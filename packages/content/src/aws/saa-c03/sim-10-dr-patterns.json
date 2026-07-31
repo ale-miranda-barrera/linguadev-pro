@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-10-dr-patterns",
+  "certId": "saa-c03",
+  "order": 10,
+  "title": "Simulacro 10 — DR patterns: backup-restore, pilot light, warm standby, multi-site active-active, RTO/RPO",
+  "focus": "Dominio 2 — Design Resilient Architectures (26%). Estrategias de disaster recovery y decision framework RTO/RPO.",
+  "domainCoverage": ["resilient"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "resilient",
+      "topic": "RTO vs RPO conceptos",
+      "difficulty": "easy",
+      "scenario": "Un arquitecto necesita explicar RTO y RPO al negocio. Le dan: 'aceptamos perder hasta 15 min de datos y estar caidos maximo 1 hora'.",
+      "question": "Cual es la clasificacion correcta de estos numeros?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RPO = 15 min (data perdida aceptable), RTO = 1 hora (tiempo maximo para recuperar operacion)", "correct": true, "why": "Correcto. RPO (Recovery Point Objective) = cuanto dato puedes perder (medido en tiempo hacia atras desde el desastre). RTO (Recovery Time Objective) = cuanto tiempo puedes estar caido antes de recuperar. Definen la estrategia DR y su coste." },
+        { "letter": "B", "text": "RTO = 15 min, RPO = 1 hora", "correct": false, "why": "Invertido. RTO = tiempo de recuperacion (downtime tolerable), RPO = punto en el tiempo (data loss tolerable)." },
+        { "letter": "C", "text": "Ambos son lo mismo", "correct": false, "why": "Incorrecto. Miden dimensiones distintas: data loss vs downtime." },
+        { "letter": "D", "text": "RTO = uptime SLA", "correct": false, "why": "Incorrecto. Uptime SLA es distinto (por ejemplo 99.99% availability); RTO es tiempo de recuperacion cuando ocurre el desastre." }
+      ],
+      "explanation": "RPO (Recovery Point Objective): cantidad maxima aceptable de datos perdidos, expresada en tiempo. RPO = 15 min significa que los backups deben ser al menos cada 15 min. RTO (Recovery Time Objective): tiempo maximo aceptable entre desastre y recuperacion. RTO = 1h significa que los procedimientos DR deben completar en 1h. Combinado con MTPD (Maximum Tolerable Period of Disruption) y MBCO (Minimum Business Continuity Objective) para BIA completo.",
+      "keywords": ["RTO", "RPO", "data loss", "downtime"],
+      "services": ["DR"],
+      "references": [{ "title": "AWS DR whitepaper" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "resilient",
+      "topic": "4 estrategias DR AWS",
+      "difficulty": "medium",
+      "scenario": "Una empresa evalua las 4 estrategias DR de AWS para diferentes apps: (a) blog corporativo (RTO 24h, RPO 24h), (b) e-commerce (RTO 10 min, RPO 1 min), (c) sistema interno de RR.HH. (RTO 4h, RPO 1h), (d) sistema critico de trading (RTO 30s, RPO ~0).",
+      "question": "Que estrategia para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) Backup and Restore, (b) Warm Standby, (c) Pilot Light, (d) Multi-Site Active-Active", "correct": true, "why": "Correcto mapping. Backup-Restore = mas barato, RTO/RPO horas. Pilot Light = infra minima activa (DB) + resto apagado, RTO horas. Warm Standby = ambiente pequeno funcional, RTO minutos, escalable rapido. Active-Active = infra completa activa en ambas regiones, RTO ~0, RPO ~0, mas caro." },
+        { "letter": "B", "text": "Todos con Multi-Site Active-Active", "correct": false, "why": "Incorrecto. Mucho mas caro que necesario para apps con RTO/RPO relajados." },
+        { "letter": "C", "text": "Todos con Backup-Restore", "correct": false, "why": "Incorrecto. No cumple RTO/RPO estrictos de (b) y (d)." },
+        { "letter": "D", "text": "(a) Multi-Site, (b) Backup, (c) Warm, (d) Pilot Light", "correct": false, "why": "Invertido. La app critica necesita Multi-Site, no Pilot Light." }
+      ],
+      "explanation": "AWS DR strategies (de barato/lento a caro/rapido): (1) Backup and Restore: RPO/RTO horas-dias, solo backups en otra region, restore on-demand. (2) Pilot Light: DB replicando always-on, resto de infra pre-configurada pero apagada, RTO horas. (3) Warm Standby: ambiente completo pero minimalmente escalado, RTO minutos, se escala al recibir carga. (4) Multi-Site Active-Active: infra full-scale en ambas regiones sirviendo trafico, RTO ~0, RPO ~0.",
+      "keywords": ["4 estrategias", "RTO", "RPO", "coste"],
+      "services": ["DR", "Route 53", "RDS"],
+      "references": [{ "title": "Disaster Recovery of Workloads on AWS" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "resilient",
+      "topic": "AWS Elastic Disaster Recovery (DRS)",
+      "difficulty": "medium",
+      "scenario": "Una empresa tiene 200 servidores on-prem heterogeneos (Windows, Linux, DBs) que quiere replicar continuamente a AWS para DR. Quieren failover rapido (RTO minutos) sin re-arquitectar cada workload.",
+      "question": "Que servicio AWS provee DR-as-a-Service para servidores fisicos/virtuales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Elastic Disaster Recovery (DRS, ex-CloudEndure): replica continuous block-level a EBS staging, en failover convierte a EC2 en minutos", "correct": true, "why": "Correcto. AWS DRS (formerly CloudEndure DR) replica continuously servidores on-prem/otro cloud a AWS staging (EBS volumes), permite failover rapido con RTO minutos y RPO segundos, sin re-arquitectar. Ideal para lift-and-shift DR." },
+        { "letter": "B", "text": "AWS Backup", "correct": false, "why": "Cercano para backup pero no continuous replication ni failover a EC2 automatico. RTO horas vs minutos." },
+        { "letter": "C", "text": "AWS DMS", "correct": false, "why": "Incorrecto. DMS es migracion de datos DB, no full servers." },
+        { "letter": "D", "text": "S3 sync", "correct": false, "why": "Incorrecto. S3 es objects, no OS/apps completos." }
+      ],
+      "explanation": "AWS DRS: DR-as-a-Service. Agente instalado en source servers replica continuous block-level via network a EBS staging en region AWS. Recovery: lanza EC2 desde staging volumes en minutos, RTO tipico 5-20 min, RPO segundos. Casos: on-prem to AWS DR, otra cloud to AWS DR, cross-region AWS DR. AWS Application Migration Service (MGN) es hermano para migracion permanente (mismo tech, diferente uso).",
+      "keywords": ["200 servidores", "on-prem DR", "lift-and-shift"],
+      "services": ["Elastic Disaster Recovery", "DRS"],
+      "references": [{ "title": "AWS Elastic Disaster Recovery" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "resilient",
+      "topic": "Route 53 failover para DR",
+      "difficulty": "medium",
+      "scenario": "Una app tiene infra activa en us-east-1 y warm standby en us-west-2. Necesitan que si us-east-1 falla, Route 53 rutee automaticamente a us-west-2 basado en health checks.",
+      "question": "Que routing policy y features Route 53 usar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Failover routing policy con health checks: registro primary (us-east-1) y registro secondary (us-west-2); Route 53 rutea al secondary si el primary health check falla", "correct": true, "why": "Correcto. Failover policy es exactamente para active-passive DR. Health checks HTTP/HTTPS/TCP configurables con thresholds, integracion con CloudWatch alarms. TTL bajo (60s tipico) acelera propagacion." },
+        { "letter": "B", "text": "Weighted routing 100/0", "correct": false, "why": "Cercano pero requiere cambio manual del weight para failover; no es automatico basado en health." },
+        { "letter": "C", "text": "Geolocation routing", "correct": false, "why": "Incorrecto. Geolocation rutea por ubicacion del usuario, no por health del endpoint." },
+        { "letter": "D", "text": "Latency routing", "correct": false, "why": "Cercano parcial (rutea al mas rapido) pero no failover explicito ante fallo." }
+      ],
+      "explanation": "Route 53 failover routing: primary/secondary records asociados a health checks. Si primary unhealthy -> Route 53 sirve secondary. Health checks: HTTP/HTTPS/TCP endpoint, calculated (agregacion de otros checks), CloudWatch alarm-based. Best practices: TTL bajo (60s) para propagacion rapida, checks desde multiples locations, alarming integrado. Combinable con Global Accelerator (que hace failover de red mas rapido, sub-30s).",
+      "keywords": ["failover automatico", "warm standby", "health check"],
+      "services": ["Route 53", "Health Checks"],
+      "references": [{ "title": "Route 53 failover routing" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "resilient",
+      "topic": "S3 Cross-Region Replication para DR",
+      "difficulty": "easy",
+      "scenario": "Una empresa guarda datos de clientes en bucket S3 en eu-west-1. Compliance exige que exista una copia sincronizada en eu-central-1 para DR.",
+      "question": "Que feature de S3 cumple esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Cross-Region Replication (CRR) con versioning habilitado en source y destination", "correct": true, "why": "Correcto. CRR replica async objects nuevos entre buckets de regiones distintas. Requiere Versioning ON en ambos. Configurable: delete markers, existing objects (via Batch Replication), replication time control (RTC) con SLA 15 min." },
+        { "letter": "B", "text": "Copiar objects con Lambda triggered por PUT", "correct": false, "why": "Cercano pero reinventa CRR con menos garantias y mas mantenimiento. CRR es la feature nativa." },
+        { "letter": "C", "text": "S3 lifecycle transition", "correct": false, "why": "Incorrecto. Lifecycle transita entre storage classes, no replica cross-region." },
+        { "letter": "D", "text": "Snapshots EBS", "correct": false, "why": "Incorrecto. EBS es storage de disco, no S3." }
+      ],
+      "explanation": "S3 Replication: SRR (Same-Region) o CRR (Cross-Region). Async por default (RTC opt-in para SLA 15 min, extra costo). Requisitos: Versioning en source y destination. Configurables: Delete Marker Replication, Existing Object Replication (backfill), storage class del destination, encryption (KMS keys de destino), owner override (bucket-owner). Casos: compliance geo, DR, latency-based cross-region reads, log aggregation.",
+      "keywords": ["CRR", "sincronizado", "eu-west a eu-central"],
+      "services": ["S3", "S3 Replication"],
+      "references": [{ "title": "S3 Cross-Region Replication" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "resilient",
+      "topic": "Aurora Global Database para DR",
+      "difficulty": "medium",
+      "scenario": "Una app critica tiene database Aurora PostgreSQL con RPO objetivo <1s y RTO objetivo <1 min ante region-wide outage.",
+      "question": "Que arquitectura cumple este SLA agresivo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora Global Database con cluster primario en region A y cluster secundario en region B; managed failover en <1 min con RPO tipico <1s", "correct": true, "why": "Correcto. Aurora Global Database es la opcion Aurora-native para DR cross-region con SLA agresivo: replicacion storage-level asincrona con latency <1s, secondary clusters read-only, managed unplanned failover (region outage) <1 min." },
+        { "letter": "B", "text": "Cross-region read replicas RDS + promote manual", "correct": false, "why": "Cercano pero RTO manual toma minutos-horas (mayor que 1 min), y RPO logico replication tiene mas lag que Aurora Global storage-level." },
+        { "letter": "C", "text": "Snapshots cross-region", "correct": false, "why": "Incorrecto. RTO horas (restore), RPO diario. No cumple SLA." },
+        { "letter": "D", "text": "Backup and Restore standalone", "correct": false, "why": "Incorrecto. Estrategia mas basica; RTO/RPO horas." }
+      ],
+      "explanation": "Aurora Global Database para DR: 1 primary region + hasta 5 secondary regions read-only, replicacion storage-level cross-region (~1s), managed failover types: (1) Planned (switchover ordenado, sin data loss), (2) Unplanned (region outage, promote secondary a primary en <1 min, RPO tipico <1s). Alternativa MRDS PostgreSQL: cross-region read replicas + promote manual (mas lento, mayor RPO).",
+      "keywords": ["Aurora Global", "RPO <1s", "region outage"],
+      "services": ["Aurora Global Database"],
+      "references": [{ "title": "Aurora Global Database for DR" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "resilient",
+      "topic": "DynamoDB Global Tables para DR",
+      "difficulty": "medium",
+      "scenario": "Una app usa DynamoDB en us-east-1. Quieren capacidad de failover a us-west-2 con RPO/RTO ~segundos y ademas servir reads locales a usuarios en cada region.",
+      "question": "Que feature DynamoDB cumple ambos requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB Global Tables: multi-region multi-master, replicacion async entre regiones (typical <1s), lecturas locales en cada region, failover simplemente cambia el endpoint DNS del cliente", "correct": true, "why": "Correcto. Global Tables son active-active multi-region: cada region acepta reads y writes, sincronizacion async cross-region ~1s, conflict resolution last-writer-wins. Failover instantaneo: cliente apunta a otro region endpoint. RPO ~1s, RTO ~0." },
+        { "letter": "B", "text": "DynamoDB streams + Lambda a otra region", "correct": false, "why": "Cercano pero es lo que Global Tables hace por debajo, sin la garantia y managed. Reinventar es fragil." },
+        { "letter": "C", "text": "Backup and Restore periodico", "correct": false, "why": "Incorrecto. RPO/RTO horas, no cumple." },
+        { "letter": "D", "text": "PITR solo", "correct": false, "why": "Cercano parcial. PITR (Point-in-Time Recovery) es intra-region hasta 35 dias, no DR cross-region." }
+      ],
+      "explanation": "DynamoDB DR options: (1) On-Demand Backup: manual snapshots, cross-region copy via AWS Backup. (2) PITR: continuous backup con restore a cualquier segundo en los ultimos 35 dias (intra-region default, cross-region via AWS Backup). (3) Global Tables: multi-master multi-region active-active. Costos: Global Tables paga replicated write capacity units (rWCU) por region adicional.",
+      "keywords": ["multi-region DDB", "lectura local", "failover"],
+      "services": ["DynamoDB Global Tables"],
+      "references": [{ "title": "DynamoDB Global Tables" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "resilient",
+      "topic": "Chaos engineering con AWS Fault Injection",
+      "difficulty": "hard",
+      "scenario": "Un equipo quiere validar que su plan DR funciona: quieren simular fallos (matar EC2, throttle Lambda, latencia API, incluso simular fallo de AZ) en un ambiente controlado para descubrir puntos ciegos antes de un incidente real.",
+      "question": "Que servicio AWS permite inyectar fallos controlados?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Fault Injection Service (FIS): experimentos preprogramados de chaos engineering (stop instances, throttle API, network latency, kill EBS volumes, simulate AZ down)", "correct": true, "why": "Correcto. AWS FIS (formerly Fault Injection Simulator) es la herramienta managed de chaos engineering: templates de experimentos, targets por tags, stop conditions (rollback si metricas violan umbral), auditoria. Ideal para game days y validacion DR." },
+        { "letter": "B", "text": "Terminar manualmente instancias en prod", "correct": false, "why": "Cercano pero descontrolado; sin stop conditions ni auditoria. FIS es managed y seguro." },
+        { "letter": "C", "text": "Solo hacer tests unitarios", "correct": false, "why": "Incorrecto. No cubre failure modes distribuidos." },
+        { "letter": "D", "text": "GameDay manual sin herramientas", "correct": false, "why": "Cercano parcial (game days son practica valida) pero FIS automatiza y estandariza." }
+      ],
+      "explanation": "AWS Fault Injection Service (FIS): chaos engineering managed. Actions: aws:ec2:stop-instances, aws:ec2:reboot, aws:ecs:stop-task, aws:rds:reboot-db-instance, aws:kinesis:add-latency, aws:network:disrupt-connectivity (simulate AZ isolation). Targets por resource selectors (tags, filters). Experiment templates versionables. Stop conditions basadas en CloudWatch alarms (rollback si SLA se viola). Casos: game days, DR drills, validacion HA architecture.",
+      "keywords": ["chaos engineering", "simular fallos", "validar DR"],
+      "services": ["Fault Injection Service", "FIS"],
+      "references": [{ "title": "AWS Fault Injection Service" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "resilient",
+      "topic": "Backup vault lock",
+      "difficulty": "medium",
+      "scenario": "Compliance exige que los backups sean inmutables durante 7 anos: ni un admin comprometido ni el root de AWS deben poder borrarlos.",
+      "question": "Que feature de AWS Backup cumple esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Backup Vault Lock en modo Compliance con retention period 7 anos (WORM inmutable, no reversible)", "correct": true, "why": "Correcto. Vault Lock (analogo a S3 Object Lock Compliance) hace los backups inmutables. En Compliance mode ni root puede borrar. Governance mode permite override con permiso especial. Ideal para SEC/FINRA/HIPAA compliance." },
+        { "letter": "B", "text": "IAM policy deniendo delete", "correct": false, "why": "Cercano pero un admin con permisos puede modificar la policy. Vault Lock Compliance es irreversible." },
+        { "letter": "C", "text": "Solo cross-region copy", "correct": false, "why": "Cercano para DR pero no proteccion contra delete malicioso." },
+        { "letter": "D", "text": "Encryption con KMS", "correct": false, "why": "Cercano parcial (importante para at-rest) pero no proteccion contra delete." }
+      ],
+      "explanation": "AWS Backup Vault Lock: modelo WORM sobre backup vaults. Modos: (1) Governance (override con permiso), (2) Compliance (irreversible, nadie puede eliminar hasta que expire retention). Grace period 3 dias para test config antes de lock final. Certificado para SEC 17a-4, CFTC, FINRA. Combinable con cross-region backup copy, KMS encryption, Organizations delegated admin.",
+      "keywords": ["backup inmutable", "7 anos", "compliance"],
+      "services": ["AWS Backup", "Vault Lock"],
+      "references": [{ "title": "AWS Backup Vault Lock" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "resilient",
+      "topic": "Region evacuation con Route 53 ARC",
+      "difficulty": "hard",
+      "scenario": "Una empresa multi-region necesita capacidad de 'shift-away' rapida: ante deteccion de degradacion en una region, redirigir todo el trafico a la otra region con un solo comando y garantia de que se ejecuta.",
+      "question": "Que servicio AWS orquesta region-shift confiable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Route 53 Application Recovery Controller (ARC): routing controls + readiness checks + safety rules; permite failover a otra region con garantia data-plane 100% durante regional outages", "correct": true, "why": "Correcto. Route 53 ARC es el servicio managed de recovery orchestration: routing controls (on/off por region), readiness checks (valida que la region secundaria puede tomar el trafico), safety rules (previene switch a region no lista). Data plane funciona incluso durante region outages." },
+        { "letter": "B", "text": "Cambiar manualmente Route 53 records", "correct": false, "why": "Cercano pero manual, propenso a error, sin readiness validation ni safety rules." },
+        { "letter": "C", "text": "Global Accelerator solo", "correct": false, "why": "Cercano parcial (GA maneja failover automatico) pero ARC es especifico para orquestacion multi-region compleja con readiness validation." },
+        { "letter": "D", "text": "AWS Systems Manager Automation", "correct": false, "why": "Cercano para runbooks generales pero ARC es built for this exact use case." }
+      ],
+      "explanation": "Route 53 Application Recovery Controller (ARC): (1) Readiness Checks = valida continuously que las regiones estan listas para asumir trafico (capacity, deployment version, etc.). (2) Routing Controls = switches on/off por region que Route 53 records referencian. (3) Safety Rules = previenen configuraciones peligrosas (ej. apagar TODAS las regiones). Data plane 5-datacenter cluster con soberania por dial state independiente de control plane.",
+      "keywords": ["region shift", "readiness", "failover orquestado"],
+      "services": ["Route 53 ARC", "Route 53"],
+      "references": [{ "title": "Route 53 Application Recovery Controller" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "resilient",
+      "topic": "AWS Systems Manager runbooks para DR",
+      "difficulty": "medium",
+      "scenario": "Un equipo de DR tiene un runbook manual documentado en Confluence con 30 pasos para failover regional. Toma 45 min ejecutar. Quieren automatizar y estandarizar.",
+      "question": "Que servicio AWS convierte runbooks manuales en automation ejecutable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Systems Manager Automation con documents (SSM runbooks): YAML/JSON con secuencia de pasos, integraciones AWS SDK, aprobaciones humanas, run in parallel, error handling", "correct": true, "why": "Correcto. SSM Automation es el orquestador de runbooks operacionales AWS. Documents (built-in library + custom) definen pasos, ejecutan via AWS SDK, soportan approvals, error handling, retries. Ideal para DR playbooks, patching, ops repetitivas." },
+        { "letter": "B", "text": "Documentar mejor en Confluence", "correct": false, "why": "Incorrecto. Sigue siendo manual y variable en ejecucion." },
+        { "letter": "C", "text": "Lambda functions custom", "correct": false, "why": "Cercano pero Lambda no orquesta secuencias multi-paso con approval nativo. Step Functions o SSM Automation son mejores." },
+        { "letter": "D", "text": "Step Functions", "correct": false, "why": "Cercano y valida alternativa para orchestration compleja de negocio. SSM Automation es especifico para operaciones AWS (menos overhead que Step Functions para runbooks IT/DR)." }
+      ],
+      "explanation": "SSM Automation documents: runbooks executables via API/console/EventBridge trigger. Steps: aws:executeAwsApi, aws:invokeLambdaFunction, aws:runCommand, aws:approve (human), aws:branch (conditionals), aws:sleep. Built-in documents: patch management, EC2 instance restart, EBS snapshot cleanup. Custom docs versionados y compartibles cross-account. Casos: DR playbooks, patching, security remediation.",
+      "keywords": ["runbook", "automatizar DR", "30 pasos"],
+      "services": ["Systems Manager", "SSM Automation"],
+      "references": [{ "title": "AWS Systems Manager Automation" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "resilient",
+      "topic": "Testing DR periodico",
+      "difficulty": "easy",
+      "scenario": "Un CTO pregunta como validar que el DR plan realmente funciona. El equipo lleva 2 anos sin probarlo.",
+      "question": "Cual es la mejor practica de testing DR?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GameDays regulares (trimestrales/semestrales) con failover real controlado: usar AWS FIS para inyectar fallos, validar RTO/RPO reales, medir gaps y iterar procedimientos", "correct": true, "why": "Correcto. Best practice: DR plan sin testing regular no es un plan, es un documento. GameDays validan procedures, entrenan al equipo, descubren fallos ocultos. AWS Well-Architected Reliability Pillar lo recomienda explicitamente." },
+        { "letter": "B", "text": "Confiar en la documentacion", "correct": false, "why": "Incorrecto. Realidad diverge de documentacion con el tiempo (configs cambian, personal rota)." },
+        { "letter": "C", "text": "Test manual una vez cada 3 anos", "correct": false, "why": "Cercano pero frecuencia insuficiente." },
+        { "letter": "D", "text": "Solo cuando ocurra un desastre real", "correct": false, "why": "Incorrecto. Aprender bajo fuego real es catastrofico." }
+      ],
+      "explanation": "DR testing best practices: (1) Frecuencia regular (mensual/trimestral segun criticidad), (2) GameDays con scenarios realistas, (3) AWS FIS para inyectar fallos controlados, (4) medir RTO/RPO reales vs objetivos, (5) actualizar runbooks tras cada test, (6) entrenar al equipo (rotacion de roles), (7) reporting a leadership. Well-Architected pilar Reliability tiene checklist especifico.",
+      "keywords": ["GameDay", "testing DR", "validar plan"],
+      "services": ["FIS", "AWS Well-Architected"],
+      "references": [{ "title": "AWS Well-Architected Reliability Pillar" }]
+    }
+  ]
+}

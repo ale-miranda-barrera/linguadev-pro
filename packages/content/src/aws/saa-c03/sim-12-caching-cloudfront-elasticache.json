@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-12-caching-cloudfront-elasticache",
+  "certId": "saa-c03",
+  "order": 12,
+  "title": "Simulacro 12 — Caching: CloudFront, ElastiCache (Redis vs Memcached), DAX, S3 Transfer Acceleration",
+  "focus": "Dominio 3 — Design High-Performing Architectures (24%). Estrategias de caching a distintos niveles: edge, aplicacion, DB, transferencia.",
+  "domainCoverage": ["high-performing"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "high-performing",
+      "topic": "ElastiCache Redis vs Memcached",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto debe elegir cache para: (1) session store con persistencia y replicacion Multi-AZ, (2) cache simple de resultados de queries donde perdida es aceptable pero throughput horizontal masivo es clave.",
+      "question": "Que engine para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Redis (soporta persistencia AOF/RDB, replicacion Multi-AZ, cluster mode, structures avanzadas), (2) Memcached (multi-threaded, escala horizontal simple, sin persistencia ni replicacion nativa)", "correct": true, "why": "Correcto. Redis = feature-rich (structures, pub/sub, streams, geo, sorted sets, transactions, persistence, HA con replicas). Memcached = simple key-value, multi-threaded, scaling horizontal easy con auto-discovery, sin HA. Redis mas usado hoy, Memcached para casos muy especificos." },
+        { "letter": "B", "text": "Ambos con Memcached", "correct": false, "why": "Incorrecto. Memcached no tiene persistencia ni replicacion Multi-AZ nativa (perdida de nodo = perdida de datos)." },
+        { "letter": "C", "text": "Ambos con Redis", "correct": false, "why": "Cercano y frecuentemente valido (Redis cubre ambos casos), pero para (2) donde throughput multi-threaded y simplicidad son clave, Memcached puede ser ligeramente superior en cost/perf." },
+        { "letter": "D", "text": "DynamoDB en lugar de cache", "correct": false, "why": "Cercano (DynamoDB con on-demand puede servir como session store) pero mayor latencia que caches in-memory." }
+      ],
+      "explanation": "ElastiCache engines: Redis (v6+, cluster mode enabled/disabled, Multi-AZ con automatic failover, backup/restore RDB/AOF, replication, TLS/AUTH, structures: strings/hashes/lists/sets/sorted sets/streams/geo/hyperloglog, pub/sub, transactions, Lua scripting). Memcached (multi-threaded, auto-discovery, sharding en cliente, sin persistencia ni HA nativa). Rule: Redis para casos criticos/complejos, Memcached solo para cache descartable de alta simplicidad.",
+      "keywords": ["Redis vs Memcached", "session store", "cache simple"],
+      "services": ["ElastiCache", "Redis", "Memcached"],
+      "references": [{ "title": "ElastiCache engines comparison" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "high-performing",
+      "topic": "DAX para DynamoDB",
+      "difficulty": "medium",
+      "scenario": "Una app hace queries repetitivas a DynamoDB de items muy accedidos (hot partition). Aunque DynamoDB single-digit ms es rapido, quieren microsegundos y reducir RCU consumption.",
+      "question": "Que servicio proporciona cache write-through especifico para DynamoDB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon DynamoDB Accelerator (DAX): cache in-memory write-through/read-through para DynamoDB, microsegundos read latency, transparent (cliente usa AWS SDK con DAX endpoint)", "correct": true, "why": "Correcto. DAX es cache managed DDB-specific: sits in-line entre app y DynamoDB, latencia sub-milisegundo (microsegundos), cache items + queries. Transparent: cliente usa DAX SDK que espeja DynamoDB API. Reduce RCU consumption drasticamente." },
+        { "letter": "B", "text": "ElastiCache Redis manual", "correct": false, "why": "Cercano y valido pero requiere codigo cache-aside en la app (leer cache, si miss leer DB y actualizar cache). DAX es transparente y write-through." },
+        { "letter": "C", "text": "CloudFront", "correct": false, "why": "Incorrecto. CloudFront es CDN HTTP; no aplica a DynamoDB API." },
+        { "letter": "D", "text": "S3 como cache", "correct": false, "why": "Incorrecto. S3 no es cache in-memory ni compatible con DynamoDB API." }
+      ],
+      "explanation": "DynamoDB Accelerator (DAX): cache in-memory managed especifica para DynamoDB. Ubicada dentro de tu VPC (cluster de nodes con Multi-AZ). Latencia microsegundos (vs single-digit ms de DynamoDB). Write-through: escrituras van a DDB y cache simultaneamente. Item cache y Query cache. Compatible con DynamoDB API via SDK-DAX-client. Reduce RCU/WCU consumption 90%+ en workloads read-heavy. Coste: por nodo hora. No aplica a Global Tables writes.",
+      "keywords": ["cache DDB", "microsegundos", "hot partition"],
+      "services": ["DAX", "DynamoDB"],
+      "references": [{ "title": "Amazon DynamoDB Accelerator" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "high-performing",
+      "topic": "CloudFront caching estrategias",
+      "difficulty": "medium",
+      "scenario": "Un e-commerce tiene: (a) imagenes estaticas de productos (cacheables horas), (b) HTML dinamico con precios personalizados por usuario (no cacheable), (c) API JSON con listados de productos (cacheable minutos, variable por query params).",
+      "question": "Como configurar cache behaviors en CloudFront?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cache behaviors separados por path pattern: /images/* (TTL alto, cache por path), /api/products/* (TTL corto, cache key incluye query params), /* HTML dinamico (TTL 0 o no cachear, forward all headers/cookies)", "correct": true, "why": "Correcto. Cache behaviors permiten reglas diferenciadas por path pattern. TTL customizable, cache key policy (que headers/queries/cookies incluir), origin request policy. Es el patron canonico para mixed workloads." },
+        { "letter": "B", "text": "TTL uniforme para todo", "correct": false, "why": "Incorrecto. HTML dinamico servido cached seria bug (usuarios ven precios de otros). Imagenes con TTL bajo genera trafico origen innecesario." },
+        { "letter": "C", "text": "Sin cache", "correct": false, "why": "Incorrecto. Anula el proposito de CloudFront." },
+        { "letter": "D", "text": "Cache infinito para todo con invalidations", "correct": false, "why": "Cercano parcial (invalidations posibles) pero costoso e ineficaz para contenido dinamico." }
+      ],
+      "explanation": "CloudFront cache behaviors: reglas por path pattern (evaluadas por prioridad). Cada behavior define: TTL (min/default/max), cache key (headers/query params/cookies incluidos), origin request policy, allowed HTTP methods, compress objects, viewer protocol policy (redirect HTTP a HTTPS). Cache policies managed (recomendadas): CachingOptimized (static), CachingDisabled (dynamic), Elemental-MediaPackage (media). Invalidations: coste extra, evitar overuse; preferir versionado en path (v1/img.png -> v2/img.png).",
+      "keywords": ["cache behaviors", "path pattern", "TTL"],
+      "services": ["CloudFront"],
+      "references": [{ "title": "CloudFront cache behaviors" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "high-performing",
+      "topic": "S3 Transfer Acceleration",
+      "difficulty": "easy",
+      "scenario": "Usuarios en Asia suben archivos grandes (GB) a un bucket S3 en us-east-1. Latencia y throughput son pobres debido a la distancia. Quieren acelerar uploads sin cambiar el bucket a otra region.",
+      "question": "Que feature de S3 acelera uploads long-distance?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Transfer Acceleration: usa CloudFront edge locations como puntos de entrada mas cercanos al usuario, reutilizando el backbone AWS para llegar al bucket destino", "correct": true, "why": "Correcto. S3 Transfer Acceleration ($0.04/GB extra) enruta uploads via el POP CloudFront mas cercano al usuario, luego via backbone AWS al bucket, reduciendo drastically el tiempo de transferencia long-distance." },
+        { "letter": "B", "text": "Multipart upload solo", "correct": false, "why": "Complementario (multipart mejora throughput dividiendo en partes paralelas) pero no resuelve el problema de latencia geografica. Combina con Transfer Acceleration." },
+        { "letter": "C", "text": "Cambiar el bucket a Asia", "correct": false, "why": "Cercano pero el enunciado dice 'sin cambiar el bucket a otra region'." },
+        { "letter": "D", "text": "CloudFront frente al bucket", "correct": false, "why": "Cercano pero CloudFront es para descargas cached, no acelera uploads (puts no se cachean)." }
+      ],
+      "explanation": "S3 Transfer Acceleration: URL especial bucket.s3-accelerate.amazonaws.com. Cliente sube al POP CloudFront mas cercano, luego backbone AWS al bucket destino. Precio extra $0.04/GB. Casos: uploads de usuarios distribuidos globalmente a un bucket central, uploads large-file long-distance. Complementable con Multipart Upload (dividir file en chunks paralelos, obligatorio >5GB, recomendado >100MB) para maximum throughput.",
+      "keywords": ["upload lejano", "acelerar", "long-distance"],
+      "services": ["S3", "Transfer Acceleration"],
+      "references": [{ "title": "S3 Transfer Acceleration" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "high-performing",
+      "topic": "Cache-aside vs write-through",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto debate patrones de caching para su app. Read-heavy con actualizaciones ocasionales.",
+      "question": "Que patron es apropiado y por que?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cache-aside (lazy loading): app lee cache, si miss lee DB, popula cache. Ideal read-heavy: solo se cachea lo que se pide, evita cache pollution. TTL controla staleness", "correct": true, "why": "Correcto. Cache-aside es el patron mas comun: cache solo tiene datos accedidos, resiliente a fallos de cache (cae a DB), consistency eventual con TTL. Ideal read-heavy. Trade-off: primer request tras miss es lento (cache miss + DB round trip)." },
+        { "letter": "B", "text": "Write-through siempre", "correct": false, "why": "Cercano y valido para write-heavy o cuando datos deben estar siempre disponibles (predictable perf), pero para read-heavy con occasional writes es overkill (cachea todo, incluso items nunca leidos)." },
+        { "letter": "C", "text": "No usar cache", "correct": false, "why": "Incorrecto. Ineficiente para read-heavy." },
+        { "letter": "D", "text": "Cache por siempre sin TTL", "correct": false, "why": "Incorrecto. Datos stale indefinidamente." }
+      ],
+      "explanation": "Patrones caching principales: (1) Cache-aside/Lazy loading: app maneja cache. Read: check cache -> if miss, DB + populate cache. Write: DB + invalidate cache. Pros: resiliente, cache solo lo pedido. Cons: primera lectura lenta. (2) Write-through: escrituras van a cache Y DB simultaneamente. Read directo cache. Pros: cache siempre updated. Cons: cachea todo (waste). (3) Write-behind (write-back): escribir a cache, cache escribe a DB async. Pros: escrituras rapidas. Cons: riesgo perdida datos. TTL clave para staleness.",
+      "keywords": ["cache-aside", "write-through", "read-heavy"],
+      "services": ["ElastiCache", "DAX"],
+      "references": [{ "title": "Caching strategies" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "high-performing",
+      "topic": "CloudFront origin shield",
+      "difficulty": "hard",
+      "scenario": "Un CDN tiene alto cache miss rate en origen porque los 400+ POPs de CloudFront cada uno hace su primera peticion al origen, saturando el ALB origen. El origen tiene tolerancia limitada.",
+      "question": "Que feature reduce el fanout al origen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CloudFront Origin Shield: capa adicional de cache regional entre POPs y origen; POPs consultan a Origin Shield, que consolida requests al origen, reduciendo carga origen significativamente", "correct": true, "why": "Correcto. Origin Shield es una capa extra de caching regional. Todos los POPs de una region van a Origin Shield primero (cache hit desde ahi). Origen recibe muchisimas menos requests. Ideal para origins con capacity limitada o transformaciones caras." },
+        { "letter": "B", "text": "Aumentar TTL max", "correct": false, "why": "Cercano parcial (mas cache reduce misses) pero no consolida requests entre POPs de diferentes regiones." },
+        { "letter": "C", "text": "Mas capacity al origen", "correct": false, "why": "Cercano pero coste alto. Origin Shield resuelve el problema en el layer CDN." },
+        { "letter": "D", "text": "Desactivar CloudFront", "correct": false, "why": "Incorrecto. Anula el beneficio de CDN." }
+      ],
+      "explanation": "CloudFront Origin Shield: capa adicional (opcional, extra costo) entre POPs edge y origen. Reduce cache miss rate al origen porque todos los POPs pasan por el Shield que actua como cache regional. Beneficios: (1) menor carga origen, (2) mejor cache hit ratio global, (3) reduccion de coste de origin egress. Configuracion: elegir region del Shield (idealmente cerca del origen). Casos: origins con capacity limitada, transformaciones caras (Lambda@Edge), origins on-prem.",
+      "keywords": ["origin shield", "reducir fanout", "muchos POPs"],
+      "services": ["CloudFront"],
+      "references": [{ "title": "CloudFront Origin Shield" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "high-performing",
+      "topic": "ElastiCache cluster mode enabled",
+      "difficulty": "hard",
+      "scenario": "Un Redis workload creciendo requiere mas memoria y throughput de escritura de lo que un solo primary node puede ofrecer (nodes maximos ~600 GB). Ademas necesitan escalar reads horizontal.",
+      "question": "Que arquitectura ElastiCache Redis soporta esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Redis Cluster Mode Enabled: sharding automatico via 16384 hash slots distribuidos en N shards; cada shard con primary + replicas; permite scaling horizontal write y read", "correct": true, "why": "Correcto. Cluster Mode Enabled particiona datos en shards (hasta 500), cada shard con su primary + hasta 5 replicas. Escala write (shards distintos) y read (replicas por shard). Requiere cliente cluster-aware." },
+        { "letter": "B", "text": "Redis Cluster Mode Disabled", "correct": false, "why": "Cercano pero disabled es single-shard (1 primary + hasta 5 replicas). Escala reads pero NO writes horizontalmente." },
+        { "letter": "C", "text": "Memcached con mas nodos", "correct": false, "why": "Cercano parcial (Memcached escala horizontal) pero sin replicacion ni HA nativa; no aplica si necesitas Redis features." },
+        { "letter": "D", "text": "Un solo node mas grande", "correct": false, "why": "Incorrecto. Los nodes tienen tope; scaling horizontal es la solucion." }
+      ],
+      "explanation": "ElastiCache Redis modes: (1) Cluster Mode Disabled: single-shard, 1 primary + hasta 5 read replicas, scale-up (mayor node type) o read scaling con mas replicas. Ideal <300GB dataset. (2) Cluster Mode Enabled: sharding con 16384 hash slots distribuidos en N shards, cada shard con primary + replicas. Scale-out para write y read. Requiere cluster-aware client (jedis-cluster, ioredis con cluster mode). Trade-off: multi-key transactions/scripts limitados a keys mismo slot (usar hash tags {}).",
+      "keywords": ["cluster mode enabled", "sharding", "escalar writes"],
+      "services": ["ElastiCache", "Redis"],
+      "references": [{ "title": "Redis cluster mode enabled" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "high-performing",
+      "topic": "S3 Multi-Region Access Points",
+      "difficulty": "hard",
+      "scenario": "Una app global escribe/lee objects que se replican con S3 CRR entre 3 regiones. Actualmente los clientes deben conocer que bucket usar y manejar failover manual entre regiones.",
+      "question": "Que feature simplifica routing entre buckets replicados?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Multi-Region Access Points (MRAP): un unico global endpoint que rutea a la region con menor latencia; failover automatico si un bucket falla; active-active o active-passive", "correct": true, "why": "Correcto. S3 MRAP crea un hostname global que rutea automaticamente al bucket S3 mas cercano/healthy. Failover managed. Ideal para apps globales con replicated buckets. Compatible con SDK y CloudFront." },
+        { "letter": "B", "text": "CloudFront frente a los buckets", "correct": false, "why": "Cercano para reads cached pero no soporta writes multi-region ni failover automatico entre buckets." },
+        { "letter": "C", "text": "Route 53 latency routing a buckets", "correct": false, "why": "Cercano parcial (funciona para read) pero no failover automatico integrado ni active-active writes." },
+        { "letter": "D", "text": "AWS Transfer Family", "correct": false, "why": "Incorrecto. Transfer Family es SFTP/FTPS/FTP para uploads, no routing multi-region." }
+      ],
+      "explanation": "S3 Multi-Region Access Points (MRAP): endpoint global unico que routea a bucket replicado por menor latencia/health. Uses SDK-integrated failover. Supports read y write. Requiere replication configurada entre buckets (S3 CRR). Casos: global apps con datos activos en multiples regiones, DR active-active, low-latency global reads. Extra cost: por request routed + data transfer.",
+      "keywords": ["multi-region S3", "routing global", "failover"],
+      "services": ["S3", "MRAP"],
+      "references": [{ "title": "S3 Multi-Region Access Points" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "high-performing",
+      "topic": "CloudFront con Lambda@Edge personalizacion",
+      "difficulty": "hard",
+      "scenario": "Un e-commerce quiere responder HTML personalizado por usuario (por ejemplo, mostrar productos recomendados basado en cookies) manteniendo cache CDN efectivo.",
+      "question": "Como combinar personalizacion y caching?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cache HTML shell generico + fetch personalizacion en cliente (JS AJAX) O usar Lambda@Edge origin response para inyectar personalizacion antes de cachear con cache key que incluya user segment (no user individual)", "correct": true, "why": "Correcto. Dos patrones validos: (1) hybrid rendering (shell cacheado + client-side personalization), (2) edge personalization con cache key por segment (no por user). Cachear por usuario individual = cache useless. Segmentar (por country, device, tier) preserva cache hit rate." },
+        { "letter": "B", "text": "Desactivar cache", "correct": false, "why": "Incorrecto. Anula CDN benefits." },
+        { "letter": "C", "text": "Cachear por user ID unico", "correct": false, "why": "Incorrecto. Cada usuario = cache entry unico = cache useless para millones de usuarios." },
+        { "letter": "D", "text": "Solo cache imagenes, no HTML", "correct": false, "why": "Cercano pero desperdicia ancho de banda del origin en HTML repetido." }
+      ],
+      "explanation": "Estrategias personalizacion + CDN: (1) Cache shell + client-side data fetch (JS/AJAX). (2) Segment-based caching: cache key incluye segment (country/device/tier) no user_id individual. (3) Lambda@Edge en viewer/origin response para inyeccion server-side. (4) CloudFront Functions para header/URL manipulation ultra-fast. (5) Server-Sent Events (SSE) o WebSocket para real-time updates a shell cacheado. Cache key policy en CloudFront controla que dimensiones diferencian entries.",
+      "keywords": ["personalizacion", "HTML cacheable", "cache key"],
+      "services": ["CloudFront", "Lambda@Edge"],
+      "references": [{ "title": "CloudFront cache key" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "high-performing",
+      "topic": "Amazon MemoryDB for Redis",
+      "difficulty": "medium",
+      "scenario": "Una app critica requiere durabilidad de datos en Redis (no puede perder datos ante fallo de nodo) y latencia sub-milisegundo. ElastiCache Redis persistence no cumple durabilidad strict.",
+      "question": "Que servicio AWS es Redis-compatible con durabilidad y HA nativa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon MemoryDB for Redis: primary database Redis-compatible con multi-AZ transactional log durability, latencia microseconds read y single-digit ms write", "correct": true, "why": "Correcto. MemoryDB es durable in-memory database Redis-compatible: writes persistidos a multi-AZ transactional log antes de ack (durabilidad estricta), reads sub-ms, HA nativa. Diferente de ElastiCache: MemoryDB es primary DB, no solo cache." },
+        { "letter": "B", "text": "ElastiCache Redis con AOF", "correct": false, "why": "Cercano pero AOF puede perder segundos de writes en crash. MemoryDB es durable a nivel transaction commit." },
+        { "letter": "C", "text": "DynamoDB", "correct": false, "why": "Cercano y durable pero API distinta (no Redis compatible) y latencia mayor (single-digit ms vs microseconds)." },
+        { "letter": "D", "text": "RDS", "correct": false, "why": "Incorrecto. RDS es relational, no Redis-compatible in-memory." }
+      ],
+      "explanation": "Redis in AWS: (1) ElastiCache Redis = cache managed, persistence opcional (AOF/RDB) pero no strict durability, casos: cache, session store. (2) MemoryDB for Redis = primary database, durable via multi-AZ transaction log commits, Redis 6+ API compatible, casos: microservices state, session with strict durability, real-time analytics. MemoryDB mas caro pero durabilidad garantizada.",
+      "keywords": ["Redis durable", "sub-ms", "primary DB"],
+      "services": ["MemoryDB", "ElastiCache"],
+      "references": [{ "title": "Amazon MemoryDB for Redis" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "high-performing",
+      "topic": "API Gateway caching",
+      "difficulty": "medium",
+      "scenario": "Una API publica tiene endpoints GET pesados que consultan DB en cada request. La misma respuesta se repite mucho (por ejemplo GET /products/top-sellers). Buscan reducir carga backend y latencia.",
+      "question": "Que feature nativa de API Gateway resuelve esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "API Gateway REST caching: habilitar cache por stage con size (0.5-237GB), TTL (0-3600s), cache key (por metodo + path + custom params)", "correct": true, "why": "Correcto. API Gateway REST tiene caching integrado por stage: reduce latencia (respuesta desde cache), reduce carga backend. Cache invalidation via header o programatica. Costo por hora del cache size." },
+        { "letter": "B", "text": "CloudFront frente al API GW", "correct": false, "why": "Cercano y alternativo (mas control, funciones edge, WAF). API GW native caching es directo si no necesitas features CloudFront." },
+        { "letter": "C", "text": "ElastiCache en backend", "correct": false, "why": "Cercano complementario (reduce carga DB) pero requiere codigo en backend. API GW cache es transparente." },
+        { "letter": "D", "text": "Aumentar timeout", "correct": false, "why": "Incorrecto. No reduce latencia ni carga." }
+      ],
+      "explanation": "API Gateway caching: solo REST API (no HTTP API). Configurable por stage. Cache size 0.5-237 GB (paga por hora). TTL por endpoint (default 300s, 0-3600s). Cache key por default = path + querystring, personalizable. Metodos cacheables: GET (default) o custom. Invalidation: header X-Cache-Invalidate + IAM permission, o programaticamente. Alternativas: CloudFront (mas features), Lambda-side caching (ElastiCache/Momento).",
+      "keywords": ["API cache", "reducir backend", "GET repetitivo"],
+      "services": ["API Gateway"],
+      "references": [{ "title": "API Gateway caching" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "high-performing",
+      "topic": "TTL y cache stampede",
+      "difficulty": "hard",
+      "scenario": "Cuando el TTL de un item cache expira y hay alta concurrencia, muchos requests simultaneos hacen cache miss y golpean la DB al mismo tiempo (thundering herd/cache stampede), saturando el backend.",
+      "question": "Que tecnicas mitigan cache stampede?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Tecnicas combinables: (1) lock/mutex (solo un request refetche DB, otros esperan cached), (2) probabilistic early expiration (algunos refetchean antes de TTL exacto), (3) stale-while-revalidate (servir stale mientras se refetche), (4) request coalescing (agrupar requests identicos)", "correct": true, "why": "Correcto. Cache stampede es problema real. Estrategias mitigantes: distributed lock (Redis SETNX) para elegir un 'refetcher', probabilistic early expiration (refetchear con prob creciente cerca del TTL), stale-while-revalidate (servir stale mientras se rebuild), request coalescing en cliente/proxy. Aplican en ElastiCache/CloudFront/API GW." },
+        { "letter": "B", "text": "Aumentar TTL infinito", "correct": false, "why": "Incorrecto. Aumenta staleness, no resuelve el problema del refresh." },
+        { "letter": "C", "text": "Sin cache", "correct": false, "why": "Incorrecto. Peor performance." },
+        { "letter": "D", "text": "Solo mas capacidad DB", "correct": false, "why": "Cercano pero caro y no elimina el problema estructural." }
+      ],
+      "explanation": "Cache stampede (thundering herd): expiracion simultanea de items hot causa muchos requests concurrentes al backend. Soluciones: (1) Distributed lock (Redis SETNX con TTL corto, quien lo obtenga hace refetch, otros sirven stale o esperan). (2) Probabilistic early expiration (algunos requests refetchean antes de TTL exacto, distribuyendo la carga). (3) Stale-while-revalidate (CDN/proxy sirven stale mientras async fetch). (4) Request coalescing (proxy consolida requests identicos). (5) Randomized TTL (evita expiraciones sincronizadas).",
+      "keywords": ["cache stampede", "thundering herd", "TTL expira"],
+      "services": ["ElastiCache", "CloudFront"],
+      "references": [{ "title": "Caching best practices" }]
+    }
+  ]
+}

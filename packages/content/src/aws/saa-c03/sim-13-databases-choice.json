@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-13-databases-choice",
+  "certId": "saa-c03",
+  "order": 13,
+  "title": "Simulacro 13 — Databases performance & choice: DynamoDB, RDS, Aurora, Redshift, Neptune, OpenSearch",
+  "focus": "Dominio 3 — Design High-Performing Architectures (24%). Decision framework: que base de datos para que carga.",
+  "domainCoverage": ["high-performing"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "high-performing",
+      "topic": "OLTP vs OLAP decision",
+      "difficulty": "medium",
+      "scenario": "Un equipo tiene dos workloads: (a) app transaccional con miles de writes/reads pequenos por segundo, latencia baja, joins moderados; (b) analytics BI con queries agregadas sobre billions of rows historicos.",
+      "question": "Que servicio AWS para CADA workload?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) Aurora/RDS (OLTP relational) o DynamoDB (OLTP NoSQL); (b) Amazon Redshift (data warehouse columnar MPP)", "correct": true, "why": "Correcto. OLTP (Online Transaction Processing) = writes/reads granulares, latencia baja, transacciones ACID: Aurora/RDS/DynamoDB. OLAP (Online Analytical Processing) = queries agregadas sobre huge datasets: Redshift (columnar, MPP, hasta petabytes)." },
+        { "letter": "B", "text": "Ambos con RDS", "correct": false, "why": "Incorrecto. RDS row-store no es optimo para analytics sobre billions de rows (queries agregadas lentas)." },
+        { "letter": "C", "text": "Ambos con DynamoDB", "correct": false, "why": "Incorrecto. DynamoDB no soporta agregaciones complejas ni joins tipicos de BI." },
+        { "letter": "D", "text": "Ambos con Redshift", "correct": false, "why": "Incorrecto. Redshift es columnar diseñado para analytics, sub-optimo para OLTP granular." }
+      ],
+      "explanation": "OLTP vs OLAP: OLTP (transaccional): muchas operaciones pequenas, latencia baja, escrituras concurrentes, ACID, ejemplos: e-commerce checkout, banking, CRM. Servicios AWS: Aurora, RDS, DynamoDB. OLAP (analitico): queries agregadas complejas, read-heavy, batch loads, historical data. Servicios AWS: Redshift, Athena, EMR. Anti-pattern: usar DB OLTP para BI heavy (slow queries + carga en prod). Modern lakehouse: Redshift + S3 + Athena juntos.",
+      "keywords": ["OLTP", "OLAP", "analytics BI"],
+      "services": ["Aurora", "DynamoDB", "Redshift"],
+      "references": [{ "title": "AWS databases overview" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "high-performing",
+      "topic": "DynamoDB vs Aurora vs DocumentDB",
+      "difficulty": "hard",
+      "scenario": "Un equipo esta decidiendo entre 3 bases para su app: (a) e-commerce catalog con productos que tienen atributos variables por categoria (JSON), (b) transacciones financieras con ACID entre cuentas, (c) session store escalando a millones de usuarios simultaneos.",
+      "question": "Que servicio para cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) DocumentDB o DynamoDB (schema flexible JSON), (b) Aurora (ACID relational con FK/joins), (c) DynamoDB (escala horizontal masiva sub-ms)", "correct": true, "why": "Correcto. DocumentDB (MongoDB-compatible) para documentos JSON complejos con queries flexibles. Aurora para transacciones ACID cross-row/table. DynamoDB para escala masiva con acceso simple por key (sub-ms, on-demand)." },
+        { "letter": "B", "text": "Todos con DynamoDB", "correct": false, "why": "Cercano parcial pero (b) transacciones cross-account requieren joins/ACID complejos (Aurora es mejor); DynamoDB tiene transactions pero limitadas." },
+        { "letter": "C", "text": "Todos con Aurora", "correct": false, "why": "Cercano parcial pero Aurora no escala horizontally writes ni sirve sesiones sub-ms a millones. DynamoDB gana en (c)." },
+        { "letter": "D", "text": "Todos con RDS", "correct": false, "why": "Incorrecto. Ni escala ni flexibilidad JSON nativa." }
+      ],
+      "explanation": "Database matrix: DynamoDB (key-value/document, escala masiva, sub-ms, sin joins). Aurora/RDS (relational, ACID, joins, moderado escalado read via replicas). DocumentDB (MongoDB-compatible, JSON documents con queries flexibles). Neptune (graph, relaciones many-to-many). Keyspaces (Cassandra-compatible, wide-column). Timestream (time-series). QLDB (ledger inmutable). Regla: elegir por access patterns, no por familiaridad con SQL.",
+      "keywords": ["JSON flexible", "ACID", "escala masiva"],
+      "services": ["DynamoDB", "Aurora", "DocumentDB"],
+      "references": [{ "title": "AWS purpose-built databases" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "high-performing",
+      "topic": "Amazon Neptune para graph",
+      "difficulty": "hard",
+      "scenario": "Una app de red social almacena users, friendships, followers, posts, likes. Queries frecuentes: 'amigos de amigos', 'sugerencias basadas en interests compartidos', 'shortest path entre dos users'. Implementar esto en SQL requiere joins recursivos lentos.",
+      "question": "Que servicio AWS es diseñado para graph queries?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Neptune: graph database managed con soporte Gremlin, openCypher (Neo4j) y SPARQL (RDF), ideal para queries de relaciones multi-hop", "correct": true, "why": "Correcto. Neptune es purpose-built graph DB: relaciones son first-class citizens, queries multi-hop rapidas (a diferencia de joins SQL recursivos). Casos: social networks, recommendation engines, fraud detection, knowledge graphs." },
+        { "letter": "B", "text": "Aurora con recursive CTE", "correct": false, "why": "Cercano funcional pero performance pobre en relaciones complejas multi-hop sobre datos grandes. Neptune es orders of magnitude mas rapido." },
+        { "letter": "C", "text": "DynamoDB con adjacency list", "correct": false, "why": "Cercano workaround pero requiere manual modeling y queries no expresivas para graph patterns complejos." },
+        { "letter": "D", "text": "OpenSearch", "correct": false, "why": "Incorrecto. OpenSearch es search/analytics de logs y documentos, no graph traversal." }
+      ],
+      "explanation": "Neptune: managed graph database. Soporta 3 modelos: (1) Property Graph con Gremlin (query language TinkerPop). (2) OpenCypher (compatible con Neo4j syntax). (3) RDF/SPARQL (semantic web, knowledge graphs). Casos: social networks (friend-of-friend), recommendation engines, fraud detection (patrones circulares de transacciones), knowledge graphs, network/IT ops. HA con up to 15 read replicas cross-AZ, Neptune Serverless disponible.",
+      "keywords": ["graph", "amigos de amigos", "shortest path"],
+      "services": ["Neptune"],
+      "references": [{ "title": "Amazon Neptune" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "high-performing",
+      "topic": "Timestream para time-series",
+      "difficulty": "medium",
+      "scenario": "Una app IoT ingiere millones de metric points/seg de sensores con timestamps. Queries tipicas: 'promedio de sensor X en la ultima hora', 'series historicas por dispositivo', 'anomalias vs baseline'. RDS con billion rows es lento.",
+      "question": "Que servicio AWS es optimizado para time-series data?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Timestream: purpose-built time-series database con memory + magnetic tiering automatico, funciones built-in de time-series (interpolacion, derivadas, agregaciones temporales)", "correct": true, "why": "Correcto. Timestream esta diseñado para time-series: ingesta masiva, storage tiering automatico (memory hot -> magnetic cold), funciones nativas SQL para series (INTERPOLATE, DERIVATIVE, WINDOW aggregations). Escala millions of writes/sec." },
+        { "letter": "B", "text": "RDS PostgreSQL con TimescaleDB extension", "correct": false, "why": "Cercano parcial pero TimescaleDB no esta en RDS PostgreSQL. Requiere self-managed EC2 o Aurora PostgreSQL con limited extensions. Timestream es managed nativo." },
+        { "letter": "C", "text": "DynamoDB", "correct": false, "why": "Cercano workaround (posible) pero sin funciones time-series nativas ni tiering automatico. Aggregations son manuales via Streams+Lambda." },
+        { "letter": "D", "text": "S3 con Athena", "correct": false, "why": "Cercano para batch analytics historico pero no para ingesta streaming ni queries sub-second sobre hot data." }
+      ],
+      "explanation": "Amazon Timestream: purpose-built time-series database. Storage tiering: memory store (fast, hot data segundos-horas) + magnetic store (cheap, cold data dias-anos). Retention policies automaticas. Query engine SQL con funciones time-series (BIN, INTERPOLATE_LINEAR, DERIVATIVE, WINDOW). Ingesta hasta millions events/sec. Casos: IoT metrics, DevOps monitoring (custom), industrial telemetry. Serverless (paga por ingest + query + storage).",
+      "keywords": ["time-series", "IoT", "metric points"],
+      "services": ["Timestream"],
+      "references": [{ "title": "Amazon Timestream" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "high-performing",
+      "topic": "QLDB ledger inmutable",
+      "difficulty": "hard",
+      "scenario": "Una app financiera necesita registro de transacciones con cryptographic verification: cada change debe ser auditable, inmutable e integridad verificable historicamente (para regulacion).",
+      "question": "Que servicio AWS provee ledger inmutable con verificacion criptografica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon QLDB (Quantum Ledger Database): journal append-only inmutable con SHA-256 cryptographic verification chain", "correct": true, "why": "Correcto. QLDB es purpose-built ledger DB: journal append-only, cryptographic hash chain (SHA-256) que permite proof of integrity. Cada cambio es auditable. Ideal para financial ledgers, supply chain, DMV/registries." },
+        { "letter": "B", "text": "DynamoDB con Streams", "correct": false, "why": "Cercano para audit trail via streams pero no ofrece verificacion criptografica end-to-end ni inmutabilidad estructural." },
+        { "letter": "C", "text": "S3 con Object Lock", "correct": false, "why": "Cercano para inmutabilidad de objetos pero no es DB transaccional con queries." },
+        { "letter": "D", "text": "Blockchain propio", "correct": false, "why": "Cercano y valida (blockchain overkill si no hay multi-party distrust). QLDB es centralizado con verificacion criptografica; no requiere consensus como blockchain." }
+      ],
+      "explanation": "QLDB: purpose-built centralized ledger. Diferencias vs blockchain: centralized (no consensus overhead) pero cryptographically verifiable. Journal-first architecture (append-only), current state derivable. SQL-like query language (PartiQL). Casos: financial ledgers, supply chain provenance, DMV registries, HR records. Anuncio 2023: EOL en 2025 recomendando migrar a Aurora PostgreSQL. Alternativa moderna para ledger: Amazon Managed Blockchain (multi-party) o Aurora con audit patterns.",
+      "keywords": ["ledger inmutable", "cryptographic", "audit"],
+      "services": ["QLDB"],
+      "references": [{ "title": "Amazon QLDB" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "high-performing",
+      "topic": "OpenSearch para logs y search",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere: (1) full-text search sobre catalogo de productos (10M items), (2) log analytics de aplicacion (billions de log lines/mes) con dashboards. Postgres full-text es lento y no escala.",
+      "question": "Que servicio AWS resuelve ambos casos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon OpenSearch Service: motor de search & analytics distributed (Elasticsearch fork), ideal para full-text search y log analytics con Kibana dashboards", "correct": true, "why": "Correcto. OpenSearch (fork AWS de Elasticsearch): distributed inverted index, full-text search sub-100ms sobre millions of docs, dashboards analytics (OpenSearch Dashboards), integrations nativas con Kinesis/CloudWatch Logs/etc. Serverless option disponible." },
+        { "letter": "B", "text": "DynamoDB con GSI", "correct": false, "why": "Cercano pero DynamoDB no soporta full-text search nativo, requiere integracion externa o queries limitadas." },
+        { "letter": "C", "text": "S3 con Athena", "correct": false, "why": "Cercano para log analytics batch pero sin full-text search interactivo sub-second." },
+        { "letter": "D", "text": "Aurora PostgreSQL con pg_trgm", "correct": false, "why": "Cercano pero no escala a billions ni performance search comparable a OpenSearch/Elastic." }
+      ],
+      "explanation": "OpenSearch Service (successor Elasticsearch Service): distributed search & analytics. Casos: full-text search (e-commerce, docs), log analytics (siempre popular ELK stack alternative), SIEM (con integraciones GuardDuty/Security Hub), APM, business analytics. OpenSearch Serverless: pay-per-use sin gestionar clusters. Integraciones: Kinesis Firehose, CloudWatch Logs, Data Prepper. Alternativas AWS: CloudSearch (managed simple search, menos features).",
+      "keywords": ["full-text search", "log analytics", "OpenSearch"],
+      "services": ["OpenSearch"],
+      "references": [{ "title": "Amazon OpenSearch Service" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "high-performing",
+      "topic": "Redshift architecture y RA3",
+      "difficulty": "hard",
+      "scenario": "Un CTO evalua Redshift para BI. Preocupa: (1) escalar storage y compute independientemente (no todos los datasets necesitan mismo compute), (2) queries sobre data en S3 sin cargarla al warehouse.",
+      "question": "Que features de Redshift cubren estos requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Redshift RA3 nodes con managed storage (compute y storage escalables separadamente) + Redshift Spectrum para queries directos sobre S3 sin cargar", "correct": true, "why": "Correcto. RA3 separo compute/storage: paga compute por hora y storage por GB independientemente. Spectrum permite external tables sobre S3 (Parquet, ORC, JSON) queryable con SQL Redshift, unificando warehouse + data lake sin ETL." },
+        { "letter": "B", "text": "Solo DC2 nodes", "correct": false, "why": "Cercano para compute-heavy pero DC2 mezcla compute/storage (no escalables separadamente). RA3 es moderno." },
+        { "letter": "C", "text": "Aurora en lugar", "correct": false, "why": "Incorrecto contexto. Aurora es OLTP row-store, no data warehouse OLAP." },
+        { "letter": "D", "text": "Athena solo", "correct": false, "why": "Cercano para queries S3 pero sin warehouse persistente ni performance interactivo consistente." }
+      ],
+      "explanation": "Redshift architectures: (1) DC2 (compute nodes con local SSD, compute+storage acoplados). (2) RA3 (compute + managed storage separados, storage automanaged en S3-backed, escalable independiente). RA3 es la eleccion moderna. Redshift Spectrum: external tables sobre S3 (formats columnar: Parquet, ORC ideal), sin cargar datos al warehouse. Redshift Serverless: pay-per-use sin gestionar clusters. Concurrency scaling: adds temporary capacity for spikes.",
+      "keywords": ["RA3", "compute vs storage", "Spectrum"],
+      "services": ["Redshift", "Redshift Spectrum"],
+      "references": [{ "title": "Redshift RA3 nodes" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "high-performing",
+      "topic": "Aurora Serverless v2",
+      "difficulty": "medium",
+      "scenario": "Un dashboard tiene uso intermitente (dev/test, cargas variables). Provisionar Aurora fijo es desperdiciado. Aurora Serverless v1 pausaba y tenia cold starts largos.",
+      "question": "Que opcion moderna escala capacity rapidly con costes optimos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora Serverless v2 con min/max ACU: escala en segundos (sub-segundo incrementos), sin cold starts al usar min ACU > 0", "correct": true, "why": "Correcto. Serverless v2 supera v1: escala en segundos vs minutos, no pausa (min ACU > 0 evita cold start), soporta la mayoria de features de Aurora provisionada (Global DB, Multi-AZ, Read Replicas)." },
+        { "letter": "B", "text": "Aurora Serverless v1", "correct": false, "why": "Incorrecto. v1 pausa completamente y tiene cold starts largos (minutos). v2 lo supera." },
+        { "letter": "C", "text": "Aurora provisioned fijo", "correct": false, "why": "Cercano pero over-provisions para cargas variables intermittent. v2 es mas cost-effective." },
+        { "letter": "D", "text": "RDS on demand", "correct": false, "why": "Incorrecto. RDS no tiene modelo serverless." }
+      ],
+      "explanation": "Aurora Serverless v2 (2022): capacity in ACUs (Aurora Capacity Units, 0.5 ACU = ~1GB RAM + CPU proporcional). Escala en segundos (sub-second) sin downtime. Compatible con la mayoria de features Aurora provisionada (Global Database, Multi-AZ, Read Replicas, RDS Proxy). Casos: variable workloads, SaaS multi-tenant, dev/test, apps con picos impredecibles. Paga por ACU-hora usado. Superior a v1 que pausaba (cold start) y era limitado.",
+      "keywords": ["Serverless v2", "cargas variables", "sin cold start"],
+      "services": ["Aurora Serverless v2"],
+      "references": [{ "title": "Aurora Serverless v2" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "high-performing",
+      "topic": "DynamoDB single-table design",
+      "difficulty": "hard",
+      "scenario": "Un arquitecto senior recomienda single-table design en DynamoDB para una app compleja (users, orders, items, reviews). Un dev junior pregunta por que no usar una tabla por entidad como en RDS.",
+      "question": "Cual es la justificacion correcta de single-table en DDB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB no tiene joins ni transactions cross-table sin trade-offs; single-table permite pre-computed relations (una query trae user + orders + items) y aprovecha patrones GSI para queries alternativos", "correct": true, "why": "Correcto. En DynamoDB single-table design maximiza el uso de partition key + sort key para acceso multi-entity en una sola query (avoids multiple round-trips), y GSIs modelan queries alternativos. Reduce coste (RCU/WCU) y latencia. Trade-off: schema mas complejo mentalmente." },
+        { "letter": "B", "text": "Usar tabla por entidad como RDS", "correct": false, "why": "Cercano tradicional pero antipattern en DynamoDB: multiples queries por request, mas latencia, no aprovecha modelo NoSQL. RDS mindset trasladado a NoSQL." },
+        { "letter": "C", "text": "Solo permite una entidad", "correct": false, "why": "Incorrecto. DynamoDB permite N entidades por tabla con schema flexible por item." },
+        { "letter": "D", "text": "DDB no soporta multi-entity", "correct": false, "why": "Incorrecto. Soporta perfectamente con single-table design y sort key patterns." }
+      ],
+      "explanation": "DynamoDB single-table design: tabla unica que contiene multiples entidades diferenciadas por prefijos en partition key/sort key (USER#123, ORDER#456, ITEM#789). Ventajas: queries multi-entity en una operacion, mejor RCU/WCU eficiencia, GSIs versatiles. Requiere pensar access patterns primero (query-driven design). Anti-pattern: 'una tabla por entidad como RDS' desperdicia el modelo. Recursos: 'The DynamoDB Book' by Alex DeBrie.",
+      "keywords": ["single-table design", "sin joins", "DynamoDB"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DynamoDB best practices" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "high-performing",
+      "topic": "Keyspaces (Cassandra) vs DynamoDB",
+      "difficulty": "medium",
+      "scenario": "Una empresa migra de Cassandra self-managed a AWS. Quieren minimizar cambios de codigo y compatibilidad con drivers CQL existentes.",
+      "question": "Que servicio AWS es Cassandra-compatible managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Keyspaces (for Apache Cassandra): CQL compatible, serverless, escala automatica, sin gestionar cluster Cassandra", "correct": true, "why": "Correcto. Keyspaces mantiene compatibilidad CQL (Cassandra Query Language) 3.11+, drivers existentes funcionan, sin gestionar seeds/gossip/repair operaciones. Serverless con on-demand o provisioned capacity." },
+        { "letter": "B", "text": "DynamoDB", "correct": false, "why": "Cercano funcionalmente (wide-column model) pero API distinta (no CQL); requiere refactorizar codigo cliente." },
+        { "letter": "C", "text": "MemoryDB", "correct": false, "why": "Incorrecto. MemoryDB es Redis-compatible, no Cassandra." },
+        { "letter": "D", "text": "Cassandra en EC2 self-managed", "correct": false, "why": "Cercano pero pierdes el 'managed' aspect: cluster ops, repair, upgrades. Keyspaces elimina eso." }
+      ],
+      "explanation": "Amazon Keyspaces: Cassandra-compatible managed service. Compatible con CQL 3.11+, drivers Cassandra estandar (Java, Python, Node.js, .NET, etc.). Serverless (paga per read/write) o provisioned. Multi-region replication via Keyspaces Multi-Region. Encryption default, IAM auth (SigV4), integracion CloudTrail. Casos: migracion Cassandra, apps con wide-column model, IoT/time-series con requerimientos CQL.",
+      "keywords": ["Cassandra", "CQL compatible", "migracion"],
+      "services": ["Keyspaces"],
+      "references": [{ "title": "Amazon Keyspaces" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "high-performing",
+      "topic": "RDS read replicas para escalar lecturas",
+      "difficulty": "easy",
+      "scenario": "Una app tiene 80% lecturas y 20% escrituras. El primary RDS PostgreSQL esta al 90% CPU en horas pico. Reads son mayormente reports y queries analiticos internos.",
+      "question": "Como escalar lecturas sin migrar de DB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Anadir read replicas RDS (hasta 5-15 segun engine) y rutear lecturas non-critical/reports a las replicas via reader endpoint", "correct": true, "why": "Correcto. Read replicas RDS descargan lecturas del primary. Aplicacion debe distinguir: writes y read-after-write al primary, reads tolerantes a lag a replicas. Aurora tiene reader endpoint que balancea automaticamente entre replicas." },
+        { "letter": "B", "text": "Vertical scaling a mayor instance size", "correct": false, "why": "Cercano temporal (mas CPU/RAM) pero limite fisico y downtime en cambio. Read replicas escalan horizontalmente." },
+        { "letter": "C", "text": "Cambiar a DynamoDB", "correct": false, "why": "Cercano pero cambio de tecnologia y refactor total. Read replicas son fix inmediato." },
+        { "letter": "D", "text": "Cache Redis solo", "correct": false, "why": "Complementario y valido para reducir carga al DB, pero no escala DB per se. Combinar con read replicas es la respuesta completa." }
+      ],
+      "explanation": "RDS read replicas: async replication desde primary. Max: PostgreSQL/MySQL 15, Oracle/SQL Server 5. Casos: read-heavy workloads, reporting/analytics offload, cross-region DR (promote como standby). Lag async: milisegundos-segundos. Read-your-writes puede requerir routing al primary. Aurora tiene arquitectura mejor: reader endpoint balanced, hasta 15 replicas con storage compartido cross-AZ (menor lag).",
+      "keywords": ["escalar lecturas", "80% reads", "read replicas"],
+      "services": ["RDS", "Aurora"],
+      "references": [{ "title": "RDS read replicas" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "high-performing",
+      "topic": "DocumentDB vs MongoDB en EC2",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere MongoDB pero prefiere managed service. Necesitan compatibilidad con driver MongoDB, scaling automatico, backups automaticos.",
+      "question": "Que servicio AWS es MongoDB-compatible managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon DocumentDB (with MongoDB compatibility): managed, MongoDB API 4.0/5.0 compatible, backups automaticos, escala storage automatica, Multi-AZ", "correct": true, "why": "Correcto. DocumentDB es managed document DB compatible con MongoDB drivers (v3.6, 4.0, 5.0). Storage compartido cross-AZ como Aurora, hasta 15 read replicas, backup automatico, sin gestionar replica sets/sharding manualmente." },
+        { "letter": "B", "text": "MongoDB en EC2 self-managed", "correct": false, "why": "Cercano pero requiere ops: replica sets, sharding, backups, upgrades. Enunciado pide managed." },
+        { "letter": "C", "text": "DynamoDB", "correct": false, "why": "Cercano por NoSQL pero API distinta (no MongoDB); no cumple compatibility con drivers existentes." },
+        { "letter": "D", "text": "MongoDB Atlas en AWS Marketplace", "correct": false, "why": "Cercano y valido tambien (SaaS 3rd-party MongoDB managed). Si el criterio es 'AWS-native managed', DocumentDB es la respuesta canonica." }
+      ],
+      "explanation": "Amazon DocumentDB: managed document database MongoDB API compatible. Version compat: MongoDB 4.0, 5.0 (algunas features MongoDB 6.0+ no soportadas). Arquitectura similar a Aurora (compute + shared storage cross-AZ, hasta 15 read replicas). No es MongoDB rebranded: es implementacion propia de AWS del wire protocol. Trade-off vs MongoDB Atlas: menos features cutting-edge pero mejor integracion AWS y coste optimizable.",
+      "keywords": ["MongoDB compatible", "managed", "documentos"],
+      "services": ["DocumentDB"],
+      "references": [{ "title": "Amazon DocumentDB" }]
+    }
+  ]
+}

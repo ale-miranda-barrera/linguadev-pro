@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-07-ec2-ha-patterns",
+  "certId": "saa-c03",
+  "order": 7,
+  "title": "Simulacro 07 — EC2 HA patterns: Multi-AZ ASG, ELB (ALB/NLB/GLB), health checks",
+  "focus": "Dominio 2 — Design Resilient Architectures (26%). Alta disponibilidad de computo elastico y balanceo de carga.",
+  "domainCoverage": ["resilient"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "resilient",
+      "topic": "Multi-AZ Auto Scaling Group",
+      "difficulty": "easy",
+      "scenario": "Una app web actualmente corre en 3 EC2 en una sola AZ (us-east-1a). Un outage de esa AZ dejo la app caida 4 horas. El equipo debe garantizar HA con RTO menor a 5 minutos y sin intervencion manual.",
+      "question": "Cual es el diseno correcto de EC2 con alta disponibilidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Auto Scaling Group con instancias distribuidas en 3 AZs, detras de un Application Load Balancer multi-AZ, con health checks tipo ELB y min=3, desired=3, max=9", "correct": true, "why": "Correcto. ASG multi-AZ + ALB proveen HA automatica: fallo de AZ = ASG detecta unhealthy y lanza en las AZs sanas, ALB rutea trafico solo a targets healthy. RTO tipicamente <2 min." },
+        { "letter": "B", "text": "Aumentar a 6 EC2 en la misma AZ", "correct": false, "why": "Incorrecto. Sigue siendo single-AZ SPOF. Un outage de AZ derriba las 6." },
+        { "letter": "C", "text": "Snapshots EBS diarios para restaurar en caso de fallo", "correct": false, "why": "Incorrecto. Recovery manual desde snapshot toma horas, no cumple RTO 5 min." },
+        { "letter": "D", "text": "Route 53 failover a instancias en otra region", "correct": false, "why": "Cercano y valido para DR regional, pero para HA intra-region con RTO <5min, ASG multi-AZ es la solucion simple y economica." }
+      ],
+      "explanation": "ASG + ALB multi-AZ es el patron canonico de HA para EC2 stateless. ASG mantiene la cantidad deseada de instancias replazando unhealthy. Health checks: EC2 (instance status) o ELB (application-level, mas confiable). Lifecycle hooks permiten setup/teardown durante scaling. Termination policies deciden que instancia matar al scale-in. Con AZs multiples, si una AZ cae, ASG rebalancea a las sanas automaticamente.",
+      "keywords": ["HA multi-AZ", "RTO 5 min", "ASG"],
+      "services": ["EC2", "Auto Scaling", "ALB"],
+      "references": [{ "title": "Auto Scaling groups across multiple AZs" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "resilient",
+      "topic": "ALB vs NLB vs GLB",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto debe elegir el load balancer correcto para 3 workloads: (1) app web HTTP/HTTPS con path-based routing, (2) juego online con TCP/UDP a >1 millon de conexiones concurrentes, (3) chain de appliances de seguridad de terceros para inspeccion de trafico.",
+      "question": "Que tipo de ELB para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) ALB, (2) NLB, (3) Gateway Load Balancer", "correct": true, "why": "Correcto. ALB = L7 HTTP/HTTPS con routing avanzado (path, host, header, query, source IP). NLB = L4 TCP/UDP/TLS con performance extrema (millones de conexiones, latencia sub-ms, IPs staticas). GLB = distribuir trafico a fleet de appliances de seguridad de terceros (Palo Alto, Check Point) con transparent bump-in-the-wire." },
+        { "letter": "B", "text": "Todo con ALB", "correct": false, "why": "Incorrecto. ALB no soporta UDP ni la performance requerida en (2), ni el modelo GENEVE-based de GLB para inspeccion transparente en (3)." },
+        { "letter": "C", "text": "Todo con NLB", "correct": false, "why": "Incorrecto. NLB no soporta path-based routing (L7) necesario en (1)." },
+        { "letter": "D", "text": "(1) NLB, (2) ALB, (3) Classic LB", "correct": false, "why": "Incorrecto. Invertido y CLB es legacy." }
+      ],
+      "explanation": "ELB types: ALB (L7 HTTP/HTTPS/gRPC/WebSocket, path/host/header routing, WAF/Cognito integration, SNI multi-cert). NLB (L4 TCP/UDP/TLS, extremely high throughput y baja latencia, IPs staticas, EIP asignable, preserva source IP). GLB (L3 GENEVE tunnel, para appliances de seguridad de terceros: inspeccion transparente, chain de virtual appliances). CLB (legacy, evitar en diseno nuevo).",
+      "keywords": ["ALB path routing", "NLB TCP/UDP", "GLB appliances seguridad"],
+      "services": ["ALB", "NLB", "GLB"],
+      "references": [{ "title": "Elastic Load Balancing" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "resilient",
+      "topic": "Health checks EC2 vs ELB",
+      "difficulty": "medium",
+      "scenario": "Un ASG tiene health check tipo EC2 (instance status). Una instancia con la app crasheada pero con OS funcional NUNCA se reemplaza. Los usuarios reciben errores 502 desde ese target.",
+      "question": "Como corregir para que ASG detecte fallos de aplicacion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cambiar el health check del ASG a tipo ELB para que use los checks del ALB (que hacen HTTP a /health de la app)", "correct": true, "why": "Correcto. ASG con health check ELB confia en el target group health check (application-level) para decidir instance health. Si la app crashea pero el OS vive, el ALB marca unhealthy y ASG termina/reemplaza." },
+        { "letter": "B", "text": "Aumentar el numero de instancias", "correct": false, "why": "Incorrecto. Solo diluye el problema; sigue sirviendo desde targets zombie." },
+        { "letter": "C", "text": "Reiniciar las instancias periodicamente", "correct": false, "why": "Incorrecto. Reboot forzado no diagnostica; puede matar instancias sanas." },
+        { "letter": "D", "text": "Aumentar el timeout del health check EC2", "correct": false, "why": "Incorrecto. EC2 health check solo mira status de la VM, no la app. Mas timeout no ayuda." }
+      ],
+      "explanation": "Health checks ASG: (1) EC2 (default, mira EC2 instance status checks system y instance), (2) ELB (usa target group health checks del ALB/NLB, application-level HTTP/TCP), (3) VPC Lattice / custom. Best practice: ELB health check para apps stateless detras de load balancer. Health check grace period: tiempo tras launch antes de marcar unhealthy (evitar terminar instancias durante warm-up).",
+      "keywords": ["app crasheada", "health check ELB", "no reemplaza"],
+      "services": ["Auto Scaling", "ALB", "EC2"],
+      "references": [{ "title": "Health checks for Auto Scaling instances" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "resilient",
+      "topic": "Sticky sessions",
+      "difficulty": "medium",
+      "scenario": "Una app legacy guarda estado de sesion en memoria de cada EC2. Cuando el ALB rutea al usuario a un backend distinto en la siguiente request, la sesion se pierde. No pueden refactorizar rapidamente a session externa.",
+      "question": "Que feature del ALB mitiga temporalmente el problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar sticky sessions (session affinity) en el target group del ALB, usando duration-based cookie (AWSALB) o application-based cookie", "correct": true, "why": "Correcto. Sticky sessions garantiza que un cliente siga siendo ruteado al mismo target. Es un workaround valido mientras se refactoriza a session externa (Redis/DynamoDB). Trade-off: menor balanceo perfecto y perdida al reemplazar instancia." },
+        { "letter": "B", "text": "Reducir a un solo EC2", "correct": false, "why": "Incorrecto. Sacrifica HA totalmente." },
+        { "letter": "C", "text": "Cambiar a NLB", "correct": false, "why": "Cercano parcial (NLB tiene source IP affinity), pero sticky sessions en ALB es la solucion nativa y controlable via cookie." },
+        { "letter": "D", "text": "Habilitar cross-zone load balancing", "correct": false, "why": "Incorrecto. Cross-zone LB distribuye trafico equitativamente entre AZs, no resuelve state affinity." }
+      ],
+      "explanation": "Sticky sessions ALB: (1) Duration-based (AWSALB cookie, tiempo configurable), (2) Application-based (tu app fija su propia cookie). NLB: Source IP affinity. Best practice de largo plazo: session externa (ElastiCache Redis, DynamoDB) para stateless, permite reemplazar instancias sin perdida y scaling elastico verdadero. Stickiness es workaround, no arquitectura ideal.",
+      "keywords": ["sesion en memoria", "sticky", "session affinity"],
+      "services": ["ALB", "Auto Scaling"],
+      "references": [{ "title": "Sticky sessions for your Application Load Balancer" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "resilient",
+      "topic": "Auto Scaling policies",
+      "difficulty": "hard",
+      "scenario": "Una app tiene picos predecibles (9am y 2pm horario laboral) y ademas variabilidad no predecible. El equipo quiere que ASG anticipe los picos y ademas reaccione a metricas en tiempo real, minimizando tanto over-provisioning como cold starts.",
+      "question": "Que combinacion de policies es optima?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Scheduled Actions para picos predecibles (pre-warm a las 8:45 y 1:45) + Target Tracking policy sobre metrica como CPU/RequestCountPerTarget para reacciones adaptativas + Predictive Scaling (ML-based) para forecasting continuo", "correct": true, "why": "Correcto. Combinacion optima: scheduled cubre lo conocido, target tracking maneja lo continuo, predictive scaling anade forecast ML de AWS (analiza 14 dias historicos para pre-provisionar). Reduce cold-start y over-provisioning." },
+        { "letter": "B", "text": "Solo Simple Scaling con thresholds fijos", "correct": false, "why": "Cercano pero simple scaling es reactivo, con cooldowns rigidos, y no anticipa. Menos eficiente que target tracking." },
+        { "letter": "C", "text": "Manual scaling ajustado por el operador", "correct": false, "why": "Incorrecto. No escala y depende de disponibilidad humana 24/7." },
+        { "letter": "D", "text": "Solo Predictive Scaling", "correct": false, "why": "Incompleto. Predictive es forecast pero no reacciona bien a spikes anomalos; se combina con target tracking." }
+      ],
+      "explanation": "Scaling policies ASG: (1) Simple Scaling (legacy, threshold + cooldown), (2) Step Scaling (multiples steps con adjustments distintos por magnitud de breach), (3) Target Tracking (define metric objetivo, ASG ajusta capacity, mas usado hoy), (4) Scheduled Actions (fechas/horarios especificos), (5) Predictive Scaling (ML analiza 14 dias, pre-provisiona antes del pico). Best practice: combinar Target Tracking + Predictive Scaling + Scheduled para casos criticos conocidos.",
+      "keywords": ["picos predecibles", "reactivo", "forecast", "predictive"],
+      "services": ["Auto Scaling", "CloudWatch"],
+      "references": [{ "title": "Predictive scaling for Amazon EC2" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "resilient",
+      "topic": "Launch Template y AMIs golden",
+      "difficulty": "medium",
+      "scenario": "Un equipo tiene 8 ASGs con launch configurations legacy. Cada actualizacion (nueva AMI, cambio de user data) requiere crear una config nueva y editar el ASG manualmente. Ademas quieren mixed instance types (Spot + On-Demand) para reducir coste.",
+      "question": "Que refactor recomiendas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Migrar a Launch Templates con versionado (default/latest) y usar Mixed Instances Policy en el ASG con Spot + On-Demand y multiples instance types", "correct": true, "why": "Correcto. Launch Templates son la evolucion de Launch Configurations: soportan versionado, mixed instance types, Spot integrado, tags avanzados, capacity reservations. Mixed Instances Policy optimiza coste (Spot) sin sacrificar disponibilidad (On-Demand baseline)." },
+        { "letter": "B", "text": "Mantener Launch Configurations", "correct": false, "why": "Incorrecto. AWS anuncio EOL de Launch Configurations; no soportan features modernas como mixed instances." },
+        { "letter": "C", "text": "Reemplazar ASGs por scripts propios", "correct": false, "why": "Incorrecto. Reinventa capacidades AWS con menos features y mas mantenimiento." },
+        { "letter": "D", "text": "Usar ECS en lugar de EC2", "correct": false, "why": "Cercano pero cambio de tecnologia; no es el fix mas simple si la app corre bien en EC2." }
+      ],
+      "explanation": "Launch Templates (recomendados): versionados, soportan mixed instance types, Spot, ENI multiples, IPv6, dedicated hosts, capacity reservations, T-family unlimited. Launch Configurations: legacy, mono-tipo, sin versiones (crear una nueva por cambio). Mixed Instances Policy en ASG: base capacity On-Demand + resto Spot, allocation strategies (capacity-optimized, price-capacity-optimized, lowest-price). Reduce coste 50-90% con HA mantenida.",
+      "keywords": ["Launch Template", "mixed instances", "Spot"],
+      "services": ["Auto Scaling", "EC2", "Spot"],
+      "references": [{ "title": "Launch templates" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "resilient",
+      "topic": "Placement Groups para HA",
+      "difficulty": "hard",
+      "scenario": "Una app HPC critica corre 20 EC2 c5.24xlarge que necesitan comunicarse entre si con muy alta bandwidth y baja latencia. Simultaneamente NO deben caer todas si una AZ falla.",
+      "question": "Que estrategia de Placement Group balancea performance y resiliencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Partition Placement Group: hasta 7 particiones por AZ, cada particion aislada en hardware distinto; las instancias se distribuyen para que fallos de hardware no derriben todas", "correct": true, "why": "Correcto. Partition PG es el compromiso ideal: agrupa instancias en particiones distintas (rack/hardware separado) para resiliencia, y permite spread across AZs. Ideal para big data distribuido (HDFS, Cassandra, Kafka). Cluster PG da mayor bandwidth pero todas en un rack." },
+        { "letter": "B", "text": "Cluster Placement Group", "correct": false, "why": "Cercano por performance (mayor bandwidth y baja latencia intra-rack), pero coloca todas en un solo AZ y hardware, sin resiliencia. No cumple 'no todas caen si AZ falla'." },
+        { "letter": "C", "text": "Spread Placement Group", "correct": false, "why": "Cercano para HA (cada instancia en hardware distinto, max 7 por AZ), pero no optimiza latencia/bandwidth entre instancias. Bueno para pequenos clusters de HA critica." },
+        { "letter": "D", "text": "Sin Placement Group", "correct": false, "why": "Incorrecto. Sin PG no hay garantias de topologia; pierdes control sobre performance y resiliencia hardware." }
+      ],
+      "explanation": "Placement Groups: (1) Cluster (single AZ, mismo rack, alta bandwidth y baja latencia, ideal HPC monolitico), (2) Partition (hasta 7 particiones por AZ, aislamiento hardware, ideal distributed big data), (3) Spread (max 7 instancias por AZ en hardware distinto, ideal HA de aplicaciones pequenas criticas). Cluster no cruza AZs. Partition y Spread pueden multi-AZ.",
+      "keywords": ["HPC", "baja latencia", "no todas caen"],
+      "services": ["EC2", "Placement Groups"],
+      "references": [{ "title": "Placement groups" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "resilient",
+      "topic": "ELB cross-zone load balancing",
+      "difficulty": "medium",
+      "scenario": "Un NLB con targets en 2 AZs (10 targets en AZ-a, 2 targets en AZ-b) distribuye el 50% del trafico a cada AZ. Los 2 targets en AZ-b se saturan mientras los 10 en AZ-a estan al 20%. El equipo pregunta como equilibrar.",
+      "question": "Que setting corrige este desbalance?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar Cross-Zone Load Balancing en el NLB (deshabilitado por default; en ALB esta ON por default)", "correct": true, "why": "Correcto. Sin cross-zone, cada nodo del LB solo distribuye entre targets de SU AZ, causando desbalance si los conteos difieren. Con cross-zone, cada nodo distribuye entre TODOS los targets. NLB lo tiene OFF por default; ALB ON por default (gratis en ALB, extra data transfer charges en NLB cross-AZ)." },
+        { "letter": "B", "text": "Anadir mas targets en AZ-b para igualar", "correct": false, "why": "Cercano parcial pero no siempre viable si scale group no anade en esa AZ. Cross-zone es el fix nativo." },
+        { "letter": "C", "text": "Usar ALB en su lugar", "correct": false, "why": "Cercano (ALB tiene cross-zone ON default) pero cambiar tipo de LB por este solo motivo es innecesario." },
+        { "letter": "D", "text": "Cambiar el algorithm a random", "correct": false, "why": "Incorrecto. El problema es distribucion entre AZs, no el algorithm intra-AZ." }
+      ],
+      "explanation": "Cross-Zone Load Balancing: cada nodo del LB distribuye entre TODOS los targets registrados, no solo los de su AZ. ALB: ON por default, gratis. NLB: OFF por default, ON tiene extra cost de data transfer cross-AZ. GLB: configurable. Sin cross-zone, si tienes 10 targets en AZ-A y 2 en AZ-B, cada AZ recibe 50% del trafico, cargando 5x mas a los de AZ-B.",
+      "keywords": ["desbalance targets", "cross-zone", "NLB"],
+      "services": ["NLB", "ALB"],
+      "references": [{ "title": "Cross-zone load balancing" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "resilient",
+      "topic": "Multi-AZ vs Multi-Region",
+      "difficulty": "medium",
+      "scenario": "Un CTO pregunta si necesitan Multi-Region para su app SaaS. RTO objetivo 15 min, RPO 5 min, budget limitado.",
+      "question": "Cuando conviene Multi-AZ vs Multi-Region?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-AZ dentro de una region cubre 99%+ de fallos (single AZ down, hardware). Multi-Region es necesario solo si compliance/latencia exige o si un region-wide outage es aceptable riesgo. Empezar por Multi-AZ robusto; anadir DR cross-region con warm standby si el negocio lo justifica.", "correct": true, "why": "Correcto. Best practice: la mayoria de apps producen alta disponibilidad suficiente con Multi-AZ. Multi-Region multiplica coste, complejidad (data replication, consistency, DNS failover) y solo se justifica cuando el negocio exige RTO/RPO ultra bajo cross-region o hay usuarios/latencia globales." },
+        { "letter": "B", "text": "Siempre Multi-Region", "correct": false, "why": "Incorrecto. Costoso e innecesario para la mayoria; introduce complejidad de data consistency, DNS failover, drift." },
+        { "letter": "C", "text": "Nunca Multi-AZ, solo backups en S3", "correct": false, "why": "Incorrecto. Backups no cumplen RTO 15 min ni HA continua." },
+        { "letter": "D", "text": "Solo backups en glacier", "correct": false, "why": "Incorrecto. Glacier retrieval en horas; no cumple RTO." }
+      ],
+      "explanation": "Regla practica: Multi-AZ = HA (fallos de hardware/AZ), Multi-Region = DR (fallos region-wide raros pero posibles, tambien compliance/latencia global). Costos: Multi-AZ ~2x recursos; Multi-Region ~2x+ recursos + data transfer + operational complexity. Well-Architected Framework recomienda empezar con Multi-AZ robusto y evaluar Multi-Region caso a caso (regulatorio, latencia usuarios, criticidad).",
+      "keywords": ["multi-AZ vs multi-region", "RTO 15 min", "budget"],
+      "services": ["EC2", "RDS", "Route 53"],
+      "references": [{ "title": "AWS Well-Architected Reliability Pillar" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "resilient",
+      "topic": "Lifecycle hooks y warm-up",
+      "difficulty": "medium",
+      "scenario": "Una app pesada tarda 3 minutos en warm-up despues del boot (cache local, JIT, dependencies). Cuando ASG lanza una instancia nueva, el ALB la marca healthy en 30s y le envia trafico, causando errores 5xx.",
+      "question": "Que features de ASG y health checks resuelven esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Configurar Health Check Grace Period del ASG a 3-5 minutos y usar Lifecycle Hooks para retener la instancia en Pending:Wait mientras se completa warm-up antes de InService", "correct": true, "why": "Correcto. Grace period da margen para que el health check ELB no marque unhealthy prematuramente. Lifecycle hooks permiten ejecutar setup/warm-up (Pending:Wait) o cleanup (Terminating:Wait). Complementario: default cooldown y warm-up para scaling smooth." },
+        { "letter": "B", "text": "Reducir el health check timeout", "correct": false, "why": "Incorrecto. Peor: marca unhealthy antes." },
+        { "letter": "C", "text": "Desactivar ALB health checks", "correct": false, "why": "Incorrecto. Perdemos la deteccion de instancias unhealthy." },
+        { "letter": "D", "text": "Precrear un pool warm de instancias manualmente", "correct": false, "why": "Cercano y valido: ASG Warm Pools mantienen instancias pre-inicializadas en Stopped state para speed-up scale-out. Combinable con lifecycle hooks. Es la evolucion moderna." }
+      ],
+      "explanation": "Auto Scaling avanzado: (1) Health Check Grace Period (segundos antes de evaluar health post-launch). (2) Lifecycle Hooks (Pending:Wait, Terminating:Wait) para acciones custom con timeout. (3) Warm Pools (mantiene instancias pre-inicializadas Stopped para arranque rapido, reduce cold start). (4) Instance Refresh (actualizacion rolling con launch template nuevo). (5) Standby state para debug sin remover del ASG.",
+      "keywords": ["warm-up 3 min", "grace period", "lifecycle hook"],
+      "services": ["Auto Scaling", "ALB"],
+      "references": [{ "title": "Amazon EC2 Auto Scaling lifecycle hooks" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "resilient",
+      "topic": "Termination protection y stateful instances",
+      "difficulty": "medium",
+      "scenario": "Un ASG lanza EC2 stateless pero UNA instancia especial (broker) mantiene estado y no debe terminarse en scale-in. Como proteger esta instancia del scale-in decision del ASG?",
+      "question": "Que mecanismo AWS aplica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Instance Scale-In Protection (setInstanceProtection) sobre esa instancia especifica del ASG", "correct": true, "why": "Correcto. ASG respeta scale-in protection y no terminara esa instancia durante scale-in. La proteccion es a nivel instancia dentro del ASG. Alternativa: instance-level termination protection para EC2 no en ASG." },
+        { "letter": "B", "text": "Termination Protection standalone EC2", "correct": false, "why": "Cercano pero NO aplica dentro de ASG por default. La proteccion standalone EC2 es solo para EC2 fuera de ASG (o para prevenir DeleteInstance manual)." },
+        { "letter": "C", "text": "Sacar la instancia del ASG (Standby)", "correct": false, "why": "Cercano parcial (Standby detach effectively) pero pierdes recreacion automatica si falla. Scale-In Protection es el mecanismo preciso." },
+        { "letter": "D", "text": "Usar Termination Policy custom", "correct": false, "why": "Cercano. Termination Policies (OldestInstance, NewestInstance, ClosestToNextInstanceHour, Default) definen QUE instancia matar cuando scale-in, pero no PROTEGEN una especifica." }
+      ],
+      "explanation": "Proteccion contra terminacion: (1) Instance-level Termination Protection (EC2 solo, previene DeleteInstance manual), (2) ASG Scale-In Protection a nivel ASG (aplica a todo scale-in) o a nivel instancia (solo esa protegida), (3) ASG entire-group protection. Termination Policies orden: OldestLaunchConfiguration, OldestLaunchTemplate, ClosestToNextInstanceHour, NewestInstance, OldestInstance, Default (mixture).",
+      "keywords": ["proteger instancia stateful", "scale-in", "broker"],
+      "services": ["Auto Scaling", "EC2"],
+      "references": [{ "title": "Instance scale-in protection" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "resilient",
+      "topic": "Session state externo",
+      "difficulty": "medium",
+      "scenario": "Una app auto-scaled sufre problemas cuando ASG reemplaza instancias: los usuarios pierden carritos de compra guardados en la sesion in-memory. El equipo quiere una solucion que sobreviva a cualquier fallo/reemplazo de instancia y sea sub-milisegundo.",
+      "question": "Donde externalizar la sesion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon ElastiCache for Redis con cluster mode y Multi-AZ (o DynamoDB con on-demand para escala variable)", "correct": true, "why": "Correcto. ElastiCache Redis es la respuesta canonica para session store: latencia sub-ms, TTL nativo, replicacion Multi-AZ con automatic failover, cluster mode para escala horizontal. DynamoDB es alternativa serverless con TTL y single-digit-ms." },
+        { "letter": "B", "text": "S3 para cada sesion", "correct": false, "why": "Incorrecto. S3 tiene latencia de decenas de ms, no sub-milisegundo. Mala eleccion para session hot path." },
+        { "letter": "C", "text": "RDS", "correct": false, "why": "Cercano pero mas lento y mas caro que ElastiCache para este workload. RDS es para relational, no session cache." },
+        { "letter": "D", "text": "EFS montado en todas las EC2", "correct": false, "why": "Incorrecto. EFS es filesystem shared, alta latencia comparada con memoria, no diseñado para session store." }
+      ],
+      "explanation": "Session state externo es requisito de arquitectura stateless escalable. Opciones: ElastiCache Redis (sub-ms, TTL, structures, Multi-AZ), ElastiCache Memcached (simple, sin replicacion nativa), DynamoDB (single-digit-ms, serverless, TTL, PITR). Redis es lo mas comun; DynamoDB gana cuando quieres serverless y no manejar clusters. Nunca usar file-based (EFS/EBS) ni S3 para hot session data.",
+      "keywords": ["session externa", "carrito compras", "sub-ms"],
+      "services": ["ElastiCache", "Redis", "DynamoDB"],
+      "references": [{ "title": "Storing session state in ElastiCache" }]
+    }
+  ]
+}

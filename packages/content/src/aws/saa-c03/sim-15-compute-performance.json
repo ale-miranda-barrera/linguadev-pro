@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-15-compute-performance",
+  "certId": "saa-c03",
+  "order": 15,
+  "title": "Simulacro 15 — Compute performance: EC2 instance families, Placement Groups, EBS types, Nitro",
+  "focus": "Dominio 3 — Design High-Performing Architectures (24%). Seleccion de compute y storage para performance optimo.",
+  "domainCoverage": ["high-performing"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "high-performing",
+      "topic": "EC2 instance families",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto debe elegir instance type para: (1) web servers general purpose, (2) DB con memoria intensiva, (3) HPC compute-bound, (4) ML training con GPU, (5) big data con storage local NVMe.",
+      "question": "Que familia para cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) M (general purpose), (2) R (memory optimized), (3) C (compute optimized), (4) P/G (GPU), (5) I (storage optimized NVMe)", "correct": true, "why": "Correcto. Familias EC2 por caso de uso: T/M = general purpose burst/balanced; C = compute optimized (HPC, batch); R = memory optimized (in-memory DB, caches); I = storage optimized (NVMe local, NoSQL, warehouse); D = dense storage (HDD, big data); P/G/Trn/Inf = GPU/ML; X = extreme memory (SAP HANA); U = ultra high memory (up to 24TB); Mac = macOS." },
+        { "letter": "B", "text": "Todo con t2.micro", "correct": false, "why": "Incorrecto. T2 es burst general purpose, no adecuado para HPC/GPU/memory-intensive." },
+        { "letter": "C", "text": "Todo con m5.large", "correct": false, "why": "Incorrecto. M es general purpose, sub-optimo para especificos." },
+        { "letter": "D", "text": "(3) M, (4) T", "correct": false, "why": "Incorrecto. M no es compute optimized; T no es GPU." }
+      ],
+      "explanation": "EC2 families cheat sheet: General Purpose (T = burst, M = balanced, Mac). Compute Optimized (C = compute-intensive, HPC, gaming). Memory Optimized (R = in-memory DB, X = extreme memory SAP HANA, U = ultra 24TB, z1d = high freq + memory). Storage Optimized (I = high IOPS NVMe, D = HDD dense, H = HDD balanced). Accelerated (P = ML training, G = graphics/inference, Trn = ML training AWS chips, Inf = ML inference AWS chips, F = FPGA, VT = video transcoding). Naming: family + generation + attributes + size (m6i.large = M6 Intel large).",
+      "keywords": ["instance families", "memory optimized", "compute optimized"],
+      "services": ["EC2"],
+      "references": [{ "title": "EC2 instance types" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "high-performing",
+      "topic": "EBS types gp3 vs io2 vs st1",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto debe elegir EBS para: (a) root volume general purpose, (b) DB relational con miles de IOPS y latencia consistente, (c) big data throughput-heavy sequential (log processing), (d) cold storage archival.",
+      "question": "Que EBS type para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) gp3 (general purpose SSD, IOPS y throughput ajustables), (b) io2 Block Express (highest IOPS y durabilidad 99.999%), (c) st1 (throughput optimized HDD), (d) sc1 (cold HDD)", "correct": true, "why": "Correcto. Mapping optimo: gp3 default (baseline 3000 IOPS + 125 MB/s, scalable), io2 Block Express (up to 256K IOPS, sub-ms latency, mission-critical DBs), st1 (throughput HDD, big data sequential), sc1 (cheapest, cold archive)." },
+        { "letter": "B", "text": "Todos con gp2", "correct": false, "why": "Cercano legacy. gp3 supera a gp2 (mejor precio, IOPS/throughput independiente del size). io2 supera para high-perf. st1/sc1 para throughput HDD." },
+        { "letter": "C", "text": "Todos con io1", "correct": false, "why": "Cercano pero muy caro para casos donde gp3 basta." },
+        { "letter": "D", "text": "Todos con st1", "correct": false, "why": "Incorrecto. st1 no soporta boot volumes ni provee IOPS bajos latency para DBs." }
+      ],
+      "explanation": "EBS volume types: gp3 (SSD, general purpose, baseline 3000 IOPS + 125 MB/s, scalable to 16K IOPS + 1000 MB/s independiente del size, sucesor gp2 con mejor precio). gp2 (SSD legacy, IOPS scale with size 3 IOPS/GB). io2 y io2 Block Express (SSD, up to 64K/256K IOPS, sub-ms latency, 99.999% durability, mission-critical DBs). st1 (HDD, throughput optimized, big data sequential, 500 MB/s, no boot). sc1 (HDD, cold, cheapest, no boot, archive). Volumes attachable a EC2 mismo AZ; snapshots portable cross-region.",
+      "keywords": ["gp3", "io2", "st1", "EBS choice"],
+      "services": ["EBS"],
+      "references": [{ "title": "EBS volume types" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "high-performing",
+      "topic": "Placement Groups",
+      "difficulty": "hard",
+      "scenario": "Una app HPC MPI (message passing interface) requiere latencia ultra-baja y throughput maximo entre nodos. Otra app diferente necesita alta HA (fallar hardware no debe derribar todo).",
+      "question": "Que Placement Group para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HPC MPI: Cluster Placement Group (single AZ, mismo rack, hasta 100 Gbps). HA critica: Spread Placement Group (hasta 7 instancias por AZ en hardware distinto)", "correct": true, "why": "Correcto. Cluster: highest network performance intra-rack pero SPOF. Spread: cada instancia en hardware distinto para maxima aislacion de fallos, hasta 7 por AZ. Partition: intermedio (particiones aisladas, ideal big data distribuido)." },
+        { "letter": "B", "text": "HPC con Spread", "correct": false, "why": "Incorrecto. Spread aisla instancias hardware pero no optimiza network latency ni bandwidth." },
+        { "letter": "C", "text": "HA con Cluster", "correct": false, "why": "Incorrecto. Cluster mismo rack = falla hardware afecta todas." },
+        { "letter": "D", "text": "Ambos sin Placement Group", "correct": false, "why": "Incorrecto. Sin PG, EC2 puede estar en cualquier hardware; sin garantias." }
+      ],
+      "explanation": "Placement Groups tipos: (1) Cluster: mismo AZ, mismo rack, alta bandwidth (up to 100 Gbps con SR-IOV/EFA), baja latencia. Ideal HPC, tight-coupled applications. Trade-off: SPOF (rack failure). (2) Partition: hasta 7 particiones por AZ, cada particion hardware separado. Ideal big data distribuido (HDFS, Cassandra, Kafka) con replicacion inter-partition. Multi-AZ soportable. (3) Spread: max 7 instancias por AZ en hardware distinct. Ideal small critical apps con maxima aislacion.",
+      "keywords": ["HPC MPI", "cluster", "spread", "partition"],
+      "services": ["EC2", "Placement Groups"],
+      "references": [{ "title": "Placement groups" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "high-performing",
+      "topic": "EFA Elastic Fabric Adapter",
+      "difficulty": "hard",
+      "scenario": "Una app HPC con MPI communication entre nodos EC2 requiere bypass del kernel para latencia mas baja de lo que TCP/IP standard permite (kernel bypass tipo InfiniBand).",
+      "question": "Que feature EC2 provee low-latency network transport para HPC?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Elastic Fabric Adapter (EFA): network device tipo ENI que soporta OS-bypass via libfabric, ideal MPI/NCCL para HPC/ML training", "correct": true, "why": "Correcto. EFA es network adapter especial para HPC/ML: OS-bypass (aplicaciones tocan hardware directo), sub-microsecond latency, ideal MPI/NCCL. Usar con Cluster Placement Group. Instancias compatibles: HPC-optimized (c5n, m5n, p3dn, p4d, etc.)." },
+        { "letter": "B", "text": "ENI regular", "correct": false, "why": "Incorrecto. ENI standard usa TCP/IP con kernel, mayor latencia." },
+        { "letter": "C", "text": "Elastic IP", "correct": false, "why": "Incorrecto. EIP es IPv4 publica estatica, no relacionada." },
+        { "letter": "D", "text": "Enhanced Networking", "correct": false, "why": "Cercano parcial (Enhanced Networking usa SR-IOV para mayor pps y menor latencia). EFA lleva esto mas lejos con OS-bypass. EFA soporta enhanced networking mas OS-bypass mode." }
+      ],
+      "explanation": "Network options EC2: (1) Standard ENI (kernel TCP/IP). (2) Enhanced Networking con SR-IOV (higher pps, lower jitter, disponible en Nitro instances por default). (3) EFA (Elastic Fabric Adapter): superset de enhanced networking + OS-bypass via libfabric. Bypass kernel para sub-microsecond latency. Casos: HPC (MPI), ML training distributed (NCCL), workloads muy sensitives a latency. Requiere Cluster Placement Group para maximum benefit.",
+      "keywords": ["EFA", "kernel bypass", "HPC network"],
+      "services": ["EC2", "EFA"],
+      "references": [{ "title": "Elastic Fabric Adapter" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "high-performing",
+      "topic": "Instance Store vs EBS",
+      "difficulty": "medium",
+      "scenario": "Una app cache local necesita el maximo IOPS y minima latencia posible, y puede tolerar perdida de datos si la instancia se detiene o falla.",
+      "question": "Que storage EC2 es apropiado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Instance Store (NVMe local): storage fisicamente attached a la instancia, IOPS extremos, sub-microsecond latency, effimero (se pierde con stop/terminate)", "correct": true, "why": "Correcto. Instance Store es local NVMe (o SSD en older gen), physically attached. IOPS y throughput superiores a EBS. Trade-off: EFIMERO (perdido con stop, terminate, hardware failure). Solo instance types especificos (i3, i4i, m5d, r5d, etc.). Ideal cache, temp data, scratch space HPC." },
+        { "letter": "B", "text": "EBS gp3", "correct": false, "why": "Cercano pero EBS es network-attached, mayor latencia. Para maxima IOPS local, Instance Store gana." },
+        { "letter": "C", "text": "EFS", "correct": false, "why": "Incorrecto. EFS es NFS network file system, mucho mayor latency que local NVMe." },
+        { "letter": "D", "text": "S3", "correct": false, "why": "Incorrecto. S3 es object storage HTTP, latency ordenes mayor." }
+      ],
+      "explanation": "EC2 storage: (1) EBS (Elastic Block Store): network-attached, persistente, snapshots, resize online (gp3/io2), attachable a otra instancia. (2) Instance Store: local NVMe/SSD, effimero (perdido en stop/terminate/hw failure), maximum IOPS y throughput, disponible solo en instance types con storage local (d instances). (3) EFS (Elastic File System): NFS shared multi-instance, elastico, POSIX. (4) FSx (Windows/Lustre/NetApp/OpenZFS): purpose-built file systems. Casos Instance Store: cache, temp, scratch HPC, buffer.",
+      "keywords": ["Instance Store", "local NVMe", "efimero"],
+      "services": ["EC2", "Instance Store"],
+      "references": [{ "title": "Instance store volumes" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "high-performing",
+      "topic": "EBS Multi-Attach",
+      "difficulty": "hard",
+      "scenario": "Una app cluster (por ejemplo Oracle RAC) necesita que multiples EC2 instances accedan al mismo EBS volume simultaneamente en modo read/write con clustered file system.",
+      "question": "Que feature EBS permite esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "EBS Multi-Attach: soportado en io1/io2 volumes, permite attach hasta 16 EC2 instances Nitro-based en la MISMA AZ; el clustered filesystem (ej. Oracle RAC, GPFS) gestiona locking", "correct": true, "why": "Correcto. Multi-Attach permite un volumen io1/io2 attachearse a hasta 16 EC2 instances Nitro en la misma AZ. Requiere clustered file system para coordinacion (Oracle Clusterware, GPFS). No es POSIX-shared: el file system cluster maneja locking." },
+        { "letter": "B", "text": "EBS gp3 con snapshots", "correct": false, "why": "Cercano parcial (Snapshots portable) pero gp3 no soporta multi-attach; snapshots no son 'shared live'." },
+        { "letter": "C", "text": "EFS", "correct": false, "why": "Cercano funcional (EFS es multi-attach NFS) pero es NAS network filesystem, no block. Para clustered DB block-level (Oracle RAC), Multi-Attach EBS es correcto." },
+        { "letter": "D", "text": "S3 mounted", "correct": false, "why": "Incorrecto. S3 no es block storage." }
+      ],
+      "explanation": "EBS Multi-Attach: soportado en io1 y io2 (Block Express). Attach hasta 16 EC2 Nitro instances SAME AZ. Block-level access simultaneo. Requiere clustered file system que gestione locking (Oracle RAC, GPFS, GFS2). No aplica para uso naive multi-EC2 (data corruption sin cluster fs). Casos: cluster DBs, HA con storage shared. Alternativa para NAS multi-attach: EFS (NFS network), FSx (Windows SMB, Lustre para HPC).",
+      "keywords": ["multi-attach EBS", "Oracle RAC", "cluster"],
+      "services": ["EBS", "EC2"],
+      "references": [{ "title": "EBS Multi-Attach" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "high-performing",
+      "topic": "AMI y user data para bootstrap",
+      "difficulty": "easy",
+      "scenario": "Un equipo tiene un stack estandarizado (Java + Nginx + agente monitoreo). Actualmente cada nueva EC2 hace apt install / config al boot, tomando 6 min de startup.",
+      "question": "Como reducir tiempo de startup?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear una Golden AMI con todo pre-instalado y configurado (via Packer, EC2 Image Builder o Snapshot), usar esa AMI en Launch Templates de ASG", "correct": true, "why": "Correcto. Golden AMI incluye OS + apps + configs pre-baked. Startup <1 min (solo boot). Combinable con user data para overrides. EC2 Image Builder automatiza build pipeline (incluye validation y sharing multi-cuenta)." },
+        { "letter": "B", "text": "Mas user data script", "correct": false, "why": "Cercano pero user data corre en cada boot y toma tiempo. Golden AMI pre-baked es mas rapido." },
+        { "letter": "C", "text": "Mas memory a la instancia", "correct": false, "why": "Incorrecto. Startup lento no depende de memory sino del bootstrap script." },
+        { "letter": "D", "text": "Warm Pool solo", "correct": false, "why": "Cercano y valido complementariamente (Warm Pools mantienen pre-inicializadas). Combinable con Golden AMI." }
+      ],
+      "explanation": "EC2 startup optimization: (1) Golden AMI: pre-baked con OS + apps + configs (Packer, EC2 Image Builder). (2) User Data: bash/Powershell que corre al primer boot (config dinamica). (3) Warm Pools (ASG): mantiene instancias pre-inicializadas Stopped para fast scale-out. (4) Lifecycle hooks: pause en Pending:Wait para warmup validation. (5) Instance Refresh: rolling update ASG con nueva Launch Template version. Best practice: Golden AMI + minimal user data + Warm Pool para high-scale apps.",
+      "keywords": ["golden AMI", "startup rapido", "6 min boot"],
+      "services": ["EC2", "AMI", "Image Builder"],
+      "references": [{ "title": "EC2 Image Builder" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "high-performing",
+      "topic": "AWS Nitro System",
+      "difficulty": "medium",
+      "scenario": "Un dev pregunta que es 'Nitro' y por que casi todas las instancias modernas son Nitro-based.",
+      "question": "Cual es la ventaja del Nitro System?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nitro System offloads virtualization (hypervisor, network, storage) a dedicated hardware cards, entregando casi todo el compute physical al usuario, mayor performance, security enhancements, soporta features modernos (EFA, Bare Metal, Enclaves)", "correct": true, "why": "Correcto. Nitro reemplazo Xen hypervisor legacy. Beneficios: casi 100% CPU/RAM disponible al usuario (Xen tenia overhead 20-30%), mejor network/storage performance via hardware offload, Nitro Enclaves para confidential computing, Bare Metal (i3.metal, etc.) para custom hypervisors. Casi todas las gen 5+ instances son Nitro." },
+        { "letter": "B", "text": "Nitro es un tipo de storage", "correct": false, "why": "Incorrecto. Nitro es la platform de virtualizacion, no storage." },
+        { "letter": "C", "text": "Nitro requiere pagar extra", "correct": false, "why": "Incorrecto. Nitro es transparent para el usuario, sin extra cost per se; simplemente entrega mejor perf a mismo precio." },
+        { "letter": "D", "text": "Nitro solo funciona en Windows", "correct": false, "why": "Incorrecto. Cross-OS." }
+      ],
+      "explanation": "AWS Nitro System: hypervisor moderno AWS. Componentes: Nitro Cards (offload de VPC networking, EBS storage, local NVMe, security), Nitro Security Chip (root of trust hardware), Nitro Hypervisor (minimal KVM-based). Beneficios: casi 100% CPU/RAM disponible, mayor performance IO, mejor security (Nitro Enclaves para confidential), soporta EFA, Bare Metal instances, Trainium/Inferentia integration. Casi todas las instances modernas (M5+, C5+, R5+, etc.) son Nitro-based.",
+      "keywords": ["Nitro", "hypervisor", "performance"],
+      "services": ["EC2", "Nitro"],
+      "references": [{ "title": "AWS Nitro System" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "high-performing",
+      "topic": "Spot Instances para reducir coste",
+      "difficulty": "medium",
+      "scenario": "Un batch job de procesamiento tolera interrupciones (checkpointing implementado). El equipo quiere reducir el coste EC2 hasta 90%.",
+      "question": "Que opcion cumple esto y con que consideraciones?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "EC2 Spot Instances: descuento hasta 90% sobre On-Demand, pero AWS puede interrumpir con 2 min warning; ideal cargas fault-tolerant (batch, big data, CI/CD)", "correct": true, "why": "Correcto. Spot approvecha capacity EC2 sin usar con 50-90% descuento. Trade-off: interrupciones con 2 min warning. Ideal para: batch jobs, big data (EMR, Spark), CI/CD workers, dev/test, ML training con checkpoints. NO para stateful/production single-instance." },
+        { "letter": "B", "text": "Reserved Instances 1 ano", "correct": false, "why": "Cercano descuento (50-70%) pero requiere commitment 1-3 anos, sin flexibilidad. Spot mas descuento sin commitment." },
+        { "letter": "C", "text": "Savings Plans", "correct": false, "why": "Cercano similar a RI pero mas flexible (family). No llega a 90% descuento como Spot." },
+        { "letter": "D", "text": "On-Demand siempre", "correct": false, "why": "Incorrecto. Sin descuento." }
+      ],
+      "explanation": "EC2 pricing models: (1) On-Demand: pay per second, sin commitment, mas caro. (2) Reserved Instances (RI): 1-3 anos commitment, up to 72% descuento. Standard vs Convertible (cambiar family). (3) Savings Plans: compromise USD/hour a 1-3 anos, applies a EC2/Fargate/Lambda (Compute SP) o EC2 solo (EC2 Instance SP). (4) Spot: bidding sobre capacity libre, 50-90% descuento, interrupcion 2 min warning. (5) Dedicated Hosts: physical server dedicated (compliance, BYOL). (6) Capacity Reservations: reserved capacity sin commitment de pago.",
+      "keywords": ["Spot", "90% descuento", "batch tolerable"],
+      "services": ["EC2 Spot"],
+      "references": [{ "title": "EC2 Spot Instances" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "high-performing",
+      "topic": "Spot Fleet y allocation strategies",
+      "difficulty": "hard",
+      "scenario": "Un equipo usa Spot para batch processing y quiere maximizar disponibilidad (menor probabilidad de interrupciones) usando multiple instance types.",
+      "question": "Que allocation strategy Spot es optima?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "capacity-optimized: AWS elige el instance pool con MAYOR capacity disponible para minimizar probabilidad de interrupciones (usar en apps que valoran estabilidad sobre precio absoluto)", "correct": true, "why": "Correcto. capacity-optimized elige pool con mas capacity disponible = menos probabilidad de reclaim. Ideal para batch jobs sensibles a interrupciones. Alternativas: capacity-optimized-prioritized (con priority list), price-capacity-optimized (balance price+capacity, recomendado hoy)." },
+        { "letter": "B", "text": "lowest-price", "correct": false, "why": "Cercano por coste minimo pero mayor probabilidad interrupcion (pool small). Antipattern para batch estable." },
+        { "letter": "C", "text": "diversified", "correct": false, "why": "Cercano (distribuye entre pools) pero no optimiza capacity availability." },
+        { "letter": "D", "text": "Un solo instance type siempre", "correct": false, "why": "Incorrecto. Reduce diversidad y aumenta risk de agotamiento." }
+      ],
+      "explanation": "Spot allocation strategies: (1) lowest-price: pool mas barato (mayor interrupt risk). (2) diversified: distribute across N pools (balance). (3) capacity-optimized: pool con mayor capacity (mejor availability). (4) capacity-optimized-prioritized: same + priority list. (5) price-capacity-optimized (recomendado 2022+): balance precio y capacity. Combinable con Mixed Instances Policy en ASG (Spot + On-Demand baseline). Casos batch: capacity-optimized para estabilidad; casos flexible: price-capacity-optimized.",
+      "keywords": ["capacity-optimized", "Spot fleet", "menor interrupcion"],
+      "services": ["EC2 Spot", "Spot Fleet"],
+      "references": [{ "title": "Spot allocation strategies" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "high-performing",
+      "topic": "Graviton ARM para reducir coste",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere reducir coste EC2 sin sacrificar performance. Sus apps son compatibles con ARM (Node.js, Python, Java, Go).",
+      "question": "Que instance types AWS ofrecen ARM procesador con mejor precio/perf?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Graviton (family g suffix como m6g, c6g, r7g): procesadores ARM diseñados por AWS, hasta 40% mejor precio/performance vs x86 equivalents", "correct": true, "why": "Correcto. Graviton (v1/v2/v3) son ARM AWS-designed processors con excelente precio/performance para workloads scale-out. Compatibles con la mayoria de Linux apps modernas. Instance types: m6g, m7g (general), c6g, c7g (compute), r6g, r7g (memory), etc." },
+        { "letter": "B", "text": "Solo instances Intel", "correct": false, "why": "Cercano tradicional pero mas caro sin benefits ARM cuando compatible." },
+        { "letter": "C", "text": "AMD instances", "correct": false, "why": "Cercano y valido (a family, e.g. m5a, c5a) para descuento ~10% vs Intel. Graviton (ARM) ofrece mayor descuento (~40%) si tu app es ARM-compatible." },
+        { "letter": "D", "text": "GPUs siempre", "correct": false, "why": "Incorrecto. GPUs son mas caros, para ML/graphics." }
+      ],
+      "explanation": "EC2 processor options: (1) Intel (default, ampliamente compatible). (2) AMD (family a suffix, e.g. m6a, ~10% mas barato que Intel same perf). (3) AWS Graviton (family g suffix, ARM64, up to 40% mejor precio/perf, requires app compatibility - la mayoria de Linux/managed langs son OK: Java, Python, Node, Go). (4) Special: Trainium (Trn) y Inferentia (Inf) para ML AWS-designed. Compatibility check: multi-arch containers (Docker buildx), rebuild binaries.",
+      "keywords": ["Graviton", "ARM", "precio-performance"],
+      "services": ["EC2 Graviton"],
+      "references": [{ "title": "AWS Graviton processors" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "high-performing",
+      "topic": "Fargate vs EC2 launch types",
+      "difficulty": "medium",
+      "scenario": "Un equipo desplega microservicios containerizados en ECS. Debate entre Fargate y EC2 launch type. Quieren minimizar ops overhead pero tambien coste optimo para workloads estables.",
+      "question": "Cuando Fargate y cuando EC2?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fargate: serverless containers, sin gestionar EC2, ideal para spiky/variable workloads, dev/test, apps con footprint pequeno. EC2 launch: coste-efficient para workloads sostenidos grandes o cuando necesitas GPU/features especificos de instance", "correct": true, "why": "Correcto. Fargate = zero ops (no EC2 mgmt, patching, cluster capacity), paga por task second, ideal spiky/variable. EC2 launch = paga por EC2 hora + you manage cluster, ideal workloads sostenidos donde economics de EC2 (RI/Spot) superan Fargate premium." },
+        { "letter": "B", "text": "Siempre Fargate", "correct": false, "why": "Cercano por simplicity pero premium price sobre EC2 (~2x). Para workloads estables 24/7 grandes, EC2 con RI es mas economico." },
+        { "letter": "C", "text": "Siempre EC2", "correct": false, "why": "Cercano economics pero anade ops overhead (cluster management, patching, scaling). Fargate elimina eso." },
+        { "letter": "D", "text": "Solo Kubernetes", "correct": false, "why": "Cercano cambio de plataforma. Fargate/EC2 son launch types de ECS/EKS." }
+      ],
+      "explanation": "ECS/EKS launch types: (1) EC2 launch: containers en EC2 instances que you manage (cluster capacity, patching, scaling ASG). Coste efficient para workloads grandes sostenidos, RI/Spot compatible. (2) Fargate: serverless containers, no EC2 mgmt, paga por vCPU + memory por task-second. Overhead operativo cero. Ideal spiky, dev/test, small apps. Fargate Spot: 70% descuento para tolerantes a interrupt. EKS tambien tiene EKS on EC2 y EKS on Fargate.",
+      "keywords": ["Fargate vs EC2", "serverless containers"],
+      "services": ["ECS", "Fargate", "EC2"],
+      "references": [{ "title": "AWS Fargate" }]
+    }
+  ]
+}

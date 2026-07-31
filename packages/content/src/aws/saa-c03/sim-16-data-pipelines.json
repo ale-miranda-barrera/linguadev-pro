@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-16-data-pipelines",
+  "certId": "saa-c03",
+  "order": 16,
+  "title": "Simulacro 16 — Data pipelines: Kinesis, MSK, Glue, EMR, Athena, Redshift Spectrum",
+  "focus": "Dominio 3 — Design High-Performing Architectures (24%). Ingestion, ETL, analytics batch y streaming.",
+  "domainCoverage": ["high-performing"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "high-performing",
+      "topic": "Kinesis Data Streams vs Firehose",
+      "difficulty": "medium",
+      "scenario": "Un equipo evalua Kinesis para dos casos: (a) analytics real-time con custom Lambda processing sobre streams ordenados con retention 7 dias, (b) ingestion simple de logs a S3/Redshift con transformacion via Lambda, sin gestionar shards.",
+      "question": "Que servicio Kinesis para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) Kinesis Data Streams (KDS, con shards, retention 24h-365d, custom consumers), (b) Kinesis Data Firehose (managed near-real-time, delivery a S3/Redshift/OpenSearch/HTTP, sin shards)", "correct": true, "why": "Correcto. KDS = raw streams con shards, ordenados por partition key, custom consumers via KCL/Lambda/EMR, retention configurable. Firehose = managed delivery a S3/Redshift/OpenSearch/HTTP endpoints, near-real-time (buffering 60s min), sin gestion de shards, transform opcional via Lambda." },
+        { "letter": "B", "text": "Ambos con Kinesis Data Streams", "correct": false, "why": "Cercano parcial pero para caso (b) delivery managed a S3, Firehose es mas simple y economico (no shards)." },
+        { "letter": "C", "text": "SQS", "correct": false, "why": "Incorrecto. SQS no es stream ordenado ni retention 7 dias." },
+        { "letter": "D", "text": "Ambos con Firehose", "correct": false, "why": "Incorrecto. Firehose no permite custom consumers con logica compleja ni retention configurable extensa." }
+      ],
+      "explanation": "Kinesis family: (1) Data Streams (KDS): raw streams, shards, ordered per shard, retention 24h-365d, consumers via KCL/Lambda/EMR/Spark Streaming/Flink. Enhanced Fan-Out (dedicated throughput per consumer). Provisioned o On-Demand. (2) Data Firehose: managed delivery, near-real-time (buffering min 60s or 1MB-128MB), sin shards, transform via Lambda, destinations S3/Redshift/OpenSearch/HTTP/3rd party. (3) Data Analytics (renamed Managed Service for Apache Flink): stream processing SQL o Flink. (4) Video Streams: media.",
+      "keywords": ["Data Streams", "Firehose", "shards"],
+      "services": ["Kinesis Data Streams", "Kinesis Firehose"],
+      "references": [{ "title": "Kinesis vs Firehose" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "high-performing",
+      "topic": "MSK vs Kinesis",
+      "difficulty": "medium",
+      "scenario": "Una empresa tiene Kafka on-prem con ecosistema robusto (Kafka Connect, Schema Registry, ksqlDB). Quieren mover a AWS managed sin cambiar codigo cliente Kafka.",
+      "question": "Que servicio AWS es Kafka-compatible managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon MSK (Managed Streaming for Apache Kafka): Kafka managed, compatible con Kafka API, ecosystem Kafka (Connect, Streams, Schema Registry)", "correct": true, "why": "Correcto. MSK es Kafka managed: same Kafka clients, MSK Connect (Kafka Connect managed), Schema Registry via Glue, ksqlDB via KRaft/Zookeeper managed. Ideal para migrar Kafka on-prem sin refactor." },
+        { "letter": "B", "text": "Kinesis Data Streams", "correct": false, "why": "Cercano funcional (streaming ordenado) pero API distinta (no Kafka); requiere refactor codigo cliente." },
+        { "letter": "C", "text": "Kafka en EC2 self-managed", "correct": false, "why": "Cercano pero perdiendo el beneficio managed. MSK es la opcion managed." },
+        { "letter": "D", "text": "Firehose", "correct": false, "why": "Incorrecto. Firehose es managed delivery, no Kafka." }
+      ],
+      "explanation": "MSK: Apache Kafka managed. Options: (1) MSK Provisioned (brokers gestionados). (2) MSK Serverless (pay per throughput, sin gestionar broker capacity). Componentes ecosistema: MSK Connect (Kafka Connect managed), Glue Schema Registry (schema evolution), ksqlDB self-managed. Casos: migracion Kafka on-prem, ecosistema Kafka rico. Precio: por broker hora + storage + data transfer. Kinesis vs MSK: Kinesis mas simple y AWS-native; MSK mas potente y Kafka ecosystem.",
+      "keywords": ["Kafka managed", "MSK", "on-prem migration"],
+      "services": ["MSK", "Kafka"],
+      "references": [{ "title": "Amazon MSK" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "high-performing",
+      "topic": "Athena para queries S3",
+      "difficulty": "easy",
+      "scenario": "Un equipo tiene datos en S3 (JSON, Parquet, CSV) y quiere hacer queries SQL ad-hoc sin ETL previo ni infrastructure de warehouse.",
+      "question": "Que servicio AWS permite queries SQL directly on S3?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Athena: serverless SQL query engine sobre S3 (Presto-based), sin infrastructure, pay per data scanned", "correct": true, "why": "Correcto. Athena es serverless SQL sobre S3 data. Sin cluster gestionar. Precio por GB scanned. Optimizable con formats columnar (Parquet, ORC) + particionamiento (por date, region). Ideal ad-hoc queries, log analytics, business analytics on S3 data lake." },
+        { "letter": "B", "text": "Redshift", "correct": false, "why": "Cercano pero requiere cluster (o Serverless) y COPY data al warehouse; Athena queries direct on S3." },
+        { "letter": "C", "text": "EMR con Presto", "correct": false, "why": "Cercano parcial (EMR con Presto ofrece funcionalidad similar) pero requiere provisionar cluster; Athena es serverless." },
+        { "letter": "D", "text": "RDS", "correct": false, "why": "Incorrecto. RDS no query direct S3 files nativamente." }
+      ],
+      "explanation": "Athena: serverless SQL sobre S3, basado en Presto/Trino. Precio: $5/TB scanned. Optimizaciones: (1) formats columnar (Parquet, ORC) reducen scan hasta 90%. (2) Particionamiento (year/month/day) reduce scan a subset. (3) Comprension (gzip, snappy). (4) Bucketing para joins. (5) AWS Glue Data Catalog para metadata (schema on read). Athena Federated: query across data sources (RDS, DynamoDB, ElastiCache, etc.). Casos: ad-hoc analytics, log analysis, one-off business queries.",
+      "keywords": ["Athena", "SQL sobre S3", "serverless"],
+      "services": ["Athena", "S3"],
+      "references": [{ "title": "Amazon Athena" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "high-performing",
+      "topic": "AWS Glue ETL",
+      "difficulty": "medium",
+      "scenario": "Un data engineer necesita: crawler que descubra schema de S3 datasets, ETL jobs escalables en Spark, y catalog central de metadata compartible entre Athena/Redshift/EMR.",
+      "question": "Que servicio AWS provee esto integrado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Glue: crawlers (auto-descubrir schema), ETL jobs Spark-based (serverless), Data Catalog (metadata central Hive-compatible), Studio (visual editor), Data Quality", "correct": true, "why": "Correcto. Glue es la suite ETL/catalog managed. Crawlers escanean S3/JDBC y populan Data Catalog. Jobs corren Spark serverless (glue etl v3+). Studio visual DAG editor. Compartible con Athena/Redshift Spectrum/EMR/Lake Formation." },
+        { "letter": "B", "text": "EMR self-managed cluster", "correct": false, "why": "Cercano funcional (Spark on EMR) pero requiere gestionar cluster y no incluye catalog nativo (usar Glue Catalog externo)." },
+        { "letter": "C", "text": "Lambda con custom code", "correct": false, "why": "Cercano solo para small transforms; no escala a big data batch." },
+        { "letter": "D", "text": "Data Pipeline", "correct": false, "why": "Incorrecto. Data Pipeline es legacy (deprecated), Glue es el sucesor moderno." }
+      ],
+      "explanation": "AWS Glue componentes: (1) Data Catalog: metadata central Hive Metastore-compatible, compartible cross-service. (2) Crawlers: auto-discovery de schema desde S3/JDBC. (3) Glue ETL Jobs: Spark/Python serverless, PySpark/Scala. (4) Glue Studio: visual DAG editor. (5) Glue DataBrew: no-code data prep. (6) Glue Data Quality: quality rules automation. (7) Glue Streaming ETL: streaming pipelines. Precio: por DPU-hour + Data Catalog storage/requests. Combinable con Lake Formation para governance.",
+      "keywords": ["Glue", "crawler", "ETL Spark", "catalog"],
+      "services": ["Glue", "Data Catalog"],
+      "references": [{ "title": "AWS Glue" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "high-performing",
+      "topic": "EMR para big data",
+      "difficulty": "medium",
+      "scenario": "Un equipo big data necesita ejecutar workloads Hadoop, Spark, Presto, Hive, HBase sobre 500TB de datos con control total del cluster (Hadoop tuning avanzado).",
+      "question": "Que servicio AWS provee cluster managed Hadoop/Spark?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon EMR (Elastic MapReduce): cluster managed Hadoop/Spark/Presto/Hive/HBase con nodes EC2 o EKS o Serverless", "correct": true, "why": "Correcto. EMR es managed Hadoop ecosystem. Deployment options: EC2 (control total, cluster manual scaling), EKS (containers), Serverless (pay per job). Frameworks: Spark, Hive, Presto/Trino, HBase, Flink, Ganglia. Casos: big data batch, ML training, log analytics masivos, ETL a escala." },
+        { "letter": "B", "text": "Glue", "correct": false, "why": "Cercano para ETL simple pero limitado en tunning avanzado Hadoop y ecosystem breadth (HBase, Flink). EMR mas potente y control." },
+        { "letter": "C", "text": "Redshift", "correct": false, "why": "Incorrecto. Redshift es warehouse OLAP, no Hadoop/Spark ecosystem." },
+        { "letter": "D", "text": "Athena", "correct": false, "why": "Cercano solo para SQL queries; no ejecuta Hadoop/Spark workloads generales." }
+      ],
+      "explanation": "Amazon EMR: managed Hadoop ecosystem on AWS. Deployment: (1) EMR on EC2 (traditional, control cluster capacity, RI/Spot). (2) EMR on EKS (containers, mejor multi-tenancy). (3) EMR Serverless (pay per job, cero cluster mgmt, ideal casos variables). Frameworks: Spark, Hive, Presto/Trino, HBase, Flink, Zeppelin. Casos: big data ETL, ML training, log analytics masivos, genomics, media processing. Storage: HDFS local + S3 (EMRFS). Combinable con Glue Catalog.",
+      "keywords": ["EMR", "Hadoop", "Spark", "500TB"],
+      "services": ["EMR", "Spark", "Hadoop"],
+      "references": [{ "title": "Amazon EMR" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "high-performing",
+      "topic": "Redshift Spectrum para data lake queries",
+      "difficulty": "hard",
+      "scenario": "Un cliente tiene Redshift warehouse con datos hot (ultimos 90 dias) y cold data (2 anos+) en S3 Parquet. Quieren ejecutar queries que combinen ambos sin cargar cold data al warehouse.",
+      "question": "Que feature Redshift permite query hybrida warehouse + S3?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Redshift Spectrum: external tables sobre S3 (formats Parquet, ORC, JSON, CSV) queryable con SQL Redshift; JOINs entre warehouse tables y S3 external tables", "correct": true, "why": "Correcto. Spectrum extiende Redshift a S3 data lake. External tables via Glue Catalog. Queries pueden combinar internal (fast columnar warehouse) y external (S3). Ideal lakehouse pattern: hot data in warehouse, cold data in S3, query unified." },
+        { "letter": "B", "text": "Copiar cold data al warehouse", "correct": false, "why": "Cercano funcional pero costoso storage warehouse. Spectrum permite queryar sin cargar." },
+        { "letter": "C", "text": "Athena solo", "correct": false, "why": "Cercano para S3 pero no une con warehouse tables Redshift en single query." },
+        { "letter": "D", "text": "Migrar todo a S3", "correct": false, "why": "Cercano lakehouse extremo pero sacrifica perf de warehouse para hot queries." }
+      ],
+      "explanation": "Redshift Spectrum: external tables sobre S3, queryables con SQL Redshift, JOINs cross-source. Precio: $5/TB scanned (mismo Athena base). Requires Glue Catalog o Hive Metastore. Best practices: (1) formats columnar (Parquet, ORC) para eficiencia scan, (2) particionamiento para pruning, (3) manifests para consistencia, (4) offloader design (hot to warehouse, cold to S3). Lakehouse pattern: warehouse + S3 + Spectrum, con AWS Lake Formation para governance.",
+      "keywords": ["Spectrum", "S3 + warehouse", "hot y cold"],
+      "services": ["Redshift", "Redshift Spectrum"],
+      "references": [{ "title": "Redshift Spectrum" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "high-performing",
+      "topic": "AWS Lake Formation",
+      "difficulty": "hard",
+      "scenario": "Una empresa multi-cuenta tiene un data lake en S3 con multiples usuarios (analistas, data scientists, apps). Necesitan governance: permisos fine-grained por columna, tag-based access, audit centralizado, data sharing entre cuentas.",
+      "question": "Que servicio AWS gestiona governance de data lakes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Lake Formation: governance layer sobre S3 + Glue Data Catalog con permissions granular (row, column, cell), tag-based access, cross-account sharing, audit", "correct": true, "why": "Correcto. Lake Formation es governance managed para data lakes AWS: fine-grained access (row/column/cell level), tag-based (LF-Tags), cross-account data sharing via Data Catalog, audit unified, integrated con Athena/Redshift/EMR/Glue." },
+        { "letter": "B", "text": "IAM policies solamente", "correct": false, "why": "Cercano pero IAM es coarse-grained (bucket/prefix), no column/row level. Lake Formation anade granularity." },
+        { "letter": "C", "text": "S3 bucket policies", "correct": false, "why": "Cercano pero limitado a permissions object-level, no columnar." },
+        { "letter": "D", "text": "Glue solo", "correct": false, "why": "Cercano complementario. Lake Formation usa Glue Catalog debajo pero anade governance layer con LF permissions y LF-Tags." }
+      ],
+      "explanation": "AWS Lake Formation: governance layer para data lakes S3. Features: (1) Fine-grained permissions: database/table/column/row/cell level. (2) LF-Tags (Lake Formation Tags): tag-based access control (Attribute-Based Access Control - ABAC). (3) Cross-account data sharing via Data Catalog. (4) Blueprint (workflow) para ingest. (5) Governed tables con ACID (transactions, time travel). (6) Data filters (predicate-based access). Integrated con Athena, Redshift Spectrum, EMR, Glue, QuickSight. Requires Data Catalog.",
+      "keywords": ["data lake governance", "column-level", "Lake Formation"],
+      "services": ["Lake Formation", "Glue"],
+      "references": [{ "title": "AWS Lake Formation" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "high-performing",
+      "topic": "Kinesis Data Analytics / Managed Flink",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere procesar streams en tiempo real con SQL o Apache Flink: agregar metrics por ventanas, detectar anomalias, sesionizar events, enriquecer con lookup tables.",
+      "question": "Que servicio AWS provee stream processing managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Managed Service for Apache Flink (formerly Kinesis Data Analytics): stream processing con Flink SQL/Java/Scala, windowing, joins, enrichment", "correct": true, "why": "Correcto. Managed Flink es el servicio managed para stream processing: Flink runtime managed, integrated con Kinesis/MSK/otras sources, windowing (tumbling, sliding, session), aggregations, joins, exactly-once semantics. Renamed 2023 de Kinesis Data Analytics for Apache Flink." },
+        { "letter": "B", "text": "Lambda con Kinesis trigger solo", "correct": false, "why": "Cercano simple pero limitado para windowing/stateful complex processing. Flink es purpose-built." },
+        { "letter": "C", "text": "EMR con Spark Streaming", "correct": false, "why": "Cercano funcional (Spark Streaming/Structured Streaming) pero requiere gestionar cluster. Managed Flink es serverless." },
+        { "letter": "D", "text": "Athena", "correct": false, "why": "Incorrecto. Athena es batch SQL, no stream processing continuo." }
+      ],
+      "explanation": "Amazon Managed Service for Apache Flink: stream processing managed. Runtime Flink (also Studio Notebooks para dev interactivo). Sources: Kinesis Data Streams, MSK, Firehose. Sinks: Kinesis, Firehose, Lambda, S3, DDB. Casos: real-time metrics/dashboards, anomaly detection, sessionization, event correlation, streaming ETL. Alternativas: Lambda triggers (simple), EMR Spark Streaming (control cluster), self-managed Flink en EKS.",
+      "keywords": ["stream processing", "Flink", "windowing"],
+      "services": ["Managed Flink", "Kinesis"],
+      "references": [{ "title": "Amazon Managed Service for Apache Flink" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "high-performing",
+      "topic": "Kinesis Firehose transformations",
+      "difficulty": "medium",
+      "scenario": "Un equipo streamea CloudWatch Logs a S3 via Firehose. Necesitan: (1) transformar cada record (parse JSON, enriquecer con lookup), (2) convertir formato de JSON a Parquet para eficiencia Athena, (3) enrutar records segun contenido a diferentes S3 prefixes.",
+      "question": "Que features de Firehose cubren esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Data Transformation via Lambda (parse/enrich), Format Conversion built-in (JSON to Parquet/ORC), Dynamic Partitioning (route por content a prefixes)", "correct": true, "why": "Correcto. Firehose soporta: Data Transformation (Lambda pre-delivery), Format Conversion nativo JSON<->Parquet/ORC (con Glue Catalog schema), Dynamic Partitioning (partition keys extraidas del content, ej. year=/month=/day=). Cumple los 3 requisitos declarativamente." },
+        { "letter": "B", "text": "Escribir custom consumer con KCL", "correct": false, "why": "Cercano pero reinventa Firehose managed features. Delivery a S3 con transforms es exacto para Firehose." },
+        { "letter": "C", "text": "Kinesis Data Streams solo", "correct": false, "why": "Cercano pero KDS es raw stream sin managed delivery ni transforms. Firehose lo hace todo." },
+        { "letter": "D", "text": "Glue ETL job periodico", "correct": false, "why": "Cercano batch pero pierde near-real-time delivery de Firehose." }
+      ],
+      "explanation": "Kinesis Firehose features: (1) Data Transformation: Lambda invocada antes de delivery para transform/enrich/filter. (2) Format Conversion: JSON to Parquet or ORC (necesita schema del Glue Catalog), reduce scan cost downstream Athena/Spectrum. (3) Dynamic Partitioning: extrae partition keys del payload (usar JQ syntax), rutea a prefixes distintos. (4) Buffering: por tamano (1MB-128MB) o tiempo (60s-900s). (5) Compression: gzip, snappy, zip. Destinations: S3, Redshift (via COPY), OpenSearch, HTTP, 3rd party (Datadog, Splunk).",
+      "keywords": ["Firehose transform", "JSON a Parquet", "dynamic partitioning"],
+      "services": ["Kinesis Firehose", "Lambda"],
+      "references": [{ "title": "Kinesis Firehose transformations" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "high-performing",
+      "topic": "QuickSight para visualization",
+      "difficulty": "easy",
+      "scenario": "Un negocio quiere dashboards BI managed sin desplegar Tableau/Looker, conectados a Redshift/Athena/S3/RDS con controles fine-grained de acceso por rol.",
+      "question": "Que servicio AWS provee BI managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon QuickSight: BI managed con SPICE (in-memory calculation engine), conectores a Redshift/Athena/S3/RDS/etc., ML insights, embedded analytics", "correct": true, "why": "Correcto. QuickSight es BI managed AWS-native. SPICE (Super-fast Parallel In-memory Calculation Engine) acelera dashboards. Conectores a data sources AWS + 3rd party. ML Insights (anomaly detection, forecasting). Embedded analytics para apps. Precio: per user (reader vs author) o session (embedded)." },
+        { "letter": "B", "text": "CloudWatch Dashboards", "correct": false, "why": "Cercano parcial para AWS metrics pero no BI para datos negocio (data sources externos, complex visualizations)." },
+        { "letter": "C", "text": "Athena solo", "correct": false, "why": "Cercano queries pero sin visualization UI." },
+        { "letter": "D", "text": "Kibana", "correct": false, "why": "Cercano para logs (OpenSearch Dashboards) pero orientado a logs, no BI general." }
+      ],
+      "explanation": "Amazon QuickSight: BI managed. Editions: Standard (basic), Enterprise (SPICE 500GB por user, SSO SAML/OIDC, row-level security, VPC connectivity, ML insights). SPICE: in-memory engine que acelera queries. Data sources: AWS services (Redshift, Athena, S3, RDS, Aurora), 3rd party (Salesforce, Snowflake, Teradata, MySQL), files (CSV, XLSX). Features avanzadas: ML Insights (anomaly detection, forecasting), Embedded Analytics (dashboards en tu app), QuickSight Q (natural language queries).",
+      "keywords": ["BI managed", "QuickSight", "dashboards"],
+      "services": ["QuickSight"],
+      "references": [{ "title": "Amazon QuickSight" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "high-performing",
+      "topic": "S3 formats para analytics",
+      "difficulty": "medium",
+      "scenario": "Un data lake almacena logs JSON. Athena queries son lentos y caros (scans multi-TB). Un consultor recomienda cambiar formato.",
+      "question": "Que formato optimiza queries analytics y por que?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Parquet (o ORC): formato columnar comprimido; queries que selectan pocas columnas scanean solo esas (no todo el row), reduciendo I/O 90%+", "correct": true, "why": "Correcto. Parquet es columnar (columnas juntas), permite: (1) column pruning (scan solo columnas del SELECT), (2) predicate pushdown (skip row groups con filtros), (3) mejor compression (columnas de mismo type comprimen mejor). Reduce coste Athena/Spectrum drasticamente. Format estandar analytics." },
+        { "letter": "B", "text": "CSV", "correct": false, "why": "Incorrecto. Row-based, texto sin comprimir, scans todos los bytes." },
+        { "letter": "C", "text": "JSON", "correct": false, "why": "Incorrecto. Row-based, verbose, sin column pruning eficiente." },
+        { "letter": "D", "text": "Avro", "correct": false, "why": "Cercano (Avro es row-based binary con schema, ideal para streams/serializacion Kafka) pero no columnar; para analytics Parquet/ORC son superiores." }
+      ],
+      "explanation": "S3 formats para analytics: (1) CSV/JSON: text, row-based, verbose, sin column pruning. Malo para queries. (2) Avro: binary row-based con schema, ideal streaming/serializacion. (3) Parquet: columnar, comprimido (Snappy default), column pruning, predicate pushdown. Estandar analytics (Spark, Athena, Spectrum). (4) ORC: similar a Parquet, optimizado Hive. Compression codecs: Snappy (rapido), Gzip (mejor ratio), Zstd (balance). Best practices: convertir a Parquet + particionamiento (fecha, region) + compression.",
+      "keywords": ["Parquet", "columnar", "Athena optimize"],
+      "services": ["S3", "Athena", "Parquet"],
+      "references": [{ "title": "Athena performance tuning" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "high-performing",
+      "topic": "AWS DataSync para transferencia masiva",
+      "difficulty": "medium",
+      "scenario": "Una empresa migra 50 TB de datos on-prem NFS/SMB a S3 y EFS. Necesitan transferencia acelerada, verificacion de integridad, y bandwidth throttling.",
+      "question": "Que servicio AWS es purpose-built para bulk data transfer?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS DataSync: agente on-prem transfiere a S3/EFS/FSx con encryption, integrity checks, bandwidth throttling, scheduling, incremental transfers", "correct": true, "why": "Correcto. DataSync es purpose-built bulk transfer: agente on-prem (VMware/Hyper-V/EC2/KVM) transfiere via network optimizado (10x faster que scp/rsync), integrity checks, bandwidth throttling, scheduling, incremental sync. Destinations: S3, EFS, FSx (Windows, Lustre, ONTAP, OpenZFS)." },
+        { "letter": "B", "text": "S3 CLI (aws s3 cp) manual", "correct": false, "why": "Cercano funcional pero mucho mas lento y sin scheduling/incremental sofisticados. DataSync es hasta 10x mas rapido." },
+        { "letter": "C", "text": "Storage Gateway", "correct": false, "why": "Cercano pero Storage Gateway es hybrid ongoing (cache/gateway), no purpose-built para migration bulk one-time." },
+        { "letter": "D", "text": "Snowball", "correct": false, "why": "Cercano para petabytes offline (>100TB) pero 50TB puede hacerse online con DataSync mas rapido/simple." }
+      ],
+      "explanation": "AWS transfer services: (1) DataSync: online bulk transfer (agente NFS/SMB/HDFS/self-managed object stores -> S3/EFS/FSx). Optimizations, incremental, scheduling. Casos: migration/replication ongoing. (2) Snow Family (Snowball, Snowmobile, Snowcone): offline (physical devices) para petabytes o low-bandwidth locations. (3) Storage Gateway: hybrid cache/tape/file gateway ongoing (no migration one-time). (4) Transfer Family: SFTP/FTPS/FTP protocol for user uploads. (5) S3 Transfer Acceleration: web upload acceleration via CloudFront.",
+      "keywords": ["50TB migration", "on-prem a S3", "DataSync"],
+      "services": ["DataSync", "S3", "EFS"],
+      "references": [{ "title": "AWS DataSync" }]
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage (dev|prod)
+        required: true
+        default: dev
+
+permissions:
+  id-token: write   # OIDC — sin llaves largas en el repo
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter "./packages/*" build
+      - run: pnpm --filter @linguadev/api build
+      - run: pnpm --filter @linguadev/web build
+
+      - name: SAM build
+        run: sam build --template infra/template.yaml
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --template infra/template.yaml \
+            --stack-name linguadev-pro-${{ inputs.stage }} \
+            --parameter-overrides StageName=${{ inputs.stage }} AiProvider=anthropic BudgetLimitUsd=${{ vars.BUDGET_LIMIT_USD || 5 }} BudgetEmail=${{ vars.BUDGET_EMAIL }} \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3
+
+      - name: Sync web to S3
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks --stack-name linguadev-pro-${{ inputs.stage }} --query "Stacks[0].Outputs[?OutputKey=='WebBucketName'].OutputValue" --output text)
+          aws s3 sync apps/web/dist/ s3://$BUCKET --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          DIST=$(aws cloudfront list-distributions --query "DistributionList.Items[?Comment==''||contains(Origins.Items[0].DomainName,'linguadev')].Id" --output text | head -n1)
+          if [ -n "$DIST" ]; then aws cloudfront create-invalidation --distribution-id $DIST --paths '/*'; fi

@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-03-vpc-networking-deep",
+  "certId": "saa-c03",
+  "order": 3,
+  "title": "Simulacro 03 — VPC deep dive: subnets, NAT, endpoints, PrivateLink, Transit Gateway",
+  "focus": "Dominio 1 — Design Secure Architectures (30%). Segmentacion de red, salida a Internet controlada, acceso privado a servicios AWS y conectividad multi-VPC.",
+  "domainCoverage": ["secure"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "secure",
+      "topic": "Subnets publicas vs privadas y NAT",
+      "difficulty": "easy",
+      "scenario": "Una empresa disena una VPC nueva para una app de 3 capas. Los servidores web publicos deben recibir trafico desde Internet, los servidores de aplicacion deben poder salir a Internet para descargar dependencias pero no deben ser accesibles desde fuera, y la base de datos no debe tener ninguna ruta a Internet.",
+      "question": "Cual es la topologia de red correcta con MENOR superficie de exposicion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Colocar los 3 tiers en subnets publicas y controlar todo con Security Groups", "correct": false, "why": "Incorrecto. Aunque los SG bloqueen el trafico entrante, todos los recursos tienen ruta 0.0.0.0/0 al IGW y podrian filtrar datos hacia Internet. Viola el principio de defense in depth." },
+        { "letter": "B", "text": "Web en subnets publicas (ruta al IGW), App en subnets privadas con NAT Gateway para salida, DB en subnets privadas SIN ruta a NAT ni IGW", "correct": true, "why": "Correcto. Es la topologia canonica 3-tier: la web recibe trafico via IGW/ALB, la app sale via NAT Gateway (managed, HA por AZ), y la DB queda completamente aislada de Internet (solo trafico intra-VPC)." },
+        { "letter": "C", "text": "Todos los tiers en subnets privadas con un unico NAT Gateway compartido", "correct": false, "why": "Incorrecto. Si los servidores web deben recibir trafico entrante desde Internet, necesitan estar detras de un ALB en subnets publicas o al menos que el ALB este en subnets publicas. NAT Gateway solo permite salida iniciada desde dentro." },
+        { "letter": "D", "text": "Usar solo una subnet publica grande y aplicar NACLs muy estrictas", "correct": false, "why": "Incorrecto. Sin separacion en subnets privadas la DB queda expuesta a errores de configuracion. Ademas se pierde HA multi-AZ." }
+      ],
+      "explanation": "Una subnet es publica si su route table tiene una ruta 0.0.0.0/0 apuntando al Internet Gateway. Es privada si no la tiene. NAT Gateway (managed, HA en su AZ, paga por hora + GB) permite salida a Internet desde subnets privadas sin exponer las instancias. Best practice: 1 NAT Gateway por AZ para HA y para evitar cross-AZ data transfer charges. Para 3-tier: ALB en publica, App en privada con NAT, DB en privada sin NAT.",
+      "keywords": ["3-tier", "NAT Gateway", "subnet publica", "aislamiento DB"],
+      "services": ["VPC", "NAT Gateway", "IGW", "Route Tables"],
+      "references": [{ "title": "VPC subnets and route tables" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "secure",
+      "topic": "VPC Endpoints Gateway vs Interface",
+      "difficulty": "medium",
+      "scenario": "Una app en subnets privadas necesita acceder a S3 y DynamoDB. Actualmente el trafico sale por NAT Gateway hacia los endpoints publicos, generando costos altos de NAT ($0.045/GB) y latencia extra. El equipo quiere que el trafico permanezca en la red AWS sin pasar por Internet ni NAT.",
+      "question": "Que tipo de VPC Endpoint es CORRECTO y MAS ECONOMICO para S3 y DynamoDB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Gateway VPC Endpoint para S3 y para DynamoDB (gratis, se anade como ruta en la route table)", "correct": true, "why": "Correcto. S3 y DynamoDB son los DOS unicos servicios que soportan Gateway Endpoints, que son gratuitos, se implementan como rutas en la route table y eliminan trafico via NAT/IGW." },
+        { "letter": "B", "text": "Interface VPC Endpoint (AWS PrivateLink) para ambos", "correct": false, "why": "Cercano pero subooptimo. Los Interface Endpoints funcionan pero cuestan $0.01/hora por AZ + $0.01/GB. Cuando existe Gateway Endpoint (solo S3 y DynamoDB), es preferible por ser gratis. S3 tambien soporta Interface, pero para reducir costo se elige Gateway." },
+        { "letter": "C", "text": "Direct Connect", "correct": false, "why": "Incorrecto. Direct Connect es para conectividad on-prem a AWS, no para acceso privado desde VPC a servicios AWS." },
+        { "letter": "D", "text": "VPC Peering al VPC de AWS", "correct": false, "why": "Incorrecto. Los servicios AWS no viven en una VPC visible; no puedes peerear con ellos." }
+      ],
+      "explanation": "Dos tipos de VPC Endpoints: (1) Gateway Endpoint: SOLO S3 y DynamoDB, gratis, se anade como target en la route table, sin ENI. (2) Interface Endpoint (PrivateLink): para casi cualquier servicio AWS y para servicios de terceros, crea una ENI en cada subnet elegida, cuesta ~$0.01/hora/AZ + $0.01/GB, se accede via DNS privado. Regla: si el servicio es S3 o DynamoDB, elige Gateway por costo. Para el resto (SQS, SNS, KMS, Secrets Manager, etc.), Interface.",
+      "keywords": ["reducir NAT cost", "trafico privado a S3", "gratis"],
+      "services": ["VPC Endpoint", "S3", "DynamoDB", "NAT Gateway"],
+      "references": [{ "title": "Gateway VPC endpoints" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "secure",
+      "topic": "AWS PrivateLink para servicios de terceros",
+      "difficulty": "hard",
+      "scenario": "Una empresa consume una API de un SaaS partner (Snowflake, MongoDB Atlas, etc.). Actualmente la app en su VPC llama al endpoint publico del partner sobre Internet. Compliance y latencia exigen que la conexion no salga a Internet publico y que no requiera VPN ni peering con el partner.",
+      "question": "Que servicio AWS habilita esta conectividad privada punto-a-punto con el partner?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS PrivateLink con Interface Endpoint hacia el servicio publicado por el partner", "correct": true, "why": "Correcto. PrivateLink permite al partner publicar su servicio via un Endpoint Service (respaldado por NLB en su VPC) y los consumidores crean un Interface Endpoint en su propia VPC. Trafico via backbone AWS, sin peering ni Internet, sin exposicion de rangos IP entre partes." },
+        { "letter": "B", "text": "VPC Peering con la VPC del partner", "correct": false, "why": "Incorrecto. Peering requiere coordinar rangos CIDR (deben ser distintos), expone toda la VPC del partner y no es escalable a muchos consumidores. PrivateLink expone solo el servicio publicado." },
+        { "letter": "C", "text": "Site-to-Site VPN al partner", "correct": false, "why": "Incorrecto. Requiere IPsec, gestion de tuneles, sale del alcance de una simple llamada API. Anade complejidad innecesaria." },
+        { "letter": "D", "text": "Transit Gateway compartido con el partner", "correct": false, "why": "Incorrecto. TGW conecta VPCs de la misma organizacion o multi-cuenta con RAM; no se comparte con un tercero externo tipico." }
+      ],
+      "explanation": "PrivateLink es el mecanismo para exposicion privada de servicios uno-a-muchos: el proveedor coloca un NLB en su VPC y crea un VPC Endpoint Service; los consumidores crean Interface Endpoints en sus VPCs. Ventajas: sin peering, sin overlap de CIDR (los IPs de consumidor son los del ENI local), granularidad por servicio, trafico via backbone AWS. Es el estandar usado por AWS mismo para exponer sus servicios y por SaaS partners (Snowflake, MongoDB, Datadog).",
+      "keywords": ["SaaS partner", "sin Internet", "sin peering", "PrivateLink"],
+      "services": ["PrivateLink", "VPC Endpoint", "NLB"],
+      "references": [{ "title": "AWS PrivateLink concepts" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "secure",
+      "topic": "Transit Gateway vs VPC Peering",
+      "difficulty": "medium",
+      "scenario": "Una organizacion crece de 5 a 50 VPCs distribuidas en 3 regiones y 20 cuentas AWS. Actualmente usan VPC Peering full-mesh, que se ha vuelto ingobernable (N*(N-1)/2 peerings, sin routing transitivo, tablas de rutas enormes).",
+      "question": "Que servicio simplifica esta topologia y ESCALA a cientos de VPCs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Transit Gateway como hub central con las VPCs conectadas radialmente (hub-and-spoke)", "correct": true, "why": "Correcto. TGW soporta hasta 5,000 attachments, routing transitivo entre VPCs, on-prem via VPN/DX, integracion con RAM para multi-cuenta y peering entre TGWs para cross-region. Reduce complejidad de N^2 a N." },
+        { "letter": "B", "text": "Mas VPC Peering", "correct": false, "why": "Incorrecto. VPC Peering no soporta routing transitivo (si A-B y B-C, A no llega a C) y su gestion escala mal (con 50 VPCs = 1,225 peerings)." },
+        { "letter": "C", "text": "Un unico VPC gigante con muchas subnets", "correct": false, "why": "Incorrecto. Anti-pattern: pierde aislamiento, blast radius grande, limites de VPC (route table entries, SGs por ENI). No es como AWS resuelve escala multi-cuenta." },
+        { "letter": "D", "text": "AWS Cloud WAN", "correct": false, "why": "Parcialmente valido. Cloud WAN es la evolucion global multi-region con policies centralizadas, pero TGW es la respuesta canonica para hub-and-spoke basico. Cloud WAN es correcto si el enfasis es politicas de red globales gestionadas centralmente." }
+      ],
+      "explanation": "TGW resuelve los tres problemas de peering: 1) escalabilidad (attachments, no N^2), 2) transitividad (spoke a spoke a traves del hub), 3) integracion con VPN/DX/otros TGWs. Comparte via RAM entre cuentas. Coste: por hora de attachment + por GB procesado. Cloud WAN es una capa superior con policy-based routing y core network global; se elige cuando hay muchas regiones y politicas complejas.",
+      "keywords": ["muchas VPCs", "hub-and-spoke", "routing transitivo", "escalar"],
+      "services": ["Transit Gateway", "VPC Peering", "RAM", "Cloud WAN"],
+      "references": [{ "title": "AWS Transit Gateway" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "secure",
+      "topic": "Security Groups vs NACLs",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto configura la seguridad de red. Quiere bloquear un rango de IPs maliciosas conocidas ANTES de que lleguen a cualquier instancia de una subnet. Ademas quiere permitir trafico HTTP solo entre el ALB SG y las instancias EC2.",
+      "question": "Que combinacion de controles es correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "NACL en la subnet con reglas DENY para las IPs maliciosas, y Security Group en las EC2 permitiendo trafico solo desde el SG del ALB (referencia SG-to-SG)", "correct": true, "why": "Correcto. NACLs son stateless y operan a nivel subnet: perfectas para bloquear rangos IP maliciosos (soportan DENY explicito, cosa que los SGs no). Los SGs son stateful y permiten referenciar otros SGs como source, patron canonico para trafico ALB->EC2." },
+        { "letter": "B", "text": "Solo Security Groups con reglas DENY para las IPs maliciosas", "correct": false, "why": "Incorrecto. Los Security Groups NO soportan reglas DENY explicitas, solo ALLOW. Para bloquear IPs se usa NACL o WAF." },
+        { "letter": "C", "text": "Solo NACL permitiendo todo excepto las IPs maliciosas", "correct": false, "why": "Incompleto. Sin SG en las EC2, el trafico llega hasta la instancia (aunque legitimo). Falta la restriccion ALB SG -> EC2 SG." },
+        { "letter": "D", "text": "Configurar la restriccion en la route table", "correct": false, "why": "Incorrecto. Las route tables definen destinos y next-hops, no filtran trafico por origen." }
+      ],
+      "explanation": "SG vs NACL: SG opera en la ENI (por instancia), es stateful (respuesta automatica permitida), solo ALLOW, puede referenciar otros SGs. NACL opera en la subnet, es stateless (necesitas ALLOW en ambos sentidos y rangos ephemeral), soporta DENY explicito, se evaluan por numero de regla en orden. Casos: SG = policy fina intra-app; NACL = bloqueo grueso de IPs/subredes o compliance de segmentacion.",
+      "keywords": ["bloquear IPs", "DENY explicito", "SG-to-SG"],
+      "services": ["Security Groups", "NACL", "VPC"],
+      "references": [{ "title": "Security Groups vs Network ACLs" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "secure",
+      "topic": "NAT Gateway HA y coste",
+      "difficulty": "medium",
+      "scenario": "Un equipo desplego una app multi-AZ (us-east-1a, 1b, 1c). Para ahorrar coste puso un unico NAT Gateway en us-east-1a que sirve a las subnets privadas de las 3 AZs. Un incidente en 1a dejo sin salida a Internet a los tiers de app en 1b y 1c, causando outage y ademas se descubrio que el trafico cross-AZ estaba pagando data transfer extra.",
+      "question": "Cual es la arquitectura recomendada de NAT Gateway para HA y coste optimo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un NAT Gateway por cada AZ que tenga subnets privadas, con route table por AZ apuntando a su NAT local", "correct": true, "why": "Correcto. Es la best practice canonica: elimina el SPOF (fallo de AZ no afecta a otras), elimina el data transfer cross-AZ ($0.01-0.02/GB), y contiene el blast radius. Trade-off: pagas ~$32/mes por NAT adicional." },
+        { "letter": "B", "text": "Mantener un solo NAT Gateway centralizado y usar Cross-AZ como aceptable", "correct": false, "why": "Incorrecto. Es el error del escenario. NAT Gateway es zonal, no regional; un solo NAT es SPOF y anade coste cross-AZ silencioso." },
+        { "letter": "C", "text": "Reemplazar NAT Gateway por NAT Instance para ahorrar", "correct": false, "why": "Incorrecto. NAT Instance es legacy, no auto-escala, no es HA nativo y su coste operativo (patching, monitoring) supera el ahorro. AWS lo mantiene solo por retrocompatibilidad." },
+        { "letter": "D", "text": "Sustituir NAT por IGW en las subnets privadas", "correct": false, "why": "Incorrecto. Ponerles ruta al IGW convierte las subnets en publicas y expone las instancias a Internet." }
+      ],
+      "explanation": "NAT Gateway es un recurso zonal: existe en una unica AZ. Para HA verdadera se necesita uno por AZ. Cada AZ tiene su propia route table (o route table dedicada) que apunta a su NAT local para evitar trafico cross-AZ. Coste NAT: ~$0.045/hora + $0.045/GB procesado. Data transfer cross-AZ: $0.01/GB cada sentido. Alternativas de reduccion: Gateway Endpoint para S3/DynamoDB (elimina trafico via NAT), NAT Instance solo en dev/test.",
+      "keywords": ["HA por AZ", "SPOF", "cross-AZ cost"],
+      "services": ["NAT Gateway", "VPC", "Route Tables"],
+      "references": [{ "title": "NAT gateway basics" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "secure",
+      "topic": "Direct Connect vs VPN",
+      "difficulty": "medium",
+      "scenario": "Una empresa mueve una workload critica del datacenter on-prem a AWS. Requiere ancho de banda de 10 Gbps sostenido, latencia predecible y baja, y evita el Internet publico. El proyecto tiene 4 meses para estar en produccion.",
+      "question": "Que solucion cumple los requisitos y con que fallback?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Direct Connect (DX) para el enlace primario dedicado, con Site-to-Site VPN sobre Internet como fallback (DX Gateway + VPN)", "correct": true, "why": "Correcto. DX ofrece ancho de banda dedicado, latencia baja predecible y no usa Internet. Como DX puede tardar semanas en provisionar y no es HA por si solo, la mejor practica es tener VPN como fallback (BGP failover) mientras se establece o si el DX falla." },
+        { "letter": "B", "text": "Solo Site-to-Site VPN", "correct": false, "why": "Incorrecto. VPN va sobre Internet publico: ancho de banda hasta ~1.25 Gbps por tunel, latencia variable, sin SLA de red. No cumple 10 Gbps sostenido ni latencia predecible." },
+        { "letter": "C", "text": "Solo Direct Connect sin fallback", "correct": false, "why": "Incompleto. Sin fallback (segundo DX de otro POP o VPN), un fallo del enlace deja al negocio sin conectividad. HA es obligatorio para workload critica." },
+        { "letter": "D", "text": "AWS Client VPN", "correct": false, "why": "Incorrecto. Client VPN es para usuarios finales/laptops, no para conectividad site-to-site datacenter." }
+      ],
+      "explanation": "DX: enlace fisico dedicado a AWS via un partner en un DX Location. Anchos 1/10/100 Gbps. Latencia baja y predecible, sin Internet, precio por hora + data transfer OUT (mas barato que Internet). Timeline: semanas a meses. HA con dos DX de POPs distintos O DX + VPN backup. VPN: rapido (minutos), sobre Internet, hasta ~1.25 Gbps por tunel (agregable con ECMP), latencia variable. DX Gateway permite conectar un DX a multiples VPCs/regiones.",
+      "keywords": ["on-prem a AWS", "10 Gbps", "latencia predecible", "sin Internet"],
+      "services": ["Direct Connect", "VPN", "DX Gateway"],
+      "references": [{ "title": "AWS Direct Connect resiliency recommendations" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "secure",
+      "topic": "VPC Flow Logs",
+      "difficulty": "easy",
+      "scenario": "Un equipo de seguridad necesita analizar TODOS los flujos de red aceptados y rechazados dentro de una VPC para forensics y deteccion de exfiltracion. Quieren almacenar los logs de forma economica y hacer queries ad-hoc.",
+      "question": "Que servicio y destino recomiendas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar VPC Flow Logs a nivel VPC con destino S3 (Parquet), luego usar Athena para queries ad-hoc", "correct": true, "why": "Correcto. Flow Logs capturan metadata de flujos (src/dst IP, port, protocol, action). S3 + Parquet es el destino mas economico para long-term retention, y Athena permite queries SQL sin infraestructura. Ideal para forensics." },
+        { "letter": "B", "text": "Habilitar Flow Logs a CloudWatch Logs", "correct": false, "why": "Cercano pero mas caro para volumen alto. CloudWatch Logs es adecuado para alerting real-time (con metric filters), pero para storage y query masivo Athena sobre S3 es mucho mas economico." },
+        { "letter": "C", "text": "Capturar paquetes con tcpdump en cada EC2", "correct": false, "why": "Incorrecto. No escala, invasivo (agente en cada host), y no captura trafico entre servicios AWS. Flow Logs es la solucion managed." },
+        { "letter": "D", "text": "GuardDuty solamente", "correct": false, "why": "Cercano pero incompleto. GuardDuty CONSUME Flow Logs (entre otros) para detectar amenazas, pero no persiste los raw flows accesibles al usuario. Necesitas Flow Logs para forensics granular." }
+      ],
+      "explanation": "VPC Flow Logs: metadata de flujos IP en interfaces de red (VPC, subnet o ENI). Formato: srcaddr, dstaddr, srcport, dstport, protocol, packets, bytes, action (ACCEPT/REJECT), log-status. Destinos: CloudWatch Logs (alerting), S3 (retention + Athena) o Kinesis Data Firehose. Traffic Mirroring es distinto: replica PACKET PAYLOADS a un target para deep inspection.",
+      "keywords": ["forensics", "flujos de red", "queries ad-hoc"],
+      "services": ["VPC Flow Logs", "S3", "Athena"],
+      "references": [{ "title": "Logging IP traffic using VPC Flow Logs" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "secure",
+      "topic": "AWS Network Firewall vs SG/NACL",
+      "difficulty": "hard",
+      "scenario": "Una empresa regulada necesita inspeccion profunda de trafico (L7): IDS/IPS con firmas actualizadas, filtrado por dominios (por ejemplo bloquear *.malware.com), y logs de sesiones TCP completas. SG y NACL solo llegan a L3/L4.",
+      "question": "Que servicio AWS proporciona esta capacidad managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Network Firewall desplegado en una firewall subnet con routing simetrico via TGW o gateway route tables", "correct": true, "why": "Correcto. Network Firewall es un firewall stateful managed L3-L7: reglas Suricata para IDS/IPS, filtrado por SNI/hostname, deep packet inspection, integracion con TGW para arquitectura centralizada (single point of inspection para muchas VPCs)." },
+        { "letter": "B", "text": "AWS WAF", "correct": false, "why": "Cercano pero solo aplica a HTTP/HTTPS (CloudFront, ALB, API Gateway). No inspecciona trafico East-West ni protocolos no HTTP. WAF y Network Firewall son complementarios, no equivalentes." },
+        { "letter": "C", "text": "Mas Security Groups", "correct": false, "why": "Incorrecto. SG opera en L3/L4 (IP, puerto, protocolo). No entiende dominios, no hace DPI, no aplica firmas IDS." },
+        { "letter": "D", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty es deteccion pasiva (analiza logs), no bloqueo activo inline." }
+      ],
+      "explanation": "AWS Network Firewall: firewall managed a nivel VPC. Se despliega en una firewall subnet dedicada por AZ, con route tables que fuerzan trafico a traves. Reglas: stateless (5-tuple), stateful (5-tuple con sesiones), Suricata IPS/IDS. Casos: compliance (PCI/HIPAA que exige firewall dedicado), inspeccion East-West en TGW inspection VPC, egress filtering por dominio. Coste: por endpoint hora + GB inspeccionado. Alternativa marketplace: Palo Alto/Fortinet en EC2.",
+      "keywords": ["L7 inspection", "IDS/IPS", "filtro por dominio", "firewall managed"],
+      "services": ["Network Firewall", "TGW", "WAF"],
+      "references": [{ "title": "AWS Network Firewall" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "secure",
+      "topic": "IPv6 y dual-stack",
+      "difficulty": "medium",
+      "scenario": "Una empresa se queda sin espacio IPv4 en su VPC (CIDR /16 saturado) y suma continuamente workloads. Cambiar la VPC entera a un CIDR mayor implicaria downtime.",
+      "question": "Que opciones tiene el arquitecto sin recrear la VPC?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Anadir CIDR blocks secundarios a la VPC (hasta 5 IPv4 adicionales) y opcionalmente habilitar IPv6 dual-stack", "correct": true, "why": "Correcto. VPC soporta hasta 5 CIDR blocks IPv4 secundarios (con reglas de rangos permitidos), lo que aumenta el espacio sin recrear. Anadir IPv6 (bloque /56 asignado por AWS o BYOIP) da direcciones publicas ilimitadas practicamente." },
+        { "letter": "B", "text": "Recrear la VPC con CIDR mas grande y migrar todo con downtime", "correct": false, "why": "Cercano pero innecesario. La feature de secondary CIDR fue introducida justamente para evitar migraciones dolorosas." },
+        { "letter": "C", "text": "Usar NAT masivo para reutilizar IPs", "correct": false, "why": "Incorrecto. NAT solo aplica a salida a Internet; no libera IPs internas de las instancias." },
+        { "letter": "D", "text": "Migrar todo a la IPv6 y desactivar IPv4", "correct": false, "why": "Incompleto. IPv6 puro tiene limitaciones (algunos servicios AWS aun no lo soportan al 100%, on-prem legacy suele ser IPv4). Dual-stack es el enfoque pragmatico." }
+      ],
+      "explanation": "VPC IPv4: CIDR primario + hasta 5 secondary CIDR blocks (deben ser del mismo pool o RFC1918 compatible). IPv6: bloque /56 asignado por AWS (public) o BYOIP; se pueden habilitar solo en las subnets deseadas. Egress-only IGW (EIGW): equivalente a NAT para IPv6 (solo salida iniciada desde dentro). IPAM: servicio para gobierno y automatizacion de asignacion de rangos IP en organizaciones grandes.",
+      "keywords": ["sin IPs", "secondary CIDR", "IPv6"],
+      "services": ["VPC", "IPAM"],
+      "references": [{ "title": "VPC sizing and CIDR blocks" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "secure",
+      "topic": "Egress control con Network Firewall centralizado",
+      "difficulty": "hard",
+      "scenario": "Una organizacion con 40 VPCs quiere aplicar un unico set de reglas de egress (allowlist de dominios permitidos) uniformemente. Duplicar Network Firewall por VPC es costoso e inconsistente.",
+      "question": "Cual es la arquitectura recomendada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Central Inspection VPC con Network Firewall, conectada via Transit Gateway al que se conectan todas las VPCs; las route tables de TGW envian trafico egress a traves de la Inspection VPC", "correct": true, "why": "Correcto. Es el patron canonico: una unica Inspection VPC concentra el firewall, TGW ruta todo el trafico North-South (y opcionalmente East-West) a traves de ella, aplicando politicas centralizadas. Menor coste, gobierno unificado, un solo punto de update de reglas." },
+        { "letter": "B", "text": "Un Network Firewall por VPC replicando manualmente reglas", "correct": false, "why": "Incorrecto. Duplica coste (endpoint por AZ por VPC) y opera con drift entre VPCs. Es lo que el escenario quiere evitar." },
+        { "letter": "C", "text": "AWS Firewall Manager sin Network Firewall", "correct": false, "why": "Incompleto. Firewall Manager es un plano de gestion centralizado (aplica policies WAF/Shield/SG/Network Firewall a multiples cuentas), pero no reemplaza a la inspection VPC arquitecturalmente." },
+        { "letter": "D", "text": "Route 53 Resolver DNS Firewall solamente", "correct": false, "why": "Parcialmente valido. DNS Firewall bloquea resolucion de dominios, pero un atacante que use IP directa lo evade. Se complementa con Network Firewall, no lo sustituye." }
+      ],
+      "explanation": "Patron 'centralized egress inspection': Inspection VPC con firewall subnets (Network Firewall o appliance marketplace), TGW attachment, y route tables de TGW que envian el trafico de spoke VPCs -> Inspection VPC -> Internet (via NAT/IGW en la Inspection VPC). Firewall Manager permite aplicar y auditar policies desde una cuenta delegada. Combinar con Route 53 Resolver DNS Firewall para bloqueo temprano por dominio.",
+      "keywords": ["central inspection", "egress uniforme", "TGW", "40 VPCs"],
+      "services": ["Network Firewall", "TGW", "Firewall Manager", "Route 53 Resolver"],
+      "references": [{ "title": "Centralized network inspection architecture" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "secure",
+      "topic": "Route 53 Resolver hibrido DNS",
+      "difficulty": "medium",
+      "scenario": "Una empresa con datacenter on-prem conectado via DX a AWS necesita que: (1) instancias en VPC resuelvan nombres internos del datacenter (corp.local), (2) servidores on-prem resuelvan nombres de servicios internos AWS (por ejemplo, una private hosted zone en Route 53).",
+      "question": "Que servicio provee resolucion DNS bidireccional entre AWS y on-prem?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Route 53 Resolver Endpoints: Outbound Endpoint para reenviar queries de AWS a DNS on-prem, e Inbound Endpoint para que on-prem consulte Route 53", "correct": true, "why": "Correcto. Los Resolver Endpoints permiten DNS hibrido: outbound reenvia queries desde VPCs a servidores on-prem (via forwarding rules), inbound expone IPs en la VPC a las que on-prem puede apuntar. Es el patron canonico." },
+        { "letter": "B", "text": "Instalar servidores BIND en EC2 y encadenarlos manualmente", "correct": false, "why": "Cercano pero legacy. Anade carga operativa (patching, HA). Route 53 Resolver Endpoints es managed y HA nativo." },
+        { "letter": "C", "text": "Public hosted zone en Route 53", "correct": false, "why": "Incorrecto. Public hosted zones son para dominios en Internet, no para resolucion privada hibrida." },
+        { "letter": "D", "text": "PrivateLink al servicio DNS on-prem", "correct": false, "why": "Incorrecto. PrivateLink expone servicios TCP/UDP puntuales, no reemplaza el flujo DNS estandar." }
+      ],
+      "explanation": "Route 53 Resolver es el DNS server default en cada VPC (la IP .2 de la VPC). Para hibrido: Inbound Endpoint = crea ENIs con IPs en la VPC, on-prem apunta sus queries a estas IPs para resolver private hosted zones. Outbound Endpoint = ENIs desde las que salen queries reenviadas segun forwarding rules (por ejemplo, corp.local -> IPs on-prem). Complemento: Route 53 Resolver DNS Firewall bloquea/permite dominios; asociable a VPC.",
+      "keywords": ["DNS hibrido", "on-prem <-> AWS", "Resolver Endpoints"],
+      "services": ["Route 53 Resolver", "VPC", "Direct Connect"],
+      "references": [{ "title": "Route 53 Resolver for hybrid clouds" }]
+    }
+  ]
+}

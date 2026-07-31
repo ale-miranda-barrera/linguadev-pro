@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-20-mixed-final",
+  "certId": "saa-c03",
+  "order": 20,
+  "title": "Simulacro 20 — Simulacro FINAL mixto: los 4 dominios proporcional a pesos oficiales",
+  "focus": "Simulacro final tipo examen real: 4 dominios (Secure 30%, Resilient 26%, High-Performing 24%, Cost 20%).",
+  "domainCoverage": ["secure", "resilient", "high-performing", "cost-optimized"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "secure",
+      "topic": "IAM roles cross-account con MFA",
+      "difficulty": "hard",
+      "scenario": "Una empresa tiene una cuenta de auditoria centralizada. Los auditors deben poder asumir un rol read-only en 30 cuentas de la organizacion, pero solo con MFA activo. Ademas, cada auditor debe tener log detallado de que asumio.",
+      "question": "Que combinacion cumple todos los requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rol cross-account en cada cuenta objetivo con trust policy Principal=cuenta auditoria + Condition aws:MultiFactorAuthPresent=true; Organization CloudTrail para logs unificados", "correct": true, "why": "Correcto. Trust policy con MFA condition previene asuncion sin MFA (preventivo). Organization CloudTrail captura los AssumeRole events cross-account uniformemente. Auditors autentican en cuenta central con MFA y asumen rol read-only en cuentas objetivo." },
+        { "letter": "B", "text": "IAM users en cada cuenta", "correct": false, "why": "Incorrecto. No escala (30 users x 30 cuentas), rota mal, sin audit unificado." },
+        { "letter": "C", "text": "Solo SCP con read-only", "correct": false, "why": "Cercano parcial (SCP puede limitar) pero no habilita AssumeRole cross-account ni MFA condition per se." },
+        { "letter": "D", "text": "IAM Identity Center sin MFA", "correct": false, "why": "Cercano IAM Identity Center es la respuesta canonica para SSO multi-cuenta, pero enunciado exige MFA obligatorio; se debe forzar via trust policy y IIC MFA settings." }
+      ],
+      "explanation": "Cross-account con MFA: trust policy con Condition Bool aws:MultiFactorAuthPresent=true rechaza AssumeRole sin MFA. Best practice moderna: IAM Identity Center con permission sets aplicados a OUs/cuentas, force MFA en el IdP. CloudTrail Organization trail para audit uniforme cross-account.",
+      "keywords": ["cross-account", "MFA", "auditoria"],
+      "services": ["IAM", "STS", "CloudTrail", "Organizations"],
+      "references": [{ "title": "IAM cross-account access with MFA" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "secure",
+      "topic": "S3 encryption y compliance",
+      "difficulty": "medium",
+      "scenario": "Una empresa healthcare debe cifrar todos los objetos en un bucket S3 con CMK Customer Managed, retencion inmutable 7 anos para PHI, y auditoria detallada de accesos.",
+      "question": "Que combinacion cumple los requisitos HIPAA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SSE-KMS con CMK Customer Managed + S3 Bucket Keys (reduce KMS costs), Object Lock Compliance mode 7 anos, CloudTrail Data Events para audit, Versioning obligatorio", "correct": true, "why": "Correcto. Combinacion completa: CMK Customer Managed para control criptografico, Bucket Keys para cost optimization, Object Lock Compliance inmutable 7 anos (SEC/HIPAA), Data Events para audit fino, Versioning requerido para Object Lock." },
+        { "letter": "B", "text": "Solo SSE-S3", "correct": false, "why": "Incorrecto. Sin CMK Customer Managed = sin control criptografico ni auditoria KMS." },
+        { "letter": "C", "text": "Client-side encryption", "correct": false, "why": "Cercano stricter pero adds refactor; SSE-KMS suele bastar para HIPAA." },
+        { "letter": "D", "text": "Sin Object Lock", "correct": false, "why": "Incorrecto. Sin inmutabilidad no cumple 7-anos retention requirement." }
+      ],
+      "explanation": "HIPAA S3 patterns: cifrado at-rest CMK Customer Managed (control cliente), Bucket Keys reduce cost KMS, Object Lock Compliance inmutabilidad regulatoria, Versioning para recovery, CloudTrail Data Events para audit fino, BAA (Business Associate Agreement) con AWS via Artifact. Access controls: bucket policies, VPC endpoints only, Block Public Access enforced.",
+      "keywords": ["HIPAA", "PHI", "Object Lock", "SSE-KMS"],
+      "services": ["S3", "KMS", "Object Lock", "CloudTrail"],
+      "references": [{ "title": "S3 HIPAA compliance" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "secure",
+      "topic": "WAF y Shield para app publica",
+      "difficulty": "medium",
+      "scenario": "Un e-commerce publico sufre DDoS L7 (fake requests parecen legitimos) y credential stuffing. RTO negocio: 5 min.",
+      "question": "Que servicios AWS componen la defensa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CloudFront + AWS WAF (managed rules + Bot Control + rate-based) + Shield Advanced (proteccion DDoS L3-L7, cost protection, SRT)", "correct": true, "why": "Correcto. Stack de defensa perimetral: CloudFront absorbe trafico en edge. WAF filtra L7 con managed rules + Bot Control anti-scraping + rate-based anti brute-force. Shield Advanced anade proteccion DDoS avanzada, SRT 24/7, cost protection." },
+        { "letter": "B", "text": "Solo Security Groups", "correct": false, "why": "Incorrecto. SG opera L3/L4, no L7 ni bot detection." },
+        { "letter": "C", "text": "Route 53 solo", "correct": false, "why": "Incorrecto. R53 no filtra L7 payloads." },
+        { "letter": "D", "text": "Sin proteccion, escalar backend", "correct": false, "why": "Incorrecto. Escalar no mitiga L7 attacks; solo paga la factura." }
+      ],
+      "explanation": "Defense-in-depth perimeter: CloudFront (edge absorb, cache), WAF (L7 filtering with managed rules OWASP Top 10, Bot Control, rate-based), Shield Standard (free L3/L4 DDoS) or Shield Advanced (L7 DDoS, SRT 24/7, cost protection). GuardDuty for behavioral anomalies. Complementable con CAPTCHA/Challenge en login endpoints.",
+      "keywords": ["WAF", "Shield Advanced", "DDoS L7"],
+      "services": ["WAF", "Shield", "CloudFront"],
+      "references": [{ "title": "AWS WAF and Shield" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "resilient",
+      "topic": "Multi-AZ ASG + ALB",
+      "difficulty": "easy",
+      "scenario": "Una app web stateless corre 4 EC2 en single-AZ detras de un ELB. Fallo de AZ causo outage de 2 horas.",
+      "question": "Diseno HA correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ASG multi-AZ (3 AZs) con ALB multi-AZ, health checks ELB, session state externalizada a ElastiCache/DynamoDB", "correct": true, "why": "Correcto. Patron canonico HA: ASG multi-AZ (auto-reemplaza unhealthy en AZs sanas), ALB multi-AZ (rutea solo a healthy), session externa (permite reemplazo transparente de instancias)." },
+        { "letter": "B", "text": "Snapshots diarios", "correct": false, "why": "Incorrecto. RTO horas, no cumple HA continua." },
+        { "letter": "C", "text": "Mas EC2 en same AZ", "correct": false, "why": "Incorrecto. Sigue single-AZ SPOF." },
+        { "letter": "D", "text": "Route 53 failover a otra region", "correct": false, "why": "Cercano para DR regional pero es overkill para HA intra-region; multi-AZ ASG basta." }
+      ],
+      "explanation": "HA intra-region pattern: ASG multi-AZ + ALB multi-AZ + stateless app (session externa Redis/DynamoDB). Fallo de AZ = ASG auto-recovers en AZs sanas, ALB rutea solo a healthy targets. RTO tipico <2 min. Diferente de DR (Multi-Region) que anade mayor cost/complexity para riesgos region-wide.",
+      "keywords": ["multi-AZ", "ASG", "ALB HA"],
+      "services": ["EC2", "Auto Scaling", "ALB"],
+      "references": [{ "title": "EC2 HA patterns" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "resilient",
+      "topic": "Aurora Global Database para DR",
+      "difficulty": "medium",
+      "scenario": "App critica Aurora PostgreSQL requiere DR cross-region con RPO <1s y RTO <1 min.",
+      "question": "Que solucion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora Global Database (primary + secondary regions con storage-level replication, managed failover <1 min)", "correct": true, "why": "Correcto. Aurora Global Database es la unica opcion Aurora-native para RPO <1s + RTO <1 min cross-region. Storage-level replication async con typical <1s lag." },
+        { "letter": "B", "text": "Cross-region read replicas RDS", "correct": false, "why": "Cercano pero RPO/RTO peores; promote manual toma minutos-horas." },
+        { "letter": "C", "text": "Snapshots cross-region", "correct": false, "why": "Incorrecto. RPO/RTO horas." },
+        { "letter": "D", "text": "Multi-AZ", "correct": false, "why": "Incorrecto. Multi-AZ es intra-region HA, no cross-region DR." }
+      ],
+      "explanation": "Aurora Global Database: single primary region + up to 5 secondary read-only regions. Storage-level replication async <1s. Managed failover unplanned (region outage) <1 min. Casos: apps SaaS globales, compliance geographic, DR RPO/RTO agresivo cross-region.",
+      "keywords": ["Aurora Global", "RPO <1s", "cross-region DR"],
+      "services": ["Aurora Global Database"],
+      "references": [{ "title": "Aurora Global DB" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "resilient",
+      "topic": "SQS DLQ para poison pill",
+      "difficulty": "easy",
+      "scenario": "Consumer Lambda procesa SQS. Un mensaje bug causa retry infinito bloqueando la queue.",
+      "question": "Como resolver?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Configurar DLQ con maxReceiveCount (por ejemplo 3); tras 3 fallos el mensaje va a DLQ, desbloqueando la queue principal", "correct": true, "why": "Correcto. DLQ es el pattern estandar para poison pills. maxReceiveCount define reintentos antes de mover a DLQ. Monitor DLQ con CloudWatch alarms." },
+        { "letter": "B", "text": "Aumentar visibility timeout", "correct": false, "why": "Incorrecto. Solo prolonga el bloqueo." },
+        { "letter": "C", "text": "Delete la queue", "correct": false, "why": "Incorrecto. Pierde mensajes legitimos." },
+        { "letter": "D", "text": "Sin DLQ", "correct": false, "why": "Incorrecto. Es exactamente el problema." }
+      ],
+      "explanation": "SQS DLQ: redrive policy con targetArn (DLQ) y maxReceiveCount. Mensajes que fallan N veces se mueven al DLQ, desbloqueando queue main. Best practices: alarm en DLQ ApproximateNumberOfMessages, redrive tras fix, no usar la misma queue como DLQ.",
+      "keywords": ["DLQ", "poison pill", "SQS"],
+      "services": ["SQS", "Lambda"],
+      "references": [{ "title": "SQS DLQ" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "high-performing",
+      "topic": "DynamoDB partition key design",
+      "difficulty": "medium",
+      "scenario": "Tabla DDB con PK 'country' sufre throttling en particion 'US' (hot).",
+      "question": "Solucion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PK con alta cardinalidad (user_id, event_id) o write sharding con random suffix (country#US#1..N)", "correct": true, "why": "Correcto. PK debe tener alta cardinalidad para distribuir. Write sharding suffix distribuye load pero requiere queries multiples para agregar." },
+        { "letter": "B", "text": "Aumentar RCU/WCU", "correct": false, "why": "Cercano parcial (adaptive capacity ayuda) pero problema estructural PK." },
+        { "letter": "C", "text": "Migrar a Aurora", "correct": false, "why": "Incorrecto. Cambio de tecnologia; diseno DDB tiene solucion." },
+        { "letter": "D", "text": "Mas GSI", "correct": false, "why": "Incorrecto. GSIs no arreglan hot partition en base table." }
+      ],
+      "explanation": "DDB hot partitions: PK con baja cardinalidad = trafico concentrado = throttling. Solutions: (1) PK con alta cardinalidad, (2) write sharding con random suffix, (3) monitor con CloudWatch Contributor Insights hot key. Adaptive capacity y burst mitigan pero no arreglan design pobre.",
+      "keywords": ["hot partition", "cardinalidad"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DDB partition key design" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "high-performing",
+      "topic": "ElastiCache Redis vs DAX",
+      "difficulty": "medium",
+      "scenario": "Cache para queries DDB con miles req/s, sub-ms latency requerida.",
+      "question": "Cache mas apropiado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DAX (DynamoDB Accelerator) - purpose-built cache para DDB, microsegundos latency, write-through transparent via DAX SDK", "correct": true, "why": "Correcto. DAX es cache managed DDB-specific, microseconds latency (vs single-digit ms DDB), reduce RCU. Transparent write-through, no requiere cache-aside logic en app." },
+        { "letter": "B", "text": "ElastiCache Redis manual", "correct": false, "why": "Cercano funcional pero requiere codigo cache-aside; DAX es transparente para DDB." },
+        { "letter": "C", "text": "CloudFront", "correct": false, "why": "Incorrecto. CloudFront es CDN HTTP, no DDB." },
+        { "letter": "D", "text": "S3", "correct": false, "why": "Incorrecto. S3 no es cache in-memory." }
+      ],
+      "explanation": "DAX: cache in-memory managed DDB-specific. Latencia microseconds. Write-through: writes actualizan DDB y cache simultaneously. Item + Query cache. Transparent para app via DAX SDK. Reduce RCU 90%+. Cluster deployado en VPC con Multi-AZ.",
+      "keywords": ["DAX", "cache DDB", "microseconds"],
+      "services": ["DAX", "DynamoDB"],
+      "references": [{ "title": "DAX" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "high-performing",
+      "topic": "Athena optimization",
+      "difficulty": "medium",
+      "scenario": "Queries Athena sobre S3 JSON logs son lentas y caras.",
+      "question": "Optimizaciones clave?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Convertir a Parquet (columnar), particionar por date/region, comprimir con Snappy", "correct": true, "why": "Correcto. Parquet reduce scan 90%+ (column pruning), particionamiento reduce a subset relevante, compression reduce I/O. Combinable = drasticamente menos $/query." },
+        { "letter": "B", "text": "Mas concurrent queries", "correct": false, "why": "Incorrecto. No reduce cost por query." },
+        { "letter": "C", "text": "Migrar a Redshift", "correct": false, "why": "Cercano cambio tech; Athena optimizado con Parquet basta usualmente." },
+        { "letter": "D", "text": "Aumentar S3 storage", "correct": false, "why": "Incorrecto. Sin relacion." }
+      ],
+      "explanation": "Athena optimization: (1) Formats columnar (Parquet, ORC): column pruning, predicate pushdown. (2) Particionamiento (year=/month=/day=) reduce scan. (3) Compression (Snappy default). (4) Bucketing. (5) CTAS para crear tables optimizadas. (6) Data catalog (Glue). Cost model: $5/TB scanned.",
+      "keywords": ["Athena optimize", "Parquet", "particionamiento"],
+      "services": ["Athena", "S3"],
+      "references": [{ "title": "Athena performance" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "cost-optimized",
+      "topic": "Savings Plans vs Spot",
+      "difficulty": "medium",
+      "scenario": "Workload baseline 24/7 constante + picos variables intermittent.",
+      "question": "Compute pricing mix optimo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Compute Savings Plans para baseline (descuento hasta 66% flexible cross-family) + On-Demand o Spot para picos variables (Spot si tolera interrupciones)", "correct": true, "why": "Correcto. SP para lo predecible sostenido (mas descuento por commitment), Spot/On-Demand para lo variable. SP aplica a EC2/Fargate/Lambda cross-family flexible." },
+        { "letter": "B", "text": "Solo Spot", "correct": false, "why": "Cercano max descuento pero riesgo interrupt baseline critico." },
+        { "letter": "C", "text": "Solo On-Demand", "correct": false, "why": "Incorrecto. Sin descuento; caro para baseline sostenido." },
+        { "letter": "D", "text": "RI Standard 3 anos", "correct": false, "why": "Cercano descuento max (72%) pero rigid (bloqueo instance type)." }
+      ],
+      "explanation": "Compute pricing mix: (1) Baseline predictable = Savings Plans (Compute SP flexible o EC2 Instance SP mas descuento) o Reserved Instances (rigid). (2) Variable/spiky = On-Demand (no commitment). (3) Fault-tolerant = Spot (50-90% descuento, interrupciones). ASG Mixed Instances Policy combina On-Demand + Spot elegantly.",
+      "keywords": ["Savings Plans", "Spot", "mix"],
+      "services": ["Savings Plans", "Spot", "EC2"],
+      "references": [{ "title": "AWS pricing options" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "cost-optimized",
+      "topic": "S3 lifecycle y storage classes",
+      "difficulty": "medium",
+      "scenario": "Backup files: hot 30 dias, warm hasta 90 dias, cold hasta 1 ano, deep archive hasta 7 anos, expire tras 7 anos.",
+      "question": "Lifecycle policy?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lifecycle rules: transition to Standard-IA a 30 dias, Glacier Instant o Flexible a 90, Glacier Deep Archive a 365, expire a 7 anos (2555 dias)", "correct": true, "why": "Correcto. Lifecycle transitions automatizan tiering economico. Standard-IA para warm, Glacier Instant/Flexible para cold accessible, Deep Archive para longest retention barato. Expire elimina al final." },
+        { "letter": "B", "text": "Todo en Standard", "correct": false, "why": "Cercano safe pero caro para retention 7 anos." },
+        { "letter": "C", "text": "Todo Glacier Deep desde dia 1", "correct": false, "why": "Cercano cheap pero retrieval delays inaceptables para hot 30 dias." },
+        { "letter": "D", "text": "Manual cleanup", "correct": false, "why": "Incorrecto. No escala; lifecycle automatiza." }
+      ],
+      "explanation": "S3 lifecycle patterns: hot->warm->cold->archive->expire. Storage classes cost aprox (per GB/mo): Standard $0.023, Standard-IA $0.0125, One Zone-IA $0.01, Glacier Instant $0.004, Glacier Flexible $0.0036, Deep Archive $0.00099. Trade-offs: retrieval time, retrieval fees, minimum duration.",
+      "keywords": ["lifecycle", "storage classes", "retention"],
+      "services": ["S3", "Lifecycle"],
+      "references": [{ "title": "S3 lifecycle" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "cost-optimized",
+      "topic": "Compute Optimizer right-sizing",
+      "difficulty": "easy",
+      "scenario": "Muchas EC2 over-provisioned (CPU 5%, memory 20%).",
+      "question": "Herramienta AWS para recomendaciones right-sizing?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Compute Optimizer (ML-based con metricas CloudWatch 14 dias)", "correct": true, "why": "Correcto. Compute Optimizer usa ML para right-sizing recommendations: EC2, ASG, EBS, Lambda, ECS Fargate. Ahorro estimado por recomendacion. Free service." },
+        { "letter": "B", "text": "Cost Explorer solo", "correct": false, "why": "Cercano analytics cost pero no recomendaciones granulares por resource." },
+        { "letter": "C", "text": "Manual CloudWatch review", "correct": false, "why": "Incorrecto. No escala." },
+        { "letter": "D", "text": "Trusted Advisor solo", "correct": false, "why": "Cercano parcial (Underutilized EC2 check) pero Compute Optimizer mas detallado ML." }
+      ],
+      "explanation": "Compute Optimizer: ML recomendaciones sobre 14 dias metricas CloudWatch. Recursos: EC2 (right instance type), ASG (fleet composition), EBS (gp3 tuning), Lambda (memory), ECS Fargate. Findings: Under/Over-provisioned, Optimized. Estimated savings.",
+      "keywords": ["Compute Optimizer", "right-sizing"],
+      "services": ["Compute Optimizer"],
+      "references": [{ "title": "AWS Compute Optimizer" }]
+    }
+  ]
+}

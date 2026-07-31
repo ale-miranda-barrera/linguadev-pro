@@ -1,0 +1,202 @@
+{
+  "id": "clf-c02-sim-06-data-protection-kms-encryption",
+  "certId": "clf-c02",
+  "order": 6,
+  "title": "Simulacro 06 — Protección de datos: KMS, cifrado en reposo y en tránsito",
+  "focus": "Dominio 2 — KMS, CloudHSM, Secrets Manager, Certificate Manager, cifrado at-rest y in-transit.",
+  "domainCoverage": ["security"],
+  "timeLimitMin": 18,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "security",
+      "topic": "Cifrado en reposo vs en tránsito",
+      "difficulty": "easy",
+      "scenario": "Un ingeniero necesita proteger datos sensibles en dos escenarios: (A) archivos guardados en un bucket S3, (B) comunicación entre navegador y una API pública.",
+      "question": "¿Qué mecanismos aplica a cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Cifrado en reposo (S3 encryption con KMS). (B) Cifrado en tránsito (TLS/HTTPS)", "correct": true, "why": "Correcto. Datos almacenados = at-rest encryption (KMS, S3 SSE, EBS encryption). Datos moviéndose = in-transit encryption (TLS/HTTPS, VPN, SSL)." },
+        { "letter": "B", "text": "Ambos solo con Security Groups", "correct": false, "why": "Incorrecto. SGs son firewalls de red; no cifran datos." },
+        { "letter": "C", "text": "Ambos solo con MFA", "correct": false, "why": "Incorrecto. MFA autentica, no cifra." },
+        { "letter": "D", "text": "Ambos con AWS Shield", "correct": false, "why": "Incorrecto. Shield es contra DDoS." }
+      ],
+      "explanation": "AT REST = datos guardados. Mecanismos: S3 SSE-S3/SSE-KMS/SSE-C, EBS encryption, RDS encryption, DynamoDB encryption (default), Redshift. IN TRANSIT = datos en movimiento. Mecanismos: TLS/HTTPS (via Certificate Manager), VPN cifrada, SSL para RDS. AWS Certificate Manager (ACM) provee certs SSL/TLS gratis para ALB/CloudFront/API GW.",
+      "keywords": ["at rest", "in transit", "S3 y API"],
+      "services": ["S3", "KMS", "ACM"],
+      "references": [{ "title": "Encryption at Rest and in Transit" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "security",
+      "topic": "AWS KMS",
+      "difficulty": "easy",
+      "scenario": "Una empresa quiere cifrar sus volúmenes EBS y objetos en S3, gestionando las claves de cifrado de forma centralizada y auditable, sin manejar la seguridad física del HSM.",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Key Management Service (KMS)", "correct": true, "why": "Correcto. KMS es el servicio managed de claves de cifrado. Se integra con casi todos los servicios AWS (S3, EBS, RDS, Lambda, DynamoDB, etc.). Uso auditado vía CloudTrail." },
+        { "letter": "B", "text": "AWS CloudHSM", "correct": false, "why": "Cercano. CloudHSM es HSM DEDICADO (single-tenant, FIPS 140-2 level 3) — más caro y complejo. Usalo cuando necesites compliance estricto o control absoluto de la key material." },
+        { "letter": "C", "text": "AWS Secrets Manager", "correct": false, "why": "Incorrecto. Secrets Manager es para SECRETOS de aplicación (passwords BD, API keys), no cifrado de discos." },
+        { "letter": "D", "text": "AWS Certificate Manager", "correct": false, "why": "Incorrecto. ACM es para certificados TLS/SSL." }
+      ],
+      "explanation": "KMS = managed key store. Tipos: (1) AWS-managed keys (creadas y gestionadas por AWS por servicio, ej. aws/s3), (2) Customer-managed keys (CMK) — tú creas y controlas rotación/política, (3) AWS-owned keys (invisibles). Rotación automática opcional cada año. Se integra con casi todo servicio AWS.",
+      "keywords": ["claves centralizadas", "cifrar EBS S3", "auditable"],
+      "services": ["KMS", "S3", "EBS"],
+      "references": [{ "title": "AWS KMS" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "security",
+      "topic": "KMS vs CloudHSM",
+      "difficulty": "medium",
+      "scenario": "Un banco tiene un requisito regulatorio de que sus claves de cifrado deben estar en un HSM certificado FIPS 140-2 Level 3, single-tenant, con control exclusivo del cliente.",
+      "question": "¿Qué servicio cumple ese requisito?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS KMS", "correct": false, "why": "Cercano. KMS es multi-tenant, FIPS 140-2 Level 2 (subiendo a Level 3 en HSMs subyacentes). Para requisito estricto single-tenant Level 3 se prefiere CloudHSM." },
+        { "letter": "B", "text": "AWS CloudHSM", "correct": true, "why": "Correcto. CloudHSM = HSM dedicado, single-tenant, FIPS 140-2 Level 3. Cliente controla claves y usuarios del HSM. Casos: compliance estricto (PCI HSM, financiero), BYOK avanzado." },
+        { "letter": "C", "text": "AWS Secrets Manager", "correct": false, "why": "Incorrecto. No es un HSM; almacena secretos usando KMS por debajo." },
+        { "letter": "D", "text": "AWS ACM", "correct": false, "why": "Incorrecto. Gestiona certificados, no llaves crudas." }
+      ],
+      "explanation": "KMS vs CloudHSM: KMS = multi-tenant, integración automática con servicios AWS, más simple/barato, suficiente para 99% de casos. CloudHSM = single-tenant, control exclusivo, para compliance duro. CloudHSM puede ser custom key store de KMS (combina lo mejor).",
+      "keywords": ["FIPS 140-2 Level 3", "single-tenant", "banco"],
+      "services": ["CloudHSM", "KMS"],
+      "references": [{ "title": "KMS vs CloudHSM" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "security",
+      "topic": "AWS Secrets Manager",
+      "difficulty": "medium",
+      "scenario": "Un equipo tiene passwords de base de datos y API keys de terceros hardcodeadas en variables de entorno de sus Lambdas. Quieren rotarlas automáticamente cada 30 días y auditar accesos.",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Secrets Manager", "correct": true, "why": "Correcto. Secrets Manager guarda secretos cifrados con KMS y ROTA AUTOMÁTICAMENTE credenciales (BDs RDS, Aurora, DocumentDB nativamente; otros con Lambda custom). Auditoría via CloudTrail. Costo ~$0.40/secret/mes." },
+        { "letter": "B", "text": "SSM Parameter Store", "correct": false, "why": "Cercano. Parameter Store guarda parámetros y secretos (SecureString con KMS) GRATIS para uso estándar. NO tiene rotación automática nativa. Bueno cuando no necesitas rotación." },
+        { "letter": "C", "text": "Variables de entorno de Lambda sin cifrar", "correct": false, "why": "Incorrecto. Las env vars son visibles en la consola y no rotan." },
+        { "letter": "D", "text": "IAM users con access keys", "correct": false, "why": "Incorrecto. No aplica a passwords de BDs de terceros." }
+      ],
+      "explanation": "Secrets Manager vs Parameter Store: Secrets Manager ($) = rotación automática nativa, integración con RDS/Aurora, replicación multi-región. Parameter Store (gratis nivel estándar) = almacena params/secretos SIN rotación nativa, integra con SSM. Ambos cifran con KMS. Elige Secrets Manager cuando necesitas rotación auto.",
+      "keywords": ["rotar contraseñas BD", "secretos", "automático"],
+      "services": ["Secrets Manager", "KMS"],
+      "references": [{ "title": "AWS Secrets Manager" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "security",
+      "topic": "AWS Certificate Manager (ACM)",
+      "difficulty": "easy",
+      "scenario": "Una empresa quiere servir su web con HTTPS usando un certificado TLS válido en su ALB, sin pagar a una CA externa ni gestionar renovaciones manuales.",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Certificate Manager (ACM)", "correct": true, "why": "Correcto. ACM provee certificados TLS/SSL PÚBLICOS GRATIS para usar con ALB, CloudFront, API Gateway. Renovación automática. También certs privados con Private CA (pago)." },
+        { "letter": "B", "text": "AWS KMS", "correct": false, "why": "Incorrecto. KMS es claves de cifrado, no certificados TLS." },
+        { "letter": "C", "text": "AWS Secrets Manager", "correct": false, "why": "Incorrecto. Guarda secretos, no emite certs." },
+        { "letter": "D", "text": "AWS Config", "correct": false, "why": "Incorrecto. Config evalúa cumplimiento." }
+      ],
+      "explanation": "ACM: certificados TLS PÚBLICOS gratis y renovación automática. Se integran con ALB/NLB, CloudFront, API Gateway (edge), Elastic Beanstalk. NO con EC2 directamente (hay que exportar/pagar). ACM Private CA = pago, para certs internos corporativos.",
+      "keywords": ["HTTPS", "TLS", "certificado gratis", "ALB"],
+      "services": ["ACM", "ALB"],
+      "references": [{ "title": "AWS Certificate Manager" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "security",
+      "topic": "S3 Encryption Options",
+      "difficulty": "medium",
+      "scenario": "Una empresa quiere cifrar objetos en un bucket S3. Evalúa opciones: (A) que AWS gestione todo con claves AWS, (B) que use claves de KMS que el cliente controla, (C) que el cliente provea la clave con cada request.",
+      "question": "¿Qué opciones existen en S3?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SSE-S3 (default, AWS keys), SSE-KMS (KMS keys), SSE-C (customer provided), y Client-side (cifrado antes de subir)", "correct": true, "why": "Correcto. Todas son opciones válidas. SSE-S3 = default desde 2023, simple. SSE-KMS = auditable, control fino. SSE-C = tú envías la key en cada request. Client-side = cifras antes de subir." },
+        { "letter": "B", "text": "Solo SSE-S3 existe", "correct": false, "why": "Incorrecto. Hay 4 opciones." },
+        { "letter": "C", "text": "Solo cifrado del lado del cliente", "correct": false, "why": "Incorrecto. También hay server-side." },
+        { "letter": "D", "text": "S3 no soporta cifrado en reposo", "correct": false, "why": "Incorrecto. S3 cifra por defecto ahora (SSE-S3)." }
+      ],
+      "explanation": "S3 encryption: (1) SSE-S3 = AWS gestiona keys, AES-256, default en buckets nuevos. (2) SSE-KMS = KMS gestiona keys, auditable via CloudTrail, permite envelope encryption. (3) SSE-C = cliente provee la key en HTTP header. (4) Client-side = cifrado antes de subir (SDK). Desde 2023 S3 cifra por defecto todos los objetos nuevos con SSE-S3.",
+      "keywords": ["S3 cifrado", "SSE-S3 SSE-KMS SSE-C"],
+      "services": ["S3", "KMS"],
+      "references": [{ "title": "S3 Encryption Options" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "security",
+      "topic": "KMS Key Rotation",
+      "difficulty": "medium",
+      "scenario": "Un compliance officer requiere que las claves de cifrado se roten al menos una vez al año, sin necesidad de re-cifrar todos los datos manualmente.",
+      "question": "¿Qué feature de KMS ayuda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Automatic key rotation en KMS (rotación anual habilitable con un clic)", "correct": true, "why": "Correcto. KMS soporta rotación automática anual para customer-managed keys (CMK). Al rotar, la key ID no cambia y los datos cifrados con la key vieja se pueden seguir descifrando." },
+        { "letter": "B", "text": "Hay que crear una key nueva y re-cifrar todos los datos manualmente", "correct": false, "why": "Incorrecto. KMS lo hace automático; la key mantiene su alias pero el material criptográfico se renueva." },
+        { "letter": "C", "text": "KMS no soporta rotación", "correct": false, "why": "Incorrecto. Soporta rotación automática." },
+        { "letter": "D", "text": "Solo CloudHSM soporta rotación", "correct": false, "why": "Incorrecto. KMS también." }
+      ],
+      "explanation": "KMS Key Rotation: (1) AWS-managed keys → rotación cada año automática (obligatoria, no configurable). (2) Customer-managed keys → rotación anual opcional (habilita/deshabilita). (3) Imported key material → rotación manual (importas nuevo material). El KeyId permanece; solo cambia el material criptográfico. Descifrado transparente para datos viejos.",
+      "keywords": ["rotación anual", "sin recifrar"],
+      "services": ["KMS"],
+      "references": [{ "title": "KMS Key Rotation" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "security",
+      "topic": "In-Transit Encryption",
+      "difficulty": "medium",
+      "scenario": "Una empresa quiere garantizar que todo el tráfico entre sus microservicios internos en AWS esté cifrado, incluyendo entre EC2, entre EC2 y RDS, y entre servicios diferentes.",
+      "question": "¿Qué combinación de medidas usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TLS/HTTPS a nivel aplicación (via ACM), SSL en conexiones RDS, y opcionalmente cifrado VPC con IPsec/VPN entre segmentos", "correct": true, "why": "Correcto. In-transit encryption se logra en múltiples capas: TLS a nivel app (HTTPS via ACM), SSL en drivers de BD, VPN/IPsec para tráfico VPC-a-VPC cross-region, o simplemente confiar en la red privada AWS (que también cifra L2 en muchos servicios)." },
+        { "letter": "B", "text": "Solo Security Groups", "correct": false, "why": "Incorrecto. SGs son firewalls, no cifran." },
+        { "letter": "C", "text": "Solo KMS", "correct": false, "why": "Incorrecto. KMS cifra en reposo, no gestiona TLS sesión." },
+        { "letter": "D", "text": "Nada porque AWS cifra internamente por defecto", "correct": false, "why": "Parcialmente cierto. AWS cifra L2 en tráfico entre AZs de la misma región, pero seguir usando TLS al nivel app es la best practice." }
+      ],
+      "explanation": "Cifrado in-transit en AWS: (1) HTTPS/TLS 1.2+ a nivel app con certs de ACM, (2) SSL forzado en drivers de conexión a RDS/Aurora, (3) VPN/IPsec para tráfico VPC-a-VPC o site-to-site, (4) AWS cifra L2 entre AZs de misma región en muchos servicios (best-effort transparente).",
+      "keywords": ["tráfico interno cifrado", "microservicios", "TLS"],
+      "services": ["ACM", "RDS", "VPC"],
+      "references": [{ "title": "In-Transit Encryption in AWS" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "security",
+      "topic": "Envelope Encryption",
+      "difficulty": "hard",
+      "scenario": "Un arquitecto explica cómo KMS cifra datos grandes eficientemente sin enviar los datos completos a KMS ni sobrecargar la latencia.",
+      "question": "¿Qué técnica usa KMS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Envelope Encryption: KMS genera una Data Key. La Data Key cifra los datos localmente; la Data Key se cifra con la CMK de KMS y se almacena con los datos", "correct": true, "why": "Correcto. Envelope encryption evita enviar datos grandes a KMS. La CMK cifra la Data Key (pequeña); la Data Key cifra los datos (grandes) localmente. Es como una carta dentro de un sobre." },
+        { "letter": "B", "text": "KMS cifra los datos completos enviándolos por HTTPS", "correct": false, "why": "Incorrecto. KMS tiene límite de 4KB por operación de cifrado directo; se usa envelope encryption para datos grandes." },
+        { "letter": "C", "text": "Solo cifra los metadatos", "correct": false, "why": "Incorrecto. Cifra el payload también, vía Data Key." },
+        { "letter": "D", "text": "KMS no soporta datos grandes", "correct": false, "why": "Incorrecto. Sí, vía envelope encryption." }
+      ],
+      "explanation": "Envelope Encryption: (1) GenerateDataKey → KMS retorna Data Key en claro Y cifrada. (2) Cifras datos con la Data Key EN TU LADO (AES-256). (3) Guardas datos cifrados + Data Key CIFRADA. (4) Para descifrar: mandas Data Key cifrada a KMS, KMS te devuelve Data Key en claro, tú descifras. Beneficio: KMS solo procesa la Data Key (pequeña), no los datos.",
+      "keywords": ["data key", "envelope encryption"],
+      "services": ["KMS"],
+      "references": [{ "title": "KMS Envelope Encryption" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "security",
+      "topic": "SSM Parameter Store",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere guardar configuración de aplicaciones (endpoints, feature flags) y algunos secretos ligeros de forma jerárquica y gratis, sin necesidad de rotación automática.",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Systems Manager Parameter Store", "correct": true, "why": "Correcto. Parameter Store guarda parámetros (String, StringList, SecureString cifrado con KMS) jerárquicamente (/app/dev/db-url). Gratis para uso estándar. Ideal para configs y secretos que NO requieren rotación automática." },
+        { "letter": "B", "text": "AWS Secrets Manager", "correct": false, "why": "Cercano. Secrets Manager cuesta $0.40/secret/mes y añade rotación automática. Overkill si solo necesitas guardar configuración." },
+        { "letter": "C", "text": "AWS KMS", "correct": false, "why": "Incorrecto. KMS solo gestiona claves, no valores de config." },
+        { "letter": "D", "text": "AWS Artifact", "correct": false, "why": "Incorrecto. Artifact es reportes de compliance." }
+      ],
+      "explanation": "Parameter Store vs Secrets Manager: Parameter Store = gratis (nivel estándar), sin rotación auto, ideal para configs y secretos simples. Secrets Manager = $/secret, con rotación auto nativa, ideal para BDs y credenciales rotables. Ambos soportan SecureString cifrado con KMS y jerarquías.",
+      "keywords": ["configuración de app", "secretos ligeros", "gratis"],
+      "services": ["SSM Parameter Store", "KMS"],
+      "references": [{ "title": "SSM Parameter Store" }]
+    }
+  ]
+}

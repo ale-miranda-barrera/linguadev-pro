@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-08-rds-ha-dr",
+  "certId": "saa-c03",
+  "order": 8,
+  "title": "Simulacro 08 — RDS HA/DR: Multi-AZ, read replicas, Aurora Global Database, backups",
+  "focus": "Dominio 2 — Design Resilient Architectures (26%). Alta disponibilidad y disaster recovery de bases de datos relacionales.",
+  "domainCoverage": ["resilient"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "resilient",
+      "topic": "RDS Multi-AZ vs Read Replicas",
+      "difficulty": "medium",
+      "scenario": "Un equipo confunde Multi-AZ con Read Replicas. Preguntan: 'si tengo Read Replicas, no me da HA gratis?'",
+      "question": "Cual es la diferencia correcta y su proposito?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-AZ = HA (standby sync en otra AZ, failover automatico ~60-120s, standby NO es leible). Read Replicas = escala lectura (asincrono, leibles, potencial promote manual como DR)", "correct": true, "why": "Correcto. Son features ortogonales. Multi-AZ resuelve HA (failover managed transparente). Read Replicas escalan reads y pueden usarse para DR con promocion manual. Se pueden combinar (Multi-AZ + Read Replicas incluso cross-region)." },
+        { "letter": "B", "text": "Son lo mismo", "correct": false, "why": "Incorrecto. Muy distintos en proposito y comportamiento." },
+        { "letter": "C", "text": "Read Replicas dan failover automatico", "correct": false, "why": "Incorrecto. Read Replicas requieren promote MANUAL (excepto Aurora que tiene su propio modelo). No hay failover automatico desde read replica en RDS clasico." },
+        { "letter": "D", "text": "Multi-AZ se lee tambien desde el standby", "correct": false, "why": "Incorrecto en RDS clasico. El standby de Multi-AZ NO es leible (excepto RDS Multi-AZ Cluster deployment que si es 2 readable standbys)." }
+      ],
+      "explanation": "RDS Multi-AZ (single-standby): 1 primary + 1 standby sync en otra AZ, standby NO leible, failover automatico ~60-120s ante fallos de instancia/AZ. RDS Multi-AZ Cluster: 1 writer + 2 readable standbys (nuevo modelo). Read Replicas: hasta 5-15 replicas asincronas, leibles, se pueden promocionar manualmente. Aurora: modelo distinto (storage compartido cross-AZ, replicas leibles y failover rapido <30s). Combinables.",
+      "keywords": ["HA vs escala lectura", "standby", "read replica"],
+      "services": ["RDS", "Aurora"],
+      "references": [{ "title": "RDS Multi-AZ deployment" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "resilient",
+      "topic": "Aurora Global Database",
+      "difficulty": "hard",
+      "scenario": "Una app SaaS opera globalmente. Requieren: base de datos con lecturas rapidas en 4 regiones, un solo writer, y DR cross-region con RPO <1s y RTO <1 min si la region primaria cae.",
+      "question": "Que solucion cumple estos requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora Global Database: cluster primario en una region + hasta 5 clusters read-only en otras regiones, replicacion via storage-level con RPO tipico <1s y managed failover en <1 min", "correct": true, "why": "Correcto. Aurora Global Database replica a nivel storage (no logico), latencia sub-second cross-region, permite lecturas locales en cada region secundaria, y managed failover promueve una region secundaria a primary en menos de 1 min." },
+        { "letter": "B", "text": "Cross-region read replicas de RDS PostgreSQL", "correct": false, "why": "Cercano pero RPO/RTO peores: replicacion logica async con lag mayor, y promocion manual mas lenta. Aurora Global Database es superior para este SLA." },
+        { "letter": "C", "text": "DynamoDB Global Tables", "correct": false, "why": "Incorrecto contexto. DynamoDB es NoSQL, active-active multi-master, cambio de tecnologia. Si el requisito exige relational, no aplica." },
+        { "letter": "D", "text": "Snapshots cross-region diarios", "correct": false, "why": "Incorrecto. Snapshots dan RPO diario (horas), no <1s." }
+      ],
+      "explanation": "Aurora Global Database: replicacion storage-level a hasta 5 regiones secundarias, latencia tipica <1s, secondary clusters read-only con hasta 16 read replicas cada uno. Managed planned failover (para switchover ordenado) y unplanned (regional outage). Diferente de Multi-AZ (intra-region HA) y Aurora Serverless (compute scaling). Combinable con Aurora Serverless v2, Aurora Machine Learning, IAM database authentication.",
+      "keywords": ["cross-region", "RPO <1s", "SaaS global"],
+      "services": ["Aurora", "Aurora Global Database"],
+      "references": [{ "title": "Aurora Global Database" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "resilient",
+      "topic": "RDS backups: automated vs manual snapshots",
+      "difficulty": "easy",
+      "scenario": "Un DBA quiere entender la diferencia entre automated backups (backup retention period) y manual snapshots en RDS.",
+      "question": "Cual es la diferencia clave para diseno de DR?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Automated backups: retencion 1-35 dias, se borran al eliminar la DB instance (o al final de la retention). Manual snapshots: retencion indefinida, sobreviven a la eliminacion de la DB, copiables cross-region y cross-account", "correct": true, "why": "Correcto. Automated son continuos con PITR (Point-in-Time Recovery) hasta segundo. Manuales son puntuales pero permanentes hasta borrado explicito. Para DR long-term o compliance de retencion, se usan manual snapshots ademas de automated." },
+        { "letter": "B", "text": "Son identicos", "correct": false, "why": "Incorrecto." },
+        { "letter": "C", "text": "Automated se guardan para siempre", "correct": false, "why": "Incorrecto. Max 35 dias y se borran con la DB (a menos que hagas final snapshot)." },
+        { "letter": "D", "text": "Manual snapshots hacen PITR", "correct": false, "why": "Incorrecto. PITR (Point-in-Time Recovery) es feature de automated backups (via transaction logs continuos). Manual snapshots restauran al punto exacto del snapshot." }
+      ],
+      "explanation": "RDS backup strategies: (1) Automated Backups: retention 1-35 dias, storage-level snapshots diarios + transaction logs cada 5 min = PITR granular. Al eliminar la DB (sin final snapshot) se borran. (2) Manual Snapshots: puntuales, retention indefinida, sobreviven a la DB, cross-region copy, cross-account share, exportables a S3 (Parquet, para analytics). (3) AWS Backup: gestion centralizada multi-servicio, policies, cross-region/cross-account backup vault.",
+      "keywords": ["automated vs manual", "PITR", "retention"],
+      "services": ["RDS", "AWS Backup"],
+      "references": [{ "title": "Working with backups" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "resilient",
+      "topic": "DB engines: RDS vs Aurora",
+      "difficulty": "medium",
+      "scenario": "Un equipo elige entre RDS PostgreSQL Multi-AZ y Aurora PostgreSQL. Buscan mejor performance, mayor cantidad de read replicas y almacenamiento que crezca automaticamente sin downtime.",
+      "question": "Que opcion es superior para estos requisitos y por que?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora PostgreSQL: hasta 15 read replicas (vs 5 RDS), 3-5x performance sobre RDS PostgreSQL, storage auto-escalable hasta 128 TB sin downtime, failover mas rapido, backtrack y clones instantaneos", "correct": true, "why": "Correcto. Aurora es un fork optimizado por AWS: storage distribuido 6-way replicated across 3 AZs, compute separado de storage, failover <30s (vs 60-120s RDS), auto-scaling storage, features exclusivos (backtrack, fast clones, ML integration)." },
+        { "letter": "B", "text": "RDS es siempre mejor por ser mas maduro", "correct": false, "why": "Incorrecto. Aurora es mas nuevo pero superior en HA/performance para PostgreSQL/MySQL compatibles. RDS es mejor cuando necesitas engines exclusivos (Oracle, SQL Server, MariaDB) o features especificos que Aurora no soporte." },
+        { "letter": "C", "text": "Ambos son equivalentes", "correct": false, "why": "Incorrecto. Diferencias significativas en performance y features." },
+        { "letter": "D", "text": "DynamoDB seria mejor", "correct": false, "why": "Incorrecto contexto. El equipo requiere PostgreSQL (relational)." }
+      ],
+      "explanation": "RDS vs Aurora: RDS es DB managed clasica (Oracle, SQL Server, MariaDB, MySQL, PostgreSQL, Db2). Aurora es AWS-native compatible con MySQL/PostgreSQL, storage distribuido 6-way cross-AZ, hasta 15 read replicas, failover <30s, auto-scaling storage, features exclusivos: Backtrack (rollback hasta 72h), Fast Clones (copy-on-write), Global Database, Serverless v2, ML integration, RDS Proxy. Coste ligeramente superior a RDS.",
+      "keywords": ["Aurora vs RDS", "15 read replicas", "storage auto"],
+      "services": ["Aurora", "RDS"],
+      "references": [{ "title": "Amazon Aurora features" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "resilient",
+      "topic": "RDS Proxy",
+      "difficulty": "medium",
+      "scenario": "Una app Lambda con miles de invocaciones concurrentes agota rapidamente las conexiones de RDS PostgreSQL (max_connections excedido). Ademas, durante failover multi-AZ, la app tarda minutos en reconectar porque debe re-resolver DNS del endpoint.",
+      "question": "Que servicio AWS mitiga ambos problemas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon RDS Proxy: connection pooling managed que multiplexa conexiones cliente, y mantiene conexiones warm con failover casi imperceptible (~seconds vs minutes)", "correct": true, "why": "Correcto. RDS Proxy resuelve exactamente ambos problemas: pooling reduce connections activos al DB, y durante failover el Proxy retiene client connections y reroutea al nuevo primary sin que la app deba reconectar. Ideal para Lambda + RDS." },
+        { "letter": "B", "text": "Aumentar max_connections en RDS", "correct": false, "why": "Cercano parcial. Consume RAM y no resuelve el problema fundamental de reconnection tras failover. RDS Proxy es la respuesta canonica." },
+        { "letter": "C", "text": "Cachear queries en ElastiCache", "correct": false, "why": "Complementario para reducir reads, pero no elimina el problema de connection storm de Lambda." },
+        { "letter": "D", "text": "Cambiar a DynamoDB", "correct": false, "why": "Incorrecto contexto. Cambio de tecnologia; el equipo tiene PostgreSQL." }
+      ],
+      "explanation": "RDS Proxy: connection pooling managed para RDS/Aurora (MySQL, PostgreSQL, MariaDB, SQL Server). Beneficios: reduce connections al DB (pooling multiplex), aisla la app del failover (mantiene client sessions), soporta IAM authentication y Secrets Manager integration. Ideal para Lambda (miles de invocations), apps serverless o con connection storms. Coste: por vCPU-hour del DB target.",
+      "keywords": ["Lambda RDS", "connection pooling", "failover invisible"],
+      "services": ["RDS Proxy", "RDS", "Lambda"],
+      "references": [{ "title": "Amazon RDS Proxy" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "resilient",
+      "topic": "Aurora Serverless v2",
+      "difficulty": "medium",
+      "scenario": "Un dashboard interno tiene uso muy variable: cero queries durante la noche, picos altos por manana cuando ejecutivos ingresan. Provisionar Aurora fixed para el pico es caro; underprovisionar da queries lentas en pico.",
+      "question": "Que opcion escala capacity automaticamente y en segundos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora Serverless v2 con min/max ACU (Aurora Capacity Units) definidos; escala en segundos siguiendo la carga real", "correct": true, "why": "Correcto. Aurora Serverless v2 escala capacity finamente (0.5 ACU incrementos, sub-segundo) desde min a max, sin downtime. Ideal para cargas variables/intermittent, dev/test, workloads con spikes. v2 supera a v1 (que pausaba y tenia cold starts)." },
+        { "letter": "B", "text": "Aurora fixed instance provisionada para el pico", "correct": false, "why": "Cercano pero paga por capacity idle en la mayoria del dia. Es exactamente lo que el escenario quiere evitar." },
+        { "letter": "C", "text": "Aurora Serverless v1", "correct": false, "why": "Cercano pero deprecated approach: v1 pausa completamente y tiene cold starts largos, incompatible con casos que requieren respuesta inmediata al pico. v2 es la evolucion." },
+        { "letter": "D", "text": "Multiples Aurora instances con shard manual", "correct": false, "why": "Innecesariamente complejo para este uso." }
+      ],
+      "explanation": "Aurora Serverless v2: capacity auto-scaling en ACU (Aurora Capacity Units, 0.5 ACU = 1GB RAM), incrementos rapidos (sub-segundos), sin pause por default. Compatible con la mayoria de features de Aurora provisionada (Global DB, Multi-AZ, Read Replicas, RDS Proxy). Casos ideales: variable workloads, SaaS multi-tenant, dev/test, apps con picos impredecibles. Coste por ACU-hora usado.",
+      "keywords": ["carga variable", "auto-scale segundos", "cero de noche"],
+      "services": ["Aurora Serverless v2", "Aurora"],
+      "references": [{ "title": "Aurora Serverless v2" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "resilient",
+      "topic": "DMS para migracion y replicacion",
+      "difficulty": "hard",
+      "scenario": "Una empresa migra 8 TB de Oracle on-prem a Aurora PostgreSQL con minimo downtime. El schema es distinto (Oracle vs Postgres), la migracion debe permitir cutover programado y rollback.",
+      "question": "Que combinacion de servicios AWS es la correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Schema Conversion Tool (SCT) para convertir schema Oracle -> PostgreSQL, luego AWS Database Migration Service (DMS) para migracion con CDC (Change Data Capture) que mantiene ambos DBs sincronizados hasta el cutover", "correct": true, "why": "Correcto. SCT convierte schema heterogeneo (auto-genera equivalents y flags manual review). DMS ejecuta full load + CDC continuo para replicar cambios en tiempo real, permitiendo cutover ventana corta y rollback si algo falla." },
+        { "letter": "B", "text": "Exportar dump SQL y cargar", "correct": false, "why": "Incorrecto. Requiere downtime largo (8 TB de dump/import), sin CDC no sincroniza cambios durante la migracion." },
+        { "letter": "C", "text": "Snapshot y restore", "correct": false, "why": "Incorrecto. Snapshots son intra-engine (Oracle snapshot no restaura en PostgreSQL). Cross-engine requiere DMS." },
+        { "letter": "D", "text": "S3 export/import", "correct": false, "why": "Cercano parcial (DMS puede usar S3 como intermediate), pero el orquestador correcto es DMS." }
+      ],
+      "explanation": "AWS DMS: migracion homogenea (Oracle->Oracle) o heterogenea (Oracle->PostgreSQL, SQL Server->Aurora MySQL, etc.). Ejecuta full load + CDC ongoing (change data capture desde transaction logs). SCT (Schema Conversion Tool): convierte schemas, procedures, funciones, indices entre engines distintos con reports de compatibilidad manual. Combinable: SCT convierte schema, DMS mueve datos. Casos: migraciones on-prem->cloud, cross-engine, consolidation.",
+      "keywords": ["Oracle a Postgres", "CDC", "minimo downtime"],
+      "services": ["DMS", "SCT", "Aurora"],
+      "references": [{ "title": "AWS Database Migration Service" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "resilient",
+      "topic": "Backup centralizado con AWS Backup",
+      "difficulty": "medium",
+      "scenario": "Una empresa tiene RDS, EBS, EFS, DynamoDB, S3 y quiere gestionar backups uniformemente: politicas de retention, encryption, cross-region copy, compliance reports y restore consolidado desde un solo panel.",
+      "question": "Que servicio unifica backup managed multi-servicio?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Backup con backup plans, backup vaults (con vault lock para inmutabilidad WORM), cross-region/cross-account backup, Backup Audit Manager para compliance", "correct": true, "why": "Correcto. AWS Backup es el servicio de backup centralizado multi-service: RDS, Aurora, DynamoDB, EBS, EFS, FSx, Storage Gateway, EC2, S3, Neptune, DocumentDB, VMware. Backup plans centralizados, vault lock (WORM), cross-region/cross-account, integracion con Organizations." },
+        { "letter": "B", "text": "Scripts custom con snapshots por servicio", "correct": false, "why": "Cercano pero requiere build y mantenimiento propio de scheduling, retention, cross-region. AWS Backup lo hace managed." },
+        { "letter": "C", "text": "Solo lifecycle policies en cada servicio", "correct": false, "why": "Incorrecto. Lifecycle no cubre todos los servicios uniformemente ni provee compliance reporting cross-service." },
+        { "letter": "D", "text": "S3 replication solamente", "correct": false, "why": "Incorrecto. S3 replication solo cubre S3, no RDS/EBS/otros." }
+      ],
+      "explanation": "AWS Backup: control plane unificado de backup. Componentes: Backup Plans (schedule + rules), Backup Vaults (destination logico con encryption y access policies), Backup Vault Lock (WORM immutabilidad estilo Object Lock), cross-region/cross-account copy, Backup Audit Manager (compliance frameworks), Backup Reports. Casos: gobierno multi-cuenta/servicio, compliance (HIPAA, PCI, GDPR retention).",
+      "keywords": ["backup multi-servicio", "centralizado", "vault lock"],
+      "services": ["AWS Backup", "RDS", "EBS", "EFS", "DynamoDB"],
+      "references": [{ "title": "AWS Backup" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "resilient",
+      "topic": "Aurora Backtrack",
+      "difficulty": "medium",
+      "scenario": "Un dev ejecuto por error un UPDATE sin WHERE en produccion Aurora MySQL, corrompiendo miles de rows. Necesitan rollback rapido a hace 10 min sin restaurar desde snapshot (que tomaria horas de downtime).",
+      "question": "Que feature de Aurora permite rewind rapido sin restore?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aurora Backtrack: rewind del cluster a un punto exacto en el tiempo (hasta 72 horas) en segundos-minutos, sin restaurar desde snapshot", "correct": true, "why": "Correcto. Backtrack es exclusivo de Aurora MySQL. Retrocede el estado del cluster hasta 72h atras en segundos-minutos, ideal para errores humanos, bad deploys, corrupcion logica. No requiere restore (que puede tomar horas)." },
+        { "letter": "B", "text": "Restore desde snapshot", "correct": false, "why": "Cercano pero lento: restore crea un nuevo cluster que hay que promover, cambiar endpoints. Backtrack es in-place." },
+        { "letter": "C", "text": "PITR clasico", "correct": false, "why": "Cercano pero PITR clasico crea un NUEVO cluster desde backups + logs; Backtrack retrocede el cluster existente in-place, mas rapido." },
+        { "letter": "D", "text": "Solo posible con SQL manual", "correct": false, "why": "Incorrecto. Sin backups o transactions abiertas, SQL manual no puede deshacer un UPDATE commited." }
+      ],
+      "explanation": "Aurora Backtrack: exclusivo Aurora MySQL (no PostgreSQL). Activable al crear el cluster (retention window 1-72h). Retrocede el cluster completo a un punto especifico sin crear nueva instancia. Se paga por change records almacenados durante la retention window. Casos: recovery rapido de errores humanos, prueba de features (backtrack para deshacer). Diferente de PITR que crea nuevo cluster desde backups.",
+      "keywords": ["error humano", "rewind rapido", "sin restore"],
+      "services": ["Aurora", "Backtrack"],
+      "references": [{ "title": "Aurora Backtrack" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "resilient",
+      "topic": "Read replica lag y consistency",
+      "difficulty": "hard",
+      "scenario": "Una app usa RDS PostgreSQL con 3 read replicas. Un cliente reporta que despues de POST /orders, un immediate GET /orders/{id} devuelve 404 aleatoriamente. El write va al primary, el read va a una replica.",
+      "question": "Cual es la causa y como mitigarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Replica lag: la replicacion async introduce delay (ms-segundos). Mitigar: (1) leer del primary tras un write (read-your-writes), (2) usar Aurora (menor lag), (3) monitorear ReplicaLag metric y hacer failover si supera umbral", "correct": true, "why": "Correcto. Read replicas son ASINCRONAS: hay ventana entre write y visibilidad en replica. Patron 'read-your-writes' rutea lecturas post-write al primary. Aurora tiene lag de ms tipico vs RDS con lag potencialmente mayor. Aurora Global tambien tiene lag cross-region." },
+        { "letter": "B", "text": "Aumentar el timeout del cliente", "correct": false, "why": "Incorrecto. No resuelve la eventual consistency; solo espera y sigue leyendo desde replica potencialmente stale." },
+        { "letter": "C", "text": "Es un bug de RDS", "correct": false, "why": "Incorrecto. Es comportamiento esperado de async replication." },
+        { "letter": "D", "text": "Migrar todo a DynamoDB con strongly consistent reads", "correct": false, "why": "Cercano por consistency (DDB soporta strong reads), pero cambio de tecnologia. La solucion pragmatica es routing consciente en la app." }
+      ],
+      "explanation": "Async replication en RDS y Aurora tiene lag. Patrones para consistencia: (1) Read-Your-Writes = lecturas post-write al primary, (2) Session Consistency = un cliente lee de la misma replica en su sesion, (3) Wait para lag <threshold, (4) Aurora tiene lag muy bajo (single-digit ms) y ademas 'read consistency' features. Metric key: ReplicaLag (segundos). Aurora Global: lag typical <1s cross-region.",
+      "keywords": ["replica lag", "read-your-writes", "eventual consistency"],
+      "services": ["RDS", "Aurora"],
+      "references": [{ "title": "Working with read replicas" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "resilient",
+      "topic": "DynamoDB Global Tables como alternativa",
+      "difficulty": "medium",
+      "scenario": "Un CTO evalua alternativas a Aurora Global Database para una app que necesita writes en multiples regiones simultaneamente (active-active) con conflict resolution.",
+      "question": "Que servicio AWS soporta active-active multi-region con writes concurrentes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon DynamoDB Global Tables: multi-master multi-region con replicacion async, last-writer-wins conflict resolution, ideal para apps con writes globales", "correct": true, "why": "Correcto. DynamoDB Global Tables soportan writes concurrentes en cualquier region, replicacion async entre regiones (~1s), conflict resolution last-writer-wins. Aurora Global Database es single-writer (writes van a la region primary). Trade-off: DynamoDB es NoSQL." },
+        { "letter": "B", "text": "Aurora Global Database", "correct": false, "why": "Cercano pero Aurora Global es SINGLE-WRITER (una region primary, resto read-only). Writes multi-region simultaneos requieren DynamoDB Global Tables o soluciones custom." },
+        { "letter": "C", "text": "RDS con multi-master", "correct": false, "why": "Incorrecto. RDS no soporta multi-master multi-region nativamente." },
+        { "letter": "D", "text": "Replicar S3 objects", "correct": false, "why": "Incorrecto. S3 no es DB relational ni NoSQL para transacciones." }
+      ],
+      "explanation": "Multi-region writes options: DynamoDB Global Tables (multi-master, async, last-writer-wins, NoSQL). Aurora Global Database (single-writer + read-only secondaries, storage-level replication, SQL). Aurora Multi-Master es feature aparte (single region, multi-writer) pero limitada y no recomendada por AWS para nuevos designs. Trade-off clave: consistency model (strong vs eventual) y modelo de datos (relational vs NoSQL).",
+      "keywords": ["active-active", "multi-region writes", "conflict resolution"],
+      "services": ["DynamoDB Global Tables", "Aurora Global"],
+      "references": [{ "title": "DynamoDB Global Tables" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "resilient",
+      "topic": "Snapshot cross-region para DR",
+      "difficulty": "easy",
+      "scenario": "Un compliance auditor exige que los backups de RDS del entorno prod (us-east-1) tambien residan en una region secundaria (us-west-2) para DR en caso de outage regional. RPO permisible: 24h.",
+      "question": "Cual es la implementacion mas simple?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar copia automatica de snapshots cross-region en el backup plan de AWS Backup o cross-region snapshot copy con lifecycle en RDS", "correct": true, "why": "Correcto. AWS Backup ofrece cross-region copy dentro del backup plan (managed, con retention independiente). Alternativa RDS-native: automated snapshot copy con region destino y retention. Cumple RPO 24h con daily snapshots." },
+        { "letter": "B", "text": "Read replica cross-region", "correct": false, "why": "Cercano pero mas caro (compute activo continuo) y no es backup formal. Snapshots cumplen el requisito de RPO 24h con menor coste." },
+        { "letter": "C", "text": "Script cron custom", "correct": false, "why": "Incorrecto. Reinventa AWS Backup, sin auditoria ni compliance reporting nativo." },
+        { "letter": "D", "text": "Nada, RDS ya lo hace automatico cross-region", "correct": false, "why": "Incorrecto. RDS automated backups son intra-region por default; cross-region copy debe habilitarse explicitamente." }
+      ],
+      "explanation": "DR de RDS: opciones por RPO/RTO. (1) Cross-region snapshot copy = RPO 24h+, RTO horas (restore). (2) Cross-region read replica = RPO segundos-minutos, RTO minutos (promocionar). (3) Aurora Global Database = RPO <1s, RTO <1 min (managed failover). Trade-off coste vs SLA. AWS Backup con cross-region copy es la opcion managed mas simple para RPO 24h.",
+      "keywords": ["cross-region snapshot", "DR 24h", "compliance"],
+      "services": ["AWS Backup", "RDS"],
+      "references": [{ "title": "Copying snapshots across regions" }]
+    }
+  ]
+}

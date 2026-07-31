@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-18-storage-cost",
+  "certId": "saa-c03",
+  "order": 18,
+  "title": "Simulacro 18 — Storage cost: S3 Intelligent-Tiering, lifecycle, Glacier tiers, EBS snapshots",
+  "focus": "Dominio 4 — Design Cost-Optimized Architectures (20%). Storage classes, lifecycle y tiering para reducir costo.",
+  "domainCoverage": ["cost-optimized"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "cost-optimized",
+      "topic": "S3 storage classes",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto elige storage class S3 para: (a) datos accedidos diariamente (hot), (b) accedidos semanalmente (warm), (c) accedidos raramente (cold), (d) archivos legales retenidos 7 anos con acceso esperado 1 vez al ano, (e) datos con patron de acceso desconocido.",
+      "question": "Que storage class para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) S3 Standard, (b) S3 Standard-IA, (c) S3 One Zone-IA, (d) S3 Glacier Deep Archive, (e) S3 Intelligent-Tiering", "correct": true, "why": "Correcto. S3 Standard = hot. Standard-IA = warm access infrequente mas barato en storage pero cobra por retrieval. One Zone-IA = igual pero single-AZ, mas barato aun (menos durability - solo 1 AZ). Glacier Deep Archive = archivo mas barato, retrieval 12h. Intelligent-Tiering = automatiza tiering segun access pattern, ideal desconocido." },
+        { "letter": "B", "text": "Todo con Standard", "correct": false, "why": "Incorrecto. Standard mas caro para storage cold; desperdicio." },
+        { "letter": "C", "text": "Todo con Glacier", "correct": false, "why": "Incorrecto. Glacier retrieval tiempo (minutes-hours) y coste; malo para hot." },
+        { "letter": "D", "text": "Intelligent-Tiering para todo", "correct": false, "why": "Cercano en casos ambiguos pero cobra monitoring fee por objeto; no siempre mas barato que asignar manual clase adecuada si el patron es conocido." }
+      ],
+      "explanation": "S3 storage classes: (1) Standard: hot, 99.99% availability, sin retrieval fee. (2) Standard-IA (Infrequent Access): warm, min duration 30 dias, retrieval fee $0.01/GB. (3) One Zone-IA: same IA pero single-AZ (menor durability effective, cheap alt). (4) Intelligent-Tiering: auto-move objects entre tiers Frequent/Infrequent/Archive Instant/Archive/Deep Archive segun access; monitoring fee small por objeto >128KB. (5) Glacier Instant Retrieval: archival con milliseconds retrieval. (6) Glacier Flexible Retrieval: retrieval 1-12 hours. (7) Glacier Deep Archive: cheapest, retrieval 12-48 hours.",
+      "keywords": ["storage classes", "hot warm cold", "Intelligent-Tiering"],
+      "services": ["S3"],
+      "references": [{ "title": "S3 storage classes" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "cost-optimized",
+      "topic": "S3 Lifecycle policies",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere automatizar: transicion de objetos a Standard-IA a los 30 dias, a Glacier Instant Retrieval a los 90 dias, a Deep Archive al ano, y expiration a los 7 anos.",
+      "question": "Como implementar esto sin scripts custom?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Lifecycle configuration con rules de Transitions (dias -> storage class) y Expiration (dias -> delete), aplicables por prefix/tags/all bucket", "correct": true, "why": "Correcto. Lifecycle rules automatizan transitions y expirations declarativamente. Sin scripts. Aplicables a bucket completo, prefix (path), tags. Complementable con Intelligent-Tiering para casos dinamicos, Object Lock para inmutabilidad." },
+        { "letter": "B", "text": "Lambda cron que copia y borra", "correct": false, "why": "Cercano funcional pero reinventa lifecycle managed. Coste extra y mantenimiento." },
+        { "letter": "C", "text": "Manual mensual", "correct": false, "why": "Incorrecto. No escala." },
+        { "letter": "D", "text": "S3 Batch Operations", "correct": false, "why": "Cercano para operaciones one-shot masivas pero no automation continua. Lifecycle es lo continuo." }
+      ],
+      "explanation": "S3 Lifecycle configuration: XML/JSON rules declarativas. Actions: (1) Transition (mover a storage class distinta despues de N dias). (2) Expiration (delete despues de N dias). (3) NoncurrentVersionTransition/Expiration (para buckets versionados). (4) AbortIncompleteMultipartUpload (cleanup uploads incompletos). Filters: prefix, tag, size. Best practices: cleanup incomplete multipart uploads (5-7 dias), transition frequency accesos (30 dias Standard->IA, 90 dias->Glacier), delete backups viejos post-retention.",
+      "keywords": ["lifecycle", "transiciones automaticas", "expiration"],
+      "services": ["S3", "Lifecycle"],
+      "references": [{ "title": "S3 Lifecycle" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "cost-optimized",
+      "topic": "S3 Intelligent-Tiering",
+      "difficulty": "medium",
+      "scenario": "Un data lake tiene acceso patterns impredecibles: algunos objects hot, otros cold, y cambian con el tiempo. El equipo no quiere gestionar tiering manual.",
+      "question": "Que storage class automatiza tiering sin lifecycle rules manuales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Intelligent-Tiering: automaticamente mueve objects entre tiers (Frequent Access, Infrequent, Archive Instant, Archive, Deep Archive) segun access patterns monitored", "correct": true, "why": "Correcto. Intelligent-Tiering ideal para patrones desconocidos o cambiantes. Cobra monitoring fee small por objeto >128KB, pero elimina risk de estar en tier equivocado. Sin retrieval fees en tiers Frequent/Infrequent/Archive Instant. Archive/Deep Archive tienen retrieval delays." },
+        { "letter": "B", "text": "S3 Standard siempre", "correct": false, "why": "Cercano safe pero caro para objects rarely accessed." },
+        { "letter": "C", "text": "Custom lifecycle rules por prefix", "correct": false, "why": "Cercano pero manual y no adapta a cambios de patron dinamicos." },
+        { "letter": "D", "text": "Solo Glacier Deep Archive", "correct": false, "why": "Incorrecto. Glacier Deep retrieval delays largos; malo para hot data." }
+      ],
+      "explanation": "S3 Intelligent-Tiering: 5 access tiers automanaged (Frequent, Infrequent, Archive Instant Access, Archive Access - opt-in, Deep Archive Access - opt-in). Object monitoring $0.0025/1000 objects >128KB (objects <128KB stay in Frequent, no monitoring). No retrieval fees en Frequent/Infrequent/Archive Instant. Archive/Deep Archive tienen retrieval delay (min/horas). Ideal para: patrones desconocidos, data lakes con acceso variable. Migration entre tiers: 30 dias sin access -> Infrequent, 90 dias -> Archive Instant (Archive Access opt-in), 180 -> Deep Archive Access.",
+      "keywords": ["Intelligent-Tiering", "patron desconocido", "automatico"],
+      "services": ["S3", "Intelligent-Tiering"],
+      "references": [{ "title": "S3 Intelligent-Tiering" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "cost-optimized",
+      "topic": "Glacier retrieval tiers",
+      "difficulty": "medium",
+      "scenario": "Un equipo archiva backups en Glacier Flexible Retrieval. Un incidente requiere restaurar un object URGENTEMENTE (dentro de 5 min).",
+      "question": "Que opcion de retrieval Glacier soporta expedited?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Expedited Retrieval Glacier Flexible Retrieval: 1-5 minutes, mas caro; Standard: 3-5 horas; Bulk: 5-12 horas mas barato. Deep Archive: 12h (Standard) o 48h (Bulk)", "correct": true, "why": "Correcto. Glacier Flexible Retrieval ofrece 3 retrieval speeds: Expedited (1-5min, mas caro), Standard (3-5h), Bulk (5-12h, mas barato). Deep Archive solo Standard (12h) o Bulk (48h). Provisioned Capacity garantiza expedited disponible." },
+        { "letter": "B", "text": "Todo Glacier retrieval es 12h", "correct": false, "why": "Incorrecto. Depende del tier de Glacier y speed elegido." },
+        { "letter": "C", "text": "Migrar a Standard primero", "correct": false, "why": "Cercano funcional pero requiere restore first anyway. Expedited es el fast path." },
+        { "letter": "D", "text": "Glacier retrieval es instantaneo", "correct": false, "why": "Incorrecto. Solo Glacier Instant Retrieval tiene milliseconds. Flexible/Deep no." }
+      ],
+      "explanation": "Glacier retrieval speeds: (1) Glacier Instant Retrieval: milliseconds (como Standard-IA pero mas barato storage, mas caro retrieval). (2) Glacier Flexible Retrieval (formerly Glacier): Expedited (1-5 min, ~$0.03/GB), Standard (3-5 hours), Bulk (5-12 hours). (3) Glacier Deep Archive: Standard (12 hours) or Bulk (48 hours). Provisioned Capacity: purchase guaranteed Expedited capacity ($100/month per unit). Restore crea copia temporal en S3 Standard (dias configurables), object en Glacier persiste.",
+      "keywords": ["Glacier retrieval", "expedited", "urgente"],
+      "services": ["S3 Glacier"],
+      "references": [{ "title": "Glacier retrieval" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "cost-optimized",
+      "topic": "EBS snapshot lifecycle",
+      "difficulty": "medium",
+      "scenario": "Un equipo tiene miles de EBS snapshots acumulados. Muchos son duplicados o obsoletos (>1 ano). Buscan automatizar retention y ademas mover snapshots viejos a archive.",
+      "question": "Que servicios AWS gestionan snapshot lifecycle?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Data Lifecycle Manager (DLM) para policies snapshot y AMI lifecycle; EBS Snapshots Archive tier para snapshots raramente accedidos (75% cheaper storage, retrieval 24-72h)", "correct": true, "why": "Correcto. DLM automatiza snapshot creation, retention (cascada), cross-region copy, cross-account share, tagging. EBS Snapshots Archive (2022): snapshots >90 dias movibles a archive tier (75% menos storage cost pero retrieval 24-72h)." },
+        { "letter": "B", "text": "Scripts custom manuales", "correct": false, "why": "Cercano funcional pero DLM es managed y auditable." },
+        { "letter": "C", "text": "S3 Lifecycle", "correct": false, "why": "Incorrecto. S3 Lifecycle es para S3 objects, no EBS snapshots (aunque snapshots viven en S3 internamente)." },
+        { "letter": "D", "text": "AWS Backup solamente", "correct": false, "why": "Cercano y valido (AWS Backup incluye snapshot lifecycle) pero DLM es especifico EBS. Ambos coexisten." }
+      ],
+      "explanation": "EBS snapshot management: (1) Amazon Data Lifecycle Manager (DLM): policies para crear/retener/borrar snapshots automatically. Cross-region copy, cross-account share, tags. (2) EBS Snapshots Archive (2022): tier archive (75% cheaper storage, retrieval 24-72h, min 90 dias en Archive). (3) Recycle Bin: recuperacion de snapshots borrados accidentalmente (retention 1-365 dias, incluye EBS volumes y AMIs). (4) AWS Backup: gestion multi-servicio incluye EBS snapshots con vault lock, cross-region. Best practices: DLM para snapshots freq, Archive para retention long-term, AWS Backup para governance cross-service.",
+      "keywords": ["snapshots lifecycle", "DLM", "archive tier"],
+      "services": ["EBS", "DLM", "AWS Backup"],
+      "references": [{ "title": "Amazon Data Lifecycle Manager" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "cost-optimized",
+      "topic": "S3 Storage Lens para visibility",
+      "difficulty": "easy",
+      "scenario": "Un CTO quiere identificar buckets con: gastos altos, storage classes sub-optimas, muchos objetos pequenos, incomplete multipart uploads abandonados, y recomendaciones de ahorro.",
+      "question": "Que servicio provee este dashboard organization-wide?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Storage Lens con activated advanced metrics (organization-wide dashboard con recomendaciones de cost optimization)", "correct": true, "why": "Correcto. Storage Lens es analytics service purpose-built para S3: dashboards multi-cuenta con metricas de uso, cost, activity. Advanced metrics (opt-in, paid) incluye recomendaciones (activar Bucket Keys, lifecycle rules, transition to IA, delete incomplete multipart uploads)." },
+        { "letter": "B", "text": "Cost Explorer solo", "correct": false, "why": "Cercano parcial (cost aggregate) pero sin granularidad por bucket ni recomendaciones especificas." },
+        { "letter": "C", "text": "CloudWatch S3 metrics", "correct": false, "why": "Cercano basico (metricas por bucket) pero sin agregacion organization-wide ni recomendaciones." },
+        { "letter": "D", "text": "AWS Config", "correct": false, "why": "Cercano para compliance de configuracion, no analytics de coste storage." }
+      ],
+      "explanation": "S3 Storage Lens: purpose-built analytics para S3. Levels: Account, Region, Bucket, Prefix. Free tier: 28 metricas basicas (storage class, activity, cost approx). Advanced (paid): 30+ metricas incluyendo trend 15 meses, prefix-level, CloudWatch publishing, contextual recommendations (activar Bucket Keys, lifecycle, delete abandoned multipart uploads). Setup: dashboards prebuilt org-wide o account-wide. Export a S3/QuickSight. Complementable con Cost Explorer (cost) y Trusted Advisor (best practices).",
+      "keywords": ["Storage Lens", "S3 visibility", "recomendaciones"],
+      "services": ["S3 Storage Lens"],
+      "references": [{ "title": "S3 Storage Lens" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "cost-optimized",
+      "topic": "S3 requester pays",
+      "difficulty": "medium",
+      "scenario": "Una empresa comparte un dataset publico grande via S3. Recibe factura enorme por data transfer OUT de los consumidores. Quiere que los consumidores paguen sus propias transferencias.",
+      "question": "Que feature S3 traslada costo de transfer al requester?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Requester Pays: consumidores pagan por request (GET) y data transfer OUT en lugar del bucket owner; requiere que consumers agreguen header x-amz-request-payer=requester", "correct": true, "why": "Correcto. Requester Pays feature transfiere costo request/transfer al requester (que debe autenticarse). Ideal open datasets/subscription datasets. Bucket owner sigue pagando storage. Consumers deben tener AWS account y explicitly acknowledge charges via header." },
+        { "letter": "B", "text": "Hacer bucket privado", "correct": false, "why": "Incorrecto. Deja de servir el dataset publicamente." },
+        { "letter": "C", "text": "CloudFront frente al bucket", "correct": false, "why": "Cercano (CloudFront reduce cost data transfer vs S3 direct) pero owner sigue pagando. Requester Pays traslada explicitamente al consumer." },
+        { "letter": "D", "text": "Subir un fee via subscription externa", "correct": false, "why": "Cercano workaround pero requiere build billing custom. Requester Pays es feature nativa." }
+      ],
+      "explanation": "S3 Requester Pays: feature para transferir costo (request + data transfer OUT) al requester en vez del bucket owner. Casos: open scientific datasets, subscription data. Requirements: requester tiene AWS account (no anonymous), explicit acknowledgment via header x-amz-request-payer=requester o CLI --request-payer=requester. Bucket owner sigue pagando storage cost. Complementable con CloudFront (para caching pero requester pays no aplica al CloudFront layer).",
+      "keywords": ["requester pays", "public dataset", "transfer cost"],
+      "services": ["S3"],
+      "references": [{ "title": "S3 Requester Pays" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "cost-optimized",
+      "topic": "EFS Infrequent Access",
+      "difficulty": "medium",
+      "scenario": "Una app usa EFS para shared filesystem. Muchos files no se acceden hace meses pero deben mantenerse. EFS Standard es caro para files infrequente accedidos.",
+      "question": "Que feature EFS reduce coste storage automaticamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "EFS Lifecycle Management: mueve automaticamente files sin access reciente a EFS IA (Infrequent Access) o EFS Archive tier, hasta 92% descuento storage vs Standard", "correct": true, "why": "Correcto. EFS Lifecycle Management transiciona files no accedidos a IA (Infrequent Access) o Archive tier automaticamente (7 dias to 90 dias configurable). Descuento hasta 92%. Retrieval fee applied cuando file en IA es accedido." },
+        { "letter": "B", "text": "Migrar todo a EBS", "correct": false, "why": "Incorrecto. EBS es block, no shared file system. Cambia arquitectura." },
+        { "letter": "C", "text": "Reducir provisioned throughput", "correct": false, "why": "Cercano parcial (Elastic throughput auto-adjusts, Provisioned es fixed) pero no aborda storage cost per se." },
+        { "letter": "D", "text": "Borrar files viejos", "correct": false, "why": "Cercano parcial (si aplicable) pero el enunciado dice 'deben mantenerse'." }
+      ],
+      "explanation": "EFS storage classes: (1) Standard (multi-AZ, hot). (2) One Zone (single-AZ, cheaper). (3) IA (Infrequent Access, hot classes -> lifecycle). (4) Archive (introduced 2024, cheapest, retrieval fee applied). Lifecycle Management: mueve files sin access despues de N dias (7, 14, 30, 60, 90) a IA o Archive. Descuento hasta 92% vs Standard. Retrieval fee al accessing IA files ($0.01/GB). EFS Throughput modes: Bursting (default, credits based), Elastic (auto-scale, recomendado), Provisioned (fixed).",
+      "keywords": ["EFS IA", "files infrecuentes", "auto tiering"],
+      "services": ["EFS"],
+      "references": [{ "title": "EFS Lifecycle Management" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "cost-optimized",
+      "topic": "S3 Bucket Keys para reducir KMS cost",
+      "difficulty": "medium",
+      "scenario": "Un bucket con billones de objetos SSE-KMS genera facturas KMS enormes (miles de dolares/mes en KMS API calls).",
+      "question": "Que feature reduce KMS charges manteniendo SSE-KMS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Bucket Keys: cachea una key a nivel bucket que envuelve DEKs de objetos localmente en S3, reduciendo llamadas KMS hasta 99%", "correct": true, "why": "Correcto. Bucket Keys reducen KMS API calls (y facturacion) hasta 99% en workloads con muchos objetos. Sin cambio de seguridad (mismo CMK Customer Managed). Habilitable por bucket o por PUT individual. Solucion designed para este caso." },
+        { "letter": "B", "text": "Migrar a SSE-S3", "correct": false, "why": "Cercano coste (SSE-S3 gratis) pero pierde control CMK Customer Managed que puede ser requisito compliance." },
+        { "letter": "C", "text": "Client-side encryption", "correct": false, "why": "Cercano y elimina KMS server-side, pero requiere refactor pipeline." },
+        { "letter": "D", "text": "Desactivar encryption", "correct": false, "why": "Incorrecto. Viola compliance." }
+      ],
+      "explanation": "S3 Bucket Keys: cache a nivel bucket de una key derivada de la CMK. S3 usa esa key para envelope DEKs de objetos localmente, reduciendo llamadas KMS ~99%. Sin cambio de seguridad efectiva (mismo KMS CMK). Habilitable por bucket (default en nuevos objetos) o por PUT individual. Compatible con SSE-KMS Customer Managed. Sin impacto en auditoria KMS (CloudTrail sigue registrando a nivel bucket key, no por objeto individual). Ahorro real millones USD en workloads muy grandes.",
+      "keywords": ["Bucket Keys", "reducir KMS", "billones objetos"],
+      "services": ["S3", "KMS"],
+      "references": [{ "title": "S3 Bucket Keys" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "cost-optimized",
+      "topic": "S3 minimum storage duration",
+      "difficulty": "hard",
+      "scenario": "Un equipo transita objetos a Standard-IA y luego los borra tras 20 dias porque ya no los necesitan. La factura muestra charges inesperados.",
+      "question": "Cual es la razon del cost adicional?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Standard-IA tiene minimum storage duration de 30 dias: borrar/mover antes cobra el remaining time. One Zone-IA igual. Glacier Flexible = 90 dias. Glacier Instant = 90 dias. Deep Archive = 180 dias", "correct": true, "why": "Correcto. Storage classes IA/Glacier tienen minimum storage duration para justificar el descuento. Delete/transition antes = charged por el remaining time hasta el minimum. Standard-IA/One Zone-IA/Glacier Instant = 30 dias (IA) o 90 dias (Glacier Instant); Glacier Flexible = 90 dias; Deep Archive = 180 dias." },
+        { "letter": "B", "text": "Es un bug", "correct": false, "why": "Incorrecto. Comportamiento documentado." },
+        { "letter": "C", "text": "Cargo por region", "correct": false, "why": "Incorrecto. No relacionado." },
+        { "letter": "D", "text": "Solo Standard tiene coste", "correct": false, "why": "Incorrecto. Standard no tiene minimum duration." }
+      ],
+      "explanation": "S3 minimum storage duration por clase: Standard (no minimum), Standard-IA/One Zone-IA (30 dias), Glacier Instant Retrieval (90 dias), Glacier Flexible Retrieval (90 dias), Glacier Deep Archive (180 dias). Intelligent-Tiering (no minimum). Retrieval fees: IA y Glacier tiers cobran per GB retrieved (adicional al storage). Impacto: transitar objects mas rapido que el minimum = pagar full minimum charge. Best practice: lifecycle transitions matched a expected retention.",
+      "keywords": ["minimum duration", "IA 30 dias", "delete early"],
+      "services": ["S3"],
+      "references": [{ "title": "S3 pricing" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "cost-optimized",
+      "topic": "S3 multipart upload cleanup",
+      "difficulty": "medium",
+      "scenario": "Un audit revela que un bucket tiene 500 GB de incomplete multipart uploads acumulados por anos (uploads fallidos nunca completados). El equipo paga storage por partes huerfanas invisibles en la UI.",
+      "question": "Como limpiar y prevenir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Lifecycle rule con AbortIncompleteMultipartUpload despues de N dias (por ejemplo 7 dias); combinable con S3 Batch Operations para cleanup existente", "correct": true, "why": "Correcto. Lifecycle rule AbortIncompleteMultipartUpload borra automaticamente parts de uploads no completados despues de N dias. Best practice: aplicar en todo bucket con 7 dias. Es cost optimization silencioso pero significativo (partes son invisibles pero cobradas)." },
+        { "letter": "B", "text": "Manual cleanup", "correct": false, "why": "Cercano funcional pero no escala y no previene futuros." },
+        { "letter": "C", "text": "Delete el bucket entero", "correct": false, "why": "Incorrecto. Perdiendo data legitima." },
+        { "letter": "D", "text": "Nada", "correct": false, "why": "Incorrecto. Sigue acumulandose." }
+      ],
+      "explanation": "S3 Multipart Uploads: uploads >5MB pueden partirse en parts, uploaded en parallel, luego 'completed' (ensambla el objeto). Si un upload falla o el cliente no llama CompleteMultipartUpload, parts quedan en S3 sin formar objeto visible pero cobradas por storage. Solucion: Lifecycle rule AbortIncompleteMultipartUpload despues de N dias (default recomendado 7). S3 Storage Lens metric 'IncompleteMultipartUploadStorageBytes' identifica el problema. Feature siempre recomendada para todos los buckets como cost hygiene.",
+      "keywords": ["multipart cleanup", "incomplete uploads", "storage huerfano"],
+      "services": ["S3", "Lifecycle"],
+      "references": [{ "title": "Aborting incomplete multipart uploads" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "cost-optimized",
+      "topic": "AWS Backup cost optimization",
+      "difficulty": "medium",
+      "scenario": "Un equipo usa AWS Backup para RDS/EBS/EFS. Retencion default 35 dias en warm storage. Compliance exige 7 anos retention pero acceso casi nunca despues del ano 1.",
+      "question": "Como reducir coste sin perder compliance?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Backup Lifecycle policies: transicion warm -> cold storage despues de N dias (por ejemplo 90); coste 5x menor cold vs warm; retention up to 100 anos", "correct": true, "why": "Correcto. AWS Backup lifecycle mueve recovery points de warm a cold storage automaticamente. Cold storage 5x mas barato pero retrieval delay (12h). Ideal cumplir long-term retention regulatorio con coste bajo. Retention max 100 anos." },
+        { "letter": "B", "text": "Borrar backups viejos", "correct": false, "why": "Incorrecto. Viola compliance de 7 anos retention." },
+        { "letter": "C", "text": "Mantener todo en warm", "correct": false, "why": "Cercano safe pero coste altisimo para retention 7 anos." },
+        { "letter": "D", "text": "Custom scripts a Glacier", "correct": false, "why": "Cercano funcional pero reinventa AWS Backup lifecycle managed." }
+      ],
+      "explanation": "AWS Backup cost optimization: (1) Lifecycle rules: transition backups warm -> cold storage (5x cheaper, retrieval delay). (2) Retention por policy adecuado a compliance real. (3) Backup Vault Lock (Compliance mode) para inmutabilidad. (4) Cross-region copy solo para critical (extra cost). (5) Cleanup expired recovery points. (6) Reports para audit y cost tracking. Cold storage: ideal long-term retention infrequently accessed. Warm: reciente/hot RPOs.",
+      "keywords": ["Backup lifecycle", "cold storage", "7 anos"],
+      "services": ["AWS Backup"],
+      "references": [{ "title": "AWS Backup lifecycle" }]
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-06-detection-compliance",
+  "certId": "saa-c03",
+  "order": 6,
+  "title": "Simulacro 06 — Detection & compliance: GuardDuty, Macie, Config, CloudTrail, Security Hub, Detective",
+  "focus": "Dominio 1 — Design Secure Architectures (30%). Servicios de deteccion, cumplimiento y respuesta a incidentes.",
+  "domainCoverage": ["secure"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "secure",
+      "topic": "GuardDuty deteccion de amenazas",
+      "difficulty": "easy",
+      "scenario": "Una empresa quiere deteccion continua de: instancias EC2 comprometidas comunicandose con IPs de C2 conocidas, credenciales IAM usadas desde ubicaciones anomalas (impossible travel), y llamadas API sospechosas (por ejemplo desactivar CloudTrail).",
+      "question": "Que servicio provee esta deteccion managed sin desplegar agentes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon GuardDuty (habilitar a nivel Organization y delegar admin account)", "correct": true, "why": "Correcto. GuardDuty es threat detection managed que analiza VPC Flow Logs, DNS logs, CloudTrail y opcionalmente EKS/S3/RDS/Lambda protection. Sin agentes, resultados en minutos, integracion con Security Hub y EventBridge para respuesta automatica." },
+        { "letter": "B", "text": "Instalar EDR de terceros en cada EC2", "correct": false, "why": "Cercano pero mas operativo. GuardDuty cubre muchos casos sin agentes; EDR se anade para deteccion de host-level malware." },
+        { "letter": "C", "text": "Solo CloudTrail y revisar manualmente", "correct": false, "why": "Incorrecto. Manual = tarde. GuardDuty aplica machine learning y threat intel." },
+        { "letter": "D", "text": "AWS Config", "correct": false, "why": "Incorrecto. Config es compliance de configuracion, no threat detection." }
+      ],
+      "explanation": "GuardDuty analiza sin agentes: VPC Flow Logs, DNS logs, CloudTrail management y S3 data events. Add-on protections (extra cost): S3 Protection, EKS Runtime Monitoring, Malware Protection (EBS scan), RDS Protection, Lambda Protection, EKS audit logs. Habilitable a nivel Organization con delegated admin. Findings integrables con Security Hub, EventBridge (para auto-respuesta con Lambda/Systems Manager runbooks).",
+      "keywords": ["threat detection", "sin agentes", "impossible travel"],
+      "services": ["GuardDuty", "CloudTrail", "VPC Flow Logs"],
+      "references": [{ "title": "Amazon GuardDuty" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "secure",
+      "topic": "Macie deteccion de PII en S3",
+      "difficulty": "medium",
+      "scenario": "Una empresa healthcare debe cumplir HIPAA y descubrir si algun bucket S3 contiene PHI (Protected Health Information) o PII (nombres, SSN, credit cards) que no debiera estar alli. Tienen miles de buckets y millones de objetos.",
+      "question": "Que servicio AWS descubre y clasifica datos sensibles en S3 automaticamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Macie con managed data identifiers para PHI/PII/credentials y sensitive data discovery jobs sobre los buckets", "correct": true, "why": "Correcto. Macie usa ML y patrones para identificar datos sensibles en S3: PII, PHI, credenciales AWS/API keys, financial. Reporta hallazgos con severity y ubicacion. Integrado con Security Hub." },
+        { "letter": "B", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas de comportamiento, no clasifica contenido sensible en objetos." },
+        { "letter": "C", "text": "Scanner custom en Lambda leyendo cada objeto", "correct": false, "why": "Cercano pero costoso y complejo. Macie ya es managed con clasificadores pre-entrenados y custom identifiers." },
+        { "letter": "D", "text": "Config Rules", "correct": false, "why": "Incorrecto. Config evalua configuracion, no contenido." }
+      ],
+      "explanation": "Macie: sensitive data discovery en S3. Managed data identifiers cubren PII (nombres, direcciones, SSN, DL), financial (credit card, bank account), credentials (AWS keys, API tokens), health (US HIPAA identifiers). Custom data identifiers via regex + keywords. Habilitable a nivel Organization. Findings clasificados por severity (Low/Medium/High). Complementa: S3 Bucket Policy, Object Lock, encryption. Coste: por GB analizado.",
+      "keywords": ["PII", "PHI", "HIPAA", "clasificar datos S3"],
+      "services": ["Macie", "S3"],
+      "references": [{ "title": "Amazon Macie" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "secure",
+      "topic": "AWS Config compliance",
+      "difficulty": "medium",
+      "scenario": "Un CISO exige: (1) que todos los volumenes EBS esten cifrados, (2) que ningun SG permita 0.0.0.0/0 en port 22, (3) que MFA este habilitado en root de cada cuenta. Necesitan deteccion continua de drift y remediacion automatica cuando sea posible.",
+      "question": "Que servicio proporciona esta evaluacion continua de configuracion con remediacion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Config con managed rules (encrypted-volumes, restricted-ssh, root-account-mfa-enabled) y automatic remediation actions via SSM Automation runbooks", "correct": true, "why": "Correcto. Config es el servicio de continuous configuration assessment. Managed rules cubren cientos de checks comunes; custom rules via Lambda. Remediacion automatica con SSM runbooks (por ejemplo, cifrar automaticamente un volumen o cerrar un SG). Conformance packs agrupan reglas por framework (CIS, PCI, HIPAA, NIST)." },
+        { "letter": "B", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty es threat detection, no configuration compliance." },
+        { "letter": "C", "text": "SCPs preventivos", "correct": false, "why": "Cercano y complementario (SCPs previenen), pero el enunciado pide deteccion de drift existente + remediacion, que es Config." },
+        { "letter": "D", "text": "Trusted Advisor", "correct": false, "why": "Cercano. Trusted Advisor da checks best-practice pero no evaluacion continua ni remediacion automatica granular como Config." }
+      ],
+      "explanation": "AWS Config: registra configuraciones de recursos, evalua contra rules (managed o custom Lambda), genera compliance reports. Conformance Packs: bundles pre-armados (CIS AWS Foundations, PCI-DSS, HIPAA, NIST 800-53, AWS Well-Architected). Aggregators: consolidan Config data multi-cuenta/region. Remediation Actions: SSM Automation documents (built-in o custom). Config Recorder debe estar activo (coste por config item registrado + por rule evaluation).",
+      "keywords": ["configuracion continua", "drift", "compliance", "remediacion"],
+      "services": ["AWS Config", "SSM Automation"],
+      "references": [{ "title": "AWS Config Rules" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "secure",
+      "topic": "Security Hub como agregador",
+      "difficulty": "medium",
+      "scenario": "Una organizacion tiene GuardDuty, Macie, Inspector, IAM Access Analyzer, Config y appliances de terceros generando findings dispersos. El SOC pierde tiempo saltando entre consolas y no puede priorizar. Quieren un dashboard unificado con findings normalizados.",
+      "question": "Que servicio consolida findings de seguridad de forma nativa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Security Hub como aggregator central con AWS Security Finding Format (ASFF), integrado con GuardDuty/Macie/Inspector/Config y partner tools", "correct": true, "why": "Correcto. Security Hub normaliza findings al formato ASFF, agrega multi-cuenta y multi-region, prioriza con severity/workflow status, ejecuta security standards (CIS, PCI-DSS, AWS Foundational). Es el hub natural para SOC." },
+        { "letter": "B", "text": "CloudWatch dashboards custom", "correct": false, "why": "Cercano pero requiere build custom desde cero. Security Hub ya provee integracion nativa y ASFF." },
+        { "letter": "C", "text": "Un SIEM de terceros solamente", "correct": false, "why": "Cercano pero Security Hub es el layer AWS-native que ademas se conecta a SIEMs (via EventBridge/Kinesis) para forwarding." },
+        { "letter": "D", "text": "Manualmente en cada consola", "correct": false, "why": "Incorrecto. Es el problema del escenario." }
+      ],
+      "explanation": "AWS Security Hub: agregador y compliance dashboard. Ingesta findings de GuardDuty, Macie, Inspector, IAM Access Analyzer, Firewall Manager, Config, Systems Manager Patch Manager, Health, y >70 partner tools. Security standards ejecutables: CIS AWS Foundations, PCI-DSS, AWS Foundational Security Best Practices, NIST 800-53. Delegated administrator a nivel Organization. Automated response via EventBridge -> Lambda/SSM runbooks.",
+      "keywords": ["dashboard unificado", "findings normalizados", "SOC"],
+      "services": ["Security Hub", "GuardDuty", "Macie", "Inspector"],
+      "references": [{ "title": "AWS Security Hub" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "secure",
+      "topic": "Detective investigacion",
+      "difficulty": "hard",
+      "scenario": "GuardDuty alerta que un EC2 se comunico con una IP maliciosa. El analista necesita reconstruir: como se comprometio, que credenciales se usaron desde esa instancia, que APIs se llamaron, y si hubo lateral movement.",
+      "question": "Que servicio AWS acelera la investigacion visualizando relaciones entre entidades y eventos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Detective (integra VPC Flow Logs, CloudTrail, GuardDuty findings y EKS audit logs en un grafo de comportamiento)", "correct": true, "why": "Correcto. Detective construye un knowledge graph de tu ambiente (users, roles, instances, IPs) con baselines de comportamiento. Reduce tiempo de investigacion de horas a minutos, visualizando timelines y relaciones." },
+        { "letter": "B", "text": "GuardDuty solo", "correct": false, "why": "Incompleto. GuardDuty genera el finding pero no facilita la investigacion profunda. Detective es el companion." },
+        { "letter": "C", "text": "Athena queries manuales sobre CloudTrail", "correct": false, "why": "Cercano pero lento y requiere expertise SQL avanzado. Detective visualiza automaticamente." },
+        { "letter": "D", "text": "Config timeline", "correct": false, "why": "Cercano solo para cambios de config, no para lateral movement ni patrones de comportamiento." }
+      ],
+      "explanation": "Amazon Detective: analitica de seguridad basada en graph database. Ingesta automatica de VPC Flow Logs, CloudTrail, GuardDuty findings, EKS audit logs, Route 53 query logs. Visualiza: connection profile (IPs conectando a un EC2), API call volume por role/user, geographic patterns, finding groups. Complementario a GuardDuty (deteccion) + Security Hub (agregacion) + Detective (investigacion).",
+      "keywords": ["investigacion", "lateral movement", "graph de comportamiento"],
+      "services": ["Detective", "GuardDuty", "CloudTrail"],
+      "references": [{ "title": "Amazon Detective" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "secure",
+      "topic": "CloudTrail multi-cuenta y multi-region",
+      "difficulty": "medium",
+      "scenario": "Una organizacion con 40 cuentas AWS quiere un trail unico que capture eventos de todas las regiones de todas las cuentas, almacenado inmutablemente en una cuenta Log Archive separada, y que los admins de cuentas hijas no puedan desactivar.",
+      "question": "Que configuracion cumple los requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Organization Trail habilitado desde la cuenta management (o delegated admin), destino a bucket S3 en cuenta Log Archive con Object Lock Compliance, y SCP que impida cloudtrail:StopLogging/DeleteTrail", "correct": true, "why": "Correcto. Organization Trails aplican a todas las cuentas de la Org, multi-region, no editables por cuentas hijas (aparecen read-only). Object Lock protege los logs de borrado. SCP anade guardrail preventivo." },
+        { "letter": "B", "text": "Un trail por cuenta configurado manualmente", "correct": false, "why": "Incorrecto. No escala, drift entre cuentas, admin local puede desactivar. Es lo que el enunciado quiere evitar." },
+        { "letter": "C", "text": "CloudWatch Logs sin S3", "correct": false, "why": "Incompleto. S3 con Object Lock es el destino que garantiza inmutabilidad para forensics/compliance." },
+        { "letter": "D", "text": "GuardDuty en lugar de CloudTrail", "correct": false, "why": "Incorrecto. GuardDuty consume CloudTrail para detectar; no reemplaza el logging de auditoria." }
+      ],
+      "explanation": "Organization Trails: se crea desde la management account (o delegated admin), replica automaticamente a todas las cuentas actuales y futuras, capturable multi-region. Best practice: destino a bucket en cuenta dedicada Log Archive (separacion de duties), con Object Lock Compliance o SSE-KMS + bucket policy restrictiva. Complementar con CloudTrail Lake para queries SQL cross-account de hasta 7 anos. Log File Integrity Validation (digest hourly) detecta tampering.",
+      "keywords": ["multi-cuenta", "trail organizacional", "inmutable", "Log Archive"],
+      "services": ["CloudTrail", "S3", "Object Lock", "Organizations"],
+      "references": [{ "title": "Creating an organization trail" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "secure",
+      "topic": "Inspector v2",
+      "difficulty": "medium",
+      "scenario": "Un equipo desea escaneo continuo de vulnerabilidades (CVEs) en: EC2 instances (OS + packages), imagenes de container en ECR, y Lambda functions (dependencies). Actualmente usan scanners CI/CD que no cubren workloads en runtime.",
+      "question": "Que servicio AWS provee scanning continuo unificado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Inspector (v2): scaneo continuo automatico de EC2 (via SSM Agent), ECR (on push y continuo) y Lambda functions con findings priorizados por CVSS y network reachability", "correct": true, "why": "Correcto. Inspector v2 es agentless para ECR/Lambda y usa SSM Agent en EC2 (sin agente adicional). Continuo, activable a nivel Organization, deep vulnerability DB, findings integrados con Security Hub." },
+        { "letter": "B", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty es threat detection (behavior), no vulnerability scanning." },
+        { "letter": "C", "text": "Trusted Advisor", "correct": false, "why": "Incorrecto. Trusted Advisor da recomendaciones generales best-practice, no CVE scanning." },
+        { "letter": "D", "text": "Solo scanner CI/CD manual", "correct": false, "why": "Incorrecto. No cubre runtime ni imagenes ya deployadas." }
+      ],
+      "explanation": "Amazon Inspector v2 (reboot 2021): continuous scanning managed. Cubre: EC2 (OS + application packages via SSM Agent, agentless para memoria vulnerable), ECR (imagenes on push + continuous re-scan al descubrirse nuevas CVEs), Lambda (functions y layers, incluye lenguajes soportados). Scoring: CVSS + Inspector risk score (context como reachability, exploit availability). Integracion nativa Security Hub, ECR console findings.",
+      "keywords": ["vulnerabilidades", "CVEs", "escaneo continuo"],
+      "services": ["Inspector", "SSM Agent", "ECR", "Lambda"],
+      "references": [{ "title": "Amazon Inspector" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "secure",
+      "topic": "AWS Audit Manager",
+      "difficulty": "medium",
+      "scenario": "Una empresa se prepara para auditoria SOC 2 y HIPAA. Recolectar evidencias manualmente (screenshots, exports de config, listas de usuarios) consume semanas. Buscan automatizar la recoleccion continua de evidencia mapeada a controles.",
+      "question": "Que servicio AWS automatiza la recoleccion de evidencia para auditorias?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Audit Manager con frameworks prebuilt (SOC 2, HIPAA, PCI-DSS, NIST) que recolectan evidencia automaticamente desde Config, CloudTrail, Security Hub", "correct": true, "why": "Correcto. Audit Manager mapea controles a evidence sources AWS y recolecta automaticamente snapshots, config items, findings, logs. Genera assessment reports listos para auditor. Ahorra semanas de trabajo manual." },
+        { "letter": "B", "text": "Security Hub solamente", "correct": false, "why": "Incompleto. Security Hub muestra estado actual de compliance vs standards pero no recolecta evidencia formal ni genera assessment reports para auditores." },
+        { "letter": "C", "text": "AWS Artifact", "correct": false, "why": "Cercano y complementario. Artifact provee los reports de compliance de AWS (SOC, ISO, PCI) para tu due diligence, pero no automatiza tu propia recoleccion de evidencia." },
+        { "letter": "D", "text": "Config Conformance Packs", "correct": false, "why": "Cercano. Conformance packs evaluan compliance de recursos vs framework; Audit Manager es el paso siguiente que agrupa evidencia y produce assessments." }
+      ],
+      "explanation": "AWS Audit Manager: automatiza recoleccion continua de evidencia mapeada a controles de frameworks (SOC 2, HIPAA, PCI-DSS, GDPR, NIST 800-53, ISO 27001, AWS Well-Architected, custom). Evidence sources: AWS Config, CloudTrail, Security Hub, License Manager, manual uploads. Genera assessment reports exportables. Diferente de Artifact (docs de AWS) y Security Hub (postura tiempo real).",
+      "keywords": ["auditoria", "evidencia automatica", "SOC 2", "HIPAA"],
+      "services": ["Audit Manager", "Config", "Security Hub"],
+      "references": [{ "title": "AWS Audit Manager" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "secure",
+      "topic": "Auto-remediation con EventBridge y SSM",
+      "difficulty": "hard",
+      "scenario": "GuardDuty detecta que una instancia EC2 esta comunicandose con IPs maliciosas. El equipo quiere respuesta automatica: aislar la instancia (cambiar SG a uno restrictivo), tomar snapshot para forensics, y notificar al SOC en Slack.",
+      "question": "Que arquitectura event-driven implementa esta respuesta automatizada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GuardDuty finding -> EventBridge rule -> Step Functions/Lambda que cambia SG via API, crea snapshot EBS, publica a SNS que integra Slack", "correct": true, "why": "Correcto. Patron event-driven canonico: EventBridge escucha finding types especificos, dispara orquestacion (Step Functions para multiples pasos con retries) o Lambda simple, integrando SDK AWS y notificacion." },
+        { "letter": "B", "text": "Revision manual por el SOC 24/7", "correct": false, "why": "Cercano en emergencias pero no escala y anade minutos-horas de exposicion. Auto-respuesta reduce a segundos." },
+        { "letter": "C", "text": "Habilitar Auto Scaling para reemplazar la instancia", "correct": false, "why": "Cercano parcial (Auto Scaling reemplaza si termino), pero no aisla ni preserva evidencia forense." },
+        { "letter": "D", "text": "Config Rule con remediation", "correct": false, "why": "Cercano pero Config actua sobre estado de recursos, no sobre findings dinamicos de GuardDuty. EventBridge es el pattern para findings." }
+      ],
+      "explanation": "Event-driven security automation: EventBridge escucha eventos de GuardDuty, Security Hub, Config, Inspector. Rules matchean por finding type/severity y disparan targets: Lambda (accion simple), Step Functions (workflow con Human-in-the-Loop opcional), SSM Automation runbook (playbook prescriptivo), SNS (notificacion). Best practice: probar en modo dry-run/COUNT antes de auto-remediar en prod para evitar interrupcion legitima.",
+      "keywords": ["auto respuesta", "aislar instancia", "forensics"],
+      "services": ["GuardDuty", "EventBridge", "Lambda", "Step Functions", "SSM"],
+      "references": [{ "title": "Automating threat response with GuardDuty" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "secure",
+      "topic": "AWS Trusted Advisor",
+      "difficulty": "easy",
+      "scenario": "Un arquitecto quiere revision automatica de best practices AWS en 5 categorias: cost optimization, performance, security, fault tolerance, service limits. Sin desplegar nada extra.",
+      "question": "Que servicio managed provee estos checks?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Trusted Advisor (los checks completos requieren Business/Enterprise Support plan)", "correct": true, "why": "Correcto. Trusted Advisor es el health check managed nativo. Basic/Developer plans acceden a subset limitado; Business/Enterprise desbloquean todos los checks (75+ incluyendo idle resources, underutilized EC2, cross-region backups, MFA on root, S3 permissions)." },
+        { "letter": "B", "text": "Config Rules", "correct": false, "why": "Cercano pero Config requiere configurar reglas explicitamente; Trusted Advisor da checks out-of-the-box." },
+        { "letter": "C", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty es threat detection, no best practices review." },
+        { "letter": "D", "text": "Compute Optimizer", "correct": false, "why": "Cercano solo para right-sizing (EC2/EBS/Lambda/ASG). Trusted Advisor cubre mas amplio." }
+      ],
+      "explanation": "AWS Trusted Advisor: 5 pillars (Cost, Performance, Security, Fault Tolerance, Service Limits). Checks free: 7 core (Security Groups Specific Ports, IAM Use, MFA on Root, Public Snapshots, Public S3 buckets, Service Limits, RDS Security Groups). Business/Enterprise: 75+ checks incluyendo idle load balancers, underutilized EC2, RDS reserved instances, cross-region backup, MFA delete on S3.",
+      "keywords": ["best practices", "checks nativos", "5 categorias"],
+      "services": ["Trusted Advisor"],
+      "references": [{ "title": "AWS Trusted Advisor" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "secure",
+      "topic": "CloudWatch Logs y metric filters para alerting",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere alerta inmediata cuando alguien intente login root en la cuenta management (evento raro y de alto riesgo).",
+      "question": "Como configurar alerta desde CloudTrail?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CloudTrail -> CloudWatch Logs con metric filter que matchee userIdentity.type=Root y eventName=ConsoleLogin, con CloudWatch Alarm que publique a SNS", "correct": true, "why": "Correcto. Patron clasico de alerting: CloudTrail feed a CloudWatch Logs, metric filter parsea eventos especificos, alarm dispara sobre count >0, SNS notifica email/SMS/Slack." },
+        { "letter": "B", "text": "Revisar logs manualmente", "correct": false, "why": "Incorrecto. No es tiempo real y no escala." },
+        { "letter": "C", "text": "EventBridge rule para CloudTrail ConsoleLogin", "correct": false, "why": "Cercano y valido alternativa (EventBridge patterns matchean CloudTrail events directamente). Para muchos escenarios simples de alerting, EventBridge -> SNS es incluso mas directo que metric filters." },
+        { "letter": "D", "text": "GuardDuty", "correct": false, "why": "Cercano. GuardDuty tiene finding RootCredentialUsage pero es mas amplio; para evento login especifico un metric filter/EventBridge es directo." }
+      ],
+      "explanation": "Dos patrones para alerting desde CloudTrail: (1) CloudWatch Logs metric filter + Alarm + SNS (util para conteo/threshold), (2) EventBridge rule con pattern JSON directo desde CloudTrail events + target Lambda/SNS (mas ligero para eventos unicos). Ambos coexisten. CIS Benchmark recomienda 14 alarmas especificas (root login, IAM policy changes, disable CloudTrail, unauthorized API calls, etc.).",
+      "keywords": ["alerta root login", "CloudTrail", "metric filter"],
+      "services": ["CloudTrail", "CloudWatch Logs", "SNS", "EventBridge"],
+      "references": [{ "title": "Monitoring CloudTrail Log files with CloudWatch Logs" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "secure",
+      "topic": "AWS Artifact para compliance reports",
+      "difficulty": "easy",
+      "scenario": "Un cliente enterprise pide el SOC 2 Type II report de AWS, un ISO 27001 certificate y el PCI-DSS AOC (Attestation of Compliance) del ambiente AWS que soporta su servicio.",
+      "question": "Donde se descargan estos reports oficiales de compliance de AWS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Artifact (self-service portal con SOC, ISO, PCI, HIPAA, FedRAMP, GDPR docs)", "correct": true, "why": "Correcto. Artifact es el repositorio oficial de compliance reports y agreements de AWS. Descarga inmediata, NDA aceptable online, cubre docs para due diligence de clientes/auditores." },
+        { "letter": "B", "text": "Audit Manager", "correct": false, "why": "Cercano pero Audit Manager recolecta TU evidencia de compliance, no descarga los reports de AWS." },
+        { "letter": "C", "text": "Support case a AWS", "correct": false, "why": "Incorrecto. Innecesario; Artifact es self-service." },
+        { "letter": "D", "text": "Config Conformance Packs", "correct": false, "why": "Incorrecto. Config evalua tu compliance, no descarga reports AWS." }
+      ],
+      "explanation": "AWS Artifact: portal de compliance reports y agreements. Documentos: SOC 1/2/3, ISO 27001/27017/27018, PCI-DSS AOC/ROC, HIPAA BAA, FedRAMP, C5 (Alemania), IRAP (Australia), CIS, entre otros. Agreements: BAA (HIPAA), NDA. Es lo que muestras a tus auditores para atestar la parte de responsabilidad de AWS del shared responsibility model.",
+      "keywords": ["compliance reports", "SOC 2", "descargar oficial"],
+      "services": ["Artifact"],
+      "references": [{ "title": "AWS Artifact" }]
+    }
+  ]
+}

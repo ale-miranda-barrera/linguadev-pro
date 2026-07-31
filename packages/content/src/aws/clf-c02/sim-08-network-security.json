@@ -1,0 +1,202 @@
+{
+  "id": "clf-c02-sim-08-network-security",
+  "certId": "clf-c02",
+  "order": 8,
+  "title": "Simulacro 08 — Seguridad de red: SG, NACL, WAF, Shield, Firewall Manager",
+  "focus": "Dominio 2 — Security Groups vs NACLs, WAF, Shield Standard/Advanced, Network Firewall, Firewall Manager.",
+  "domainCoverage": ["security"],
+  "timeLimitMin": 18,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "security",
+      "topic": "Security Groups vs NACLs",
+      "difficulty": "medium",
+      "scenario": "Un ingeniero debe elegir la capa correcta: (A) permitir tráfico HTTPS solo a un ALB de instancias EC2 específicas, (B) bloquear una IP maliciosa específica que ataca toda la subred.",
+      "question": "¿Qué usa en cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Security Group (nivel ENI, stateful, solo allow). (B) NACL (nivel subred, stateless, permite deny)", "correct": true, "why": "Correcto. SG = firewall stateful a nivel de instancia/ENI, solo reglas allow. NACL = firewall stateless a nivel de subred, permite reglas deny (útil para bloquear una IP específica)." },
+        { "letter": "B", "text": "Ambos con NACL", "correct": false, "why": "Parcial. Podrías, pero NACL para permitir HTTPS al ALB es más engorroso (stateless requiere reglas de ida y vuelta con puertos efímeros)." },
+        { "letter": "C", "text": "Ambos con Security Group", "correct": false, "why": "Incorrecto. SGs NO permiten reglas deny; no puedes bloquear una IP con SG." },
+        { "letter": "D", "text": "AWS WAF para ambos", "correct": false, "why": "Incorrecto. WAF opera en capa 7 (HTTP), no bloquea a nivel IP en la subred de forma general." }
+      ],
+      "explanation": "SG vs NACL: SG=stateful (respuestas permitidas auto), solo allow, nivel ENI, evaluación ALL rules. NACL=stateless (define in/out), allow y deny, nivel subred, evaluación por número de regla (ascendente). Regla mnemotécnica: SG=instancia, NACL=subred. Para bloquear IPs específicas → NACL o WAF (según capa).",
+      "keywords": ["stateful vs stateless", "allow only", "deny IP", "subnet vs instance"],
+      "services": ["Security Groups", "NACL", "VPC"],
+      "references": [{ "title": "SG vs NACL" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "security",
+      "topic": "AWS WAF",
+      "difficulty": "easy",
+      "scenario": "Un e-commerce sufre ataques de SQL injection y bots que scraping precios. El tráfico llega a un ALB. Quieren filtrar solicitudes maliciosas en capa 7 sin modificar la app.",
+      "question": "¿Qué servicio usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS WAF", "correct": true, "why": "Correcto. WAF opera en capa 7 (HTTP/HTTPS). Se asocia a CloudFront, ALB, API Gateway, AppSync. Provee reglas managed (SQLi, XSS, bots, AWS Managed Rules) y custom (IP sets, geo, rate-based)." },
+        { "letter": "B", "text": "AWS Shield Standard", "correct": false, "why": "Cercano. Shield Standard protege DDoS L3/L4 gratis, no filtra L7 (SQLi/XSS)." },
+        { "letter": "C", "text": "Security Groups", "correct": false, "why": "Incorrecto. SGs son capa 3/4 (IP/puerto), no inspeccionan payload HTTP." },
+        { "letter": "D", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas, no filtra tráfico entrante." }
+      ],
+      "explanation": "AWS WAF = Web Application Firewall L7. Tipos de reglas: (1) Managed Rules by AWS/Marketplace (SQLi, XSS, OWASP Top 10, bots), (2) IP sets, (3) Geo-blocking, (4) Rate-based (protección contra brute force), (5) Body/header/URI matching. Se asocia a CloudFront (global), ALB, API Gateway, AppSync, Cognito.",
+      "keywords": ["SQL injection", "capa 7", "ALB", "bots"],
+      "services": ["WAF", "ALB", "CloudFront"],
+      "references": [{ "title": "AWS WAF" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "security",
+      "topic": "AWS Shield",
+      "difficulty": "medium",
+      "scenario": "Una empresa de streaming sufre un DDoS masivo (500 Gbps, UDP amplification) contra su CloudFront. Ya tiene Shield Standard gratis. Quieren respuesta 24/7 de expertos de AWS y protección financiera contra escalado por el ataque.",
+      "question": "¿Qué opción cumple?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Shield Advanced", "correct": true, "why": "Correcto. Shield Advanced ($3000/mes/org): protección DDoS L3/L4/L7 mejorada, acceso al Shield Response Team (SRT) 24/7, cost protection para escalado por DDoS, dashboards y visibility, integración con WAF sin costo extra." },
+        { "letter": "B", "text": "Shield Standard basta", "correct": false, "why": "Incorrecto. Standard es automático y gratis pero no incluye SRT ni cost protection." },
+        { "letter": "C", "text": "Solo aumentar el rate limit en WAF", "correct": false, "why": "Cercano. Ayuda a L7, no a UDP amplification L3/L4." },
+        { "letter": "D", "text": "Cambiar de región", "correct": false, "why": "Incorrecto. El DDoS te seguiría; no es solución." }
+      ],
+      "explanation": "Shield Standard = gratis, automático, protege contra DDoS comunes L3/L4 en CloudFront/Route 53/ALB/etc. Shield Advanced = $3000/mes por organización, agrega: SRT 24/7, protecciones avanzadas L3/L4/L7, cost protection para escalado provocado por DDoS, WAF incluido, Global Accelerator protection.",
+      "keywords": ["DDoS masivo", "SRT", "cost protection", "24/7"],
+      "services": ["Shield Advanced", "CloudFront", "WAF"],
+      "references": [{ "title": "AWS Shield" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "security",
+      "topic": "SG stateful behavior",
+      "difficulty": "medium",
+      "scenario": "Un desarrollador configura un Security Group que permite HTTPS entrante (443) pero NO configura reglas de salida. Se sorprende cuando la app responde correctamente al cliente.",
+      "question": "¿Por qué funciona?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los Security Groups son stateful: la respuesta a una conexión permitida se permite automáticamente", "correct": true, "why": "Correcto. SG=stateful. Si entra una request, la respuesta sale sin necesidad de regla explícita. Además, el SG default outbound es allow all." },
+        { "letter": "B", "text": "AWS bypassa el SG automáticamente para HTTPS", "correct": false, "why": "Incorrecto. AWS no bypassa reglas." },
+        { "letter": "C", "text": "Es un bug", "correct": false, "why": "Incorrecto. Es comportamiento diseñado." },
+        { "letter": "D", "text": "Los NACLs lo permiten", "correct": false, "why": "Cercano. Sí ayudan las NACLs (default allow), pero la razón principal es que SG es stateful." }
+      ],
+      "explanation": "Stateful (SG) = trackea conexiones establecidas; el retorno se permite auto. Stateless (NACL) = evalúa cada paquete de forma independiente; necesitas reglas explícitas in/out incluyendo puertos efímeros (1024-65535). Nota adicional: SG default = allow all outbound, deny all inbound.",
+      "keywords": ["stateful", "response allowed automatically"],
+      "services": ["Security Groups", "VPC"],
+      "references": [{ "title": "Security Groups Stateful" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "security",
+      "topic": "AWS Firewall Manager",
+      "difficulty": "hard",
+      "scenario": "Una empresa con 200 cuentas AWS en Organizations debe aplicar reglas de WAF, políticas de SG y Shield Advanced en todas las cuentas de forma centralizada, sin repetir configuración en cada cuenta.",
+      "question": "¿Qué servicio ayuda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Firewall Manager", "correct": true, "why": "Correcto. Firewall Manager permite gestionar centralmente en Organizations: WAF rules, Shield Advanced, SG policies, AWS Network Firewall, Route 53 Resolver DNS Firewall. Cambios se propagan automáticamente." },
+        { "letter": "B", "text": "AWS WAF en cada cuenta manualmente", "correct": false, "why": "Incorrecto. No escala a 200 cuentas." },
+        { "letter": "C", "text": "AWS Control Tower solo", "correct": false, "why": "Cercano. Control Tower gestiona landing zone y guardrails, pero para políticas de firewall específicas se usa Firewall Manager." },
+        { "letter": "D", "text": "AWS Config Rules", "correct": false, "why": "Cercano. Config evalúa compliance pero no aplica reglas de firewall directamente." }
+      ],
+      "explanation": "Firewall Manager (con Organizations obligatorio) = gestión centralizada de: AWS WAF, Shield Advanced, VPC Security Groups (auditar y remediar), AWS Network Firewall, Route 53 Resolver DNS Firewall, terceros (Palo Alto, Fortinet). Ideal para enterprise multi-cuenta.",
+      "keywords": ["multi-cuenta", "Organizations", "centralizado", "WAF SG Shield"],
+      "services": ["Firewall Manager", "Organizations", "WAF", "Shield"],
+      "references": [{ "title": "AWS Firewall Manager" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "security",
+      "topic": "AWS Network Firewall",
+      "difficulty": "hard",
+      "scenario": "Un equipo necesita filtrado profundo de tráfico en la VPC: inspección stateful, IDS/IPS con reglas Suricata, filtrado por dominio saliente, aplicado a todo el tráfico entre subnets y hacia internet.",
+      "question": "¿Qué servicio managed provee esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Network Firewall", "correct": true, "why": "Correcto. Network Firewall = firewall managed L3-L7 para VPC. Stateful/stateless, reglas Suricata compatibles, IDS/IPS, filtrado por FQDN, deep packet inspection. Se despliega en una subred dedicada de firewall." },
+        { "letter": "B", "text": "AWS WAF", "correct": false, "why": "Cercano. WAF es solo para HTTP/HTTPS en front (ALB/CloudFront/APIGW), no filtra tráfico este-oeste en VPC ni tráfico egress general." },
+        { "letter": "C", "text": "Security Groups + NACL", "correct": false, "why": "Cercano. Filtran L3/L4 pero no dan inspección profunda ni IDS/IPS ni filtrado FQDN." },
+        { "letter": "D", "text": "AWS Shield", "correct": false, "why": "Incorrecto. Shield es DDoS." }
+      ],
+      "explanation": "AWS Network Firewall: managed, deep packet inspection, reglas Suricata, IDS/IPS, filtrado por dominio, ideal para tráfico este-oeste en VPC, egress control y compliance. Se posiciona entre subnets. Complementa (no reemplaza) SGs y NACLs. Alternativa DIY: appliance de terceros en EC2 (Palo Alto, Fortinet).",
+      "keywords": ["IDS/IPS", "Suricata", "FQDN filtering", "deep packet inspection"],
+      "services": ["Network Firewall", "VPC"],
+      "references": [{ "title": "AWS Network Firewall" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "security",
+      "topic": "Rate-based rules WAF",
+      "difficulty": "medium",
+      "scenario": "Una API pública sufre brute-force en el endpoint /login: miles de intentos por IP en minutos. Quieren limitar la cadencia por IP sin bloquear tráfico legítimo permanentemente.",
+      "question": "¿Qué feature de WAF usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rate-based rule en WAF (ej. bloquear IP >100 req/5min sobre /login)", "correct": true, "why": "Correcto. Rate-based rule cuenta requests por IP en ventana de 5 min y bloquea temporalmente al superar el umbral. Perfecto para brute-force y credential stuffing." },
+        { "letter": "B", "text": "Bloquear la IP manualmente cada vez con NACL", "correct": false, "why": "Incorrecto. Reactivo, no escalable, y el atacante rota IPs." },
+        { "letter": "C", "text": "Shield Standard", "correct": false, "why": "Cercano. Shield es DDoS, no brute-force en login." },
+        { "letter": "D", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas pero no bloquea tráfico." }
+      ],
+      "explanation": "WAF rate-based rules: umbral configurable en ventana de 1-5 min, por IP (o por header/URI). Actions: block, count, captcha, challenge. Combinar con: AWS Managed Rules para OWASP Top 10, IP sets para IPs conocidas maliciosas, geo-blocking para países no operativos.",
+      "keywords": ["brute force", "rate limiting", "login endpoint"],
+      "services": ["WAF", "ALB", "API Gateway"],
+      "references": [{ "title": "WAF Rate-based Rules" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "security",
+      "topic": "SG references",
+      "difficulty": "medium",
+      "scenario": "Una app tiene dos tiers: ALB (SG-ALB) y EC2 backend (SG-EC2). Quieren permitir que SOLO el ALB hable con las EC2 en el puerto 8080, sin mantener listas de IPs privadas que cambian con Auto Scaling.",
+      "question": "¿Cómo se configura?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En SG-EC2, regla inbound 8080 con source = SG-ALB (referencia de SG)", "correct": true, "why": "Correcto. Puedes usar el ID de otro SG como source. Cualquier instancia con SG-ALB podrá conectarse al puerto 8080 sin importar su IP. Ideal para Auto Scaling y arquitecturas dinámicas." },
+        { "letter": "B", "text": "Listar las IPs privadas de todas las EC2 en el SG", "correct": false, "why": "Incorrecto. No escala con Auto Scaling; IPs cambian." },
+        { "letter": "C", "text": "Poner 0.0.0.0/0", "correct": false, "why": "Incorrecto. Abre a todo el mundo, violando least privilege." },
+        { "letter": "D", "text": "Usar solo NACL", "correct": false, "why": "Incorrecto. NACLs no soportan referencias a SGs." }
+      ],
+      "explanation": "SG referencing: fuentes válidas para reglas SG son (1) CIDR, (2) otro SG ID (misma VPC o peered), (3) prefix list. Referenciar SGs es la best practice en arquitecturas multi-tier con Auto Scaling. NACLs solo aceptan CIDR.",
+      "keywords": ["referencia de SG", "auto scaling", "tiers"],
+      "services": ["Security Groups", "EC2", "ALB"],
+      "references": [{ "title": "Security Group Referencing" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "security",
+      "topic": "Shield Standard vs Advanced",
+      "difficulty": "easy",
+      "scenario": "Una startup pregunta si necesita pagar por Shield Advanced para tener protección DDoS básica en su CloudFront y ALB.",
+      "question": "¿Qué respondes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Shield Standard es automático y gratis para todos los clientes AWS, protege contra los DDoS L3/L4 más comunes", "correct": true, "why": "Correcto. Shield Standard es always-on, sin costo, para todos los clientes. Protege contra SYN floods, UDP reflection, etc. Shield Advanced solo si necesitas SRT, cost protection o L7 avanzado." },
+        { "letter": "B", "text": "Hay que pagar Shield Advanced para cualquier protección DDoS", "correct": false, "why": "Incorrecto. Standard es gratis por defecto." },
+        { "letter": "C", "text": "AWS no ofrece protección DDoS", "correct": false, "why": "Incorrecto. Sí ofrece via Shield." },
+        { "letter": "D", "text": "Solo con WAF hay protección DDoS", "correct": false, "why": "Cercano. WAF ayuda contra DDoS L7 pero Shield es el servicio primario DDoS." }
+      ],
+      "explanation": "Shield Standard = gratis, automático, DDoS L3/L4 comunes. Shield Advanced = $3000/mes/org, agrega SRT 24/7, cost protection, WAF incluido, protecciones L7 avanzadas, dashboards. Decisión: startup → Standard suele bastar. Media/grande con SLA crítico → Advanced.",
+      "keywords": ["Shield gratis", "protección DDoS default"],
+      "services": ["Shield", "CloudFront", "ALB"],
+      "references": [{ "title": "AWS Shield Standard" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "security",
+      "topic": "VPC Flow Logs",
+      "difficulty": "medium",
+      "scenario": "Un incidente de red requiere entender qué IPs se comunicaron con una EC2 comprometida en las últimas 24h, con qué puertos y si el tráfico fue aceptado o rechazado.",
+      "question": "¿Qué herramienta captura esa información?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "VPC Flow Logs (a CloudWatch Logs o S3)", "correct": true, "why": "Correcto. VPC Flow Logs capturan metadata de tráfico IP en VPC/subnet/ENI: source/dest IP, ports, protocol, ACCEPT/REJECT, bytes. Se analizan con Athena o CloudWatch Logs Insights." },
+        { "letter": "B", "text": "CloudTrail", "correct": false, "why": "Incorrecto. CloudTrail = API calls, no tráfico de red." },
+        { "letter": "C", "text": "Security Group logs", "correct": false, "why": "Incorrecto. Los SGs no generan logs por sí mismos; los flujos se ven en VPC Flow Logs." },
+        { "letter": "D", "text": "AWS Config", "correct": false, "why": "Incorrecto. Config es estado de configuración, no flujos." }
+      ],
+      "explanation": "VPC Flow Logs: metadata de flujos IP (no payload). Niveles: VPC, subnet, ENI. Destinos: CloudWatch Logs, S3, Kinesis Data Firehose. Contenido default: srcaddr, dstaddr, srcport, dstport, protocol, packets, bytes, action (ACCEPT/REJECT). Analiza con Athena, CloudWatch Logs Insights o alimenta GuardDuty/Detective.",
+      "keywords": ["flujos IP", "ACCEPT REJECT", "quién habló con quién"],
+      "services": ["VPC Flow Logs", "CloudWatch", "S3"],
+      "references": [{ "title": "VPC Flow Logs" }]
+    }
+  ]
+}

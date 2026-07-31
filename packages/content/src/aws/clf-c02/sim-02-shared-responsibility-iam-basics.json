@@ -1,0 +1,204 @@
+{
+  "id": "clf-c02-sim-02-shared-responsibility-iam-basics",
+  "certId": "clf-c02",
+  "order": 2,
+  "title": "Simulacro 02 — Modelo de Responsabilidad Compartida + IAM básico",
+  "focus": "Dominio 1 & 2 — Quién es responsable de qué en AWS y fundamentos de IAM (usuarios, root, MFA, políticas).",
+  "domainCoverage": ["concepts", "security"],
+  "timeLimitMin": 18,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "security",
+      "topic": "Shared Responsibility Model",
+      "difficulty": "easy",
+      "scenario": "Una empresa que acaba de migrar a AWS se pregunta quién es responsable de aplicar parches al sistema operativo de sus instancias EC2 y quién de la seguridad del hipervisor donde corren.",
+      "question": "Según el modelo de responsabilidad compartida, ¿quién es responsable de cada capa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS es responsable del hipervisor y del SO invitado", "correct": false, "why": "Incorrecto. AWS gestiona el hipervisor, pero el SO invitado (guest OS) de una EC2 es responsabilidad DEL CLIENTE." },
+        { "letter": "B", "text": "El cliente parchea el SO invitado; AWS gestiona el hipervisor y el hardware", "correct": true, "why": "Correcto. En IaaS como EC2, AWS = 'security OF the cloud' (hipervisor, hardware, red física, DCs). Cliente = 'security IN the cloud' (SO, apps, datos, IAM, Security Groups)." },
+        { "letter": "C", "text": "AWS gestiona todo; el cliente solo consume el servicio", "correct": false, "why": "Incorrecto. Eso aplicaría a un SaaS puro, no a EC2 (IaaS)." },
+        { "letter": "D", "text": "El cliente gestiona todo, incluido el hardware", "correct": false, "why": "Incorrecto. El cliente nunca gestiona hardware físico en AWS (excepto Outposts donde AWS igual lo entrega y opera)." }
+      ],
+      "explanation": "Regla mnemotécnica: AWS = 'security OF the cloud' (todo lo físico + capas base). Cliente = 'security IN the cloud' (todo lo que tú configuras encima). Para EC2 (IaaS), el cliente parchea el SO. Para RDS/Lambda (managed), AWS parchea el SO y el motor; el cliente sigue siendo responsable de datos, permisos y config de red.",
+      "keywords": ["parches", "hipervisor", "SO invitado", "EC2"],
+      "services": ["EC2"],
+      "references": [{ "title": "AWS Shared Responsibility Model" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "security",
+      "topic": "Shared Responsibility con servicios managed",
+      "difficulty": "medium",
+      "scenario": "Un DBA usa Amazon RDS para MySQL. Pregunta si debe planear ventanas de mantenimiento para parchar el sistema operativo de la base de datos y el motor MySQL.",
+      "question": "¿De qué es responsable el cliente vs AWS en RDS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El cliente parcha SO y motor; AWS solo provee hardware", "correct": false, "why": "Incorrecto. En RDS AWS gestiona SO Y motor. Es la ventaja de un servicio managed." },
+        { "letter": "B", "text": "AWS parcha SO y motor; el cliente gestiona esquema, usuarios de BD, permisos, cifrado, configuración de red y backups adicionales", "correct": true, "why": "Correcto. En managed services (RDS, ElastiCache, etc.) AWS opera SO y motor. El cliente sigue responsable de datos, credenciales de BD, IAM, security groups y cifrado activado." },
+        { "letter": "C", "text": "AWS es responsable de todo, incluidos los datos", "correct": false, "why": "Incorrecto. Los DATOS son SIEMPRE responsabilidad del cliente en cualquier servicio AWS." },
+        { "letter": "D", "text": "Nadie es responsable; RDS es autónomo", "correct": false, "why": "Incorrecto. Siempre hay responsabilidad compartida." }
+      ],
+      "explanation": "La responsabilidad se desplaza hacia AWS conforme el servicio es más managed: EC2 (cliente parcha SO) → RDS (AWS parcha SO+motor) → Lambda (AWS gestiona todo el runtime) → SaaS (AWS gestiona la app entera). En TODOS los casos el CLIENTE es responsable de: (1) sus datos, (2) IAM, (3) config de red que él controla, (4) cifrado del lado del cliente si lo requiere.",
+      "keywords": ["RDS", "managed service", "parches motor"],
+      "services": ["RDS"],
+      "references": [{ "title": "Shared Responsibility - Managed Services" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "security",
+      "topic": "Responsabilidad cliente",
+      "difficulty": "easy",
+      "scenario": "Un auditor pregunta qué elementos son SIEMPRE responsabilidad del cliente en cualquier servicio AWS, sin importar si es IaaS, PaaS o SaaS.",
+      "question": "Selecciona los DOS elementos que SIEMPRE son responsabilidad del cliente. (Selecciona 2)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Los datos del cliente y su clasificación", "correct": true, "why": "Correcto. Los datos son SIEMPRE del cliente y su responsabilidad, sin importar el servicio." },
+        { "letter": "B", "text": "La gestión de identidades y accesos (IAM)", "correct": true, "why": "Correcto. Los usuarios, roles, permisos y MFA son siempre del cliente." },
+        { "letter": "C", "text": "La seguridad física del datacenter", "correct": false, "why": "Incorrecto. Siempre es AWS quien opera el datacenter físico." },
+        { "letter": "D", "text": "Mantener la red global de fibra óptica de AWS", "correct": false, "why": "Incorrecto. Esa es la infraestructura AWS ('of the cloud')." },
+        { "letter": "E", "text": "La virtualización y el hipervisor", "correct": false, "why": "Incorrecto. AWS gestiona el hipervisor en todos los servicios." }
+      ],
+      "explanation": "Independientemente del modelo (IaaS/PaaS/SaaS), estas cuatro cosas SIEMPRE son del cliente: (1) DATOS, (2) IAM/accesos, (3) CLASIFICACIÓN de datos, (4) uso responsable. Todo lo que sea físico o global es de AWS.",
+      "keywords": ["siempre del cliente", "datos", "IAM"],
+      "services": ["IAM"],
+      "references": [{ "title": "Shared Responsibility Model" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "security",
+      "topic": "IAM Users vs Groups",
+      "difficulty": "easy",
+      "scenario": "Una empresa tiene 40 desarrolladores nuevos que necesitan los mismos permisos: acceso a S3, CloudWatch Logs y EC2 en un ambiente de dev. El administrador no quiere crear y mantener políticas individualmente por usuario.",
+      "question": "¿Cuál es la mejor práctica en IAM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear una política y adjuntarla a cada uno de los 40 usuarios individualmente", "correct": false, "why": "Incorrecto. Es ineficiente y difícil de mantener. Cuando cambien los permisos hay que editar 40 usuarios." },
+        { "letter": "B", "text": "Crear un IAM Group 'Developers', adjuntar la política al grupo, y agregar a los 40 usuarios al grupo", "correct": true, "why": "Correcto. Los Groups son colecciones de usuarios; los permisos se gestionan en el grupo. Añadir/quitar usuarios al grupo hereda permisos automáticamente." },
+        { "letter": "C", "text": "Compartir la cuenta root con los 40 desarrolladores", "correct": false, "why": "Incorrecto. La cuenta root JAMÁS debe compartirse. Es la peor práctica de seguridad posible." },
+        { "letter": "D", "text": "Crear 40 roles IAM y que asuman roles", "correct": false, "why": "Roles se usan para servicios AWS o federación, no para usuarios humanos individuales que ya tienen credenciales." }
+      ],
+      "explanation": "Users = identidad individual con credenciales. Groups = colección de users; hereda políticas. Roles = identidad temporal, asumible, sin credenciales permanentes (para servicios AWS, federación o cross-account). Best practice: users al grupo, políticas al grupo.",
+      "keywords": ["mismos permisos", "40 usuarios", "grupo"],
+      "services": ["IAM"],
+      "references": [{ "title": "IAM Best Practices" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "security",
+      "topic": "Root Account Best Practices",
+      "difficulty": "easy",
+      "scenario": "Un ingeniero recién contratado recibe las credenciales de la cuenta root para 'poder trabajar rápido'. El CISO se entera y suspende la práctica.",
+      "question": "¿Cuáles son buenas prácticas para la cuenta root? (Selecciona 2)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Habilitar MFA en la cuenta root", "correct": true, "why": "Correcto. Root debe SIEMPRE tener MFA, idealmente hardware." },
+        { "letter": "B", "text": "Usar la cuenta root solo para tareas que la requieran explícitamente y crear usuarios IAM para el uso diario", "correct": true, "why": "Correcto. Root tiene acceso ilimitado; su uso debe ser excepcional (crear la primera cuenta, cambiar plan de soporte, cerrar cuenta)." },
+        { "letter": "C", "text": "Compartir root con todos los admins para redundancia", "correct": false, "why": "Incorrecto. Nunca compartas root; es responsabilidad indelegable." },
+        { "letter": "D", "text": "Guardar la contraseña de root en un post-it físico", "correct": false, "why": "Incorrecto. Práctica insegura." },
+        { "letter": "E", "text": "Crear access keys programáticas de root", "correct": false, "why": "Incorrecto. AWS lo desaconseja explícitamente; elimina cualquier access key de root existente." }
+      ],
+      "explanation": "Root = usuario dueño de la cuenta AWS. Puede hacer todo, incluso cosas que un admin normal no puede (cambiar plan soporte, cerrar cuenta, cambiar email). Reglas: (1) MFA obligatorio, (2) sin access keys, (3) usar sólo para tareas específicas, (4) contraseña larga en gestor de contraseñas.",
+      "keywords": ["root", "MFA", "no usar diariamente"],
+      "services": ["IAM"],
+      "references": [{ "title": "AWS Root User Best Practices" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "security",
+      "topic": "IAM Roles",
+      "difficulty": "medium",
+      "scenario": "Un desarrollador tiene una función Lambda que necesita leer objetos de un bucket S3 y escribir en una tabla DynamoDB. Está pensando en hardcodear un access key y secret key en el código.",
+      "question": "¿Qué debería hacer en su lugar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear un usuario IAM, generar access keys y guardarlas en el código de Lambda", "correct": false, "why": "Incorrecto. Hardcodear credenciales es una malísima práctica: se filtran, no rotan, quedan en git." },
+        { "letter": "B", "text": "Asignar un IAM Role a la función Lambda con permisos sobre S3 y DynamoDB", "correct": true, "why": "Correcto. Los servicios AWS asumen roles automáticamente. Lambda recibe credenciales temporales rotadas por AWS. Sin secretos en código." },
+        { "letter": "C", "text": "Usar la cuenta root para máxima simplicidad", "correct": false, "why": "Incorrecto. Nunca usar root para operar workloads." },
+        { "letter": "D", "text": "Habilitar acceso público a S3 y DynamoDB", "correct": false, "why": "Incorrecto. Rompe la seguridad y no es necesario." }
+      ],
+      "explanation": "IAM Roles = identidad AWS SIN credenciales permanentes que puede ser asumida por servicios AWS (EC2, Lambda), usuarios de otras cuentas o usuarios federados. Genera credenciales temporales vía STS. Regla: NUNCA hardcodees keys. Siempre usa roles.",
+      "keywords": ["Lambda accede S3", "sin hardcodear", "role"],
+      "services": ["IAM", "Lambda", "S3", "DynamoDB"],
+      "references": [{ "title": "IAM Roles for AWS Services" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "security",
+      "topic": "IAM Policies",
+      "difficulty": "medium",
+      "scenario": "Un administrador crea una política IAM que permite s3:GetObject en un bucket. También tiene otra política adjunta al mismo usuario que hace explicit Deny sobre s3:GetObject.",
+      "question": "¿Qué pasa cuando el usuario intenta descargar un objeto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Se permite; el Allow gana", "correct": false, "why": "Incorrecto. En IAM, un explicit Deny SIEMPRE gana sobre un Allow." },
+        { "letter": "B", "text": "Se deniega; explicit Deny siempre gana", "correct": true, "why": "Correcto. Lógica IAM: (1) por defecto todo denegado, (2) explicit Allow permite, (3) explicit Deny bloquea sin importar cuántos Allows haya." },
+        { "letter": "C", "text": "Se cancela la política más nueva", "correct": false, "why": "Incorrecto. No hay ordenamiento por fecha." },
+        { "letter": "D", "text": "Depende del rol de la sesión", "correct": false, "why": "Incorrecto. Deny explícito siempre gana, independiente de rol/sesión." }
+      ],
+      "explanation": "Evaluación IAM: (1) Deny por defecto → (2) evalúa TODAS las políticas aplicables (usuario, grupo, role, SCP, resource) → (3) si HAY explicit Deny en cualquiera, DENY final → (4) si NO hay Deny y HAY Allow, ALLOW → (5) si no hay ni Allow ni Deny, DENY. Regla: 'Explicit Deny beats everything'.",
+      "keywords": ["deny explícito", "allow", "evaluación de políticas"],
+      "services": ["IAM"],
+      "references": [{ "title": "IAM Policy Evaluation Logic" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "security",
+      "topic": "MFA",
+      "difficulty": "easy",
+      "scenario": "Un CISO quiere reducir el riesgo de que una contraseña filtrada resulte en un acceso no autorizado a la consola AWS.",
+      "question": "¿Cuál es la primera medida a implementar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar Multi-Factor Authentication (MFA) para todos los usuarios IAM y root", "correct": true, "why": "Correcto. MFA añade un segundo factor (código temporal, hardware, biométrico). Aunque se filtre la contraseña, atacante no puede entrar sin el 2º factor." },
+        { "letter": "B", "text": "Cambiar todas las contraseñas a longitud 6 caracteres", "correct": false, "why": "Incorrecto. Contraseñas más cortas son MENOS seguras. AWS exige mínimo 8." },
+        { "letter": "C", "text": "Habilitar cifrado de EBS", "correct": false, "why": "Incorrecto. El cifrado de EBS protege datos en reposo, no accesos a la consola." },
+        { "letter": "D", "text": "Comprar AWS Shield Advanced", "correct": false, "why": "Incorrecto. Shield es contra DDoS, no contra credenciales comprometidas." }
+      ],
+      "explanation": "MFA es una defensa de identidad. Formas soportadas: (1) Virtual MFA (Google Authenticator, Authy), (2) U2F/FIDO2 hardware keys (YubiKey), (3) hardware TOTP. AWS ahora obliga MFA para root en cuentas nuevas. Adicionalmente, IAM Access Analyzer, políticas fuertes de contraseña y rotación son medidas complementarias.",
+      "keywords": ["contraseña filtrada", "segundo factor", "MFA"],
+      "services": ["IAM"],
+      "references": [{ "title": "AWS MFA" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "security",
+      "topic": "Cross-account roles",
+      "difficulty": "hard",
+      "scenario": "La empresa A quiere permitir que auditores externos de la empresa B accedan a ciertos logs de CloudTrail en su cuenta AWS, sin crear usuarios IAM permanentes ni compartir credenciales.",
+      "question": "¿Cuál es el mecanismo correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear un IAM User en la cuenta A con permisos de lectura y enviar las credenciales a la empresa B", "correct": false, "why": "Incorrecto. Compartir credenciales es una mala práctica; expiran mal, no se auditan bien y crean riesgo." },
+        { "letter": "B", "text": "Crear un IAM Role en la cuenta A que confíe en la cuenta B; los usuarios de B lo asumen vía STS AssumeRole", "correct": true, "why": "Correcto. Cross-account role = mecanismo estándar para delegar acceso entre cuentas AWS sin credenciales compartidas." },
+        { "letter": "C", "text": "Hacer los buckets de logs públicos", "correct": false, "why": "Incorrecto. Rompe seguridad, expone a todo internet." },
+        { "letter": "D", "text": "Usar la cuenta root", "correct": false, "why": "Incorrecto. Root nunca debe compartirse ni asumirse." }
+      ],
+      "explanation": "Cross-account access pattern: (1) En cuenta destino (A), creas un Role con trust policy que confía en la cuenta B (o en un usuario específico de B), (2) users/roles de B invocan sts:AssumeRole, (3) reciben credenciales temporales para operar en A. Beneficios: sin credenciales compartidas, auditoría por usuario original en CloudTrail.",
+      "keywords": ["cross-account", "auditor externo", "sin credenciales"],
+      "services": ["IAM", "STS", "CloudTrail"],
+      "references": [{ "title": "IAM Cross-Account Access" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "security",
+      "topic": "AWS Managed vs Customer Managed Policies",
+      "difficulty": "medium",
+      "scenario": "Una empresa quiere dar permisos de lectura sobre todos los buckets S3 a un grupo de auditoría. Prefieren no reinventar la rueda ni mantener JSON manualmente.",
+      "question": "¿Qué opción es más eficiente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Adjuntar la política AWS-managed 'AmazonS3ReadOnlyAccess'", "correct": true, "why": "Correcto. AWS mantiene políticas pre-hechas para casos comunes: ReadOnlyAccess, PowerUserAccess, AmazonS3ReadOnlyAccess, etc. AWS las actualiza cuando salen nuevas APIs." },
+        { "letter": "B", "text": "Escribir una política customer-managed con permisos específicos", "correct": false, "why": "Válido pero más trabajo. Se justifica si necesitas granularidad específica que AWS-managed no cubre." },
+        { "letter": "C", "text": "Adjuntar una inline policy directamente al grupo", "correct": false, "why": "Cercano. Inline policies son válidas pero no reusables entre entidades. Peor para gobernanza." },
+        { "letter": "D", "text": "Dar acceso root de solo lectura", "correct": false, "why": "Incorrecto. Root no se comparte y no tiene modo 'solo lectura'." }
+      ],
+      "explanation": "Tipos de políticas: (1) AWS Managed = creadas y mantenidas por AWS, reusables, updates automáticos. (2) Customer Managed = tu creas y mantienes, reusables entre entidades. (3) Inline = ligadas 1:1 a una entidad, no reusables (útil para excepciones puntuales). Best practice: empieza con AWS managed, sube a customer managed cuando necesites granularidad.",
+      "keywords": ["AWS-managed policy", "no reinventar", "AmazonS3ReadOnlyAccess"],
+      "services": ["IAM", "S3"],
+      "references": [{ "title": "IAM Managed Policies" }]
+    }
+  ]
+}

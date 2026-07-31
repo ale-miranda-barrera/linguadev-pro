@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-09-serverless-resilience",
+  "certId": "saa-c03",
+  "order": 9,
+  "title": "Simulacro 09 — Serverless resilience: Lambda destinations, SQS DLQ, EventBridge retries, Step Functions",
+  "focus": "Dominio 2 — Design Resilient Architectures (26%). Patrones de resiliencia en arquitecturas serverless y event-driven.",
+  "domainCoverage": ["resilient"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "resilient",
+      "topic": "SQS Dead Letter Queue",
+      "difficulty": "easy",
+      "scenario": "Un consumer Lambda procesa mensajes SQS. Un bug reciente hace que ciertos mensajes causen excepcion y se reintentan infinitamente, bloqueando la queue con el mismo mensaje 'poison pill'.",
+      "question": "Que patron AWS resuelve el poison pill problem?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Configurar Dead Letter Queue (DLQ) en la queue principal con maxReceiveCount (por ejemplo 3), tras 3 fallos el mensaje va al DLQ para inspeccion manual/procesamiento distinto", "correct": true, "why": "Correcto. DLQ es el patron canonico para poison pills: tras N intentos fallidos, el mensaje se mueve a la DLQ, desbloqueando la queue principal. La DLQ puede monitorearse con CloudWatch alarms, procesarse por otro consumer o inspeccionarse manualmente." },
+        { "letter": "B", "text": "Aumentar el visibility timeout", "correct": false, "why": "Incorrecto. Solo prolonga el bloqueo; el mensaje sigue siendo re-procesado tras el timeout." },
+        { "letter": "C", "text": "Eliminar la queue y recrearla", "correct": false, "why": "Incorrecto. Pierdes todos los mensajes legitimos pendientes." },
+        { "letter": "D", "text": "Bajar el maxReceiveCount a 0", "correct": false, "why": "Incorrecto. maxReceiveCount 0 no es valido; ademas queremos algunos retries." }
+      ],
+      "explanation": "DLQ pattern: SQS soporta redrive policy con targetArn (DLQ) y maxReceiveCount. Cuando un mensaje se ha recibido N veces sin ser eliminado (delete), SQS lo mueve al DLQ. Best practices: (1) alarms CloudWatch en DLQ ApproximateNumberOfMessages, (2) DLQ redrive (mover mensajes de vuelta tras fix), (3) NUNCA usar la DLQ como principal (misma queue como propia DLQ es antipattern). SNS y Lambda tambien soportan DLQ.",
+      "keywords": ["poison pill", "DLQ", "maxReceiveCount"],
+      "services": ["SQS", "Lambda", "CloudWatch"],
+      "references": [{ "title": "Amazon SQS dead-letter queues" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "resilient",
+      "topic": "Lambda destinations vs DLQ",
+      "difficulty": "medium",
+      "scenario": "Un equipo tiene una Lambda invocada async por S3 events. Quieren: (a) enviar los failed events a otro sistema para retry/inspeccion, (b) enviar los successful outputs a otro downstream service. Sin escribir codigo custom en la Lambda.",
+      "question": "Que feature Lambda cumple ambos objetivos declarativamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lambda Destinations con onSuccess (a SNS/SQS/EventBridge/Lambda) y onFailure (a otra queue), ambos configurables en la funcion sin escribir logica en el handler", "correct": true, "why": "Correcto. Lambda Destinations es superior al DLQ tradicional: separa success y failure, envia el payload con contexto completo (request, response, error), soporta 4 targets (SQS, SNS, EventBridge, Lambda). DLQ solo soporta failure y solo SQS/SNS." },
+        { "letter": "B", "text": "Solo DLQ SQS", "correct": false, "why": "Cercano pero solo captura failures y solo a SQS/SNS. No maneja success routing." },
+        { "letter": "C", "text": "Escribir logica en el handler que publique a otros servicios", "correct": false, "why": "Cercano funcional pero requiere codigo y maintenance. Destinations es declarativo." },
+        { "letter": "D", "text": "Configurar EventBridge rules", "correct": false, "why": "Cercano parcial. EventBridge captura eventos, pero Lambda Destinations es la manera integrada de enviar los outputs Lambda directamente." }
+      ],
+      "explanation": "Lambda Destinations (2019): configuracion declarativa para enrutar OnSuccess y OnFailure de invocaciones asincronas. Targets soportados: SQS queue, SNS topic, EventBridge event bus, Lambda function. Solo aplica a invocaciones asincronas (async invoke) o stream events. Ventajas sobre DLQ tradicional: incluye request context, permite success routing, mas targets. Retries async por default: 2 reintentos (configurable), luego destination.",
+      "keywords": ["success y failure", "destinations", "declarativo"],
+      "services": ["Lambda", "SQS", "SNS", "EventBridge"],
+      "references": [{ "title": "Lambda destinations" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "resilient",
+      "topic": "Step Functions vs choreography con EventBridge",
+      "difficulty": "hard",
+      "scenario": "Un proceso complejo tiene 15 pasos: validacion, pagos, reservas, notificaciones, con condiciones (if/else), paralelismo, retries por paso con backoff, y compensaciones (saga pattern). Actualmente lo hacen encadenando Lambdas con SQS entre ellas y es dificil observar el estado global.",
+      "question": "Que servicio simplifica orquestacion visual con estado managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Step Functions (orquestacion): define workflows JSON/ASL con Parallel, Choice, Retry, Catch, Map, integracion directa con 200+ servicios AWS sin escribir Lambdas glue", "correct": true, "why": "Correcto. Step Functions es el orquestador visual managed: workflows complejos con estado, retries por paso, error handling, saga (via Catch + compensating actions), visualizacion en tiempo real. Reduce Lambdas glue y mejora observabilidad." },
+        { "letter": "B", "text": "Mas Lambdas encadenadas con SQS (choreography)", "correct": false, "why": "Cercano pero es el problema actual: choreography es dificil de observar globalmente, cada Lambda debe manejar sus retries, saga se vuelve fragil. Orquestacion (Step Functions) centraliza la logica del flujo." },
+        { "letter": "C", "text": "EventBridge Pipes", "correct": false, "why": "Cercano parcial. Pipes es integracion point-to-point con filtering y enrichment; no orquesta workflows complejos con branching." },
+        { "letter": "D", "text": "SNS fan-out", "correct": false, "why": "Incorrecto. SNS es pub-sub, no orquesta secuencias con estado." }
+      ],
+      "explanation": "Orchestration vs Choreography: Orchestration = un orquestador central conoce el flujo (Step Functions). Choreography = cada servicio reacciona a eventos, sin central knowledge (EventBridge + Lambdas). Step Functions Standard: workflows largos (hasta 1 ano), pay-per-transition, exactly-once. Express: workflows cortos (max 5 min), pay-per-request + duration, at-least-once, ideal para streaming/high-volume. Step Functions Distributed Map: parallel iteration sobre millones de items.",
+      "keywords": ["orquestacion", "saga pattern", "15 pasos"],
+      "services": ["Step Functions", "Lambda"],
+      "references": [{ "title": "AWS Step Functions" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "resilient",
+      "topic": "EventBridge retries y archives",
+      "difficulty": "medium",
+      "scenario": "Una app usa EventBridge para propagar eventos entre servicios. Ocasionalmente un target Lambda esta caido y los eventos se pierden. Ademas, el equipo quiere replay historico de eventos para debug o para hidratar un nuevo consumer.",
+      "question": "Que features de EventBridge cubren estos requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Configurar retry policy y DLQ (target dead letter) por regla + habilitar Event Archive para replay de eventos historicos", "correct": true, "why": "Correcto. EventBridge tiene retry automatico con jitter/backoff, DLQ configurable por target, Event Archive para retener eventos y Replay para reprocessar rangos historicos. Combinacion completa de resiliencia y observabilidad." },
+        { "letter": "B", "text": "Solo aumentar timeout de la Lambda", "correct": false, "why": "Incorrecto. No captura eventos fallidos ni permite replay historico." },
+        { "letter": "C", "text": "Cambiar todo a SQS", "correct": false, "why": "Cercano pero SQS es pull-based, EventBridge es push-based con filtering y routing. Cambio de arquitectura no necesario." },
+        { "letter": "D", "text": "CloudTrail replay", "correct": false, "why": "Incorrecto. CloudTrail es audit, no replay de eventos custom de EventBridge." }
+      ],
+      "explanation": "EventBridge features de resiliencia: (1) Retry Policy por target (maxRetryAttempts, maxEventAge). (2) DLQ por target (SQS). (3) Event Archive: retiene eventos que matchean patron por N dias o indefinido. (4) Replay: reprocesa eventos archivados en un rango de tiempo hacia una regla especifica. (5) Schema Registry: valida payloads. Casos: retry transient failures, backfill de nuevo consumer, debugging post-mortem.",
+      "keywords": ["retry", "replay", "archive"],
+      "services": ["EventBridge", "SQS", "Lambda"],
+      "references": [{ "title": "EventBridge event archive and replay" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "resilient",
+      "topic": "SQS FIFO vs Standard",
+      "difficulty": "medium",
+      "scenario": "Una app procesa transacciones financieras donde el orden es critico (debitar antes de acreditar) y no puede haber duplicados. Actualmente usan SQS Standard y ocasionalmente ejecutan la misma transaccion dos veces.",
+      "question": "Que tipo de SQS resuelve orden y deduplicacion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SQS FIFO con MessageGroupId (garantiza orden dentro del grupo) y MessageDeduplicationId (deduplicacion 5 min)", "correct": true, "why": "Correcto. SQS FIFO garantiza exactly-once processing y order-preservation dentro de un MessageGroupId. Deduplication automatica en ventana de 5 min por MessageDeduplicationId. Trade-off: throughput menor (300 msg/s por MessageGroupId, 3000/s con high-throughput mode)." },
+        { "letter": "B", "text": "SQS Standard con codigo custom de deduplicacion", "correct": false, "why": "Cercano funcional pero complejo y no garantiza orden. FIFO lo resuelve nativamente." },
+        { "letter": "C", "text": "Kinesis Data Streams", "correct": false, "why": "Cercano y valida alternativa (Kinesis mantiene orden por shard) pero es cambio de tecnologia. Para queue simple con orden, FIFO es lo natural." },
+        { "letter": "D", "text": "SNS FIFO solo", "correct": false, "why": "Cercano pero SNS FIFO existe y publica a SQS FIFO (para fan-out). El core es SQS FIFO." }
+      ],
+      "explanation": "SQS Standard: at-least-once (duplicates posibles), best-effort ordering, throughput ilimitado. SQS FIFO: exactly-once (dedup 5 min), strict FIFO order per MessageGroupId, throughput hasta 300 msg/s (default) o 3000/s con high-throughput mode + batching. MessageGroupId agrupa mensajes que requieren orden entre si (por ejemplo, por userId). MessageDeduplicationId: token que SQS usa para detectar duplicates en 5 min window.",
+      "keywords": ["orden critico", "sin duplicados", "FIFO"],
+      "services": ["SQS FIFO", "SQS"],
+      "references": [{ "title": "Amazon SQS FIFO queues" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "resilient",
+      "topic": "Lambda concurrency y throttling",
+      "difficulty": "hard",
+      "scenario": "Una Lambda downstream de un API Gateway sufre throttles y errores 429 en picos. Ademas otras Lambdas en la misma cuenta agotan el concurrent execution limit (default 1000 por region), afectandolas indirectamente.",
+      "question": "Que configuraciones mitigan estos problemas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reserved Concurrency en la Lambda critica (asegura N slots dedicados y protege de starvation por otras Lambdas) + Provisioned Concurrency para eliminar cold starts en el pico + solicitar service quota increase si el limite regional es insuficiente", "correct": true, "why": "Correcto. Reserved Concurrency reserva slots dedicados y evita que otra Lambda 'devore' el pool. Provisioned Concurrency mantiene N instancias warm (elimina cold start). Service Quota increase eleva el limite regional total." },
+        { "letter": "B", "text": "Aumentar el memory de la Lambda", "correct": false, "why": "Cercano parcial (mas memory = mas CPU y mas rapido), pero no resuelve concurrency contention entre Lambdas." },
+        { "letter": "C", "text": "Migrar a ECS Fargate", "correct": false, "why": "Cercano cambio de tecnologia. Reserved/Provisioned Concurrency ya resuelven en Lambda." },
+        { "letter": "D", "text": "Reducir el timeout", "correct": false, "why": "Incorrecto. Timeout menor causa mas fallos si la logica tarda." }
+      ],
+      "explanation": "Lambda concurrency: (1) Unreserved (default): comparte pool regional (1000 default por cuenta/region, incrementable). (2) Reserved Concurrency: garantiza slots dedicados a una funcion (protege de starvation y limita blast radius si tiene un bug de recursion). (3) Provisioned Concurrency: mantiene N instancias warm pre-inicializadas (elimina cold start, coste extra). Bursts: 500-3000 immediate + 500/min scaling. Combinable con Application Auto Scaling.",
+      "keywords": ["throttling", "cold start", "reserved concurrency"],
+      "services": ["Lambda", "API Gateway"],
+      "references": [{ "title": "Lambda function scaling" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "resilient",
+      "topic": "SNS fan-out con SQS",
+      "difficulty": "easy",
+      "scenario": "Una app publica un evento 'OrderCreated' que debe procesarse por 4 servicios distintos independientes (billing, inventory, notifications, analytics). Actualmente el publisher llama directamente a las 4 APIs y si una falla debe reintentar todo.",
+      "question": "Que patron desacopla al publisher del delivery a los 4 consumers?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SNS Topic con 4 SQS queues subscritas (fan-out): publisher publica una vez, SNS entrega a las 4 queues, cada consumer procesa independientemente con su propio retry/DLQ", "correct": true, "why": "Correcto. Fan-out desacopla completamente: publisher solo conoce SNS, cada consumer tiene su queue con retries independientes. Si un consumer falla no afecta a otros. Alternativa moderna: EventBridge con 4 targets, cada uno con su queue." },
+        { "letter": "B", "text": "Publisher llama las 4 APIs con retry logic propio", "correct": false, "why": "Incorrecto. Es el problema actual: coupling fuerte, si una API falla afecta todo el proceso." },
+        { "letter": "C", "text": "Un solo SQS y round-robin", "correct": false, "why": "Incorrecto. Con un solo SQS y multiples consumers cada mensaje va a UN consumer, no a los 4." },
+        { "letter": "D", "text": "S3 event notifications", "correct": false, "why": "Incorrecto. S3 events son para cambios en buckets, no para eventos de dominio." }
+      ],
+      "explanation": "Fan-out pattern con SNS+SQS: publisher publica una vez a SNS topic; SNS entrega a cada SQS suscriptor; cada consumer procesa su queue con retries y DLQ independientes. Alternativas: EventBridge (mas potente, con filtering avanzado y schema registry, mas caro), Kinesis (streams ordenados por shard, retention configurable). Ventaja fan-out: eventual consistency con desacoplamiento maximo.",
+      "keywords": ["fan-out", "4 consumers", "desacoplar"],
+      "services": ["SNS", "SQS", "EventBridge"],
+      "references": [{ "title": "Fanout to SQS from SNS" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "resilient",
+      "topic": "Idempotency en handlers Lambda",
+      "difficulty": "hard",
+      "scenario": "Una Lambda procesa pagos desde SQS. Ocasionalmente un mensaje se procesa dos veces (SQS at-least-once + retry en fallo intermitente), causando double-charge al cliente.",
+      "question": "Como garantizar idempotency correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Implementar idempotency en la Lambda usando un idempotency key (por ejemplo transaction_id o MessageId) contra una tabla DynamoDB con conditional writes; AWS Powertools for Lambda provee un decorator listo", "correct": true, "why": "Correcto. Idempotency requerida en cualquier consumer de at-least-once systems. Pattern: guardar idempotency key en DDB con TTL, rechazar si ya existe (conditional write ifNotExists). AWS Lambda Powertools tiene modulo Idempotency que implementa este patron de forma robusta." },
+        { "letter": "B", "text": "Confiar en que SQS no envia duplicados", "correct": false, "why": "Incorrecto. SQS Standard es at-least-once (duplicates posibles). SQS FIFO ayuda pero deduplication window es 5 min, no absoluta." },
+        { "letter": "C", "text": "Usar solo SQS FIFO", "correct": false, "why": "Cercano pero FIFO dedup solo es 5 min. Idempotency a nivel aplicacion es lo robusto." },
+        { "letter": "D", "text": "Aumentar visibility timeout", "correct": false, "why": "Cercano parcial (reduce probabilidad de re-delivery premature) pero no elimina duplicates." }
+      ],
+      "explanation": "Idempotency = misma operacion ejecutada N veces = mismo resultado que 1 vez. Distributed systems (SQS at-least-once, HTTP retries, network partitions) requieren idempotency en consumers. Pattern: idempotency key + estado guardado (DDB, Redis) + conditional write. AWS Lambda Powertools (Python/TypeScript/Java) provee decorator idempotent que gestiona lookup/store/TTL. Alternativa: request deduplication a nivel API Gateway con custom logic.",
+      "keywords": ["duplicados", "idempotency", "double-charge"],
+      "services": ["Lambda", "DynamoDB", "SQS"],
+      "references": [{ "title": "AWS Lambda Powertools Idempotency" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "resilient",
+      "topic": "API Gateway throttling y caching",
+      "difficulty": "medium",
+      "scenario": "Una API publica sufre bursts que saturan el backend. El equipo quiere: (1) rate limit por API key para clientes premium vs free, (2) throttling global proteccion del backend, (3) cache de responses a queries idempotentes GET para reducir carga.",
+      "question": "Que features de API Gateway cubren esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usage Plans + API Keys con quotas y rate limits por plan; Method-level throttling; API Gateway caching con TTL en endpoints GET", "correct": true, "why": "Correcto. API Gateway soporta usage plans (rate + burst + quota por API key), method throttling, caching (0.5-237 GB, TTL configurable, cache invalidation via header). Cumple los 3 requisitos declarativamente." },
+        { "letter": "B", "text": "Escribir rate limit custom en Lambda", "correct": false, "why": "Cercano pero requiere codigo y estado externo (Redis). API Gateway lo hace managed." },
+        { "letter": "C", "text": "Solo CloudFront caching", "correct": false, "why": "Cercano para cache pero no maneja API keys ni rate limiting per client." },
+        { "letter": "D", "text": "WAF rate-based rules solo", "correct": false, "why": "Cercano por rate limiting pero no maneja API key differentiation ni caching. WAF y API Gateway se combinan." }
+      ],
+      "explanation": "API Gateway features de resiliencia y performance: Usage Plans (asocian API keys con throttle rates y quotas), Method Throttling (por route, por stage), Caching (edge/regional, TTL, key by header/query), Request Validation, WAF integration, Mutual TLS, API Gateway resource policies (IP allowlist, VPC endpoints). REST API tiene mas features de gestion; HTTP API es mas rapida y economica.",
+      "keywords": ["rate limit", "API key", "cache"],
+      "services": ["API Gateway", "WAF"],
+      "references": [{ "title": "API Gateway throttling" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "resilient",
+      "topic": "Circuit breaker pattern",
+      "difficulty": "hard",
+      "scenario": "Un servicio downstream (proveedor externo de precios) esta lento e intermitente. Cada llamada Lambda espera 30s de timeout, agotando concurrency y afectando otros features. Como implementar circuit breaker managed?",
+      "question": "Que herramientas AWS ayudan a implementar circuit breaker?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Implementar circuit breaker en la app (contador de fallos + estado en DynamoDB/ElastiCache) + reducir timeout Lambda + usar Step Functions con Catch/Retry policies + fallback a cached/default value en caso de circuit open", "correct": true, "why": "Correcto. AWS no tiene 'CircuitBreaker service' native; se implementa: (1) counter en DDB/Redis, (2) estado (Closed/Open/HalfOpen) con TTL, (3) fallback response cuando Open, (4) Step Functions permite Catch por error type y Retry con backoff. AppMesh tambien tiene retries automaticos entre services." },
+        { "letter": "B", "text": "Ignorar los fallos y esperar", "correct": false, "why": "Incorrecto. Cascada de fallos empeora el sistema." },
+        { "letter": "C", "text": "Aumentar timeout a 15 min", "correct": false, "why": "Incorrecto. Peor: agota concurrency mas rapido." },
+        { "letter": "D", "text": "Usar EventBridge Scheduler", "correct": false, "why": "Cercano solo para invocaciones programadas, no circuit breaker." }
+      ],
+      "explanation": "Circuit Breaker pattern: 3 estados (Closed = trafico normal, Open = fallar rapido sin llamar, HalfOpen = probar recuperacion). Se implementa con estado shared (DynamoDB, ElastiCache) y counter/threshold. En AWS: patron manual + Step Functions Retry/Catch + fallback. AWS App Mesh (service mesh) tiene retries y outlier detection a nivel network. Complementario: bulkheads (Reserved Concurrency para aislar), timeouts agresivos, health checks.",
+      "keywords": ["circuit breaker", "downstream lento", "fallback"],
+      "services": ["Lambda", "DynamoDB", "Step Functions", "App Mesh"],
+      "references": [{ "title": "Circuit breaker pattern" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "resilient",
+      "topic": "Kinesis vs SQS para streams",
+      "difficulty": "medium",
+      "scenario": "Un IoT sensor genera 100k eventos/segundo que deben procesarse en orden por device_id, con retention de 7 dias para reprocessing, y multiples consumers independientes (analytics, alertas, storage).",
+      "question": "Que servicio es mas apropiado y por que no SQS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Kinesis Data Streams: orden por shard (device_id como partition key), retention 24h-365d, multiples consumers via Enhanced Fan-Out, throughput ilimitado por shard", "correct": true, "why": "Correcto. Kinesis Data Streams es diseñado para high-throughput ordered streaming: partition key para orden, retention 24h a 365d, Enhanced Fan-Out entrega a multiples consumers sin drenar throughput compartido. SQS Standard no garantiza orden y no soporta consumers multiples con replay." },
+        { "letter": "B", "text": "SQS Standard", "correct": false, "why": "Incorrecto. Standard no garantiza orden ni permite retention >14 dias ni multiples consumers replay-able." },
+        { "letter": "C", "text": "SQS FIFO", "correct": false, "why": "Cercano parcial (orden si) pero throughput 3000 msg/s max, retention max 14 dias, no soporta multiples consumers reading same messages." },
+        { "letter": "D", "text": "SNS", "correct": false, "why": "Incorrecto. SNS es pub-sub sin retention ni orden garantizado." }
+      ],
+      "explanation": "Kinesis Data Streams vs SQS: Kinesis = event streaming (ordered per shard, retention 24h-365d, multiples consumers via GetRecords o Enhanced Fan-Out, replay-able), SQS = message queue (queue processed then deleted, retention 4d default max 14d, order solo FIFO). MSK = Managed Kafka (similar a Kinesis pero Kafka-compatible). Firehose = Kinesis Data Firehose para load streams a S3/Redshift/OpenSearch sin gestion.",
+      "keywords": ["orden por device", "100k events/s", "multiples consumers"],
+      "services": ["Kinesis Data Streams", "SQS"],
+      "references": [{ "title": "Amazon Kinesis Data Streams" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "resilient",
+      "topic": "Step Functions Wait y Callback",
+      "difficulty": "medium",
+      "scenario": "Un workflow requiere esperar aprobacion humana (email con link) antes de continuar. Podria tomar minutos u horas. El equipo no quiere que Step Functions cobre por polling continuo.",
+      "question": "Que patron Step Functions es ideal para wait-for-callback humano?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Task token pattern (waitForTaskToken): el state pausa hasta recibir SendTaskSuccess/SendTaskFailure con el token; se combina con SES/SNS enviando email con link que triggerea el callback", "correct": true, "why": "Correcto. Task token es el patron canonico para human-in-the-loop y integraciones async: el workflow pausa (no cobra por wait) hasta recibir el callback API con el token. Ideal para approvals, revisiones manuales, integraciones con sistemas async externos." },
+        { "letter": "B", "text": "Polling con Wait state cada 30s", "correct": false, "why": "Cercano funcional pero cobra por cada transicion y polling continuo desperdicia recursos. Task token es event-driven." },
+        { "letter": "C", "text": "Usar solo Lambdas con SQS", "correct": false, "why": "Cercano parcial pero implementar wait-for-callback manualmente es complejo comparado con task token nativo." },
+        { "letter": "D", "text": "Terminar workflow y reiniciar cuando llegue aprobacion", "correct": false, "why": "Incorrecto. Pierdes estado y contexto del workflow." }
+      ],
+      "explanation": "Step Functions integration patterns: (1) Request Response (default, sync/async no bloqueante). (2) Run a Job (.sync): espera a que el servicio complete el job (ej. Glue, Athena, ECS Task) hasta 1 ano. (3) Wait for Callback (.waitForTaskToken): pausa hasta recibir SendTaskSuccess/Failure con el token. Ideal para human approval, integraciones async externas, workflows largos. No cobra por wait activo.",
+      "keywords": ["human approval", "callback", "wait"],
+      "services": ["Step Functions", "Lambda", "SNS", "SES"],
+      "references": [{ "title": "Step Functions Wait for Callback" }]
+    }
+  ]
+}

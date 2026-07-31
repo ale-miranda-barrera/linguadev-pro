@@ -1,0 +1,202 @@
+{
+  "id": "clf-c02-sim-15-serverless-integration",
+  "certId": "clf-c02",
+  "order": 15,
+  "title": "Simulacro 15 — Serverless e integración: Lambda, API Gateway, SQS, SNS, EventBridge, Step Functions",
+  "focus": "Dominio 3 — Arquitecturas event-driven y de integración.",
+  "domainCoverage": ["technology"],
+  "timeLimitMin": 18,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "technology",
+      "topic": "SQS vs SNS",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto elige entre: (A) desacoplar productor de consumidores con procesamiento asíncrono y garantía de entrega, retención de mensajes hasta 14 días, (B) enviar un mismo evento a múltiples suscriptores (pub/sub) — emails, SMS, Lambda, HTTP.",
+      "question": "¿Qué servicio para cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Amazon SQS (queue), (B) Amazon SNS (pub/sub)", "correct": true, "why": "Correcto. SQS = queue pull, 1 productor a 1 consumer, retención 14d max, garantía entrega. SNS = pub/sub push, 1 productor a N suscriptores (SQS, Lambda, HTTP, email, SMS, mobile push)." },
+        { "letter": "B", "text": "Ambos con SNS", "correct": false, "why": "Incorrecto. SNS no persiste mensajes (fire-and-forget); no cumple caso A." },
+        { "letter": "C", "text": "Ambos con SQS", "correct": false, "why": "Incorrecto. SQS no es pub/sub multi-suscriptor." },
+        { "letter": "D", "text": "Kinesis para ambos", "correct": false, "why": "Cercano. Kinesis Data Streams es streaming ordenado con replay; overkill para desacople simple y no reemplaza pub/sub." }
+      ],
+      "explanation": "SQS = queue managed pull-based. Standard (best-effort ordering, at-least-once) o FIFO (exactly-once, ordering estricto). Retención 1min-14d. SNS = pub/sub managed push-based. Fan-out a múltiples subscribers. Combinar: SNS+SQS = fan-out con persistencia por consumidor. Regla: desacople 1-a-1 = SQS; broadcast 1-a-N = SNS.",
+      "keywords": ["queue", "pub/sub", "desacople", "fan-out"],
+      "services": ["SQS", "SNS"],
+      "references": [{ "title": "SQS vs SNS" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "technology",
+      "topic": "API Gateway",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere exponer sus Lambdas como API REST pública, con autenticación (Cognito), throttling, caching, versioning, sin gestionar servidores.",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon API Gateway", "correct": true, "why": "Correcto. API Gateway = managed REST/HTTP/WebSocket API frontend. Integra con Lambda, HTTP, VPC. Features: auth (Cognito, IAM, Lambda authorizer), throttling, caching, stages, canary deploys, WAF. Serverless." },
+        { "letter": "B", "text": "ALB con Lambda targets", "correct": false, "why": "Cercano. ALB puede tener Lambda como target pero carece de features API management (caching por método, throttling granular, transformaciones)." },
+        { "letter": "C", "text": "CloudFront directo a Lambda", "correct": false, "why": "Cercano. Lambda@Edge o Function URL con CloudFront funciona para casos simples, pero sin API management." },
+        { "letter": "D", "text": "EC2 con nginx", "correct": false, "why": "Incorrecto. No serverless." }
+      ],
+      "explanation": "API Gateway tipos: REST API (features completos, más caro), HTTP API (más simple, más barato, ~70% menos costo), WebSocket API (chat, notifs realtime). Integra con Lambda, HTTP backends, servicios AWS. Auth: IAM, Cognito, Lambda authorizer, API keys. Alternativa: AppSync para GraphQL managed.",
+      "keywords": ["API REST", "Lambda", "auth Cognito", "throttling"],
+      "services": ["API Gateway", "Lambda"],
+      "references": [{ "title": "Amazon API Gateway" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "technology",
+      "topic": "EventBridge",
+      "difficulty": "medium",
+      "scenario": "Una empresa quiere una arquitectura event-driven: eventos de S3, GuardDuty, apps custom y SaaS de terceros (Shopify, Zendesk) deben enrutar a diferentes targets basándose en el contenido del evento (filtros).",
+      "question": "¿Qué servicio central usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon EventBridge", "correct": true, "why": "Correcto. EventBridge = event bus managed, sucesor de CloudWatch Events. Bus default (eventos AWS), custom buses (apps), partner buses (SaaS). Reglas con content-based filtering enrutan a targets (Lambda, SQS, SNS, Step Functions, etc.). Schema Registry incluido." },
+        { "letter": "B", "text": "SNS", "correct": false, "why": "Cercano. SNS es pub/sub sin filtering avanzado ni schema registry ni partner integrations." },
+        { "letter": "C", "text": "SQS", "correct": false, "why": "Incorrecto. SQS es queue, no bus con enrutamiento." },
+        { "letter": "D", "text": "Kinesis", "correct": false, "why": "Cercano. Kinesis es streaming; EventBridge es event bus con enrutamiento y filtering nativo." }
+      ],
+      "explanation": "EventBridge: (1) default bus = eventos AWS (S3, EC2, GuardDuty, etc.). (2) custom buses = tus apps. (3) partner buses = SaaS (Datadog, Shopify, Zendesk, etc.). Rules con filtering, targets = Lambda, SQS, SNS, Step Functions, Kinesis, ECS task, etc. Schema Registry + Schema Discovery. Ideal para arquitecturas event-driven complejas.",
+      "keywords": ["event bus", "filtering", "SaaS partner", "eventos AWS"],
+      "services": ["EventBridge", "Lambda"],
+      "references": [{ "title": "Amazon EventBridge" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "technology",
+      "topic": "Step Functions",
+      "difficulty": "medium",
+      "scenario": "Un equipo tiene un workflow complejo: (1) Lambda valida input, (2) si válido, procesa BD y esperar approval humano, (3) según approval llama a APIs externas con retries y compensación en fallos.",
+      "question": "¿Qué servicio orquesta esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Step Functions", "correct": true, "why": "Correcto. Step Functions = orquestador serverless de workflows. States: Task, Choice, Parallel, Wait, Map. Espera human approval, retries, error handling, timeouts. Visual editor. 2 tipos: Standard (long-running, exactly-once) y Express (high-volume, at-least-once)." },
+        { "letter": "B", "text": "Lambda que llama otras Lambdas", "correct": false, "why": "Cercano. Se puede pero es frágil: gestión de estado, retries, y timeouts complejos manual." },
+        { "letter": "C", "text": "SQS entre Lambdas", "correct": false, "why": "Cercano. SQS ayuda a desacoplar pero no orquesta flujos con branching y estado." },
+        { "letter": "D", "text": "Cron con EC2", "correct": false, "why": "Incorrecto. No serverless y sin orquestación managed." }
+      ],
+      "explanation": "Step Functions: workflows visuales con estados (Task, Choice, Parallel, Wait, Map, Succeed, Fail). Integra con ~200 servicios AWS directamente. Standard = long-running (hasta 1 año), exactly-once, casos ETL y business processes. Express = alto volumen, hasta 5 min, at-least-once, ideal streaming/microservicios. Alternativa: SWF (legacy).",
+      "keywords": ["orquestar workflow", "human approval", "retries", "compensación"],
+      "services": ["Step Functions", "Lambda"],
+      "references": [{ "title": "AWS Step Functions" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "technology",
+      "topic": "SQS FIFO vs Standard",
+      "difficulty": "hard",
+      "scenario": "Una app financiera procesa órdenes: (A) órdenes deben procesarse EN ORDEN y solo UNA vez para evitar duplicados de trade, (B) logs de aplicación pueden procesarse desordenados a alto throughput.",
+      "question": "¿Qué tipo de queue para cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) SQS FIFO, (B) SQS Standard", "correct": true, "why": "Correcto. FIFO = orden estricto + exactly-once, hasta 300 msg/s (3000 con batching), sufijo .fifo. Standard = best-effort ordering + at-least-once, throughput casi ilimitado, más económico." },
+        { "letter": "B", "text": "Ambos FIFO", "correct": false, "why": "Cercano. FIFO limita throughput; para logs de alto volumen es innecesariamente restrictivo." },
+        { "letter": "C", "text": "Ambos Standard", "correct": false, "why": "Incorrecto. Standard puede duplicar mensajes; órdenes financieras necesitan exactly-once." },
+        { "letter": "D", "text": "Kinesis para ambos", "correct": false, "why": "Cercano. Kinesis Data Streams es alternativa pero más complejo; SQS suele bastar." }
+      ],
+      "explanation": "SQS Standard: throughput casi ilimitado, at-least-once, ordering best-effort. SQS FIFO: exactly-once, ordering estricto por MessageGroupId, throughput 300 msg/s (o 3000 con batch), 300/s per MessageGroupId. Nombres FIFO terminan en .fifo. Message deduplication ID para exactly-once.",
+      "keywords": ["orden estricto", "exactly once", "throughput alto"],
+      "services": ["SQS FIFO", "SQS Standard"],
+      "references": [{ "title": "SQS FIFO Queues" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "technology",
+      "topic": "Kinesis Data Streams",
+      "difficulty": "hard",
+      "scenario": "Una empresa IoT recibe 1M eventos/segundo de dispositivos. Necesita: procesamiento en tiempo real, retención 24-365 días, replay de eventos, múltiples consumers independientes leyendo desde diferentes offsets.",
+      "question": "¿Qué servicio usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Kinesis Data Streams", "correct": true, "why": "Correcto. KDS = streaming platform managed (tipo Kafka). Retención 24h-365d, ordering per shard, replay, múltiples consumers con offset propio. Ideal para IoT, logs, clickstream a escala." },
+        { "letter": "B", "text": "SQS", "correct": false, "why": "Cercano. SQS es queue con consumo destructivo (mensaje procesado se borra), sin replay ni multi-consumer con offsets independientes." },
+        { "letter": "C", "text": "SNS", "correct": false, "why": "Incorrecto. Pub/sub sin persistencia." },
+        { "letter": "D", "text": "EventBridge", "correct": false, "why": "Cercano. EventBridge es event bus, no streaming a esa escala con replay." }
+      ],
+      "explanation": "Kinesis family: (1) Data Streams = streaming durable con shards, replay, retención hasta 365d. (2) Data Firehose = delivery a S3/Redshift/OpenSearch sin gestionar consumer, near-realtime. (3) Data Analytics (Managed Flink) = SQL/Flink sobre streams. (4) Video Streams = video streaming. Alternativa: MSK (Managed Kafka).",
+      "keywords": ["streaming", "1M eventos/s", "replay", "multi-consumer offsets"],
+      "services": ["Kinesis Data Streams"],
+      "references": [{ "title": "Amazon Kinesis" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "technology",
+      "topic": "Kinesis Data Firehose",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere ingestar streams de logs y entregarlos automáticamente a S3 en formato Parquet, near real-time, sin gestionar shards ni consumers.",
+      "question": "¿Qué servicio elige?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Data Firehose (antes Kinesis Data Firehose)", "correct": true, "why": "Correcto. Firehose = delivery managed a S3, Redshift, OpenSearch, Splunk. Buffering configurable, conversión de formatos (Parquet, ORC), transformación con Lambda. Sin gestión de shards." },
+        { "letter": "B", "text": "Kinesis Data Streams", "correct": false, "why": "Cercano. KDS requiere gestionar shards y escribir consumer para entregar a S3. Firehose es más simple para el caso 'ingest → S3'." },
+        { "letter": "C", "text": "SQS con Lambda", "correct": false, "why": "Cercano. Se puede pero requiere plumbing y no soporta buffering/conversión Parquet nativo." },
+        { "letter": "D", "text": "Direct upload a S3", "correct": false, "why": "Cercano. Funciona para batch pero sin buffering/streaming automático." }
+      ],
+      "explanation": "Firehose vs Data Streams: Firehose = near real-time (delay 60s min), sin shards, entrega a targets managed, ideal ingest→destino. Data Streams = real-time (ms), con shards, replay, múltiples consumers custom. Muy común: apps→Firehose→S3 (data lake).",
+      "keywords": ["ingest a S3", "Parquet", "sin shards"],
+      "services": ["Data Firehose"],
+      "references": [{ "title": "Amazon Data Firehose" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "technology",
+      "topic": "AWS AppSync",
+      "difficulty": "hard",
+      "scenario": "Un equipo mobile quiere una API GraphQL managed con suscripciones en tiempo real (WebSocket), autenticación con Cognito y offline sync.",
+      "question": "¿Qué servicio usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS AppSync", "correct": true, "why": "Correcto. AppSync = GraphQL managed. Subscriptions realtime via WebSocket, auth (Cognito, IAM, API key, OIDC, Lambda), data sources (DynamoDB, Aurora, Lambda, OpenSearch, HTTP), offline sync con conflict resolution." },
+        { "letter": "B", "text": "API Gateway REST", "correct": false, "why": "Cercano. API GW REST no es GraphQL." },
+        { "letter": "C", "text": "API Gateway WebSocket", "correct": false, "why": "Cercano. WebSocket API sirve para realtime, pero no GraphQL managed." },
+        { "letter": "D", "text": "ALB", "correct": false, "why": "Incorrecto. No GraphQL managed." }
+      ],
+      "explanation": "AppSync: GraphQL as-a-service. Ideal apps mobile/web con esquemas ricos, subscriptions realtime, offline sync (Amplify DataStore). Alternativa REST: API Gateway. AppSync usa resolvers VTL o JS para conectar a data sources sin código de servidor.",
+      "keywords": ["GraphQL", "subscriptions", "offline sync", "mobile"],
+      "services": ["AppSync"],
+      "references": [{ "title": "AWS AppSync" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "technology",
+      "topic": "Amazon MQ",
+      "difficulty": "medium",
+      "scenario": "Una empresa migra apps legacy que usan protocolos AMQP/MQTT/STOMP con RabbitMQ y ActiveMQ. Quieren un servicio managed sin cambiar código.",
+      "question": "¿Qué servicio usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon MQ (managed RabbitMQ y ActiveMQ)", "correct": true, "why": "Correcto. Amazon MQ soporta engines RabbitMQ y ActiveMQ con protocolos estándar (AMQP, MQTT, STOMP, JMS, OpenWire). Ideal para migrar apps sin refactor. SQS/SNS son AWS-native pero requieren código nuevo." },
+        { "letter": "B", "text": "SQS", "correct": false, "why": "Cercano. SQS es AWS-native API; no soporta AMQP/MQTT estándar." },
+        { "letter": "C", "text": "SNS", "correct": false, "why": "Incorrecto. SNS es pub/sub AWS-native." },
+        { "letter": "D", "text": "MSK (Kafka)", "correct": false, "why": "Cercano. MSK es Kafka, no RabbitMQ/ActiveMQ." }
+      ],
+      "explanation": "Amazon MQ: managed message broker para RabbitMQ y ActiveMQ, protocolos estándar (AMQP, MQTT, STOMP, JMS, OpenWire). Uso: migrar apps legacy sin cambiar código. AWS-native alternatives (más escalables para greenfield): SQS/SNS/EventBridge/MSK.",
+      "keywords": ["RabbitMQ", "ActiveMQ", "AMQP MQTT", "legacy"],
+      "services": ["Amazon MQ"],
+      "references": [{ "title": "Amazon MQ" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "technology",
+      "topic": "Lambda triggers",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere que una Lambda se dispare automáticamente cuando: (A) se sube un objeto a S3, (B) llega un mensaje a SQS, (C) cambia un item en DynamoDB, (D) llega un HTTP request.",
+      "question": "¿Qué es cierto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lambda soporta triggers nativos para todos esos casos", "correct": true, "why": "Correcto. Lambda tiene event sources nativos: S3 (put/delete objects), SQS (poll), DynamoDB Streams, Kinesis, EventBridge, API Gateway (HTTP), ALB, Cognito, IoT, CloudWatch, y más." },
+        { "letter": "B", "text": "Solo se dispara por HTTP", "correct": false, "why": "Incorrecto. Muchos sources soportados." },
+        { "letter": "C", "text": "Necesita EC2 poller intermedio", "correct": false, "why": "Incorrecto. Lambda se integra directamente." },
+        { "letter": "D", "text": "Solo con EventBridge", "correct": false, "why": "Incorrecto. EventBridge es uno de muchos." }
+      ],
+      "explanation": "Lambda event sources principales: síncronos (API Gateway, ALB, Cognito, invoke SDK), asíncronos (S3, SNS, EventBridge, SES), poll-based (SQS, Kinesis, DynamoDB Streams, MSK/Kafka, DocumentDB). Manejo de errores: DLQ (SQS/SNS), retries automáticos, Lambda Destinations.",
+      "keywords": ["triggers Lambda", "S3 SQS DynamoDB HTTP"],
+      "services": ["Lambda", "S3", "SQS", "DynamoDB", "API Gateway"],
+      "references": [{ "title": "Lambda Event Sources" }]
+    }
+  ]
+}

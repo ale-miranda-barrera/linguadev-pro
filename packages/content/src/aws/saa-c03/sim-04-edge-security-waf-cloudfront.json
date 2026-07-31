@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-04-edge-security-waf-cloudfront",
+  "certId": "saa-c03",
+  "order": 4,
+  "title": "Simulacro 04 — Edge security: WAF, Shield Advanced, CloudFront, Route 53 DNSSEC",
+  "focus": "Dominio 1 — Design Secure Architectures (30%). Proteccion en el borde: DDoS, WAF L7, CDN, DNSSEC.",
+  "domainCoverage": ["secure"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "secure",
+      "topic": "AWS WAF: managed rules y OWASP Top 10",
+      "difficulty": "easy",
+      "scenario": "Una app web publica en ALB sufre ataques constantes de SQL injection, XSS y scanners automatizados. El equipo no tiene experiencia escribiendo reglas WAF desde cero y quiere proteccion basica en dias, no meses.",
+      "question": "Cual es la manera MAS RAPIDA de obtener proteccion L7 con las mejores practicas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Asociar AWS WAF al ALB y activar los AWS Managed Rules (Core rule set, SQLi, XSS, IP reputation, Anonymous IP)", "correct": true, "why": "Correcto. Las AWS Managed Rules son rulesets mantenidos por AWS y por vendors (F5, Fortinet) que cubren OWASP Top 10 y amenazas comunes. Se activan en minutos, se actualizan solas, y evitan escribir reglas custom desde cero." },
+        { "letter": "B", "text": "Escribir todas las reglas WAF custom desde cero", "correct": false, "why": "Incorrecto. Es lento, propenso a errores, dificil de mantener. Los managed rules cubren el 80-90% de amenazas comunes; las custom se anaden para casos especificos." },
+        { "letter": "C", "text": "Confiar solo en Security Groups", "correct": false, "why": "Incorrecto. SG operan en L3/L4 (IP, puerto), no entienden HTTP payloads ni pueden detectar SQLi/XSS." },
+        { "letter": "D", "text": "Bloquear todo con NACL", "correct": false, "why": "Incorrecto. NACL tampoco inspecciona HTTP; solo IP/port. Ademas bloquearia trafico legitimo." }
+      ],
+      "explanation": "AWS WAF se asocia a: CloudFront, ALB, API Gateway, AppSync, Cognito, App Runner, Verified Access. Web ACL contiene rules (managed o custom), cada rule tiene una accion (ALLOW/BLOCK/COUNT/CHALLENGE/CAPTCHA). Precio: por Web ACL + por rule + por request. Managed rule groups mas usados: AWSManagedRulesCommonRuleSet (Core), KnownBadInputs, SQLi, LinuxRuleSet, WindowsRuleSet, PHP, WordPress, IPReputationList, AnonymousIpList (bloquea Tor/VPN/proxies), BotControl.",
+      "keywords": ["OWASP", "SQL injection", "XSS", "managed rules"],
+      "services": ["WAF", "ALB", "CloudFront"],
+      "references": [{ "title": "AWS WAF Managed Rules" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "secure",
+      "topic": "AWS Shield Standard vs Advanced",
+      "difficulty": "medium",
+      "scenario": "Una empresa financiera lanza una app critica que ya recibio amenazas de DDoS extorsivas. Requieren: proteccion contra L3/L4 y L7 DDoS avanzado, acceso 24/7 al Shield Response Team (SRT), y garantia de que los costos de escalado por ataque estan cubiertos.",
+      "question": "Que nivel de proteccion DDoS necesitan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Shield Advanced", "correct": true, "why": "Correcto. Shield Advanced anade: mitigacion avanzada L3/L4/L7, acceso al SRT 24/7, cost protection (AWS reembolsa spike de charges por ELB/EC2/CloudFront/R53/GA causadas por DDoS), WAF incluido, dashboards y visibilidad detallada. Precio: $3,000/mes por org." },
+        { "letter": "B", "text": "AWS Shield Standard", "correct": false, "why": "Incorrecto. Standard es gratis y automatico para todos, protege contra L3/L4 comunes pero NO incluye SRT, cost protection ni proteccion avanzada L7." },
+        { "letter": "C", "text": "Solo WAF sin Shield", "correct": false, "why": "Incompleto. WAF protege L7 (application) pero no incluye SRT, cost protection ni las capacidades de mitigacion global de Shield." },
+        { "letter": "D", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas (analisis pasivo de logs), no mitiga DDoS inline." }
+      ],
+      "explanation": "Shield Standard: gratis, siempre activo, protege contra los DDoS L3/L4 mas comunes (SYN flood, UDP reflection). Shield Advanced ($3k/mes con commitment 1 ano, aplicable a toda la org): mitigacion avanzada, SRT (Shield Response Team) 24/7, cost protection para spikes causados por DDoS en ELB/CloudFront/R53/GA/EIP, WAF incluido en el precio para recursos protegidos, Global Threat Environment dashboard. Se aplica a: CloudFront, R53, ALB, NLB, Global Accelerator, EIP.",
+      "keywords": ["DDoS L7", "Shield Response Team", "cost protection", "financiera"],
+      "services": ["Shield Advanced", "WAF", "CloudFront"],
+      "references": [{ "title": "AWS Shield Advanced overview" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "secure",
+      "topic": "CloudFront como proteccion perimetral",
+      "difficulty": "medium",
+      "scenario": "Una app publica tiene el ALB expuesto directamente a Internet. El origen recibe ataques dirigidos por IP publica del ALB, y ademas los usuarios lejanos sufren latencia alta. Se quiere reducir superficie de ataque y mejorar performance sin cambiar la app.",
+      "question": "Que arquitectura de borde resuelve ambos problemas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Poner CloudFront delante del ALB, restringir el ALB para aceptar solo trafico desde CloudFront (via SG con AWS-managed prefix list o header secreto), asociar WAF + Shield en CloudFront", "correct": true, "why": "Correcto. CloudFront absorbe trafico en el edge (400+ POPs), aplica WAF/Shield temprano, cachea contenido estatico y reduce latencia. Restringir el ALB al prefix list de CloudFront elimina exposicion directa. Header secreto anade defensa contra bypass." },
+        { "letter": "B", "text": "Solo anadir mas EC2 detras del ALB para absorber trafico", "correct": false, "why": "Incorrecto. Escalado vertical/horizontal en origen no protege del ataque, solo aumenta coste de ancho de banda y compute." },
+        { "letter": "C", "text": "Migrar el ALB a otra region", "correct": false, "why": "Incorrecto. No reduce la superficie de ataque (nueva IP publica sigue expuesta) y aumenta latencia para usuarios cerca de la region original." },
+        { "letter": "D", "text": "Configurar VPN para todos los usuarios", "correct": false, "why": "Incorrecto. La app es publica; no puedes exigir VPN a usuarios finales de Internet." }
+      ],
+      "explanation": "CloudFront actua como proxy de borde global: absorbe DDoS, ejecuta WAF en el edge (mas cerca del atacante), cachea contenido, TLS termination optimizada, y integracion con Shield Advanced. Patron 'origen protegido': ALB SG permite solo desde el prefix list managed 'com.amazonaws.global.cloudfront.origin-facing' + validar header custom (por ejemplo 'X-Origin-Verify: <secret>') que solo CloudFront envia. Alternativa: Origin Access Control (OAC) para S3, Lambda@Edge/CloudFront Functions para logica de borde.",
+      "keywords": ["proteger origen", "reducir latencia", "trafico solo desde CloudFront"],
+      "services": ["CloudFront", "WAF", "Shield", "ALB"],
+      "references": [{ "title": "Restricting access to origins" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "secure",
+      "topic": "CloudFront Origin Access Control (OAC) para S3",
+      "difficulty": "medium",
+      "scenario": "Un sitio estatico se sirve desde S3 detras de CloudFront. Auditoria detecta que el bucket S3 tambien es accesible directamente por URL publica (los usuarios pueden hacer bypass del WAF y del caching). Se requiere que S3 SOLO responda a CloudFront.",
+      "question": "Cual es la implementacion recomendada en 2024+?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bloquear todo acceso publico al bucket, configurar Origin Access Control (OAC) en CloudFront, y una bucket policy que permita s3:GetObject solo al service principal cloudfront.amazonaws.com con condicion SourceArn de la distribucion", "correct": true, "why": "Correcto. OAC es el mecanismo recomendado (sustituye al legacy OAI): usa SigV4, soporta SSE-KMS, todas las regiones, y una bucket policy con condicion SourceArn garantiza que solo esa distribucion CloudFront puede acceder." },
+        { "letter": "B", "text": "Mantener el bucket publico y confiar en que los usuarios usen la URL de CloudFront", "correct": false, "why": "Incorrecto. Si el bucket es publico, cualquiera con la URL directa evade WAF, caching y logs. Rompe el proposito de CloudFront como perimetro." },
+        { "letter": "C", "text": "Usar Origin Access Identity (OAI) legacy", "correct": false, "why": "Cercano pero desaconsejado. OAI es legacy: no soporta SSE-KMS, no funciona en todas las regiones, usa firma SigV2. AWS recomienda migrar a OAC." },
+        { "letter": "D", "text": "Restringir el bucket por IP del CloudFront", "correct": false, "why": "Incorrecto. Los IPs de CloudFront cambian frecuentemente (400+ POPs, gestion dinamica); mantener whitelist de IPs es inviable." }
+      ],
+      "explanation": "OAC (Origin Access Control) es la evolucion moderna de OAI: soporta SigV4, SSE-KMS en el bucket, todas las regiones incluyendo nuevas, y todos los tipos de origin S3 (buckets, S3 Object Lambda). Bucket policy tipica: Allow Principal Service cloudfront.amazonaws.com con Condition StringEquals aws:SourceArn = <distribution ARN>. Para MediaStore/MediaPackage/otros custom origins se usa autenticacion custom.",
+      "keywords": ["OAC", "S3 solo desde CloudFront", "bypass CDN"],
+      "services": ["CloudFront", "S3", "OAC"],
+      "references": [{ "title": "Restricting access to Amazon S3 content with OAC" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "secure",
+      "topic": "Route 53 DNSSEC",
+      "difficulty": "hard",
+      "scenario": "Una empresa financiera fue victima de un ataque DNS cache poisoning que redirigio a sus usuarios a sitios fraudulentos. Los auditores exigen firmar las respuestas DNS del dominio principal de forma que los resolvers puedan validar autenticidad e integridad criptograficamente.",
+      "question": "Que feature de Route 53 protege contra DNS spoofing/cache poisoning?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar DNSSEC signing en la hosted zone de Route 53 y publicar el DS record en el registrar del TLD", "correct": true, "why": "Correcto. DNSSEC anade firmas RRSIG a los records, y la cadena de confianza se establece con el DS record en el TLD. Los resolvers validadores rechazan respuestas modificadas. Route 53 soporta DNSSEC en public hosted zones desde 2020 y usa KMS asymmetric key para el KSK." },
+        { "letter": "B", "text": "Activar Query Logging", "correct": false, "why": "Incorrecto. Query Logging registra queries para auditoria pero no protege contra spoofing." },
+        { "letter": "C", "text": "Cambiar TTLs a 0", "correct": false, "why": "Incorrecto. TTL 0 aumenta carga en Route 53, no valida autenticidad ni impide spoofing." },
+        { "letter": "D", "text": "Usar solo private hosted zones", "correct": false, "why": "Incorrecto. El dominio publico debe seguir siendo publico. Private hosted zones son para resolucion interna en VPCs." }
+      ],
+      "explanation": "DNSSEC en Route 53: crea KSK con KMS asymmetric key (ECC_NIST_P256), habilita signing, exporta DS record y lo publicas en el registrar del TLD para establecer cadena de confianza. Route 53 firma automaticamente las respuestas. Beneficio: resolvers validadores (Google 8.8.8.8, Cloudflare 1.1.1.1) rechazan responses spoofed. Limitacion: proteccion depende de que el resolver del usuario valide DNSSEC.",
+      "keywords": ["DNS spoofing", "cache poisoning", "firmar DNS"],
+      "services": ["Route 53", "DNSSEC", "KMS"],
+      "references": [{ "title": "Configuring DNSSEC signing in Amazon Route 53" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "secure",
+      "topic": "WAF rate limiting y bot control",
+      "difficulty": "medium",
+      "scenario": "Una app publica sufre scraping masivo automatizado (bots) y credential stuffing (miles de intentos de login por minuto desde miles de IPs distintas). El equipo quiere frenar bots sin bloquear usuarios legitimos.",
+      "question": "Que caracteristicas de WAF son especificamente utiles?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rate-based rules (limite de requests por IP/tiempo) + AWS Managed Bot Control + CAPTCHA/Challenge en endpoints sensibles (login)", "correct": true, "why": "Correcto. Rate-based bloquea IPs que superan un umbral (por ejemplo 100 req/5min). Bot Control identifica bots buenos (SEO) y malos (scrapers, credential stuffing). CAPTCHA/Challenge presenta un desafio JS que bots comunes no pasan sin ejecutar browser." },
+        { "letter": "B", "text": "Bloquear todo trafico automatizado", "correct": false, "why": "Incorrecto. Bloquearia bots buenos (Googlebot, monitoring) y algunos flujos legitimos (mobile apps, APIs)." },
+        { "letter": "C", "text": "Confiar solo en el hosting para escalado", "correct": false, "why": "Incorrecto. Escalado paga la factura del ataque pero no lo mitiga (y credential stuffing puede llevar a account takeover)." },
+        { "letter": "D", "text": "Usar Route 53 geolocation para bloquear paises", "correct": false, "why": "Cercano pero grueso. Geo-blocking puede reducir la superficie si el ataque viene de una region no relevante, pero credential stuffing distribuido globalmente lo evade." }
+      ],
+      "explanation": "WAF anti-automation: (1) Rate-based rules: limite N requests por IP o por header en ventana de 5 minutos. (2) Bot Control managed rule group: clasifica trafico como bot/human, categoriza bots (search engine, scraper, HTTP library). (3) CAPTCHA action: presenta desafio interactivo. (4) Challenge action: JavaScript silent (mas UX-friendly). (5) IP reputation + Anonymous IP lists managed. Combinable con Shield Advanced para proteccion DDoS.",
+      "keywords": ["scraping", "credential stuffing", "rate limit", "CAPTCHA"],
+      "services": ["WAF", "Bot Control", "Shield"],
+      "references": [{ "title": "AWS WAF Bot Control" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "secure",
+      "topic": "CloudFront signed URLs / cookies",
+      "difficulty": "medium",
+      "scenario": "Un servicio de streaming vende contenido premium. Quiere que solo usuarios autenticados con suscripcion activa puedan acceder a los videos en S3 a traves de CloudFront, y el acceso debe expirar 4 horas despues.",
+      "question": "Que mecanismo CloudFront implementa acceso restringido temporal?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Signed URLs (un URL por objeto) o Signed Cookies (autorizacion de sesion para multiples objetos), firmadas con la key pair del trusted key group de la distribucion", "correct": true, "why": "Correcto. Signed URLs firman URLs individuales con fecha de expiracion; Signed Cookies autentican una sesion completa para muchos objetos (mejor para HLS/DASH con miles de segmentos). Ambos permiten expiracion, IP restriction opcional." },
+        { "letter": "B", "text": "Hacer el bucket S3 publico y confiar en URLs 'ocultas'", "correct": false, "why": "Incorrecto. Security through obscurity. Una URL leakeada es acceso permanente." },
+        { "letter": "C", "text": "Usar OAC solamente", "correct": false, "why": "Incompleto. OAC restringe que solo CloudFront lea de S3, pero NO restringe quien accede a CloudFront. Necesitas Signed URLs/Cookies encima." },
+        { "letter": "D", "text": "Cognito solamente", "correct": false, "why": "Cercano pero Cognito autentica usuarios; para autorizar la descarga de un objeto en CDN se usa Signed URLs/Cookies (posiblemente generadas por Lambda tras autenticar con Cognito)." }
+      ],
+      "explanation": "Signed URLs vs Signed Cookies: URL = un objeto (buena para descarga puntual). Cookies = muchos objetos y patrones URL (buena para streaming HLS/DASH, sitios paywall). Firma con key pair (private key custodiada, public key en CloudFront key group). Politica incluye: DateLessThan (expiracion), DateGreaterThan (activacion), IpAddress (opcional). Alternativa: CloudFront Functions/Lambda@Edge que consulten un authorizer en cada request.",
+      "keywords": ["contenido premium", "acceso temporal", "signed URL"],
+      "services": ["CloudFront", "S3"],
+      "references": [{ "title": "Serving private content with signed URLs" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "secure",
+      "topic": "Global Accelerator vs CloudFront",
+      "difficulty": "hard",
+      "scenario": "Una empresa opera una app de gaming online en tiempo real (UDP + TCP) con jugadores en 5 continentes. Necesitan latencia predecible, failover rapido entre regiones, y IPs staticas anycast para whitelisting corporativo.",
+      "question": "Que servicio AWS es el correcto y por que NO CloudFront?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Global Accelerator: ofrece 2 IPs anycast staticas, routing por AWS backbone, soporta TCP y UDP, health-checks con failover entre endpoints regionales", "correct": true, "why": "Correcto. Global Accelerator es capa 4 (TCP/UDP), ideal para apps stateful/gaming/VoIP donde CloudFront (HTTP/HTTPS + WebSocket) no aplica. Anycast IPs staticas simplifican whitelist. Backbone AWS reduce jitter y latencia vs Internet publico." },
+        { "letter": "B", "text": "CloudFront", "correct": false, "why": "Incorrecto. CloudFront es CDN L7 HTTP/HTTPS (y WebSocket); no soporta UDP nativo. Ademas usa hostnames CloudFront, no IPs staticas whitelisteables permanentemente." },
+        { "letter": "C", "text": "Route 53 latency-based routing", "correct": false, "why": "Cercano pero incompleto. R53 rutea al endpoint mas cercano, pero luego el trafico va por Internet publico (no backbone AWS) y no ofrece anycast ni failover sub-30s." },
+        { "letter": "D", "text": "ALB", "correct": false, "why": "Incorrecto. ALB es regional y solo HTTP/HTTPS/gRPC. No resuelve global." }
+      ],
+      "explanation": "CloudFront vs Global Accelerator: CloudFront = CDN, HTTP/HTTPS/WebSocket, caching, ideal para web/media. Global Accelerator = L4, TCP/UDP, IPs staticas anycast, backbone AWS end-to-end, ideal para gaming/VoIP/IoT/enterprise apps. Ambos usan la red edge AWS. Precio GA: por Accelerator hora + data transfer premium.",
+      "keywords": ["UDP", "gaming", "IPs staticas", "backbone AWS"],
+      "services": ["Global Accelerator", "CloudFront"],
+      "references": [{ "title": "AWS Global Accelerator vs CloudFront" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "secure",
+      "topic": "WAF cross-region con Firewall Manager",
+      "difficulty": "medium",
+      "scenario": "Una empresa tiene 30 cuentas y multiples ALB/CloudFront distribuciones. Actualmente cada equipo configura sus reglas WAF por separado y hay drift entre reglas. Compliance exige un baseline uniforme (block Tor, allow-list de paises, rate limits basicos).",
+      "question": "Que servicio permite aplicar un baseline WAF centralmente en toda la organizacion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Firewall Manager con security policies WAF aplicadas desde una cuenta delegada a los recursos de todas las cuentas de la Organization", "correct": true, "why": "Correcto. Firewall Manager es el plano de gestion centralizado para WAF, Shield Advanced, Network Firewall, Security Groups y Route 53 Resolver DNS Firewall. Requiere AWS Organizations, aplica policies a cuentas/OUs por tags o account IDs." },
+        { "letter": "B", "text": "Un solo WAF Web ACL compartido manualmente entre cuentas", "correct": false, "why": "Incorrecto. WAF Web ACLs son por cuenta y region; no se comparten directamente. Firewall Manager los replica y mantiene sincronizados." },
+        { "letter": "C", "text": "Escribir un script que copie las reglas periodicamente", "correct": false, "why": "Cercano pero anti-pattern. Reinventa Firewall Manager, con drift potencial y sin auditoria." },
+        { "letter": "D", "text": "Config Rules", "correct": false, "why": "Incorrecto. Config detecta compliance drift pero no aplica cambios de WAF por si solo." }
+      ],
+      "explanation": "AWS Firewall Manager: gobierno central de politicas de seguridad de red. Requisitos: AWS Organizations con full features, Config habilitado, cuenta administrativa delegada. Politicas soportadas: WAF (managed rule groups + custom), Shield Advanced (proteccion automatica en recursos elegibles), Security Groups (baseline SG y auditoria), Network Firewall, Route 53 Resolver DNS Firewall. Aplicable por region y por OU/cuenta.",
+      "keywords": ["multi-cuenta", "baseline WAF", "gobierno central"],
+      "services": ["Firewall Manager", "WAF", "Organizations"],
+      "references": [{ "title": "AWS Firewall Manager" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "secure",
+      "topic": "CloudFront Functions vs Lambda@Edge",
+      "difficulty": "hard",
+      "scenario": "Un equipo necesita ejecutar logica en el borde: (a) reescribir URLs y modificar headers en cada request (millones/seg, ultra low latency), (b) autorizacion custom mas compleja consultando DynamoDB Global Tables en el origen.",
+      "question": "Que servicio conviene para CADA caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CloudFront Functions para (a) por latencia sub-milisegundo y bajo coste; Lambda@Edge para (b) porque puede llamar servicios AWS y soporta logica compleja", "correct": true, "why": "Correcto. CloudFront Functions es JS runtime muy limitado (no libs externas, no network calls, no I/O), sub-ms, ideal para header/URL manipulation en 100% de POPs. Lambda@Edge ejecuta Node/Python con SDKs completos, puede llamar DynamoDB/otros, latencia ms, disponible en Regional Edge Caches." },
+        { "letter": "B", "text": "Lambda@Edge para ambos", "correct": false, "why": "Cercano pero costoso y con latencia mayor para (a). CloudFront Functions es la opcion optima para transformaciones simples de header/URL a escala masiva." },
+        { "letter": "C", "text": "CloudFront Functions para ambos", "correct": false, "why": "Incorrecto. CloudFront Functions no puede hacer llamadas de red ni tiene SDK AWS; no puede consultar DynamoDB." },
+        { "letter": "D", "text": "Solo Lambda regular en la region del origen", "correct": false, "why": "Incorrecto. Lambda regular tiene la latencia de ida-y-vuelta a la region; el proposito de edge functions es ejecutar en POPs cercanos al usuario." }
+      ],
+      "explanation": "CloudFront Functions: JS puro, viewer request/response, 1 ms max, 2 MB memory, sin network I/O ni file system, sin SDK AWS, ejecutado en todos los POPs. Casos: URL rewrite, header manipulation, A/B testing con cookies, redirects, basic auth headers. Lambda@Edge: Node/Python, viewer/origin request/response, mas capacidades (network, SDK), latencia mayor, cache regionales edge (no todos los POPs). Casos: SEO, image resize on-the-fly, autorizacion compleja, geo-based content dinamico.",
+      "keywords": ["edge compute", "sub-milisegundo", "manipular headers", "logica compleja"],
+      "services": ["CloudFront Functions", "Lambda@Edge", "CloudFront"],
+      "references": [{ "title": "CloudFront Functions vs Lambda@Edge" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "secure",
+      "topic": "ACM certificados publicos vs privados",
+      "difficulty": "medium",
+      "scenario": "Una empresa emite decenas de certificados TLS: (1) publicos para sitios cara al Internet, (2) privados para servicios internos (mTLS entre microservicios) donde los clientes son controlados por la empresa.",
+      "question": "Que opciones AWS son correctas para cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ACM Public para (1) - gratis, renovacion automatica, integrado en CloudFront/ALB/API GW; ACM Private CA para (2) - CA privada gestionada por la empresa para emitir certs internos", "correct": true, "why": "Correcto. ACM Public emite certs para servicios AWS gratis con auto-renew. Private CA (AWS Private Certificate Authority) permite operar una CA privada managed para PKI interna (mTLS, IoT, servicios internos)." },
+        { "letter": "B", "text": "Comprar todos los certs a un CA externo y subirlos manualmente", "correct": false, "why": "Incorrecto. Anade carga de renewal (te caducan y rompes prod). ACM automatiza el ciclo de vida." },
+        { "letter": "C", "text": "Usar solo certs self-signed", "correct": false, "why": "Incorrecto. Self-signed en publico es rechazado por browsers. En interno funciona pero sin gobierno ni rotacion centralizada." },
+        { "letter": "D", "text": "ACM Public para todo (interno tambien)", "correct": false, "why": "Incorrecto. ACM Public solo emite para dominios validados publicos (DNS/email), no para dominios internos como *.corp.internal." }
+      ],
+      "explanation": "ACM Public: emision y renovacion automatica de certs TLS publicos para AWS services (CloudFront, ALB, NLB TLS, API GW, App Runner, Cognito, ES). No exportable. Validacion DNS (recomendada) o email. Private CA: PKI managed, emite certs para nombres internos, soporta jerarquia (root + subordinadas), integracion con ACM (importable/gestionable). Coste Private CA: mensual por CA + por cert emitido. Para exportar cert a EC2 usa Private CA (los publicos no son exportables).",
+      "keywords": ["certificados publicos", "certificados internos", "mTLS"],
+      "services": ["ACM", "Private CA", "CloudFront", "ALB"],
+      "references": [{ "title": "AWS Certificate Manager" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "secure",
+      "topic": "Origin failover en CloudFront",
+      "difficulty": "medium",
+      "scenario": "Una app critica sirve contenido dinamico via CloudFront desde un ALB en us-east-1. Requieren que si el origen primario falla o retorna 5xx, CloudFront rutee automaticamente a un origen secundario en us-west-2, sin cambios de DNS.",
+      "question": "Que feature de CloudFront implementa esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Origin Groups con Origin Failover configurando primario y secundario, y una lista de HTTP codes que disparan el failover (500, 502, 503, 504, 403, 404)", "correct": true, "why": "Correcto. Origin Groups permiten definir un origen primario y un secundario; CloudFront falla al secundario ante fallos de conexion o codes configurados. Ideal para HA activa/pasiva sin cambios DNS." },
+        { "letter": "B", "text": "Route 53 failover routing", "correct": false, "why": "Cercano pero opera a nivel DNS con TTLs que introducen retraso. Origin Failover en CloudFront actua en cada request y es mas rapido." },
+        { "letter": "C", "text": "Cambiar el origen manualmente cuando falle", "correct": false, "why": "Incorrecto. Manual = downtime prolongado. Se busca automatico." },
+        { "letter": "D", "text": "Poner un ALB con targets en dos regiones", "correct": false, "why": "Incorrecto. Un ALB es regional; no puede tener targets cross-region." }
+      ],
+      "explanation": "CloudFront Origin Failover: se define Origin Group con dos origins (primary + secondary) y una lista de HTTP status codes (400, 403, 404, 500, 502, 503, 504) que disparan failover. CloudFront reintenta con el secundario. Solo aplica a GET/HEAD/OPTIONS. Combinable con multi-region backends y Route 53 health checks para health end-to-end.",
+      "keywords": ["failover automatico", "origen secundario", "5xx"],
+      "services": ["CloudFront", "ALB", "Route 53"],
+      "references": [{ "title": "CloudFront origin failover" }]
+    }
+  ]
+}

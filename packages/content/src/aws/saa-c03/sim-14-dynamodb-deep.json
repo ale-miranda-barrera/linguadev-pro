@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-14-dynamodb-deep",
+  "certId": "saa-c03",
+  "order": 14,
+  "title": "Simulacro 14 — DynamoDB deep: partition keys, GSI/LSI, on-demand vs provisioned, DAX, Streams, TTL",
+  "focus": "Dominio 3 — Design High-Performing Architectures (24%). Modelado, indexes, capacity y features avanzadas de DynamoDB.",
+  "domainCoverage": ["high-performing"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "high-performing",
+      "topic": "Partition key design y hot partitions",
+      "difficulty": "medium",
+      "scenario": "Una tabla DynamoDB tiene partition key 'country'. La mayoria del trafico es de US, causando que la particion 'US' se sature (throttling) mientras las otras estan idle. Es un hot partition.",
+      "question": "Como corregir el modelo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Elegir una partition key con alta cardinalidad (por ejemplo user_id, event_id) o usar write sharding: anadir sufijo aleatorio a la partition key (country#US#1..N) y agregarse en query", "correct": true, "why": "Correcto. Partition key debe tener alta cardinalidad y distribucion uniforme. Write sharding (adding random suffix) distribuye la carga al costo de queries mas complejas (multiple GetItem por shard). Best practice: modelar por access patterns con PK unique por item." },
+        { "letter": "B", "text": "Aumentar RCU/WCU sin cambiar el modelo", "correct": false, "why": "Cercano parcial pero no resuelve el problema estructural: adaptive capacity ayuda pero limitada; PK con baja cardinalidad limita throughput por particion." },
+        { "letter": "C", "text": "Cambiar a Aurora", "correct": false, "why": "Incorrecto. Aurora tiene diferente modelo escalado; problema es diseno DDB, no la tecnologia." },
+        { "letter": "D", "text": "Anadir mas GSIs", "correct": false, "why": "Cercano parcial pero GSIs no arreglan el problema de hot partition en base table; solo cambian query paths." }
+      ],
+      "explanation": "DynamoDB divide datos en particiones fisicas basado en hash de PK. Cada particion tiene limite (3000 RCU + 1000 WCU o menos). PK con baja cardinalidad concentra trafico. Best practices: (1) PK con alta cardinalidad, (2) write sharding para PK inherentemente hot, (3) adaptive capacity (auto-balance de RCU/WCU entre particiones, activado por default), (4) monitorear hot key con CloudWatch Contributor Insights.",
+      "keywords": ["hot partition", "cardinalidad", "write sharding"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DynamoDB partition key design" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "high-performing",
+      "topic": "GSI vs LSI",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto quiere queries alternativos a los del PK. Los diferencias entre GSI y LSI le son confusas.",
+      "question": "Cual es la diferencia clave y cuando usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GSI (Global Secondary Index): PK y SK distintas a la tabla, se crea/borra en cualquier momento, escala independiente, eventualmente consistente por default (strong opt-in). LSI (Local Secondary Index): mismo PK que tabla, SK distinta, se crea SOLO al crear la tabla, strongly consistent opcional, comparte capacity con tabla", "correct": true, "why": "Correcto. GSI = flexible, escala aparte, eventual consistency. LSI = mismo PK, creada al inicio, strong consistency posible, comparte capacity. GSI mas usado en modernos designs por flexibilidad." },
+        { "letter": "B", "text": "Son lo mismo con distinto nombre", "correct": false, "why": "Incorrecto. Diferencias significativas." },
+        { "letter": "C", "text": "LSI se puede anadir en cualquier momento", "correct": false, "why": "Incorrecto. LSI SOLO al crear la tabla. Es una limitacion importante." },
+        { "letter": "D", "text": "GSI garantiza strong consistency", "correct": false, "why": "Incorrecto. GSI es eventual por default (strong no soportado, solo con proyecciones especiales)." }
+      ],
+      "explanation": "GSI: PK/SK distintas a la tabla, hasta 20 por tabla, se pueden crear/borrar/modificar cualquier momento (backfill toma tiempo), tienen su propia capacity RCU/WCU (o comparten en on-demand), solo eventual consistency. LSI: mismo PK que tabla + SK distinta, hasta 5 por tabla, DEBEN crearse al crear la tabla, comparten capacity, strong consistency opcional, limitados a 10GB por partition key. Best practice moderno: preferir GSI, evitar LSI.",
+      "keywords": ["GSI vs LSI", "secondary index"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DynamoDB secondary indexes" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "high-performing",
+      "topic": "On-demand vs Provisioned capacity",
+      "difficulty": "medium",
+      "scenario": "Un equipo debate entre on-demand y provisioned para su tabla DDB. Trafico: variable, con picos impredecibles, y baseline moderado.",
+      "question": "Cual conviene y por que?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "On-demand: paga por request (mas caro por unidad pero sin planificar capacity), ideal para trafico variable/impredecible o cargas nuevas sin baseline conocido", "correct": true, "why": "Correcto. On-demand elimina planning: escala instantly a picos, cero throttling (soft limits altos), paga solo por lo usado. Trade-off: ~7x mas caro por unidad que provisioned. Ideal para trafico impredecible, apps nuevas, dev/test." },
+        { "letter": "B", "text": "Provisioned sin auto-scaling", "correct": false, "why": "Cercano barato en estado estable pero causa throttling en picos impredecibles. Requiere planning cuidadoso." },
+        { "letter": "C", "text": "Provisioned con auto-scaling", "correct": false, "why": "Cercano y valida alternativa (auto-scaling ajusta capacity dinamicamente) pero el auto-scaling reacciona lento (minutos), on-demand es instantaneo. Para picos MUY variables, on-demand mejor." },
+        { "letter": "D", "text": "Solo provisioned sin monitoring", "correct": false, "why": "Incorrecto. Sin monitoring, throttling silencioso." }
+      ],
+      "explanation": "DynamoDB capacity modes: (1) On-Demand: paga por request, escala instantly, ideal trafico variable/impredecible, nuevo/desconocido, dev/test. Coste ~7x per-unit. (2) Provisioned: paga RCU/WCU/hora, mas barato steady, requiere planning. Auto-scaling ajusta capacity segun target utilization (default 70%), reactivo (minutos lag). Reserved Capacity: descuento hasta 76% para provisioned con commitment 1-3 anos. Regla: empezar on-demand, migrar a provisioned+auto-scaling cuando el pattern es predecible.",
+      "keywords": ["on-demand", "provisioned", "trafico variable"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DynamoDB capacity modes" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "high-performing",
+      "topic": "DynamoDB Streams",
+      "difficulty": "medium",
+      "scenario": "Una app quiere que cada cambio en su tabla DDB (create/update/delete) triggeree procesamiento downstream: replicar a data lake S3, invalidar cache, notificar a otro microservicio.",
+      "question": "Que feature de DDB expone el change data feed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB Streams: change data capture ordenado por item; consumers via Lambda triggers, Kinesis Data Streams, o Kinesis Client Library", "correct": true, "why": "Correcto. DDB Streams son time-ordered log de cambios por item (24h retention). Consumers via Lambda triggers (mas comun) para reaccionar automaticamente. Casos: replicacion, cache invalidation, event sourcing, notifications." },
+        { "letter": "B", "text": "Polling constante de la tabla", "correct": false, "why": "Incorrecto. Ineficaz, no captura deletes ni cambios granulares. Streams es el patron correcto." },
+        { "letter": "C", "text": "CloudTrail data events", "correct": false, "why": "Cercano parcial (CloudTrail Data Events pueden capturar APIs) pero no da payload de items ni orden por item como Streams." },
+        { "letter": "D", "text": "SNS topic manual", "correct": false, "why": "Cercano pero requiere que la app publique explicitamente en cada write. Streams es transparente." }
+      ],
+      "explanation": "DynamoDB Streams: change log 24h retention, ordenado por partition key. StreamViewType opciones: KEYS_ONLY, NEW_IMAGE, OLD_IMAGE, NEW_AND_OLD_IMAGES. Consumers: Lambda trigger (mas simple), Kinesis Data Streams (via Kinesis adapter, mas potente con multiple consumers), KCL library. Casos: cross-region replication (via Global Tables underlying), event sourcing, cache invalidation, real-time analytics. Alternativa: Kinesis Data Streams for DynamoDB (extend retention hasta 365d).",
+      "keywords": ["change data capture", "streams", "trigger"],
+      "services": ["DynamoDB Streams", "Lambda"],
+      "references": [{ "title": "DynamoDB Streams" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "high-performing",
+      "topic": "TTL para expiration automatica",
+      "difficulty": "easy",
+      "scenario": "Una tabla DDB guarda sesiones de usuarios que deben borrarse automaticamente tras 24h de inactividad. El equipo no quiere escribir cleanup jobs.",
+      "question": "Que feature DDB elimina items automaticamente por edad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB TTL: define un atributo con Unix epoch timestamp; DDB borra items expirados automaticamente en background sin consumir WCU", "correct": true, "why": "Correcto. TTL es feature managed que borra items con timestamp expirado. NO consume WCU (gratis). Borra tipicamente en 48h de la expiracion (best-effort, no exacto). Los items expirados desaparecen de Streams tras el delete." },
+        { "letter": "B", "text": "Escribir Lambda cron cada hora", "correct": false, "why": "Cercano pero consume WCU (scanning y deleting), reinventa TTL. TTL nativo es gratis." },
+        { "letter": "C", "text": "Lifecycle rules como S3", "correct": false, "why": "Incorrecto. DDB no tiene lifecycle rules (S3 si)." },
+        { "letter": "D", "text": "Manual delete al login", "correct": false, "why": "Incorrecto. No cubre sesiones abandonadas sin login posterior." }
+      ],
+      "explanation": "DynamoDB TTL: define un atributo (numero) con Unix epoch seconds. Items con TTL < now son marked for deletion. Backend borra en background dentro de 48h de expiracion (best-effort). NO consume WCU. Items expirados aparecen en Streams como REMOVE events pre-borrado (usable para archivado antes de delete). Casos: sessions, cache expiration, temporary data, GDPR data retention.",
+      "keywords": ["TTL", "expirar sesiones", "auto-borrado"],
+      "services": ["DynamoDB", "TTL"],
+      "references": [{ "title": "DynamoDB Time to Live" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "high-performing",
+      "topic": "Transactions DDB",
+      "difficulty": "medium",
+      "scenario": "Una app financiera necesita transferir dinero entre cuentas: debitar A y acreditar B ATOMICAMENTE. Si uno falla, ambos deben revertirse.",
+      "question": "Que feature de DDB soporta ACID transactions cross-item?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB Transactions (TransactWriteItems / TransactGetItems): ACID cross-items en una sola call, up to 100 items o 4MB", "correct": true, "why": "Correcto. DDB Transactions (2018) soporta ACID cross-item: all-or-nothing writes con up to 100 items. Consume 2x WCU (write) o 2x RCU (read strong). Ideal para transferencias, saga steps atomicos, conditional multi-item updates." },
+        { "letter": "B", "text": "Multiple PutItem calls con try/catch", "correct": false, "why": "Incorrecto. Sin transaction, un fallo entre operaciones deja estado inconsistente sin rollback." },
+        { "letter": "C", "text": "SQS queue con eventual consistency", "correct": false, "why": "Cercano workaround (saga pattern) pero no es transaccion ACID sync." },
+        { "letter": "D", "text": "Migrar a Aurora", "correct": false, "why": "Cercano pero cambio tecnologia; DDB si soporta transactions nativamente." }
+      ],
+      "explanation": "DynamoDB Transactions: (1) TransactWriteItems (up to 100 actions: Put/Update/Delete/ConditionCheck en una operacion atomica), (2) TransactGetItems (up to 100 items strongly consistent). Consume 2x capacity vs regular ops. Isolation: serializable. Casos: cross-item invariants, saga steps atomicos, conditional multi-item updates. Limits: 4MB payload, mismo region, mismo tabla o cross-table.",
+      "keywords": ["ACID cross-item", "transaction", "atomico"],
+      "services": ["DynamoDB Transactions"],
+      "references": [{ "title": "DynamoDB Transactions" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "high-performing",
+      "topic": "DAX cache",
+      "difficulty": "medium",
+      "scenario": "Una app read-heavy hace queries repetitivas a DDB y quiere reducir latencia a microsegundos + reducir RCU consumption.",
+      "question": "Que servicio provee cache managed especifico para DDB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon DynamoDB Accelerator (DAX): cluster in-memory cache write-through/read-through, latencia microseconds, transparent via DAX SDK", "correct": true, "why": "Correcto. DAX es cache managed especifica para DDB: cluster deployado en tu VPC, latencia microseconds (vs single-digit ms de DDB), reduce RCU 90%+. Write-through: writes actualizan cache y DDB. Requires DAX SDK (espeja DDB API)." },
+        { "letter": "B", "text": "ElastiCache Redis con cache-aside custom", "correct": false, "why": "Cercano funcional pero requiere codigo cache-aside en app. DAX es transparente y write-through." },
+        { "letter": "C", "text": "CloudFront", "correct": false, "why": "Incorrecto. CloudFront es CDN HTTP, no aplica a DDB API." },
+        { "letter": "D", "text": "S3", "correct": false, "why": "Incorrecto. S3 no es cache in-memory." }
+      ],
+      "explanation": "DAX: cache managed DDB-specific. Cluster de nodos in-memory en tu VPC (Multi-AZ para HA). Item cache (GetItem, BatchGet) + Query cache (Query, Scan results). TTL configurables por tipo. Write-through: writes van a DDB y cache simultaneamente. Transparent via DAX SDK (mimics DDB API). Beneficios: latencia microseconds, reduce RCU. Consideraciones: no compatible con Global Tables writes (solo reads), coste por nodo hora.",
+      "keywords": ["DAX", "cache DDB", "microseconds"],
+      "services": ["DAX", "DynamoDB"],
+      "references": [{ "title": "Amazon DynamoDB Accelerator" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "high-performing",
+      "topic": "DynamoDB Scan vs Query",
+      "difficulty": "easy",
+      "scenario": "Un dev novato hace SCAN sobre una tabla de 10M items para obtener 20 registros que matchean un filtro. Es lento y caro.",
+      "question": "Cual es el patron correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar Query (con partition key o GSI) que solo lee la particion relevante; Scan lee TODA la tabla y filtra post-lectura, consumiendo RCU sobre todos los items", "correct": true, "why": "Correcto. Scan = O(N) read all items y luego filter. Query = O(log N) usando index, solo lee items relevantes. Best practice: modelar access patterns con GSIs/PKs adecuados para Query. Scan solo para admin/analytics, no hot path." },
+        { "letter": "B", "text": "Scan es mas rapido siempre", "correct": false, "why": "Incorrecto. Scan es el mas caro y lento; ineficaz para hot path." },
+        { "letter": "C", "text": "Aumentar RCU para acelerar Scan", "correct": false, "why": "Cercano parcial (Scan seria mas rapido) pero sigue leyendo todo. Query es la solucion arquitectural." },
+        { "letter": "D", "text": "Migrar a Aurora", "correct": false, "why": "Cercano cambio tecnologia. DDB con buen modelado (GSIs) es suficiente." }
+      ],
+      "explanation": "DynamoDB access patterns: (1) GetItem: 1 item por PK completo (fastest). (2) Query: items en una partition (PK igual, SK operators BETWEEN/BEGINS_WITH/etc.), eficiente. (3) Scan: todos items de tabla/index, muy caro, evitar en hot path. Filters aplican DESPUES de la read (consumen RCU sobre items filtrados). Best practice: modelar por access patterns, usar GSIs para queries alternativos, evitar Scan salvo casos admin.",
+      "keywords": ["Scan vs Query", "10M items", "filtro"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DynamoDB Query vs Scan" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "high-performing",
+      "topic": "Global Tables multi-region",
+      "difficulty": "medium",
+      "scenario": "Una app quiere DDB multi-region active-active con RPO segundos y writes locales en cada region.",
+      "question": "Que feature DDB provee esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB Global Tables: multi-master multi-region, replicacion async ~1s, conflict resolution last-writer-wins", "correct": true, "why": "Correcto. Global Tables son active-active multi-region: cada region acepta reads y writes, sync async cross-region ~1s. Requiere Streams. Cada region agrega replicated Write Capacity (rWCU). Casos: apps globales activas, low-latency global reads/writes, DR." },
+        { "letter": "B", "text": "DDB Streams + custom Lambda replicator", "correct": false, "why": "Cercano pero es lo que Global Tables hace por debajo managed. Reinventar es fragil." },
+        { "letter": "C", "text": "Backup cross-region", "correct": false, "why": "Cercano DR pero no active-active writes." },
+        { "letter": "D", "text": "PITR", "correct": false, "why": "Incorrecto. PITR es intra-region point-in-time recovery, no multi-region." }
+      ],
+      "explanation": "DynamoDB Global Tables: multi-master multi-region active-active. Requisitos: DDB Streams habilitado (view NEW_AND_OLD_IMAGES). Cada region: read/write local, replica async ~1s a otras regions. Conflict resolution: last-writer-wins (basado en timestamp). Coste: replicated Write Capacity Units (rWCU) por region adicional (2x normal WCU cada uno). Casos: apps globales, DR active-active, low-latency multi-region.",
+      "keywords": ["Global Tables", "multi-region", "active-active"],
+      "services": ["DynamoDB Global Tables"],
+      "references": [{ "title": "DynamoDB Global Tables" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "high-performing",
+      "topic": "PITR Point-in-Time Recovery",
+      "difficulty": "easy",
+      "scenario": "Un dev por error hizo un UpdateItem masivo que corrompio miles de items. Necesitan recuperar a hace 30 min.",
+      "question": "Que feature DDB permite restore a un timestamp exacto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PITR (Point-in-Time Recovery): continuous backups, restore a cualquier segundo en los ultimos 35 dias, opt-in", "correct": true, "why": "Correcto. PITR es opt-in feature managed que provee continuous backup. Restore crea una nueva tabla al timestamp deseado (segundo exacto), luego rename o migrar. Retention 35 dias. Ideal para recovery de human error." },
+        { "letter": "B", "text": "DynamoDB Streams historico", "correct": false, "why": "Incorrecto. Streams tiene retention 24h y no permiten restore full-table." },
+        { "letter": "C", "text": "Manual on-demand backup periodico", "correct": false, "why": "Cercano parcial pero solo permite restore a snapshots discretos, no timestamp arbitrario continuo." },
+        { "letter": "D", "text": "S3 export", "correct": false, "why": "Cercano para exports puntuales pero no continuous timestamp-based restore." }
+      ],
+      "explanation": "DynamoDB backup options: (1) PITR (Point-in-Time Recovery): opt-in, continuous, retention 35 dias, restore a segundo exacto. (2) On-Demand Backup: manual snapshots, retention indefinida, sin performance impact. (3) AWS Backup integration: cross-region/cross-account backup vaults, retention policies. Restore siempre crea una NUEVA tabla (rename luego). Casos PITR: recovery human error, ransomware, corrupcion logica. Coste PITR: por GB continuous backup storage.",
+      "keywords": ["PITR", "restore timestamp", "human error"],
+      "services": ["DynamoDB", "PITR"],
+      "references": [{ "title": "DynamoDB PITR" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "high-performing",
+      "topic": "Adaptive capacity y burst",
+      "difficulty": "hard",
+      "scenario": "Un equipo experimenta throttling ocasional en particiones con trafico irregular. AWS Support menciona 'burst capacity' y 'adaptive capacity'.",
+      "question": "Como funcionan estas features y por que a veces no evitan throttling?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Burst: cada particion acumula hasta 300s de RCU/WCU no usados para absorber picos cortos. Adaptive capacity: redistribute RCU/WCU entre particiones automaticamente para hot partitions. Ninguna resuelve baja cardinalidad de PK; requieren buena distribucion", "correct": true, "why": "Correcto. Burst absorbe spikes cortos (hasta 5 min de capacity unused). Adaptive capacity balancea entre particiones cuando una esta hot. Ambas ayudan pero no arreglan PK design fundamentalmente malo (baja cardinalidad, hot key permanente)." },
+        { "letter": "B", "text": "Ambas eliminan throttling siempre", "correct": false, "why": "Incorrecto. No son magia; PK design pobre sigue causando throttling estructural." },
+        { "letter": "C", "text": "Solo aplican en on-demand", "correct": false, "why": "Incorrecto. Adaptive y burst aplican en provisioned; on-demand tiene su propio modelo." },
+        { "letter": "D", "text": "Requieren activacion manual", "correct": false, "why": "Incorrecto. Ambas son automaticas nativas." }
+      ],
+      "explanation": "DynamoDB capacity features: (1) Burst capacity: cada particion acumula hasta 300 segundos de unused capacity (RCU o WCU) para absorber spikes. Best-effort, no garantizado. (2) Adaptive capacity: DDB balancea RCU/WCU no usada entre particiones para hot partitions (automatic, sin config). (3) Isolate frequently accessed items: DDB puede aislar hot items a particiones dedicadas. Ninguna resuelve PK design pobre; requieren buena distribucion.",
+      "keywords": ["burst", "adaptive capacity", "throttling"],
+      "services": ["DynamoDB"],
+      "references": [{ "title": "DynamoDB adaptive capacity" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "high-performing",
+      "topic": "DynamoDB export to S3",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere hacer analytics batch sobre datos DDB con Athena/Redshift, sin impactar la performance de produccion ni consumir RCU.",
+      "question": "Que feature DDB exporta a S3 sin RCU?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DynamoDB Export to S3 (basado en PITR): exporta full o incremental snapshot a S3 en DynamoDB JSON o ION formats, sin consumir RCU, disponible desde 2020", "correct": true, "why": "Correcto. DDB Export to S3 usa PITR backups (requiere PITR habilitado), no consume RCU. Exporta a formats DynamoDB JSON o ION. Combinable con Athena, Glue, Redshift Spectrum, EMR para analytics. Incremental exports (2023) traen solo cambios entre timestamps." },
+        { "letter": "B", "text": "Scan full a S3 via Lambda", "correct": false, "why": "Incorrecto. Consume RCU intensivo, afecta produccion, ineficiente." },
+        { "letter": "C", "text": "DynamoDB Streams a Firehose", "correct": false, "why": "Cercano para incremental streaming pero no da un snapshot full historico rapido." },
+        { "letter": "D", "text": "Athena federated a DDB", "correct": false, "why": "Cercano (Athena PartiQL sobre DDB posible via connector) pero consume RCU. Export a S3 desacopla completamente." }
+      ],
+      "explanation": "DynamoDB Export to S3: feature 2020, exporta datos via PITR backups sin consumir RCU. Formats: DynamoDB JSON, Amazon ION. Full export o incremental (delta entre 2 timestamps, 2023+). Casos: analytics batch, data lake ingestion, backup archivable, cross-region data transfer. Combinable con Athena, Glue crawler, Redshift COPY. Requiere PITR habilitado. Alternativa managed: DynamoDB zero-ETL to Redshift/OpenSearch (streaming continuo).",
+      "keywords": ["export S3", "analytics batch", "sin RCU"],
+      "services": ["DynamoDB", "S3", "Athena"],
+      "references": [{ "title": "DynamoDB export to S3" }]
+    }
+  ]
+}

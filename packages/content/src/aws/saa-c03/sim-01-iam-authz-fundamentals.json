@@ -1,0 +1,251 @@
+{
+  "id": "saa-c03-sim-01-iam-authz-fundamentals",
+  "certId": "saa-c03",
+  "order": 1,
+  "title": "Simulacro 01 — IAM para arquitectos: roles, trust policies y cross-account",
+  "focus": "Dominio 1 — Design Secure Architectures (30%). Identidad, autorización, roles temporales, boundaries y federación multi-cuenta.",
+  "domainCoverage": ["secure"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "secure",
+      "topic": "Cross-account roles y ExternalId",
+      "difficulty": "medium",
+      "scenario": "Una empresa contrata a un proveedor externo (partner SaaS) para analizar sus logs de CloudTrail en S3. El partner necesita acceso desde su propia cuenta AWS. El equipo de seguridad exige que el partner no pueda ser usado por otra cuenta si por error configura mal el ID de tu cuenta en su lado (confused deputy problem).",
+      "question": "¿Cuál es la configuración MÁS SEGURA para dar acceso al partner?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear un IAM user en tu cuenta y compartir access keys con el partner por email cifrado", "correct": false, "why": "Incorrecto. Access keys de larga duración compartidas violan el principio de credenciales temporales. Aunque cifres el email, la clave persiste, no rota y no hay forma limpia de revocarla si el partner es comprometido." },
+        { "letter": "B", "text": "Crear un IAM Role en tu cuenta con trust policy que permita al Principal del partner asumirlo, exigiendo una condición sts:ExternalId único acordado", "correct": true, "why": "Correcto. Rol cross-account con ExternalId es la solución canónica: credenciales temporales STS, revocación instantánea al remover la trust, y ExternalId previene el confused deputy problem exigiendo un secreto que solo tu escenario legítimo conoce." },
+        { "letter": "C", "text": "Habilitar acceso público de lectura en el bucket de CloudTrail y darle la URL al partner", "correct": false, "why": "Incorrecto. Exponer logs de CloudTrail públicamente es catastrófico: revelan estructura interna, ARNs, patrones de acceso y a menudo información sensible que sirve para reconnaissance por atacantes." },
+        { "letter": "D", "text": "Crear un IAM Role con trust policy que permita a cualquier cuenta AWS asumirlo (Principal: *)", "correct": false, "why": "Incorrecto. Principal '*' permite que CUALQUIER cuenta AWS del mundo asuma el rol. Sin ExternalId ni Principal específico es equivalente a acceso público." },
+        { "letter": "E", "text": "Configurar una VPC Peering entre tu cuenta y la del partner", "correct": false, "why": "Incorrecto. VPC Peering es networking (capa 3), no autorización. No resuelve quién puede leer un bucket S3." }
+      ],
+      "explanation": "El patrón de rol cross-account con ExternalId es el estándar de AWS para acceso de terceros. La trust policy indica QUIÉN puede asumir el rol (Principal), y la condición sts:ExternalId añade un secreto compartido que evita que otra cuenta del partner (con el mismo ARN base) suplante la relación. Combinado con permisos de solo lectura sobre el bucket específico, cumple least privilege y traceabilidad (CloudTrail registra el AssumeRole).",
+      "keywords": ["cross-account", "partner", "confused deputy", "acceso temporal"],
+      "services": ["IAM", "STS", "S3", "CloudTrail"],
+      "references": [{ "title": "IAM: How to use an external ID when granting access to your AWS resources to a third party" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "secure",
+      "topic": "Permission Boundaries y delegación",
+      "difficulty": "hard",
+      "scenario": "Una plataforma interna permite a desarrolladores crear sus propios IAM roles para funciones Lambda. El equipo de seguridad quiere que los devs puedan crear roles LIBREMENTE pero que ninguno de esos roles pueda superar un conjunto máximo aprobado de permisos (por ejemplo, ningún rol creado por devs debe poder tocar IAM ni Organizations ni us-gov-*).",
+      "question": "¿Qué mecanismo IAM implementa este control de forma preventiva y granular?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un Service Control Policy (SCP) aplicado al OU de desarrollo", "correct": false, "why": "Parcialmente válido pero insuficiente. Los SCPs son globales para la cuenta/OU y afectarían también a admins y pipelines. No permiten decir 'específicamente los roles CREADOS POR los devs'. Además, SCPs se combinan con permission boundaries, no las reemplazan." },
+        { "letter": "B", "text": "Attachar una Permission Boundary a los roles/usuarios de los devs y exigir vía IAM policy que cualquier rol que ellos creen lleve la misma boundary", "correct": true, "why": "Correcto. La Permission Boundary es el mecanismo diseñado para delegar creación de IAM sin dar permisos ilimitados: el rol nuevo solo puede hacer la intersección de sus policies y la boundary. Se fuerza con condición iam:PermissionsBoundary en la policy del dev." },
+        { "letter": "C", "text": "Usar solo IAM policies inline muy detalladas en cada rol de dev", "correct": false, "why": "Incorrecto. Las policies inline definen qué PUEDE HACER un rol, pero no ponen un TECHO a los roles que ese usuario crea. Un dev con permisos de iam:CreateRole y iam:AttachRolePolicy podría escalar privilegios." },
+        { "letter": "D", "text": "Usar Session Policies al asumir cada rol", "correct": false, "why": "Incorrecto. Session Policies limitan una sesión STS específica (efímera), no la creación futura de recursos IAM." },
+        { "letter": "E", "text": "Habilitar MFA obligatorio para los devs", "correct": false, "why": "Incorrecto. MFA autentica pero no limita permisos. Un dev con MFA aún podría crear un rol con AdministratorAccess si su policy se lo permite." }
+      ],
+      "explanation": "La Permission Boundary es un tipo especial de policy que define el MÁXIMO efectivo de permisos que puede tener una identidad IAM, sin otorgar permisos por sí sola. Es la pieza clave para 'delegated administration': permitir que devs creen roles sin abrir la puerta a escalación de privilegios. Patrón completo: 1) IAM policy en el dev que permite iam:CreateRole/AttachPolicy solo si iam:PermissionsBoundary == BoundaryX; 2) BoundaryX niega servicios sensibles.",
+      "keywords": ["delegar creación de roles", "techo máximo", "escalación de privilegios"],
+      "services": ["IAM"],
+      "references": [{ "title": "Permissions boundaries for IAM entities" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "secure",
+      "topic": "IAM Identity Center vs Cognito",
+      "difficulty": "easy",
+      "scenario": "Una empresa tiene 200 empleados usando Okta como IdP corporativo. Necesitan acceso Single Sign-On a 15 cuentas AWS con diferentes conjuntos de permisos por equipo (dev, ops, finance). Además, la empresa lanza una app móvil pública donde usuarios finales se registran con email o Google.",
+      "question": "¿Qué servicios usar para CADA caso (empleados vs usuarios finales)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IAM Users por empleado y Cognito User Pools para usuarios finales", "correct": false, "why": "Incorrecto. Crear 200 IAM users en 15 cuentas = 3000 users a mantener manualmente. Contradice la mejor práctica actual y no aprovecha Okta." },
+        { "letter": "B", "text": "IAM Identity Center federado con Okta para empleados y Cognito User Pools para usuarios finales", "correct": true, "why": "Correcto. IAM Identity Center es la evolución de AWS SSO: se conecta a Okta como IdP, define permission sets por equipo y los propaga a múltiples cuentas. Cognito User Pools es el directorio de usuarios finales de la app móvil (login, social, MFA)." },
+        { "letter": "C", "text": "Cognito User Pools para ambos", "correct": false, "why": "Incorrecto. Cognito no es el mecanismo estándar para SSO de empleados a la consola AWS multi-cuenta. Está diseñado para usuarios finales de apps." },
+        { "letter": "D", "text": "IAM Identity Center para ambos", "correct": false, "why": "Incorrecto. IAM Identity Center está pensado para acceso de personas a AWS (consola/CLI), no para autenticar usuarios finales de una app móvil pública que se registran con email/Google." },
+        { "letter": "E", "text": "Directory Service Simple AD para empleados y IAM users para usuarios finales", "correct": false, "why": "Incorrecto. Simple AD es un directorio compatible AD; no reemplaza IAM Identity Center para SSO multi-cuenta. IAM users para usuarios finales es un anti-pattern (no escala, no soporta social login)." }
+      ],
+      "explanation": "Regla mnemónica: EMPLEADOS/ADMINS → IAM Identity Center (federado con tu IdP corporativo, permission sets multi-cuenta). USUARIOS FINALES de tu app → Cognito (User Pools para autenticar, Identity Pools si necesitas darles credenciales AWS temporales para acceder a S3/DDB desde móvil).",
+      "keywords": ["empleados", "usuarios finales", "SSO", "Okta", "social login"],
+      "services": ["IAM Identity Center", "Cognito"],
+      "references": [{ "title": "AWS IAM Identity Center User Guide" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "secure",
+      "topic": "Roles para servicios AWS (EC2 instance profile)",
+      "difficulty": "easy",
+      "scenario": "Un desarrollador junior configuró una app en EC2 que necesita leer objetos de un bucket S3. Actualmente hardcodeó las access keys de su usuario IAM en el código y las commiteó al repositorio (después las rotó).",
+      "question": "¿Cuál es la práctica correcta para que la instancia acceda a S3?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear un IAM role con permisos s3:GetObject sobre el bucket y attacharlo como instance profile a la EC2; la app usa el SDK sin credenciales explícitas", "correct": true, "why": "Correcto. El SDK obtiene credenciales temporales automáticamente vía el metadata service (IMDSv2). Sin secretos en código ni rotación manual. Es el patrón canónico." },
+        { "letter": "B", "text": "Guardar las access keys en Secrets Manager y leerlas al inicio de la app", "correct": false, "why": "Incorrecto. Aunque Secrets Manager es mejor que hardcodear, sigues usando credenciales de LARGA DURACIÓN de un IAM user. El role attach a la EC2 elimina completamente las credenciales de larga duración." },
+        { "letter": "C", "text": "Guardar las access keys en un archivo .env con permisos 600", "correct": false, "why": "Incorrecto. Sigue siendo credenciales de larga duración en el filesystem; un compromiso de la instancia las expone. No hay rotación automática." },
+        { "letter": "D", "text": "Hacer el bucket público de lectura", "correct": false, "why": "Incorrecto. Nunca se abre un bucket al mundo por comodidad. Es un anti-pattern serio de seguridad." }
+      ],
+      "explanation": "Regla de oro: los servicios AWS NUNCA deben tener credenciales de IAM user hardcodeadas. Siempre attach un IAM role. Para EC2 = instance profile; para Lambda = execution role; para ECS/EKS = task role; para on-prem = IAM Roles Anywhere. STS provee credenciales rotadas automáticamente vía metadata service (usar IMDSv2 obligatoriamente para mitigar SSRF).",
+      "keywords": ["EC2 acceso S3", "credenciales hardcodeadas", "instance profile"],
+      "services": ["IAM", "EC2", "STS", "S3"],
+      "references": [{ "title": "IAM roles for Amazon EC2" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "secure",
+      "topic": "Organizations y SCPs",
+      "difficulty": "medium",
+      "scenario": "Un CISO quiere aplicar dos guardrails obligatorios en TODAS las cuentas de la Organización: (1) prohibir el uso de regiones fuera de us-east-1 y eu-west-1 por razones de compliance GDPR, y (2) prohibir la desactivación de CloudTrail. Aunque un admin de una cuenta tenga AdministratorAccess, estas dos reglas deben seguir aplicándose.",
+      "question": "¿Qué implementación cumple con esta necesidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IAM policies aplicadas a cada usuario en cada cuenta con Deny explícito", "correct": false, "why": "Incorrecto. No escala (nuevos usuarios/roles se saltan la regla) y un admin puede editar sus propias policies. Necesitas un techo más alto que IAM." },
+        { "letter": "B", "text": "Service Control Policies (SCP) en Organizations aplicadas a la OU raíz con Deny sobre cloudtrail:StopLogging y aws:RequestedRegion fuera de las autorizadas", "correct": true, "why": "Correcto. Los SCPs actúan como TECHO MÁXIMO sobre TODA identidad en las cuentas afectadas (incluyendo root y AdministratorAccess). Deny gana siempre. Son el mecanismo preventivo de guardrails de organización." },
+        { "letter": "C", "text": "AWS Config Rules que detecten y notifiquen la violación", "correct": false, "why": "Cercano pero es DETECTIVO, no PREVENTIVO. Config detecta post-facto (drift) y notifica; no impide la acción. El enunciado exige que aunque un admin quiera, no pueda hacerlo." },
+        { "letter": "D", "text": "AWS WAF con reglas geográficas", "correct": false, "why": "Incorrecto. WAF filtra tráfico HTTP a aplicaciones web (CloudFront/ALB/API GW), no controla operaciones IAM/API de administración." },
+        { "letter": "E", "text": "Permission Boundaries en cada rol", "correct": false, "why": "Cercano. Boundaries funcionan por identidad y deberías aplicarlas a cada rol/usuario existente y futuro; los SCPs actúan a nivel de cuenta/OU y son mucho más simples de mantener para guardrails organizacionales." }
+      ],
+      "explanation": "SCP vs IAM policy: el SCP es un FILTRO al nivel de la cuenta/OU que limita el máximo posible de acciones. Nunca OTORGA permisos (para eso siguen siendo necesarias IAM policies), solo restringe. Regla clave del examen: si te piden 'aplicar a TODAS las cuentas', 'nadie incluido admin puede', 'preventivo' → SCP. Si te piden 'detectar y notificar' → Config. Si te piden 'restringir permisos que puede recibir un rol específico' → Permission Boundary.",
+      "keywords": ["multi-cuenta", "preventivo", "guardrail", "prohibir regiones"],
+      "services": ["Organizations", "SCP", "CloudTrail"],
+      "references": [{ "title": "Service Control Policies (SCPs) in AWS Organizations" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "secure",
+      "topic": "IAM condition MFA",
+      "difficulty": "medium",
+      "scenario": "Una empresa quiere que ciertos roles sensibles (por ejemplo, ProdReadWrite) solo puedan ser asumidos si la sesión tiene MFA activo. Los usuarios federados desde IAM Identity Center a veces se saltan MFA en operaciones automatizadas.",
+      "question": "¿Cómo se implementa este control?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Añadir en la trust policy del rol la condición Bool: aws:MultiFactorAuthPresent = true", "correct": true, "why": "Correcto. La trust policy se evalúa en el momento del AssumeRole; si el request no lleva contexto MFA, STS rechaza la asunción. Es la forma canónica de forzar MFA sobre roles sensibles." },
+        { "letter": "B", "text": "Configurar MFA en el IAM user, sin cambios en el rol", "correct": false, "why": "Incorrecto. MFA en el user solo aplica al login inicial. La trust policy del rol es lo que valida el contexto de la sesión que quiere asumirlo." },
+        { "letter": "C", "text": "Habilitar CloudTrail y revisar logs semanalmente", "correct": false, "why": "Incorrecto. CloudTrail es detectivo (post-facto), no PREVIENE el uso sin MFA." },
+        { "letter": "D", "text": "Configurar Cognito con MFA", "correct": false, "why": "Incorrecto. Cognito es para usuarios finales de apps, no para roles administrativos AWS." },
+        { "letter": "E", "text": "Añadir MFA solo en la resource policy del bucket S3 al que accede el rol", "correct": false, "why": "Parcial pero incompleto. Puedes exigir MFA en resource policies, pero eso solo cubre ese recurso. El enunciado pide bloquear la ASUNCIÓN del rol." }
+      ],
+      "explanation": "Claves de condición útiles en IAM: aws:MultiFactorAuthPresent (bool, presente en la sesión), aws:MultiFactorAuthAge (segundos desde autenticación MFA), aws:SecureTransport (TLS), aws:SourceIp, aws:PrincipalTag/*, aws:RequestedRegion. Aplicables tanto en identity policies como en trust policies y resource policies.",
+      "keywords": ["MFA obligatorio", "roles sensibles", "AssumeRole"],
+      "services": ["IAM", "STS"],
+      "references": [{ "title": "IAM Policy Element: Condition Operators" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "secure",
+      "topic": "AWS Control Tower y landing zone",
+      "difficulty": "medium",
+      "scenario": "Una organización acaba de comprar 12 startups y necesita rápidamente estandarizar sus 40 cuentas AWS heredadas bajo una landing zone: crear OUs (Security, Sandbox, Prod, NonProd), aplicar guardrails preventivos y detectivos, centralizar logs y establecer una cuenta de auditoría separada.",
+      "question": "¿Qué servicio de AWS acelera esta implementación con mejores prácticas prescriptivas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Control Tower", "correct": true, "why": "Correcto. Control Tower automatiza la creación de una landing zone multi-cuenta: cuentas Log Archive y Audit dedicadas, OUs preconfiguradas, guardrails (SCPs preventivos + Config Rules detectivos), Organization CloudTrail, integración con Account Factory (Service Catalog) para nuevas cuentas." },
+        { "letter": "B", "text": "AWS Organizations solo", "correct": false, "why": "Incompleto. Organizations es la base (agrupa cuentas y aplica SCPs) pero no crea automáticamente la landing zone, ni las cuentas dedicadas de Log/Audit, ni los guardrails predefinidos." },
+        { "letter": "C", "text": "AWS Config con conformance packs", "correct": false, "why": "Incorrecto. Config es una PIEZA de la landing zone (los guardrails detectivos), no la solución integral de landing zone." },
+        { "letter": "D", "text": "AWS Service Catalog", "correct": false, "why": "Incompleto. Service Catalog gestiona blueprints de recursos aprobados; Control Tower lo usa por debajo pero por sí solo no crea la landing zone." },
+        { "letter": "E", "text": "AWS Systems Manager", "correct": false, "why": "Incorrecto. SSM es operaciones/patching/parameter store, no landing zone." }
+      ],
+      "explanation": "Control Tower es la respuesta canónica para 'implementar landing zone multi-cuenta con mejores prácticas'. Bajo el capó orquesta Organizations + Config + CloudTrail + Service Catalog + IAM Identity Center. Cuentas obligatorias: Management (donde vive Organizations), Log Archive (S3 central con Object Lock), Audit (Security Hub/GuardDuty delegados). Guardrails se catalogan como Mandatory, Strongly Recommended, Elective.",
+      "keywords": ["landing zone", "multi-cuenta", "guardrails", "cuentas heredadas"],
+      "services": ["Control Tower", "Organizations", "SCP", "Config", "IAM Identity Center"],
+      "references": [{ "title": "AWS Control Tower User Guide" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "secure",
+      "topic": "IAM Access Analyzer y least privilege",
+      "difficulty": "medium",
+      "scenario": "Un auditor de seguridad detectó que 200 roles IAM existentes tienen permisos excesivos otorgados hace años. El equipo quiere calcular la policy MÍNIMA que realmente usa cada rol (basado en actividad real de los últimos 90 días) y usarla como base para right-sizing.",
+      "question": "¿Qué herramienta AWS facilita esta tarea de forma automatizada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IAM Access Analyzer (policy generation) que analiza CloudTrail y genera una policy basada en actividad observada", "correct": true, "why": "Correcto. La feature de Policy Generation de IAM Access Analyzer lee los logs de CloudTrail del principal y produce una policy sugerida con los permisos que efectivamente usó, acelerando el camino a least privilege." },
+        { "letter": "B", "text": "Trusted Advisor", "correct": false, "why": "Cercano pero no. Trusted Advisor da recomendaciones generales (cuentas sin MFA, buckets expuestos, etc.), no genera policies mínimas por rol." },
+        { "letter": "C", "text": "AWS Config", "correct": false, "why": "Incorrecto. Config evalúa cumplimiento de reglas configuradas; no genera policies mínimas basadas en actividad." },
+        { "letter": "D", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas (comportamiento malicioso), no propone policies de least privilege." },
+        { "letter": "E", "text": "Revisar manualmente cada rol", "correct": false, "why": "Incorrecto. No escala a 200 roles y es propenso a error humano." }
+      ],
+      "explanation": "IAM Access Analyzer tiene tres capacidades clave: (1) Findings de external access (recursos accesibles fuera de tu Organization/cuenta), (2) Findings de unused access (roles/permisos no usados en X días), (3) Policy generation (genera policy mínima desde CloudTrail). Complemento: IAM Access Advisor muestra qué SERVICIOS ha usado un principal en los últimos 400 días.",
+      "keywords": ["least privilege", "actividad real", "generar policy"],
+      "services": ["IAM Access Analyzer", "CloudTrail"],
+      "references": [{ "title": "IAM Access Analyzer policy generation" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "secure",
+      "topic": "Federación SAML/OIDC",
+      "difficulty": "hard",
+      "scenario": "Una empresa quiere que sus pipelines de GitHub Actions asuman roles IAM temporalmente para desplegar en AWS, sin almacenar access keys como secretos en GitHub (buena práctica de la industria post-2023).",
+      "question": "¿Qué mecanismo cumple esto usando estándares abiertos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Almacenar access keys de larga duración de un IAM user en GitHub Secrets", "correct": false, "why": "Incorrecto. Es el patrón LEGACY que la empresa quiere abandonar. Las keys en Secrets son un objetivo de compromiso y no rotan solas." },
+        { "letter": "B", "text": "Configurar un OIDC Identity Provider en IAM que confíe en token.actions.githubusercontent.com, y crear un rol con trust policy que permita a repos específicos asumirlo", "correct": true, "why": "Correcto. GitHub emite un OIDC token por workflow; IAM lo valida contra el IdP configurado y permite AssumeRoleWithWebIdentity. Sin secretos de larga vida, credenciales temporales por ejecución, y trust condition por repo/branch (sub, aud)." },
+        { "letter": "C", "text": "Configurar SAML entre GitHub Enterprise y AWS IAM Identity Center", "correct": false, "why": "Incorrecto. GitHub Actions no habla SAML para federación de workloads; usa OIDC. SAML se usa entre IdPs de humanos (Okta, AD)." },
+        { "letter": "D", "text": "Crear un rol asumible por cualquier cuenta AWS y compartirlo con GitHub", "correct": false, "why": "Incorrecto. GitHub Actions no es una cuenta AWS. Además, Principal '*' es inseguro." },
+        { "letter": "E", "text": "Usar Cognito Identity Pools", "correct": false, "why": "Incorrecto. Cognito Identity Pool es para dar credenciales AWS a usuarios finales de apps móviles, no para pipelines CI/CD." }
+      ],
+      "explanation": "OIDC federation es el estándar 2024+ para CI/CD (GitHub Actions, GitLab, CircleCI, Bitbucket). Ventajas: sin secretos rotables, credenciales por ejecución con TTL corto, trust policy con condiciones granulares (repo, branch, environment) que evitan que un fork/PR malicioso asuma el rol.",
+      "keywords": ["GitHub Actions", "sin access keys", "OIDC", "workload federation"],
+      "services": ["IAM", "STS", "OIDC"],
+      "references": [{ "title": "Configuring OpenID Connect in Amazon Web Services (GitHub Docs)" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "secure",
+      "topic": "Cross-account access con RAM",
+      "difficulty": "medium",
+      "scenario": "Una organización con 30 cuentas AWS quiere que múltiples cuentas de workloads compartan las MISMAS subnets de una VPC central gestionada por la cuenta de Networking, en lugar de que cada cuenta cree su propia VPC. Objetivo: centralizar routing, reducir NAT costs y simplificar VPC peering.",
+      "question": "¿Qué servicio AWS habilita esta arquitectura de VPC compartida?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Resource Access Manager (RAM) para compartir subnets desde la cuenta Networking a las cuentas participantes", "correct": true, "why": "Correcto. RAM soporta compartir subnets como recurso; las cuentas destino ven las subnets y lanzan recursos en ellas sin transferir la VPC. Es el modelo canónico de shared VPC." },
+        { "letter": "B", "text": "VPC Peering entre cada cuenta y la cuenta Networking", "correct": false, "why": "Incorrecto. VPC Peering crea rutas entre VPCs distintas; el enunciado pide compartir LAS MISMAS subnets. Además, peering no es transitivo y explota en complejidad con 30 cuentas." },
+        { "letter": "C", "text": "Transit Gateway", "correct": false, "why": "Cercano pero no es lo que se pide. TGW interconecta VPCs distintas; el enunciado pide compartir la MISMA VPC. TGW se combina con RAM en arquitecturas más grandes, pero para 'shared VPC' la respuesta es RAM." },
+        { "letter": "D", "text": "PrivateLink", "correct": false, "why": "Incorrecto. PrivateLink publica un SERVICIO específico entre VPCs (via NLB), no comparte subnets ni permite lanzar recursos ajenos en ellas." },
+        { "letter": "E", "text": "Site-to-Site VPN", "correct": false, "why": "Incorrecto. VPN conecta redes remotas; no comparte subnets entre cuentas AWS." }
+      ],
+      "explanation": "AWS RAM permite compartir recursos entre cuentas de la Organización o cuentas específicas: subnets (shared VPC), Transit Gateway, License Manager configs, Route 53 Resolver rules, Aurora clusters, EC2 Capacity Reservations, entre otros. El patrón de VPC compartida centraliza IPAM, routing y NAT en una cuenta y deja a cada workload en su propia cuenta para blast radius menor.",
+      "keywords": ["compartir subnets", "shared VPC", "multi-cuenta"],
+      "services": ["RAM", "VPC", "Organizations"],
+      "references": [{ "title": "AWS Resource Access Manager User Guide" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "secure",
+      "topic": "Session policies y roles temporales",
+      "difficulty": "hard",
+      "scenario": "Un servicio interno asume un rol con permisos amplios (leer/escribir sobre múltiples buckets) pero para una operación puntual necesita RESTRINGIR aún más la sesión a un solo bucket específico y de solo lectura, sin modificar el rol original.",
+      "question": "¿Cómo se logra este ajuste JUST-IN-TIME?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Modificar la policy del rol temporalmente y revertirla después", "correct": false, "why": "Incorrecto. Modificar la policy afecta a todas las sesiones activas, causa condiciones de carrera y es un anti-pattern (audit trail confuso, ventanas de exposición)." },
+        { "letter": "B", "text": "Pasar una Session Policy en el AssumeRole que restrinja la sesión resultante a s3:GetObject sobre el bucket concreto", "correct": true, "why": "Correcto. La Session Policy es una policy INLINE que se pasa en el momento del AssumeRole (via CLI/SDK) y produce una sesión con permisos = intersección del rol y la session policy. No requiere modificar el rol." },
+        { "letter": "C", "text": "Crear un nuevo rol solo para esta operación", "correct": false, "why": "Cercano pero excesivo si es puntual. Session policies existen precisamente para evitar proliferación de roles cuando la restricción es efímera." },
+        { "letter": "D", "text": "Usar un SCP dinámico", "correct": false, "why": "Incorrecto. Los SCPs son estáticos a nivel de cuenta/OU, no cambian por sesión." },
+        { "letter": "E", "text": "Aplicar una NACL a la subnet", "correct": false, "why": "Incorrecto. NACL es networking; no restringe permisos IAM/S3." }
+      ],
+      "explanation": "Session Policy es la herramienta para 'downscoping' temporal de permisos: se pasa como parámetro a sts:AssumeRole (o AssumeRoleWithWebIdentity/SAML) y solo aplica a esa sesión STS. Se combina con la policy del rol via intersección (deny explícito siempre gana). Útil en autorización dinámica: por ejemplo, en un servicio multi-tenant, cada llamada a un backend obtiene una sesión con acceso solo a los recursos del tenant que la origina.",
+      "keywords": ["restringir sesión", "just-in-time", "downscoping"],
+      "services": ["IAM", "STS"],
+      "references": [{ "title": "IAM: Session policies" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "secure",
+      "topic": "Resource-based policies y cross-account S3",
+      "difficulty": "medium",
+      "scenario": "Un data lake en la cuenta A tiene un bucket S3. Un analista en la cuenta B necesita leer objetos usando su rol IAM. Ambos administradores quieren la configuración mínima que funcione.",
+      "question": "¿Qué combinación es NECESARIA para que el analista pueda leer?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo bucket policy en la cuenta A que permita al rol de cuenta B leer los objetos", "correct": false, "why": "Insuficiente. En cross-account con S3 se necesita AMBOS lados: la resource policy (bucket policy) permite al Principal externo, y la identity policy del rol en cuenta B debe también permitir s3:GetObject sobre el ARN del bucket." },
+        { "letter": "B", "text": "Bucket policy en cuenta A que permita al Principal (rol de cuenta B) + IAM policy en el rol de cuenta B que permita s3:GetObject sobre ese bucket", "correct": true, "why": "Correcto. En cross-account con S3, ambos lados deben permitirlo. Cualquier Deny explícito bloquea. Es una excepción notable: para KMS keys la key policy sola puede bastar, pero para S3 se requieren ambos." },
+        { "letter": "C", "text": "Solo IAM policy en el rol de cuenta B", "correct": false, "why": "Insuficiente. Sin bucket policy explícita, S3 rechaza requests cross-account por defecto." },
+        { "letter": "D", "text": "Hacer el bucket público", "correct": false, "why": "Incorrecto. Nunca. Además viola el principio de compartir con una cuenta específica." },
+        { "letter": "E", "text": "Configurar VPC Peering entre las cuentas", "correct": false, "why": "Incorrecto. S3 se accede vía endpoint público o VPC Endpoint; el peering no aplica al modelo de autorización de S3." }
+      ],
+      "explanation": "Regla general cross-account en AWS: cuando el recurso es propiedad de una cuenta distinta al principal, se necesita permiso en AMBAS partes (identity policy + resource policy). Excepciones/matices: (1) KMS: la key policy es suficiente si delega en IAM. (2) IAM roles cross-account: la trust policy + identity policy del asumidor. (3) Dentro de la MISMA cuenta, una de las dos basta. Cualquier Deny explícito en cualquier capa gana.",
+      "keywords": ["cross-account S3", "bucket policy", "identity policy"],
+      "services": ["S3", "IAM"],
+      "references": [{ "title": "S3: Bucket policies and user policies" }]
+    }
+  ]
+}

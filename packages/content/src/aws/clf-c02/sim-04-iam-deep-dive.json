@@ -1,0 +1,204 @@
+{
+  "id": "clf-c02-sim-04-iam-deep-dive",
+  "certId": "clf-c02",
+  "order": 4,
+  "title": "Simulacro 04 — IAM en profundidad: Users, Groups, Roles, Policies",
+  "focus": "Dominio 2 — IAM completo: identidades, permisos, roles, políticas, best practices.",
+  "domainCoverage": ["security"],
+  "timeLimitMin": 18,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "security",
+      "topic": "IAM Least Privilege",
+      "difficulty": "easy",
+      "scenario": "Un desarrollador junior necesita acceso solo a subir archivos a un bucket S3 específico. El admin senior propone darle 'AdministratorAccess' para 'no complicarnos'.",
+      "question": "¿Qué principio IAM se viola y qué debería hacer el admin?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Se viola 'least privilege'; crear una política que permita solo s3:PutObject sobre ese bucket", "correct": true, "why": "Correcto. Principio de mínimo privilegio: otorgar SOLO los permisos necesarios para la tarea. AdministratorAccess da todo, un exceso peligroso." },
+        { "letter": "B", "text": "No se viola nada; AdministratorAccess es estándar para desarrolladores", "correct": false, "why": "Incorrecto. Es una anti-práctica. Aumenta el blast radius si se compromete la cuenta." },
+        { "letter": "C", "text": "Darle credenciales root para eficiencia", "correct": false, "why": "Incorrecto. Nunca compartas root." },
+        { "letter": "D", "text": "Habilitar acceso público al bucket para simplificar", "correct": false, "why": "Incorrecto. Exponer S3 a internet es un riesgo severo." }
+      ],
+      "explanation": "'Least Privilege' es un pilar de IAM y del Well-Architected pillar de Security. Herramientas para lograrlo: IAM Access Analyzer (identifica permisos no usados), Access Advisor (últimas fechas de uso de servicios), políticas específicas por recurso ARN, condiciones (Condition en policies).",
+      "keywords": ["mínimo privilegio", "solo lo necesario", "S3 específico"],
+      "services": ["IAM", "S3"],
+      "references": [{ "title": "IAM Least Privilege" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "security",
+      "topic": "IAM Policy Anatomy",
+      "difficulty": "medium",
+      "scenario": "Un administrador escribe la siguiente política IAM (simplificada): { Effect: Allow, Action: s3:GetObject, Resource: arn:aws:s3:::reports/*, Condition: { IpAddress: { aws:SourceIp: 10.0.0.0/8 } } }",
+      "question": "¿Qué hace esta política?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Permite descargar cualquier objeto del bucket 'reports', pero solo desde IPs 10.0.0.0/8", "correct": true, "why": "Correcto. Effect (Allow), Action (GetObject), Resource (todo objeto en reports), Condition (solo si el requester viene de esa red)." },
+        { "letter": "B", "text": "Permite descargar desde cualquier bucket y cualquier IP", "correct": false, "why": "Incorrecto. Está restringido al bucket 'reports' y a IPs 10.0.0.0/8." },
+        { "letter": "C", "text": "Deniega el acceso a 'reports' desde 10.0.0.0/8", "correct": false, "why": "Incorrecto. Effect es Allow, no Deny." },
+        { "letter": "D", "text": "Permite subir objetos", "correct": false, "why": "Incorrecto. Action es GetObject (leer), no PutObject (subir)." }
+      ],
+      "explanation": "Estructura de una IAM Policy JSON: (1) Version, (2) Statement (array de reglas), cada regla tiene: Effect (Allow/Deny), Action (qué APIs), Resource (sobre qué ARN), opcionalmente Principal (quién, solo en resource-based policies) y Condition (cuándo). Condiciones comunes: aws:SourceIp, aws:MultiFactorAuthPresent, aws:RequestedRegion.",
+      "keywords": ["policy JSON", "condition", "IP source"],
+      "services": ["IAM", "S3"],
+      "references": [{ "title": "IAM Policy Elements" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "security",
+      "topic": "IAM Roles vs Users",
+      "difficulty": "medium",
+      "scenario": "Una aplicación corriendo en EC2 necesita acceder a DynamoDB. El desarrollador considera dos opciones: (A) crear un IAM User, generar access keys y ponerlas en el archivo de configuración de la app; (B) crear un IAM Role y asignarlo a la instancia EC2.",
+      "question": "¿Cuál es la mejor práctica y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Opción A porque es más simple", "correct": false, "why": "Incorrecto. Hardcodear keys es una anti-práctica: se filtran en git, no rotan, difícil auditar." },
+        { "letter": "B", "text": "Opción B: IAM Role asignado a la EC2 con credenciales temporales rotadas automáticamente", "correct": true, "why": "Correcto. Los roles asignados a EC2 (via Instance Profile) proveen credenciales temporales que AWS rota. Sin secretos en el código." },
+        { "letter": "C", "text": "Ninguna; usar la cuenta root", "correct": false, "why": "Incorrecto. Nunca root para operaciones." },
+        { "letter": "D", "text": "Hacer DynamoDB público", "correct": false, "why": "Incorrecto. DynamoDB no debería ser público jamás." }
+      ],
+      "explanation": "Users = identidad humana con credenciales permanentes (contraseña, access keys). Roles = identidad SIN credenciales permanentes, asumida temporalmente por servicios AWS, usuarios federados o cross-account. Regla: si es un SERVICIO AWS quien accede, usa ROLE. Si es un HUMANO, User (idealmente vía Identity Center + federación).",
+      "keywords": ["EC2 accede DynamoDB", "role vs user"],
+      "services": ["IAM", "EC2", "DynamoDB"],
+      "references": [{ "title": "IAM Roles for EC2" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "security",
+      "topic": "MFA para root y usuarios",
+      "difficulty": "easy",
+      "scenario": "Un auditor de seguridad revisa la cuenta AWS de una startup y encuentra: (1) root sin MFA, (2) 20 usuarios IAM sin MFA, (3) políticas de contraseña con longitud mínima de 6.",
+      "question": "¿Qué medidas debe recomendar? (Selecciona 2)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Habilitar MFA en la cuenta root inmediatamente", "correct": true, "why": "Correcto. Root sin MFA es el riesgo #1. AWS ahora fuerza MFA para root en cuentas nuevas." },
+        { "letter": "B", "text": "Habilitar MFA en todos los usuarios IAM, especialmente los con permisos elevados", "correct": true, "why": "Correcto. MFA debería ser universal, mínimo obligatorio para usuarios privilegiados." },
+        { "letter": "C", "text": "Bajar longitud mínima de contraseñas a 4", "correct": false, "why": "Incorrecto. Empeora seguridad." },
+        { "letter": "D", "text": "Compartir credenciales root entre admins", "correct": false, "why": "Incorrecto. Peor práctica." },
+        { "letter": "E", "text": "Publicar las access keys en el repo Git para colaboración", "correct": false, "why": "Incorrecto. Filtración inmediata de credenciales." }
+      ],
+      "explanation": "Best practices IAM: (1) MFA en root y usuarios, (2) sin access keys en root, (3) política de contraseñas fuerte (min 14 char, mayúsc/minúsc/número/símbolo, rotación), (4) least privilege, (5) grupos, (6) roles para servicios, (7) revisar Access Advisor y Access Analyzer regularmente.",
+      "keywords": ["MFA root", "MFA usuarios"],
+      "services": ["IAM"],
+      "references": [{ "title": "IAM MFA Best Practices" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "security",
+      "topic": "IAM Access Analyzer",
+      "difficulty": "hard",
+      "scenario": "Una empresa quiere identificar automáticamente qué recursos (buckets S3, roles IAM, funciones Lambda, KMS keys) están accesibles desde fuera de la organización, para evitar exposiciones accidentales.",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IAM Access Analyzer", "correct": true, "why": "Correcto. Access Analyzer analiza políticas de recursos e identifica accesos externos (fuera de la cuenta u organización). También sugiere políticas de mínimo privilegio basadas en uso real (CloudTrail)." },
+        { "letter": "B", "text": "AWS Trusted Advisor", "correct": false, "why": "Cercano. Trusted Advisor da chequeos generales de seguridad pero no analiza políticas en profundidad como Access Analyzer." },
+        { "letter": "C", "text": "AWS Config", "correct": false, "why": "Config evalúa configuración contra reglas, no analiza accesos externos automáticamente." },
+        { "letter": "D", "text": "Amazon GuardDuty", "correct": false, "why": "GuardDuty detecta AMENAZAS activas (comportamiento sospechoso), no exposición estática de políticas." }
+      ],
+      "explanation": "IAM Access Analyzer: (1) External Access = detecta recursos accesibles desde fuera de tu cuenta/organización, (2) Unused Access = detecta roles/permisos sin usar, (3) Policy Generation = genera política de mínimo privilegio basada en uso de CloudTrail. Gratuito para uso básico dentro de tu cuenta.",
+      "keywords": ["accesibles desde fuera", "exposición externa"],
+      "services": ["IAM Access Analyzer", "IAM"],
+      "references": [{ "title": "IAM Access Analyzer" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "security",
+      "topic": "Password Policy",
+      "difficulty": "easy",
+      "scenario": "Un CISO quiere establecer una política de contraseñas corporativa para todos los usuarios IAM: longitud mínima, complejidad, rotación cada 90 días.",
+      "question": "¿Dónde se configura?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En cada usuario IAM individualmente", "correct": false, "why": "Incorrecto. Se configura a nivel cuenta, no por usuario." },
+        { "letter": "B", "text": "En la Password Policy de IAM (a nivel de cuenta)", "correct": true, "why": "Correcto. IAM Account Password Policy define reglas para TODOS los usuarios IAM de la cuenta: longitud, complejidad, expiración, no reutilizar últimas N, permitir cambio propio." },
+        { "letter": "C", "text": "En AWS Config", "correct": false, "why": "Incorrecto. Config evalúa cumplimiento, no define la password policy." },
+        { "letter": "D", "text": "En KMS", "correct": false, "why": "Incorrecto. KMS es cifrado, no contraseñas." }
+      ],
+      "explanation": "IAM Password Policy (nivel cuenta): min length (recomendado 14+), requiere may/min/num/símbolo, expiration (días), no reuse (N previas), permitir a usuarios cambiar su propia password, contraseña obligatoria en el primer login. Para SSO empresarial usa IAM Identity Center + tu IdP corporativo.",
+      "keywords": ["password policy", "todos los usuarios", "longitud"],
+      "services": ["IAM"],
+      "references": [{ "title": "IAM Password Policy" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "security",
+      "topic": "Programmatic vs Console Access",
+      "difficulty": "medium",
+      "scenario": "Un DevOps engineer necesita configurar acceso para dos usuarios: (A) Un desarrollador que solo usará la consola AWS, (B) Un pipeline CI/CD que se autenticará vía CLI/SDK.",
+      "question": "¿Qué credenciales necesita cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Contraseña de consola con MFA. (B) Access Key ID + Secret Access Key", "correct": true, "why": "Correcto. Consola = contraseña (+ MFA). Programático (CLI/SDK/API) = access key pair. Un mismo user puede tener ambos si necesita." },
+        { "letter": "B", "text": "Ambos con contraseña de consola", "correct": false, "why": "Incorrecto. Un pipeline no usa contraseña; usa keys programáticas." },
+        { "letter": "C", "text": "Ambos con access keys", "correct": false, "why": "Incorrecto. Un humano usará mejor la consola con contraseña + MFA." },
+        { "letter": "D", "text": "Ambos con la cuenta root", "correct": false, "why": "Incorrecto. Nunca compartir root." }
+      ],
+      "explanation": "Dos tipos de acceso IAM: (1) Console = username + password (+ MFA opcional). (2) Programmatic = Access Key ID + Secret Access Key para CLI/SDK/API. Best practice para CI/CD: mejor usar IAM Roles con OIDC federation (ej. GitHub Actions) en lugar de long-lived access keys.",
+      "keywords": ["consola vs CLI", "access keys", "pipeline"],
+      "services": ["IAM"],
+      "references": [{ "title": "IAM Access Types" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "security",
+      "topic": "IAM Roles for Services",
+      "difficulty": "medium",
+      "scenario": "Un data engineer configura AWS Glue para leer datos de S3 y escribir en Redshift. Glue necesita permisos sobre ambos servicios.",
+      "question": "¿Cómo se otorgan los permisos a Glue?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear un IAM Role con permisos S3 y Redshift, y asignárselo al job de Glue", "correct": true, "why": "Correcto. Los servicios AWS usan Service Roles con Trust Policy que confía en el service principal (ej. glue.amazonaws.com)." },
+        { "letter": "B", "text": "Hardcodear access keys en el script de Glue", "correct": false, "why": "Incorrecto. Anti-práctica; keys en código, difícil rotar." },
+        { "letter": "C", "text": "Usar la cuenta root para el job", "correct": false, "why": "Incorrecto. Root jamás." },
+        { "letter": "D", "text": "Hacer S3 y Redshift públicos", "correct": false, "why": "Incorrecto. Rompe seguridad." }
+      ],
+      "explanation": "Service Roles = IAM Roles asumidos por servicios AWS. Trust Policy define QUÉ servicio puede asumirlo (Principal: service). Ejemplos: Lambda execution role, EC2 instance profile, Glue service role, ECS task role. Best practice absoluta: NUNCA claves hardcodeadas.",
+      "keywords": ["Glue role", "service role"],
+      "services": ["IAM", "Glue", "S3", "Redshift"],
+      "references": [{ "title": "IAM Service Roles" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "security",
+      "topic": "Access Keys Rotation",
+      "difficulty": "medium",
+      "scenario": "Una empresa detecta que un ex-empleado tenía access keys activas 6 meses después de irse. También ve keys de otros usuarios sin rotar hace 2 años.",
+      "question": "¿Qué medidas correctivas debe tomar? (Selecciona 2)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Revocar inmediatamente las access keys del ex-empleado (deshabilitar/eliminar)", "correct": true, "why": "Correcto. Al offboarding se deben desactivar credenciales de inmediato: password, keys, sesiones, MFA devices." },
+        { "letter": "B", "text": "Establecer política de rotación regular de access keys (ej. 90 días)", "correct": true, "why": "Correcto. Rotación limita ventana de exposición si una key se compromete. IAM Access Advisor y Credentials Report ayudan a auditar." },
+        { "letter": "C", "text": "Publicar todas las keys en un wiki interno para transparencia", "correct": false, "why": "Incorrecto. Exposición masiva." },
+        { "letter": "D", "text": "Deshabilitar IAM completamente", "correct": false, "why": "Incorrecto. Rompe todo el acceso." },
+        { "letter": "E", "text": "Migrar todo a la cuenta root", "correct": false, "why": "Incorrecto. Peor práctica." }
+      ],
+      "explanation": "Ciclo de vida de credenciales: (1) offboarding inmediato al terminar contrato, (2) rotación periódica de access keys (90 días típico), (3) IAM Credentials Report (CSV) muestra edad de credenciales, MFA, últimos usos, (4) mejor aún: usar SSO (Identity Center) con credenciales temporales en lugar de keys long-lived.",
+      "keywords": ["ex-empleado", "keys sin rotar", "offboarding"],
+      "services": ["IAM"],
+      "references": [{ "title": "IAM Credentials Rotation" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "security",
+      "topic": "IAM Global vs Regional",
+      "difficulty": "hard",
+      "scenario": "Una empresa opera en 3 regiones AWS (us-east-1, eu-west-1, ap-southeast-1). Se pregunta si tienen que crear los mismos usuarios IAM en cada región.",
+      "question": "¿Cómo funciona IAM respecto a regiones?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IAM es global: usuarios, grupos, roles y políticas se crean UNA vez y aplican a toda la cuenta en todas las regiones", "correct": true, "why": "Correcto. IAM es un servicio global. Un IAM User creado en una región funciona en todas. Otros servicios globales: CloudFront, Route 53, WAF (para CloudFront), Organizations." },
+        { "letter": "B", "text": "IAM es regional: hay que crear todo por región", "correct": false, "why": "Incorrecto. IAM es global, no regional." },
+        { "letter": "C", "text": "IAM solo funciona en us-east-1", "correct": false, "why": "Incorrecto. Funciona globalmente." },
+        { "letter": "D", "text": "IAM requiere una cuenta AWS por región", "correct": false, "why": "Incorrecto. Una cuenta AWS es global." }
+      ],
+      "explanation": "Servicios GLOBALES en AWS (no atados a región): IAM, CloudFront, Route 53, WAF for CloudFront, AWS Organizations, AWS Artifact. Servicios REGIONALES: EC2, S3 (bucket sí, pero namespace global), RDS, VPC, Lambda, etc. Servicios ZONALES: EBS, Instance Store (atados a una AZ específica).",
+      "keywords": ["global vs regional", "IAM en múltiples regiones"],
+      "services": ["IAM"],
+      "references": [{ "title": "AWS Global vs Regional Services" }]
+    }
+  ]
+}

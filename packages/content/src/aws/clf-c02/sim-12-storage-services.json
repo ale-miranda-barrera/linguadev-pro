@@ -1,0 +1,202 @@
+{
+  "id": "clf-c02-sim-12-storage-services",
+  "certId": "clf-c02",
+  "order": 12,
+  "title": "Simulacro 12 — Almacenamiento: S3, EBS, EFS, FSx, Storage Gateway, Snow Family",
+  "focus": "Dominio 3 — Elegir el servicio de almacenamiento correcto por caso de uso.",
+  "domainCoverage": ["technology"],
+  "timeLimitMin": 20,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "technology",
+      "topic": "S3 vs EBS vs EFS",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto debe elegir el storage adecuado: (A) objetos estáticos (imágenes, videos) accedidos desde web, (B) disco raíz de una EC2 con base de datos MySQL, (C) sistema de archivos compartido entre 5 EC2 en distintas AZs.",
+      "question": "¿Qué usa en cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) S3 (object), (B) EBS (block, adjunto a 1 EC2), (C) EFS (NFS multi-attach)", "correct": true, "why": "Correcto. S3=objetos (URL, HTTP). EBS=disco block adjunto a 1 EC2 (BD, OS). EFS=NFS compartido entre múltiples EC2/AZs (workloads Linux compartidos)." },
+        { "letter": "B", "text": "Todo con S3", "correct": false, "why": "Incorrecto. S3 no es filesystem POSIX; no sirve para BD ni disco de OS." },
+        { "letter": "C", "text": "Todo con EBS", "correct": false, "why": "Incorrecto. EBS es block, adjunto 1 EC2 (multi-attach limitado a instancias específicas y misma AZ). No sirve para objetos ni compartir multi-AZ." },
+        { "letter": "D", "text": "(A) EBS, (B) S3, (C) EFS", "correct": false, "why": "Incorrecto. S3 no puede correr BD ni ser disco raíz; y EBS no es CDN de objetos." }
+      ],
+      "explanation": "3 tipos de storage: OBJECT (S3) = archivos accedidos por URL/API, unlimited, HTTP. BLOCK (EBS) = disco crudo para VM, 1 EC2 por volumen (o multi-attach limitado), rápido low-latency, misma AZ. FILE (EFS/FSx) = sistema de archivos POSIX compartible, NFS/SMB, multi-AZ.",
+      "keywords": ["object vs block vs file", "S3 EBS EFS"],
+      "services": ["S3", "EBS", "EFS"],
+      "references": [{ "title": "AWS Storage Options" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "technology",
+      "topic": "S3 Storage Classes",
+      "difficulty": "medium",
+      "scenario": "Una empresa guarda logs de auditoría: se acceden frecuentemente durante los primeros 30 días, esporádicamente durante 6 meses, y luego se archivan por 7 años por compliance (raro acceso, tolera recuperación de horas).",
+      "question": "¿Qué combinación de clases y lifecycle usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Standard → Standard-IA → Glacier Flexible Retrieval, vía lifecycle policy", "correct": true, "why": "Correcto. S3 Standard para acceso frecuente. Transition a Standard-IA a los 30d (menor costo storage, cobra retrieval). Transition a Glacier Flexible Retrieval después de 6 meses (retrieval minutos-horas, muy barato)." },
+        { "letter": "B", "text": "Solo S3 Standard permanente", "correct": false, "why": "Incorrecto. Storage más caro; no aprovechas patrones de acceso." },
+        { "letter": "C", "text": "Solo Glacier Deep Archive", "correct": false, "why": "Cercano. Deep Archive es aún más barato (retrieval hasta 12h). El enunciado dice 'acceso frecuente inicialmente' — Deep Archive es demasiado lento para primeros 30d." },
+        { "letter": "D", "text": "S3 One Zone-IA para todo", "correct": false, "why": "Incorrecto. One Zone-IA guarda en 1 AZ (riesgo). No sirve para logs de auditoría críticos." }
+      ],
+      "explanation": "S3 Storage Classes: STANDARD (default, alta durabilidad y disponibilidad). INTELLIGENT-TIERING (auto-mueve entre tiers por patrones, ideal si no conoces patrón). STANDARD-IA (infrequent access, cobra retrieval, misma durabilidad). ONE ZONE-IA (1 AZ, más barato, menos disponibilidad). GLACIER INSTANT (archive con retrieval ms). GLACIER FLEXIBLE RETRIEVAL (retrieval minutos-12h). GLACIER DEEP ARCHIVE (retrieval hasta 12h, más barato).",
+      "keywords": ["lifecycle", "archivo 7 años", "acceso decreciente"],
+      "services": ["S3", "Glacier"],
+      "references": [{ "title": "S3 Storage Classes" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "technology",
+      "topic": "S3 Intelligent-Tiering",
+      "difficulty": "easy",
+      "scenario": "Un equipo guarda millones de objetos en S3 con patrones de acceso desconocidos y variables por objeto. Quieren optimizar costo sin analizar y configurar lifecycle manual.",
+      "question": "¿Qué clase de S3 usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Intelligent-Tiering", "correct": true, "why": "Correcto. Intelligent-Tiering mueve objetos automáticamente entre tiers (Frequent, Infrequent, Archive Instant, Archive, Deep Archive) según patrón real de acceso. Sin retrieval fees. Ideal cuando el patrón es desconocido o cambia." },
+        { "letter": "B", "text": "S3 Standard-IA fijo", "correct": false, "why": "Cercano. Standard-IA cobra si accedes muchas veces; solo bueno si sabes que rara vez accedes." },
+        { "letter": "C", "text": "S3 Standard", "correct": false, "why": "Incorrecto. Storage más caro sin optimizar." },
+        { "letter": "D", "text": "Glacier Deep Archive", "correct": false, "why": "Incorrecto. Retrieval muy lento, no apto para acceso normal." }
+      ],
+      "explanation": "S3 Intelligent-Tiering: tarifa pequeña por monitoreo, sin retrieval fees. Mueve objetos entre 5 tiers automáticamente. Ideal para datos con patrones desconocidos o cambiantes. Sin penalización de acceso.",
+      "keywords": ["patrón desconocido", "auto-mover", "sin lifecycle manual"],
+      "services": ["S3 Intelligent-Tiering"],
+      "references": [{ "title": "S3 Intelligent-Tiering" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "technology",
+      "topic": "EBS volume types",
+      "difficulty": "medium",
+      "scenario": "Un ingeniero elige volumen EBS para: (A) BD OLTP de alto IOPS y baja latencia, (B) volumen general de app web, (C) throughput alto para big data / logs / video streaming.",
+      "question": "¿Qué tipos elige?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) io2/io2 Block Express (Provisioned IOPS SSD), (B) gp3 (General Purpose SSD), (C) st1 (Throughput Optimized HDD)", "correct": true, "why": "Correcto. io2/io2 Block Express = máx IOPS y latencia mínima (BDs críticas). gp3 = general SSD, mejor costo/performance para uso general. st1 = HDD para throughput secuencial (logs, big data)." },
+        { "letter": "B", "text": "Todo gp2", "correct": false, "why": "Cercano. gp2 era default; gp3 lo reemplazó con mejor costo. Para BDs OLTP muy exigentes se prefiere io2." },
+        { "letter": "C", "text": "Todo sc1", "correct": false, "why": "Incorrecto. sc1 = HDD cold, muy barato pero performance bajo; no sirve para BD ni app web." },
+        { "letter": "D", "text": "Todo magnético", "correct": false, "why": "Incorrecto. Deprecated." }
+      ],
+      "explanation": "EBS types: (SSD) gp3 = general purpose (default), gp2 = anterior default. io1/io2/io2 Block Express = provisioned IOPS, mayor performance, BDs críticas. (HDD) st1 = throughput optimized, big data, logs. sc1 = cold HDD, backup/rara acceso, muy barato. Elegir por IOPS/throughput requerido y costo.",
+      "keywords": ["IOPS BD", "gp3", "throughput HDD"],
+      "services": ["EBS"],
+      "references": [{ "title": "EBS Volume Types" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "technology",
+      "topic": "EFS",
+      "difficulty": "medium",
+      "scenario": "Un cluster de 20 EC2 Linux corriendo un CMS necesita un directorio compartido para uploads de usuarios, accesible desde todas las instancias en 3 AZs, con scaling automático de storage.",
+      "question": "¿Qué servicio usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon EFS (Elastic File System)", "correct": true, "why": "Correcto. EFS = NFS managed multi-AZ. Escala automáticamente (petabytes). Se monta en múltiples EC2 Linux simultáneamente. Ideal para directorios compartidos, apps legacy Linux, CMS/wordpress." },
+        { "letter": "B", "text": "EBS multi-attach", "correct": false, "why": "Cercano. EBS multi-attach solo soporta instancias específicas en MISMA AZ (io1/io2), no multi-AZ ni 20 instancias." },
+        { "letter": "C", "text": "S3", "correct": false, "why": "Cercano. S3 no es filesystem POSIX; requiere reescribir app para usar SDK." },
+        { "letter": "D", "text": "FSx for Windows File Server", "correct": false, "why": "Incorrecto. FSx Windows es SMB para Windows; el enunciado es Linux (usa NFS)." }
+      ],
+      "explanation": "EFS: NFS v4 managed, multi-AZ, escalabilidad automática, para EC2 Linux (y on-prem via VPN/DX). Storage classes: Standard, One Zone, IA. Performance modes: General Purpose (default), Max I/O. Throughput modes: Bursting (default), Provisioned, Elastic. Solo Linux. Para Windows/SMB → FSx for Windows.",
+      "keywords": ["NFS", "multi-AZ", "compartido Linux", "CMS"],
+      "services": ["EFS"],
+      "references": [{ "title": "Amazon EFS" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "technology",
+      "topic": "FSx family",
+      "difficulty": "hard",
+      "scenario": "Un equipo debe elegir FSx: (A) SMB shares para Windows apps con AD, (B) HPC con Lustre para simulaciones, (C) apps que usan NetApp ONTAP on-prem, (D) OpenZFS features.",
+      "question": "¿Qué FSx para cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) FSx for Windows File Server, (B) FSx for Lustre, (C) FSx for NetApp ONTAP, (D) FSx for OpenZFS", "correct": true, "why": "Correcto. Cada FSx target un filesystem específico. Windows=SMB+AD. Lustre=HPC. NetApp ONTAP=compat con on-prem ONTAP. OpenZFS=features ZFS (snapshots, clones)." },
+        { "letter": "B", "text": "Todo con EFS", "correct": false, "why": "Incorrecto. EFS es solo Linux NFS." },
+        { "letter": "C", "text": "Todo con S3", "correct": false, "why": "Incorrecto. S3 no es filesystem POSIX." },
+        { "letter": "D", "text": "Todo con Windows File Server", "correct": false, "why": "Incorrecto. HPC Lustre y ONTAP tienen protocolos distintos." }
+      ],
+      "explanation": "FSx family: (1) Windows File Server = SMB, AD, ideal apps Windows. (2) Lustre = HPC, ML, big data (integra con S3). (3) NetApp ONTAP = compatibilidad enterprise (NFS/SMB/iSCSI, snapshots, dedupe). (4) OpenZFS = ZFS features (snapshots, clones, compresión). EFS = NFS Linux simple; FSx = filesystems especializados.",
+      "keywords": ["Windows SMB", "Lustre HPC", "ONTAP", "OpenZFS"],
+      "services": ["FSx"],
+      "references": [{ "title": "Amazon FSx" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "technology",
+      "topic": "Storage Gateway",
+      "difficulty": "medium",
+      "scenario": "Una empresa on-premises quiere: (A) backup de servidores locales a S3 vía protocolo iSCSI, (B) mover cintas VTL a la nube, (C) montar S3 como NFS/SMB para apps locales sin refactor.",
+      "question": "¿Qué tipo de Storage Gateway para cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Volume Gateway, (B) Tape Gateway, (C) File Gateway (S3 File Gateway o FSx File Gateway)", "correct": true, "why": "Correcto. Volume=block iSCSI a S3 (backups). Tape=VTL para reemplazar cintas físicas. File=NFS/SMB local que expone S3 o FSx. Cada modo cubre un caso hybrid." },
+        { "letter": "B", "text": "Todo con DataSync", "correct": false, "why": "Cercano. DataSync migra datos (online) entre on-prem y AWS; NO es un gateway persistente." },
+        { "letter": "C", "text": "Todo con Snowball", "correct": false, "why": "Incorrecto. Snowball es appliance físico de transferencia offline." },
+        { "letter": "D", "text": "Todo con Direct Connect", "correct": false, "why": "Incorrecto. DX es conectividad de red, no storage." }
+      ],
+      "explanation": "Storage Gateway: hybrid cloud storage. (1) File Gateway = NFS/SMB al frente, backend S3 o FSx. (2) Volume Gateway = iSCSI block, cached o stored, backup a S3 con snapshots EBS. (3) Tape Gateway = VTL, reemplaza cintas físicas para backup software legacy. Instalado como appliance (VM o hardware).",
+      "keywords": ["hybrid storage", "iSCSI", "NFS SMB local", "VTL cintas"],
+      "services": ["Storage Gateway"],
+      "references": [{ "title": "AWS Storage Gateway" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "technology",
+      "topic": "Snow Family",
+      "difficulty": "medium",
+      "scenario": "Una empresa debe migrar 500 TB de datos a AWS. Su conexión a internet es 100 Mbps (transferir online tomaría >1 año). ¿Qué opción es más práctica?",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Snowball Edge (appliance físico)", "correct": true, "why": "Correcto. Snowball Edge = appliance de 80-210 TB. Se envía por camión, cargas datos localmente, devuelves a AWS. Ideal para volúmenes grandes con internet limitado. Para petabytes → Snowmobile (camión completo, deprecated 2024)." },
+        { "letter": "B", "text": "Subir vía internet", "correct": false, "why": "Incorrecto. Tomaría >1 año." },
+        { "letter": "C", "text": "AWS DataSync online", "correct": false, "why": "Cercano. DataSync es rápido para migraciones online pero limitado por bandwidth; a 100 Mbps sigue siendo muy lento para 500 TB." },
+        { "letter": "D", "text": "Direct Connect", "correct": false, "why": "Cercano. DX ayuda pero requiere provisioning que puede tomar semanas y también dinero significativo para 500 TB one-shot." }
+      ],
+      "explanation": "Snow Family: (1) Snowball Edge Storage Optimized (~80TB) y Compute Optimized. (2) Snowcone (~8TB, portátil). (3) Snowmobile (petabytes, camión — deprecated 2024). Cifrado 256-bit, tamper-evident. Ideal cuando bandwidth es cuello de botella. También pueden correr EC2/Lambda para edge computing.",
+      "keywords": ["migrar TB grandes", "bandwidth limitado", "appliance físico"],
+      "services": ["Snowball", "Snow Family"],
+      "references": [{ "title": "AWS Snow Family" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "technology",
+      "topic": "S3 Versioning y Object Lock",
+      "difficulty": "medium",
+      "scenario": "Un equipo de compliance requiere que los archivos legales guardados en S3 no puedan borrarse o modificarse por 7 años, ni siquiera por el usuario root.",
+      "question": "¿Qué features de S3 combinan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Versioning + Object Lock en modo Compliance (WORM)", "correct": true, "why": "Correcto. Object Lock modo Compliance = WORM (Write Once Read Many). NADIE (ni root) puede borrar o modificar hasta que expire retention. Requiere versioning habilitado. Ideal SEC 17a-4, FINRA, HIPAA." },
+        { "letter": "B", "text": "Solo versioning", "correct": false, "why": "Cercano. Versioning conserva versiones, pero admin puede borrar. No es WORM." },
+        { "letter": "C", "text": "Solo bucket policy deny delete", "correct": false, "why": "Cercano. Se puede eludir cambiando la policy. Object Lock Compliance es inmutable." },
+        { "letter": "D", "text": "Cifrado con KMS", "correct": false, "why": "Incorrecto. Cifrado no impide borrado." }
+      ],
+      "explanation": "Object Lock: (1) modo Compliance = ni root puede borrar hasta expirar retention (inmutable). (2) modo Governance = admins con permiso especial pueden bypass. (3) Legal Hold = indefinido hasta remover. Requiere versioning y habilitarse al crear bucket. Cumplimiento SEC 17a-4 f, FINRA, WORM.",
+      "keywords": ["WORM", "compliance", "no borrar 7 años"],
+      "services": ["S3 Object Lock", "S3 Versioning"],
+      "references": [{ "title": "S3 Object Lock" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "technology",
+      "topic": "S3 Transfer Acceleration",
+      "difficulty": "hard",
+      "scenario": "Usuarios en Australia y Brasil suben archivos grandes a un bucket S3 en us-east-1 con latencia alta y velocidad pobre. Se busca acelerar uploads globales sin cambiar región del bucket.",
+      "question": "¿Qué feature usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Transfer Acceleration (usa red edge de CloudFront)", "correct": true, "why": "Correcto. S3TA enruta uploads por edge locations de CloudFront hacia el bucket via red AWS optimizada. Acelera hasta 50-500% para transferencias globales largas. Se activa por bucket." },
+        { "letter": "B", "text": "CloudFront con origin S3 solo", "correct": false, "why": "Cercano. CloudFront acelera DOWNLOADS (GET) via caché. S3TA está optimizado para UPLOADS globales al bucket." },
+        { "letter": "C", "text": "Mover el bucket a cada región", "correct": false, "why": "Incorrecto. Complejo y no resuelve la vista unificada." },
+        { "letter": "D", "text": "Aumentar tamaño de instancia", "correct": false, "why": "Incorrecto. No aplica a S3." }
+      ],
+      "explanation": "S3 Transfer Acceleration: leverages CloudFront edge para acelerar uploads al bucket. Endpoint distinto (bucket.s3-accelerate.amazonaws.com). Costo extra por GB. Beneficia clientes lejos de la región del bucket. Herramienta para probar velocidad: s3-accelerate-speedtest.",
+      "keywords": ["upload global rápido", "edge", "usuarios lejanos"],
+      "services": ["S3 Transfer Acceleration", "CloudFront"],
+      "references": [{ "title": "S3 Transfer Acceleration" }]
+    }
+  ]
+}

@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: LinguaDev Pro — always-free serverless stack (Lambda + Function URL + DynamoDB + SSM + S3 + CloudFront + Budgets)
+
+Parameters:
+  StageName:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  AiProvider:
+    Type: String
+    Default: anthropic
+    AllowedValues: [anthropic, openai, bedrock]
+  BudgetLimitUsd:
+    Type: Number
+    Default: 5
+  BudgetEmail:
+    Type: String
+    Default: alerts@example.com
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 512
+    Architectures: [arm64]
+    Environment:
+      Variables:
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  # ─── Datos: DynamoDB single-table ───
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub linguadev-${StageName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ─── Secreto IA: SSM Parameter Store (SecureString creado a mano fuera de CFN) ───
+  # CFN no crea SecureString por seguridad. Se crea con:
+  #   aws ssm put-parameter --name /linguadev/ai/apiKey --type SecureString --value "sk-..."
+
+  # ─── Backend: Lambda + Function URL ───
+  ApiFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub linguadev-api-${StageName}
+      CodeUri: ../apps/api/
+      Handler: dist/lambda.handler
+      Description: LinguaDev Pro BFF (Hono)
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DDB_TABLE: !Ref Table
+          SSM_AI_KEY_PARAM: /linguadev/ai/apiKey
+          AI_PROVIDER: !Ref AiProvider
+          AI_RATE_LIMIT_PER_MIN: 20
+          AI_DAILY_BUDGET_USD: 1
+          CORS_ALLOWED_ORIGINS: '*'
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/linguadev/ai/*
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: '*'
+      FunctionUrlConfig:
+        AuthType: NONE
+        # Streaming es clave para el endpoint /api/ai/tutor.
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins: ['*']
+          AllowHeaders: ['content-type', 'x-session-id', 'x-request-id']
+          AllowMethods: ['GET', 'POST', 'PUT', 'OPTIONS']
+          MaxAge: 3600
+
+  # ─── Frontend: S3 privado + CloudFront con OAC ───
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub linguadev-web-${StageName}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  WebOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub linguadev-oac-${StageName}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: web-origin
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt WebOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: web-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${WebBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}
+
+  # ─── Guardrail de costo: AWS Budgets ───
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub linguadev-${StageName}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref BudgetLimitUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 20
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+
+Outputs:
+  ApiFunctionUrl:
+    Description: URL pública del BFF (Function URL con streaming)
+    Value: !GetAtt ApiFnUrl.FunctionUrl
+  WebBucketName:
+    Value: !Ref WebBucket
+  CloudFrontDomain:
+    Value: !GetAtt WebDistribution.DomainName
+  TableName:
+    Value: !Ref Table

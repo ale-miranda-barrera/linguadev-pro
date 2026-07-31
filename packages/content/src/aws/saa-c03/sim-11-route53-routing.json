@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-11-route53-routing",
+  "certId": "saa-c03",
+  "order": 11,
+  "title": "Simulacro 11 — Route 53 routing policies: simple, weighted, latency, failover, geolocation, multi-value",
+  "focus": "Dominio 2 — Design Resilient Architectures (26%). Politicas de routing DNS y decision framework.",
+  "domainCoverage": ["resilient"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "resilient",
+      "topic": "Weighted routing para canary",
+      "difficulty": "easy",
+      "scenario": "Un equipo despliega una nueva version de la app y quiere rutear inicialmente el 5% del trafico a la nueva version (canary) y 95% a la version estable. Si todo va bien, incrementar gradualmente el porcentaje.",
+      "question": "Que routing policy Route 53 soporta esto nativamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Weighted routing policy con dos records al mismo hostname: version-estable weight=95, version-canary weight=5", "correct": true, "why": "Correcto. Weighted routing distribuye trafico segun weights relativos. Ideal para canary deployments, A/B testing, blue/green graduales. TTL bajo (60s) permite ajustar weights rapidamente." },
+        { "letter": "B", "text": "Latency routing", "correct": false, "why": "Incorrecto. Latency routing rutea al endpoint mas rapido para el usuario, no permite control por percentage." },
+        { "letter": "C", "text": "Failover routing", "correct": false, "why": "Incorrecto. Failover es active/passive, no distribucion percentual." },
+        { "letter": "D", "text": "Multivalue answer", "correct": false, "why": "Cercano pero multivalue devuelve todos los records healthy sin control percentual." }
+      ],
+      "explanation": "Route 53 Weighted Routing: records con mismo name y type, cada uno con weight (0-255). Trafico distribuido proporcionalmente. Weight 0 = no rutea a ese record. Casos: canary/blue-green, split testing, migration gradual. Combinable con health checks (records unhealthy se excluyen). Alternativa a nivel infraestructura: ALB weighted target groups.",
+      "keywords": ["canary", "5% trafico", "weighted"],
+      "services": ["Route 53"],
+      "references": [{ "title": "Route 53 weighted routing" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "resilient",
+      "topic": "Latency vs Geolocation",
+      "difficulty": "medium",
+      "scenario": "Una empresa opera datacenters AWS en us-east-1, eu-west-1 y ap-southeast-1. Quiere rutear cada usuario al datacenter con menor latencia de red desde su ubicacion, no simplemente al mas cercano geograficamente.",
+      "question": "Que routing policy es correcto y cual es la diferencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Latency routing: rutea al endpoint con menor latencia real medida (basado en datos de AWS de latencias Internet entre resolver y regiones)", "correct": true, "why": "Correcto. Latency routing usa mediciones reales de latencia de red (no distancia geografica). Un usuario en Sudamerica podria tener menor latencia a us-east-1 que a un endpoint mas cercano si el peering Internet es mejor. Ideal para performance global." },
+        { "letter": "B", "text": "Geolocation routing", "correct": false, "why": "Cercano pero geo rutea por PAIS/CONTINENTE del usuario (fixed mapping), no por latencia real de red. Util para compliance/legal (idioma, moneda), no performance." },
+        { "letter": "C", "text": "Geoproximity routing", "correct": false, "why": "Cercano y valida alternativa. Geoproximity con Route 53 Traffic Flow rutea por distancia GEOGRAFICA con bias tunable. Latency es la respuesta canonica para minimizar RTT real." },
+        { "letter": "D", "text": "Simple routing", "correct": false, "why": "Incorrecto. Simple retorna un record fijo sin logica." }
+      ],
+      "explanation": "Route 53 routing por proximidad: (1) Latency: mide RTT real Internet entre usuario y endpoint, rutea al mas rapido, ideal para performance global. (2) Geolocation: mapping fijo pais/continente -> record, ideal para compliance (idioma, moneda, GDPR routing to eu region). (3) Geoproximity (via Traffic Flow): distancia fisica con bias configurable (expandir/reducir 'territorio' de un endpoint). Latency es la opcion default para minimizar RTT.",
+      "keywords": ["menor latencia real", "3 regiones", "global"],
+      "services": ["Route 53", "Latency Routing"],
+      "references": [{ "title": "Route 53 latency-based routing" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "resilient",
+      "topic": "Multivalue answer routing",
+      "difficulty": "medium",
+      "scenario": "Un cliente quiere pseudo-load-balancing barato usando DNS: devolver multiples IPs al cliente para que este haga round-robin en cliente. Ademas quiere que solo se devuelvan IPs de endpoints healthy.",
+      "question": "Que routing policy provee esto sin necesidad de ELB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multivalue Answer routing con health checks: Route 53 devuelve hasta 8 records healthy en la respuesta DNS", "correct": true, "why": "Correcto. Multivalue Answer es como Simple pero con multiples records y health-check awareness: devuelve subset de records healthy (max 8). Cliente selecciona uno (usualmente round-robin). Load balancing barato basado en DNS." },
+        { "letter": "B", "text": "Simple routing", "correct": false, "why": "Cercano pero Simple soporta multiples IPs sin health checks; devuelve todas incluso unhealthy. Multivalue anade health awareness." },
+        { "letter": "C", "text": "Failover", "correct": false, "why": "Incorrecto. Failover es active/passive, no distribucion multiple." },
+        { "letter": "D", "text": "Weighted", "correct": false, "why": "Cercano pero weighted es proportion-based, no round-robin ni multivalue simultaneo." }
+      ],
+      "explanation": "Multivalue Answer: hasta 8 records healthy en respuesta DNS. No es reemplazo de ELB (no hace load balancing real, solo distribuye la responsabilidad al cliente y algunos clientes hacen round-robin, otros el primero). Casos: load balancing simple, redundancia DNS, endpoints multiples sin ELB. Health checks son key: Route 53 excluye unhealthy de la respuesta.",
+      "keywords": ["multivalue", "hasta 8", "health-aware DNS"],
+      "services": ["Route 53"],
+      "references": [{ "title": "Route 53 multivalue answer" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "resilient",
+      "topic": "Geolocation para compliance",
+      "difficulty": "medium",
+      "scenario": "Una app SaaS debe cumplir GDPR: usuarios de EU deben ser servidos desde infra en EU, no desde us-east-1 (que podria implicar transferencia de datos personales fuera de EU).",
+      "question": "Que routing policy Route 53 aplica routing basado en pais del usuario?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Geolocation routing: mapping por continent/country/state -> record; usuarios EU van a endpoint EU, US va a endpoint US, default para el resto", "correct": true, "why": "Correcto. Geolocation es exactamente para este caso (compliance geografica). Se define un default record para paises no listados. Combinable con health checks. Alternativa mas fina: geo Traffic Flow con overrides." },
+        { "letter": "B", "text": "Latency routing", "correct": false, "why": "Incorrecto. Latency puede rutear un usuario EU a us-east-1 si tiene menor latencia, violando GDPR requirement." },
+        { "letter": "C", "text": "Weighted routing", "correct": false, "why": "Incorrecto. Weighted no considera ubicacion del usuario." },
+        { "letter": "D", "text": "CloudFront geographic restriction", "correct": false, "why": "Cercano parcial (restringe/permite acceso por country) pero es CloudFront-specific; para DNS routing la respuesta es Geolocation." }
+      ],
+      "explanation": "Geolocation vs Latency: Geolocation = mapping fijo por region geografica (Continent, Country, State US), ideal para compliance/legal/content localization. Latency = por menor RTT, ideal para performance. Ambos pueden combinarse via Traffic Flow (Route 53 policy visual editor con nested rules). Casos Geolocation: GDPR (EU users -> EU infra), idioma/moneda, contenido regional, PSD2/data sovereignty.",
+      "keywords": ["GDPR", "usuarios EU", "compliance geografico"],
+      "services": ["Route 53", "Geolocation"],
+      "references": [{ "title": "Route 53 geolocation routing" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "resilient",
+      "topic": "IP-based routing",
+      "difficulty": "hard",
+      "scenario": "Una empresa telco quiere rutear usuarios de sus propias redes IP a endpoints premium (edge servers exclusivos) y todos los demas a endpoints publicos regulares. Necesita routing basado en el rango IP del cliente.",
+      "question": "Que feature de Route 53 permite routing por CIDR del cliente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IP-based routing (CIDR-based): asignar CIDR blocks del cliente a locations, y locations a records; el resolver ve el CIDR y rutea al record correspondiente", "correct": true, "why": "Correcto. IP-based routing (feature 2023) permite mapear CIDR del cliente a records especificos. Casos: cost optimization (peering agreements), custom SLA por segmento, telco/ISP con backbones propios." },
+        { "letter": "B", "text": "Latency routing", "correct": false, "why": "Incorrecto. Latency no considera CIDR especifico del cliente." },
+        { "letter": "C", "text": "Geolocation", "correct": false, "why": "Cercano pero geolocation es por country/continent, no CIDR granular." },
+        { "letter": "D", "text": "Solo posible con WAF", "correct": false, "why": "Incorrecto. WAF filtra despues del DNS resolution; el routing por CIDR es a nivel DNS con IP-based." }
+      ],
+      "explanation": "Route 53 IP-based routing (relativamente nuevo): permite crear CIDR locations (grupos de CIDR blocks) y asociarlos a records. El resolver expone el subnet del client (via EDNS Client Subnet) y Route 53 responde con el record del CIDR mas especifico. Casos: telco/ISP custom routing, cost optimization con proveedores IP, custom SLAs. Alternativa a Traffic Flow con reglas geo/latency para casos complejos.",
+      "keywords": ["CIDR client", "telco", "IP-based"],
+      "services": ["Route 53", "IP-based routing"],
+      "references": [{ "title": "Route 53 IP-based routing" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "resilient",
+      "topic": "Alias records vs CNAME",
+      "difficulty": "medium",
+      "scenario": "Un equipo quiere apuntar el apex domain (example.com sin www) a un ALB. Intenta crear un CNAME pero DNS rules no lo permiten en apex. Ademas quiere que el apex apunte a diferentes endpoints AWS (S3, CloudFront, ELB) sin costos DNS adicionales.",
+      "question": "Que tipo de record Route 53 resuelve esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Alias records: extension AWS al DNS que permite apuntar a servicios AWS (ALB, NLB, CloudFront, S3 website, API Gateway, Global Accelerator, otra Route 53 record) incluso en apex, sin costo por query", "correct": true, "why": "Correcto. Alias records son A o AAAA records especiales que resuelven directamente al recurso AWS (no chain de CNAME). Funcionan en apex (donde CNAME no puede), se resuelven en Route 53 sin cargo extra, y ajustan automaticamente si cambian las IPs del target." },
+        { "letter": "B", "text": "CNAME en apex", "correct": false, "why": "Incorrecto. Estandar DNS prohibe CNAME en apex (conflicto con SOA/NS). Alias es la solucion AWS." },
+        { "letter": "C", "text": "MX record", "correct": false, "why": "Incorrecto. MX es para mail servers." },
+        { "letter": "D", "text": "TXT record", "correct": false, "why": "Incorrecto. TXT es texto informativo (SPF, verificaciones), no routing." }
+      ],
+      "explanation": "Alias records: extension AWS al DNS. Diferencias vs CNAME: (1) funcionan en apex (zone root), (2) son gratis (CNAMEs cobran por query DNS estandar), (3) hacen chase automatico si cambia el IP del target, (4) integran con health checks del target AWS. Targets soportados: CloudFront, ALB, NLB, CLB, Global Accelerator, S3 website, VPC endpoint, API Gateway, Amplify, otra Route 53 record. NO soportan endpoints externos (para eso CNAME).",
+      "keywords": ["apex domain", "alias", "CNAME"],
+      "services": ["Route 53", "ALB"],
+      "references": [{ "title": "Route 53 alias records" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "resilient",
+      "topic": "Private hosted zones",
+      "difficulty": "easy",
+      "scenario": "Una empresa quiere que sus servicios internos usen nombres como orders.corp.internal accesibles solo desde sus VPCs (no publicamente en Internet).",
+      "question": "Que tipo de hosted zone Route 53?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Private Hosted Zone asociada a las VPCs autorizadas (posible cross-account via RAM)", "correct": true, "why": "Correcto. Private hosted zones resuelven nombres solo desde VPCs asociadas. No visibles publicamente. Se pueden asociar multiples VPCs (mismo cuenta o cross-account via CLI/API para ahora, RAM para algunos casos). Combinable con Route 53 Resolver para DNS hibrido." },
+        { "letter": "B", "text": "Public hosted zone", "correct": false, "why": "Incorrecto. Public es resoluble en Internet global." },
+        { "letter": "C", "text": "Hosts file local en cada EC2", "correct": false, "why": "Incorrecto. No escala y sin gobierno." },
+        { "letter": "D", "text": "CloudFront distribution", "correct": false, "why": "Incorrecto. CloudFront es CDN publica, no resolucion DNS interna." }
+      ],
+      "explanation": "Route 53 hosted zones: (1) Public: dominio resoluble en Internet global. (2) Private: solo desde VPCs asociadas. Puede tener mismo dominio como public y private (split-view/split-horizon DNS: distintos records segun quien pregunte). VPC associated: puede ser multi-VPC cross-region. Combinable con Route 53 Resolver Endpoints para DNS hibrido on-prem.",
+      "keywords": ["private DNS", "solo VPC", "corp.internal"],
+      "services": ["Route 53", "Private Hosted Zone"],
+      "references": [{ "title": "Route 53 private hosted zones" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "resilient",
+      "topic": "TTL y propagacion DNS",
+      "difficulty": "medium",
+      "scenario": "Un equipo planea un failover manual entre regiones. Actualmente los records tienen TTL 3600s (1h). Preocupan que usuarios queden atascados en cache DNS old durante la ventana.",
+      "question": "Que ajuste facilita failover rapido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reducir TTL a 60 segundos ANTES del planned failover para permitir que caches DNS se renueven rapidamente", "correct": true, "why": "Correcto. TTL bajo (60s) permite propagacion rapida de cambios DNS. Best practice: reducir TTL algunas horas antes del cambio (para que caches viejas expiren), hacer el cambio, luego opcionalmente restaurar TTL alto para reducir queries." },
+        { "letter": "B", "text": "Aumentar TTL a 24h", "correct": false, "why": "Incorrecto. TTL alto significa mas tiempo con IPs cached; peor para failover." },
+        { "letter": "C", "text": "TTL = 0", "correct": false, "why": "Cercano pero excesivo: aumenta drasticamente queries DNS y costos. TTL 60s es el sweet spot." },
+        { "letter": "D", "text": "Cambiar a IPs staticas Global Accelerator", "correct": false, "why": "Cercano y valido para failover rapido sin depender de DNS TTL (GA usa anycast IPs staticas). Alternativa arquitectural mas potente. Para escenarios DNS puros, ajustar TTL es la respuesta directa." }
+      ],
+      "explanation": "TTL DNS: cuanto tiempo caches (resolver ISPs, browsers, OS) mantienen la respuesta. TTL alto = menos queries a authoritative DNS (barato) pero cambios propagan lento. TTL bajo = mas queries pero cambios rapidos. Best practice failover: reducir TTL varias horas antes, cambiar, restaurar. Global Accelerator: bypass DNS con IPs anycast staticas, failover network-layer <30s independiente de TTL DNS.",
+      "keywords": ["TTL", "failover rapido", "cache DNS"],
+      "services": ["Route 53", "Global Accelerator"],
+      "references": [{ "title": "Route 53 TTL" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "resilient",
+      "topic": "Health checks calculated",
+      "difficulty": "hard",
+      "scenario": "Un equipo quiere una health check compleja: 'el sistema es healthy si al menos 2 de 3 endpoints backend estan up Y el endpoint frontend responde'. Route 53 no permite AND/OR complejos en un solo health check.",
+      "question": "Como implementar logica combinada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Calculated Health Checks: combinan hasta 256 child health checks con logica (X of Y healthy, o OR, o AND via nested calculated)", "correct": true, "why": "Correcto. Calculated Health Checks agregan child checks con logica boolean. Ejemplo: '2 of 3 backends healthy AND frontend healthy'. Permite disenos complejos de disponibilidad." },
+        { "letter": "B", "text": "CloudWatch Alarm health checks", "correct": false, "why": "Cercano y complementario (los calculated pueden usar CloudWatch alarm-based checks como children), pero la respuesta a 'logica combinada' es Calculated." },
+        { "letter": "C", "text": "Escribir logica en Lambda", "correct": false, "why": "Cercano pero reinventa la feature nativa. Calculated es managed." },
+        { "letter": "D", "text": "Solo health check por endpoint individual", "correct": false, "why": "Cercano pero no permite combinar en logica AND/OR compleja." }
+      ],
+      "explanation": "Route 53 health check types: (1) Endpoint (HTTP/HTTPS/TCP a un endpoint con string match opcional). (2) Calculated (combina children con logica). (3) CloudWatch Alarm (basado en estado de una alarma). Calculated permite hasta 256 children con umbrales (X of Y healthy). Casos: multi-endpoint apps, dependencias criticas, health con contextos externos (via CW alarms). Precio: por health check + optional string matching + fast interval.",
+      "keywords": ["logica compleja", "2 de 3", "calculated"],
+      "services": ["Route 53", "Health Checks"],
+      "references": [{ "title": "Route 53 calculated health checks" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "resilient",
+      "topic": "Route 53 Traffic Flow",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto necesita routing complejo: primero por geolocation (EU users vs resto), luego dentro de EU por latency entre 3 endpoints EU, y con failover. Escribir esto como records individuales es error-prone.",
+      "question": "Que herramienta Route 53 facilita disenar routing policies visualmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Route 53 Traffic Flow con visual editor: componer policies encadenadas (geo + latency + failover) como flowchart, versionar y desplegar a records", "correct": true, "why": "Correcto. Traffic Flow es el visual policy composer de Route 53: permite anidar policies (geo -> latency -> weighted -> failover), versionar policies, aplicarlas a records. Simplifica manejar routing multi-layer complejo." },
+        { "letter": "B", "text": "Escribir manualmente cada record", "correct": false, "why": "Cercano pero para logica compleja es error-prone. Traffic Flow abstrae esto." },
+        { "letter": "C", "text": "AWS CloudFormation", "correct": false, "why": "Cercano y valido para IaC de records, pero Traffic Flow es visual composition specifica de Route 53." },
+        { "letter": "D", "text": "Multivalue answer solo", "correct": false, "why": "Incorrecto. Multivalue no soporta logica multi-layer." }
+      ],
+      "explanation": "Route 53 Traffic Flow: visual editor para componer routing policies complejos. Bloques: geolocation, latency, weighted, failover, geoproximity, endpoint. Nested rules crean flowcharts. Traffic policies versionables (v1, v2), applied to Traffic Policy Records. Casos: routing global multi-layer (region primary -> failover regional -> latency dentro de region). Extra cost por policy record.",
+      "keywords": ["visual editor", "routing complejo", "nested"],
+      "services": ["Route 53", "Traffic Flow"],
+      "references": [{ "title": "Route 53 Traffic Flow" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "resilient",
+      "topic": "Route 53 vs Global Accelerator para failover",
+      "difficulty": "hard",
+      "scenario": "Una app critica necesita failover multi-region en <30s. Route 53 con TTL 60s toma minutos por caches downstream. Un requisito adicional es IPs staticas para whitelisting.",
+      "question": "Que servicio complementa/reemplaza Route 53 para failover ultra-rapido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Global Accelerator: IPs anycast staticas, failover network-layer <30s independiente de TTL DNS, usa backbone AWS", "correct": true, "why": "Correcto. Global Accelerator bypass el problema de DNS caching: los clientes conectan a 2 IPs anycast staticas, GA rutea al endpoint healthy en milisegundos ante failover. Ademas mejora latencia (backbone AWS) y provee IPs whitelisteable." },
+        { "letter": "B", "text": "Route 53 con TTL 0", "correct": false, "why": "Cercano pero muchos resolvers ignoran TTL <60s, y aumenta drasticamente coste de queries. GA es network-layer y evade el problema." },
+        { "letter": "C", "text": "CloudFront", "correct": false, "why": "Incorrecto contexto. CloudFront es CDN HTTP; no aplica para failover TCP/UDP generico." },
+        { "letter": "D", "text": "ALB", "correct": false, "why": "Incorrecto. ALB es regional, no multi-region." }
+      ],
+      "explanation": "Global Accelerator: capa 4 (TCP/UDP), 2 IPs anycast staticas globales, health checks continuous a endpoints regionales, failover en milisegundos (independiente de DNS caching). Trafico via backbone AWS end-to-end (menor jitter, mayor throughput). Casos: apps con failover ultra-rapido, gaming, IoT, apps con IPs whitelisteables, mejora de latencia global. Combinable con Route 53 (GA IPs se pueden asignar a records DNS).",
+      "keywords": ["failover <30s", "IPs staticas", "bypass DNS"],
+      "services": ["Global Accelerator", "Route 53"],
+      "references": [{ "title": "AWS Global Accelerator" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "resilient",
+      "topic": "Split-horizon DNS",
+      "difficulty": "medium",
+      "scenario": "Una empresa tiene example.com como dominio publico. Quiere que internamente (desde sus VPCs) el mismo dominio resuelva a IPs privadas del backend (para reducir latencia y evitar salir a Internet), mientras externos siguen resolviendo a la IP publica.",
+      "question": "Que setup Route 53 implementa esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Public Hosted Zone example.com con records publicos + Private Hosted Zone example.com asociada a las VPCs con records privados; split-horizon DNS", "correct": true, "why": "Correcto. Split-horizon (split-view) DNS: mismo dominio con distintas resoluciones segun quien pregunta. Route 53 lo soporta con public y private hosted zones del mismo dominio. Resolver dentro VPC ve la private zone; resolver externo ve la public zone." },
+        { "letter": "B", "text": "Solo public zone con IPs publicas", "correct": false, "why": "Incorrecto. Interno saldria a Internet para resolver, sin beneficios de private routing." },
+        { "letter": "C", "text": "Modificar /etc/hosts en cada EC2", "correct": false, "why": "Incorrecto. No escala, sin gobierno." },
+        { "letter": "D", "text": "Solo private zone", "correct": false, "why": "Incorrecto. Externos no podrian resolver el dominio." }
+      ],
+      "explanation": "Split-horizon (split-view) DNS: mismo domain resuelve distinto segun contexto (interno vs externo). Route 53 pattern: public hosted zone + private hosted zone con mismo nombre, asociando la private a las VPCs. Casos: reducir latencia interna, evitar egress via Internet, DNS names amigables tanto interno como externo, migrations. Complementable con Route 53 Resolver para DNS hibrido on-prem.",
+      "keywords": ["split-horizon", "public y private", "mismo dominio"],
+      "services": ["Route 53", "Private Hosted Zone"],
+      "references": [{ "title": "Route 53 split-view DNS" }]
+    }
+  ]
+}

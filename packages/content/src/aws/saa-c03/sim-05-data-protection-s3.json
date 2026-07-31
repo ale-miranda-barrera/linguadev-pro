@@ -1,0 +1,240 @@
+{
+  "id": "saa-c03-sim-05-data-protection-s3",
+  "certId": "saa-c03",
+  "order": 5,
+  "title": "Simulacro 05 — Data protection at scale: S3 encryption, policies, Object Lock, VPC Endpoints",
+  "focus": "Dominio 1 — Design Secure Architectures (30%). Proteccion de datos en S3: cifrado, control de acceso, retencion legal, acceso privado.",
+  "domainCoverage": ["secure"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.72,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "secure",
+      "topic": "S3 Block Public Access",
+      "difficulty": "easy",
+      "scenario": "Un CISO ordena que NINGUN bucket S3 de la organizacion pueda ser publico, sin importar que un dev futuro configure una bucket policy o ACL abierta por error. Debe aplicarse a nivel cuenta y ser dificil de desactivar.",
+      "question": "Que configuracion cumple este requisito de forma preventiva?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar S3 Block Public Access a nivel cuenta (los 4 settings: BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets) y aplicar SCP en Organizations que impida desactivarlo", "correct": true, "why": "Correcto. BPA a nivel cuenta anula cualquier policy/ACL que otorgue acceso publico. Combinado con un SCP que niegue s3:PutAccountPublicAccessBlock modificacion, el guardrail es irrompible por cuentas hijas." },
+        { "letter": "B", "text": "Solo habilitar BPA por bucket individualmente", "correct": false, "why": "Incorrecto. Los devs pueden crear buckets nuevos sin BPA. A nivel cuenta cubre todos, existentes y futuros." },
+        { "letter": "C", "text": "Confiar en la auditoria mensual", "correct": false, "why": "Incorrecto. Deteccion post-facto: los datos ya pudieron exfiltrarse. Se pide preventivo." },
+        { "letter": "D", "text": "Configurar WAF en cada bucket", "correct": false, "why": "Incorrecto. WAF no aplica a S3 directamente (solo via CloudFront)." }
+      ],
+      "explanation": "S3 Block Public Access opera a dos niveles: cuenta (aplica a todos los buckets actuales y futuros) y bucket (override si cuenta no lo bloquea). Los 4 flags: 1) BlockPublicAcls (rechaza PUT de ACL publicas), 2) IgnorePublicAcls (ignora las existentes), 3) BlockPublicPolicy (rechaza policies publicas), 4) RestrictPublicBuckets (limita acceso a AWS services y usuarios autorizados). Desde 2023 los buckets nuevos tienen BPA por default.",
+      "keywords": ["prevenir publico", "toda la cuenta", "guardrail S3"],
+      "services": ["S3", "Organizations", "SCP"],
+      "references": [{ "title": "S3 Block Public Access" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "secure",
+      "topic": "S3 Object Lock y compliance",
+      "difficulty": "hard",
+      "scenario": "Un banco debe cumplir SEC Rule 17a-4(f): guardar registros de trading en formato WORM (Write Once Read Many) por 7 anos, imposibles de modificar o borrar incluso por administradores durante ese periodo.",
+      "question": "Que configuracion S3 cumple este requisito de retencion inmutable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Object Lock en modo Compliance con retention period de 7 anos, habilitado en un bucket con versionado", "correct": true, "why": "Correcto. Object Lock Compliance mode es WORM estricto: ni root, ni admins, ni el propio AWS pueden borrar/modificar el objeto hasta que expire la retencion. Cumple SEC 17a-4(f), FINRA, CFTC. Requiere versioning habilitado." },
+        { "letter": "B", "text": "S3 Object Lock en modo Governance", "correct": false, "why": "Incorrecto. Governance mode permite override con permiso especial (s3:BypassGovernanceRetention). Utiles para politicas internas pero NO cumple compliance WORM regulatorio estricto." },
+        { "letter": "C", "text": "S3 lifecycle policy que impida deletion", "correct": false, "why": "Incorrecto. Lifecycle policies AUTOMATIZAN transiciones y expiraciones; no impiden que un admin borre manualmente." },
+        { "letter": "D", "text": "S3 Glacier con Vault Lock", "correct": false, "why": "Cercano y valido tambien. Glacier Vault Lock es WORM equivalente pero para archivos frios y usa Vault Access Policies. Object Lock es la respuesta canonica moderna para el bucket S3 standard/IA/Glacier tiers." }
+      ],
+      "explanation": "S3 Object Lock: modelo WORM. Modos: Governance (override con permiso), Compliance (nadie puede override, ni root). Legal Hold: independiente de retention, sin fecha de expiracion, requiere accion explicita para liberar. Requisitos: bucket con Versioning habilitado, Object Lock habilitado al crear el bucket (no se puede activar despues sin AWS Support). Certificado por Cohasset Associates para SEC 17a-4(f), FINRA, CFTC.",
+      "keywords": ["WORM", "compliance retencion", "SEC 17a-4", "inmutable"],
+      "services": ["S3", "Object Lock"],
+      "references": [{ "title": "S3 Object Lock" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "secure",
+      "topic": "S3 Access Points y buckets grandes",
+      "difficulty": "medium",
+      "scenario": "Un data lake en un solo bucket S3 es usado por 20 equipos con permisos distintos. La bucket policy tiene 10 KB de reglas encadenadas dificiles de mantener, y cambios rompen accesos existentes.",
+      "question": "Que feature simplifica la gestion de permisos por equipo sobre un bucket compartido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Access Points: crear un access point por equipo con su propia access point policy y su hostname, la bucket policy queda minima delegando a los access points", "correct": true, "why": "Correcto. Access Points son endpoints dedicados por caso de uso/equipo, cada uno con su hostname y policy propia. La bucket policy queda simple. Facilitan escalar accesos, limitar por VPC, y auditar por equipo." },
+        { "letter": "B", "text": "Crear 20 buckets separados", "correct": false, "why": "Incorrecto. Fragmenta el data lake, complica queries analytics (Athena, Redshift Spectrum, Glue crawlers). El enunciado quiere UN dataset compartido." },
+        { "letter": "C", "text": "Solo IAM policies en cada rol de equipo", "correct": false, "why": "Cercano pero no reemplaza a la bucket policy. Con muchos equipos, IAM policies duplicadas por rol tampoco escalan bien; Access Points centralizan el modelo por caso de uso." },
+        { "letter": "D", "text": "Bucket policy con 100 statements distintos", "correct": false, "why": "Incorrecto. Es exactamente el problema del escenario: bucket policy inmanejable." }
+      ],
+      "explanation": "S3 Access Points: named network endpoints attached to a bucket. Cada uno tiene: hostname unico (bucket-ap.s3-accesspoint.region.amazonaws.com), policy propia, opcional VPC-only (accesible solo desde una VPC). Beneficios: separar politicas por consumidor, aplicar diferentes controls (por ejemplo, un access point read-only para analistas, otro read-write para ingestion). Multi-Region Access Points: enrutamiento global a bucket mas cercano.",
+      "keywords": ["muchos equipos", "bucket policy compleja", "access point"],
+      "services": ["S3", "S3 Access Points"],
+      "references": [{ "title": "Managing data access with S3 Access Points" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "secure",
+      "topic": "S3 replication cross-region con KMS",
+      "difficulty": "hard",
+      "scenario": "Una app requiere que los objetos cifrados con SSE-KMS en un bucket us-east-1 se repliquen automaticamente a eu-west-1 para DR, incluyendo delete markers y objetos ya existentes al momento de habilitar la replicacion.",
+      "question": "Que configuracion cumple todos los requisitos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Cross-Region Replication (CRR) con Replication Time Control (RTC), configurar permisos IAM para replicar objetos SSE-KMS especificando la KMS key destino, habilitar S3 Batch Replication para backfill de objetos existentes, y activar Delete Marker Replication", "correct": true, "why": "Correcto. CRR necesita permisos especificos para KMS (Decrypt en origen, Encrypt en destino con la key destino), Batch Replication resuelve el backfill (por default CRR solo replica objetos NUEVOS post-configuracion), y Delete Marker Replication debe activarse explicitamente." },
+        { "letter": "B", "text": "Habilitar CRR simple sin configurar KMS ni delete markers", "correct": false, "why": "Incorrecto. Por default: CRR no replica objetos existentes previos a la configuracion, no replica delete markers, y objetos cifrados con SSE-KMS requieren configuracion explicita de key destino y permisos." },
+        { "letter": "C", "text": "Copiar objetos con AWS DataSync una vez", "correct": false, "why": "Incompleto. DataSync es one-shot o programado; no es replicacion continua nativa como CRR." },
+        { "letter": "D", "text": "S3 Same-Region Replication (SRR)", "correct": false, "why": "Incorrecto. SRR replica en la misma region; el enunciado pide cross-region para DR." }
+      ],
+      "explanation": "S3 Replication: SRR (misma region, casos de log aggregation o cambio de storage class), CRR (cross-region, DR/compliance). Requisitos: versioning en origen y destino. KMS objects necesitan: policy que permita al replication role kms:Decrypt en source key y kms:Encrypt en dest key. Replication Time Control (RTC): SLA de 15 min para 99.99% de objetos, mas caro. Batch Replication: backfill de objetos ya existentes. Delete Marker Replication y Existing Object Replication son opt-in.",
+      "keywords": ["CRR", "KMS", "delete markers", "backfill"],
+      "services": ["S3", "KMS", "Replication"],
+      "references": [{ "title": "Replicating objects created with server-side encryption" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "secure",
+      "topic": "S3 VPC endpoint policy",
+      "difficulty": "medium",
+      "scenario": "Una VPC accede a S3 via Gateway Endpoint. El equipo de seguridad exige que desde esa VPC SOLO se pueda acceder a los buckets propios de la cuenta, no a buckets publicos de otras cuentas (para prevenir exfiltracion via S3 a buckets externos).",
+      "question": "Como se implementa esta restriccion?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "VPC Endpoint policy en el S3 Gateway Endpoint que solo permita acciones sobre ARNs de buckets con Condition aws:ResourceAccount igual al accountId propio", "correct": true, "why": "Correcto. Endpoint policies restringen que se puede hacer a traves del endpoint. Con aws:ResourceAccount se limita a buckets pertenecientes a tu propia cuenta, previniendo que instancias comprometidas envien datos a buckets de atacantes." },
+        { "letter": "B", "text": "Bucket policy en cada bucket externo (imposible)", "correct": false, "why": "Incorrecto. No controlas policies de buckets ajenos." },
+        { "letter": "C", "text": "Bloquear S3 entirely y usar solo EFS", "correct": false, "why": "Incorrecto. Rompe funcionalidad legitima." },
+        { "letter": "D", "text": "SCP a nivel Organizations", "correct": false, "why": "Cercano pero grueso. SCP aplica al principal (usuario/rol), no al endpoint de red. Endpoint policy es mas granular para 'restringir salidas desde esta VPC'. Se combinan (defense in depth)." }
+      ],
+      "explanation": "Endpoint policies: resource policies en VPC endpoints (Gateway o Interface) que restringen que principals, acciones y recursos pueden usarse a traves del endpoint. Complemento util a IAM/SCP: opera desde la perspectiva de la red. Keys utiles: aws:ResourceAccount (bucket propio), aws:PrincipalOrgID (solo principals de tu Org). Para el reverso (que solo tu VPC pueda acceder al bucket) se usa bucket policy con aws:sourceVpce o aws:sourceVpc.",
+      "keywords": ["restringir exfiltracion", "solo buckets propios", "endpoint policy"],
+      "services": ["S3", "VPC Endpoint"],
+      "references": [{ "title": "Using VPC endpoint policies for S3" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "secure",
+      "topic": "S3 Presigned URLs",
+      "difficulty": "easy",
+      "scenario": "Una app permite a usuarios subir avatares directamente a S3 sin pasar por el backend (para no consumir ancho de banda del servidor). Debe funcionar sin hacer publico el bucket ni requerir credenciales AWS del lado del cliente.",
+      "question": "Que mecanismo AWS habilita subida directa segura?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Presigned URL PUT firmada por el backend con las credenciales del rol de la app, con expiracion corta y condiciones (Content-Type, tamano maximo)", "correct": true, "why": "Correcto. El backend genera una URL firmada temporal que autoriza un PUT concreto a un key concreto. El cliente sube directo a S3 sin credenciales, y el bucket permanece privado. Es el patron canonico para uploads directos." },
+        { "letter": "B", "text": "Hacer el bucket publico writable", "correct": false, "why": "Incorrecto. Bucket publico writable = anyone puede sobrescribir/borrar/anadir contenido malicioso. Nunca." },
+        { "letter": "C", "text": "Enviar credenciales AWS al cliente", "correct": false, "why": "Incorrecto. Credenciales en cliente = comprometidas facilmente." },
+        { "letter": "D", "text": "Usar Cognito Identity Pools con credenciales AWS temporales", "correct": false, "why": "Cercano y valido en otros contextos (apps moviles con SDK AWS). Para web upload puntual, presigned URL es mas simple y no requiere Cognito." }
+      ],
+      "explanation": "Presigned URL: URL con firma HMAC que autoriza una operacion especifica S3 (GET, PUT) por un tiempo limitado. Genera con SDK/CLI usando credenciales que tengan permiso para esa operacion. Presigned POST: alternativa para uploads con conditions (tamano, tipo, exact key match) desde HTML forms. Cognito Identity Pools: da credenciales AWS temporales para operaciones complejas (SDK completo desde app movil). Presigned = simple upload/download; Cognito = SDK completo.",
+      "keywords": ["upload directo", "bucket privado", "sin credenciales cliente"],
+      "services": ["S3", "IAM"],
+      "references": [{ "title": "Using presigned URLs" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "secure",
+      "topic": "S3 Server Access Logging vs CloudTrail Data Events",
+      "difficulty": "medium",
+      "scenario": "Un equipo de seguridad necesita auditar TODOS los accesos GET/PUT a un bucket S3 con: identidad del principal, ARN del recurso, timestamp y source IP. Requieren que los logs se puedan consultar con SQL en Athena.",
+      "question": "Que servicio provee este nivel de detalle mas facilmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CloudTrail Data Events para S3 (habilitados especificamente para el bucket o para el trail), destino S3 y query con Athena", "correct": true, "why": "Correcto. CloudTrail Data Events capturan operaciones a nivel objeto (GetObject, PutObject, DeleteObject) con identidad IAM completa. Se envian a un bucket de logs para Athena. Nota: Data Events NO estan habilitados por default (coste extra $0.10 por 100k events)." },
+        { "letter": "B", "text": "S3 Server Access Logging", "correct": false, "why": "Cercano pero SAL no incluye identidad IAM detallada (solo el requester si es una cuenta AWS conocida) y su formato es dificil de parsear. CloudTrail Data Events es mas rico y estructurado para auditoria." },
+        { "letter": "C", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas basadas en Data Events pero no persiste los logs raw para query." },
+        { "letter": "D", "text": "VPC Flow Logs", "correct": false, "why": "Incorrecto. Flow Logs son metadata de red, no operaciones S3 a nivel objeto." }
+      ],
+      "explanation": "CloudTrail tiene: Management Events (por default, gratis, operaciones tipo control plane), Data Events (opt-in, extra costo, operaciones data plane: S3 objetos, Lambda invocations, DynamoDB item ops), Insights Events (deteccion anomalias). Para auditar accesos a objetos S3 = habilitar Data Events. Server Access Logging es legacy, formato texto flat, sigue existiendo pero CloudTrail Data Events es superior en detalle e integracion con SIEM.",
+      "keywords": ["auditar accesos S3", "identidad IAM", "SQL query"],
+      "services": ["CloudTrail", "S3", "Athena"],
+      "references": [{ "title": "Logging data events with CloudTrail" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "secure",
+      "topic": "S3 versioning y MFA Delete",
+      "difficulty": "medium",
+      "scenario": "Un backup critico se guarda en S3. Compliance exige que ni un admin comprometido pueda borrar permanentemente las versiones antiguas sin proveer MFA en cada delete.",
+      "question": "Que combinacion de features cumple esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar S3 Versioning y MFA Delete en el bucket (activable solo por el root account con CLI)", "correct": true, "why": "Correcto. MFA Delete exige que las operaciones de eliminar versiones o de desactivar versioning incluyan un codigo MFA. Solo el root account puede activarlo (via CLI/API). Combinado con Versioning, cualquier borrado deja una delete marker recuperable." },
+        { "letter": "B", "text": "Solo Versioning", "correct": false, "why": "Incompleto. Sin MFA Delete, un admin comprometido puede borrar versiones (DeleteObjectVersion) sin MFA." },
+        { "letter": "C", "text": "IAM policy que exija MFA para s3:DeleteObject", "correct": false, "why": "Cercano pero un admin con AdministratorAccess puede modificar la policy o asumir un rol sin MFA. MFA Delete a nivel bucket es mas robusto." },
+        { "letter": "D", "text": "Object Lock Compliance", "correct": false, "why": "Cercano y para inmutabilidad estricta es mejor. Pero el enunciado exige 'con MFA' explicitamente, y Object Lock es un enfoque distinto (retention period sin MFA). Ambos son validos segun requisito exacto." }
+      ],
+      "explanation": "S3 Versioning: cada PUT crea una version nueva, delete crea un delete marker (recuperable). MFA Delete: activable solo por root via CLI/API (no desde consola), requiere MFA para operaciones DeleteObjectVersion y para deshabilitar Versioning. Object Lock (Compliance): garantia mas fuerte para inmutabilidad regulatoria. Para 'proteger backups de borrado accidental/malicioso' se combinan Versioning + MFA Delete + lifecycle rules + eventualmente CRR a cuenta separada.",
+      "keywords": ["MFA obligatorio para delete", "backup inmutable"],
+      "services": ["S3", "Versioning", "MFA Delete"],
+      "references": [{ "title": "Configuring MFA delete" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "secure",
+      "topic": "S3 Access Analyzer",
+      "difficulty": "easy",
+      "scenario": "Un auditor pide una lista de todos los buckets de la organizacion que sean accesibles desde fuera de la cuenta (compartidos cross-account o publicos) para verificar que la exposicion sea intencional.",
+      "question": "Que herramienta AWS genera automaticamente este inventario?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IAM Access Analyzer (external access findings) que analiza policies y reporta recursos accesibles fuera de la zone of trust definida (Organization o cuenta)", "correct": true, "why": "Correcto. Access Analyzer usa razonamiento matematico (Zelkova) sobre las policies para identificar accesos externos, incluyendo S3 buckets, KMS keys, IAM roles, Lambda functions, SQS queues, Secrets Manager secrets, EFS." },
+        { "letter": "B", "text": "Revisar manualmente las policies", "correct": false, "why": "Incorrecto. No escala y es propenso a error." },
+        { "letter": "C", "text": "GuardDuty", "correct": false, "why": "Incorrecto. GuardDuty detecta amenazas activas, no exposicion configurada." },
+        { "letter": "D", "text": "AWS Config Rule s3-bucket-public-read-prohibited", "correct": false, "why": "Cercano pero solo detecta publicos, no cross-account intencionales. Access Analyzer cubre todo el espectro external." }
+      ],
+      "explanation": "IAM Access Analyzer: findings de (1) External Access (recursos accesibles fuera de la zone of trust), (2) Unused Access (roles/permisos no usados), (3) Custom Policy Checks, (4) Policy Generation. Habilitable a nivel cuenta o Organization (analiza todas las cuentas). Recursos analizados: S3 buckets, IAM roles, KMS keys, Lambda functions/layers, SQS queues, Secrets Manager, EFS filesystems, ECR repositories, SNS topics.",
+      "keywords": ["accesos externos", "cross-account", "buckets publicos"],
+      "services": ["IAM Access Analyzer", "S3"],
+      "references": [{ "title": "IAM Access Analyzer" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "secure",
+      "topic": "S3 encryption default y bucket keys",
+      "difficulty": "medium",
+      "scenario": "Un data lake almacena billones de objetos. Necesitan cifrado at-rest con auditoria KMS pero los costos de KMS por API call estan explotando (millones de GET/mes cada uno con llamada KMS).",
+      "question": "Que combinacion reduce coste manteniendo SSE-KMS con CMK Customer Managed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SSE-KMS con S3 Bucket Keys habilitadas (reducen llamadas KMS hasta 99% al derivar DEKs localmente en S3 desde una clave por bucket)", "correct": true, "why": "Correcto. Bucket Keys son la feature diseñada para exactamente este caso: KMS emite una clave por bucket, S3 la usa localmente para derivar DEKs de objetos, reduciendo API calls y facturacion KMS drasticamente, sin sacrificar auditoria ni control de CMK." },
+        { "letter": "B", "text": "Cambiar a SSE-S3 sin CMK", "correct": false, "why": "Incorrecto. El enunciado exige mantener CMK Customer Managed (auditoria y control)." },
+        { "letter": "C", "text": "Desactivar cifrado", "correct": false, "why": "Incorrecto. Viola compliance." },
+        { "letter": "D", "text": "Client-side encryption", "correct": false, "why": "Cercano pero implica refactor completo del pipeline. Bucket Keys resuelve sin cambiar codigo." }
+      ],
+      "explanation": "S3 Bucket Keys: cache local en S3 de una clave a nivel bucket derivada de la CMK. Reduce API calls a KMS ~99% en workloads read/write heavy. Habilitable por bucket o por PUT individual. Compatible con SSE-KMS Customer Managed. Sin impacto en auditoria (CloudTrail sigue registrando eventos KMS a nivel bucket key, no por objeto). Requerido para reducir coste sin renunciar a CMK.",
+      "keywords": ["reducir coste KMS", "Bucket Keys", "muchos objetos"],
+      "services": ["S3", "KMS"],
+      "references": [{ "title": "Reducing cost of SSE-KMS with S3 Bucket Keys" }]
+    },
+    {
+      "id": "q11",
+      "domainId": "secure",
+      "topic": "S3 Cross-Account acceso via bucket policy",
+      "difficulty": "hard",
+      "scenario": "Cuenta A (data producer) tiene un bucket S3. Cuenta B (analytics) tiene un cluster EMR que necesita leer objetos. Ambos administradores desean el minimo esfuerzo y que los objetos escritos por Cuenta B sean propiedad de Cuenta A (para que Cuenta A pueda gestionarlos).",
+      "question": "Que combinacion de configuraciones es necesaria?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bucket policy en A permitiendo al rol EMR de B; IAM policy en el rol EMR con s3:GetObject sobre el bucket; habilitar S3 Object Ownership 'Bucket owner enforced' para que objetos escritos por B pertenezcan a A", "correct": true, "why": "Correcto. Cross-account S3 requiere permisos en ambos lados. Bucket owner enforced (desde 2021) elimina el problema clasico de que objetos escritos cross-account eran del writer, no del bucket owner." },
+        { "letter": "B", "text": "Solo bucket policy en A", "correct": false, "why": "Insuficiente. Cross-account con S3 requiere permisos en identity policy tambien (recuerda excepcion: dentro de la misma cuenta con una basta)." },
+        { "letter": "C", "text": "Hacer el bucket publico", "correct": false, "why": "Incorrecto. Innecesario y peligroso." },
+        { "letter": "D", "text": "IAM policy en el rol EMR sin bucket policy", "correct": false, "why": "Insuficiente. Sin permiso en bucket policy, S3 rechaza cross-account por default." }
+      ],
+      "explanation": "S3 Object Ownership settings: (1) Bucket owner enforced (recomendado, ACLs disabled, todos los objetos pertenecen al bucket owner), (2) Bucket owner preferred (ACLs habilitadas, PUTs con bucket-owner-full-control ACL le dan ownership al bucket), (3) Object writer (legacy: writer es owner). Best practice moderna: 'bucket owner enforced' + bucket policies para todo el control de acceso. Cross-account: requiere identity policy + resource policy simultaneamente.",
+      "keywords": ["cross-account", "bucket ownership", "EMR"],
+      "services": ["S3", "IAM", "EMR"],
+      "references": [{ "title": "S3 Object Ownership" }]
+    },
+    {
+      "id": "q12",
+      "domainId": "secure",
+      "topic": "S3 Storage Lens y visibilidad",
+      "difficulty": "easy",
+      "scenario": "Un CTO quiere visibilidad organizacion-wide de: TB almacenados por bucket, distribucion por storage class, cost anomalies, buckets no cifrados, uploads incompletos con lifecycle abandonado, y trends historicos.",
+      "question": "Que servicio AWS provee este dashboard nativo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 Storage Lens con dashboard organizacional y metricas advanced (activadas por opt-in)", "correct": true, "why": "Correcto. Storage Lens es el servicio nativo de analitica de uso S3, aplicable a nivel cuenta o Organization, con metricas free (28) y advanced (30+, incluye tendencias 15 meses, prefix-level metrics)." },
+        { "letter": "B", "text": "CloudWatch metricas custom por bucket", "correct": false, "why": "Cercano pero solo metricas basicas y sin agregacion multi-cuenta out-of-the-box. Storage Lens es lo diseñado para este uso." },
+        { "letter": "C", "text": "Cost Explorer solamente", "correct": false, "why": "Incompleto. Cost Explorer da coste total S3 pero no granularidad por bucket, storage class ni recomendaciones." },
+        { "letter": "D", "text": "Athena queries sobre server access logs", "correct": false, "why": "Cercano pero requiere build custom. Storage Lens ya provee dashboard listo, recomendaciones y organizacion-wide." }
+      ],
+      "explanation": "S3 Storage Lens: dashboard nativo con 28 metricas free (uso, actividad, costos rough) + 30+ advanced (opt-in, con costo): trends 15 meses, prefix-level, CloudWatch publishing, contextual recommendations. Alcance: cuenta, region, bucket, prefix. Recomendaciones: crear lifecycle para reducir costos, activar bucket keys, abandoned multipart uploads. Complementa con Cost Explorer (coste) y CloudWatch (metricas en tiempo real).",
+      "keywords": ["visibilidad S3", "TB por bucket", "recomendaciones"],
+      "services": ["S3 Storage Lens", "S3"],
+      "references": [{ "title": "S3 Storage Lens" }]
+    }
+  ]
+}

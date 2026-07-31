@@ -1,0 +1,202 @@
+{
+  "id": "clf-c02-sim-14-networking",
+  "certId": "clf-c02",
+  "order": 14,
+  "title": "Simulacro 14 — Networking: VPC, subnets, gateways, DX, VPN, Route 53, CloudFront",
+  "focus": "Dominio 3 — VPC, subnets pub/priv, IGW/NAT, Direct Connect, VPN, Route 53, CloudFront, Global Accelerator.",
+  "domainCoverage": ["technology"],
+  "timeLimitMin": 20,
+  "passThreshold": 0.7,
+  "questions": [
+    {
+      "id": "q1",
+      "domainId": "technology",
+      "topic": "Public vs Private subnet",
+      "difficulty": "easy",
+      "scenario": "Un arquitecto diseña una VPC: (A) EC2 web que debe recibir tráfico HTTP desde internet, (B) BD RDS que NO debe ser accesible desde internet.",
+      "question": "¿Dónde colocar cada una?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Subnet pública (con ruta a Internet Gateway), (B) Subnet privada (sin ruta a IGW)", "correct": true, "why": "Correcto. Subnet pública = tiene ruta 0.0.0.0/0 a IGW. Subnet privada = sin ruta a IGW; solo accesible desde recursos internos. Patrón clásico: web tier en pública, app/DB tier en privada." },
+        { "letter": "B", "text": "Ambas en pública", "correct": false, "why": "Incorrecto. Exponer BD a internet es riesgo grave de seguridad." },
+        { "letter": "C", "text": "Ambas en privada", "correct": false, "why": "Incorrecto. Web pública no sería accesible desde internet." },
+        { "letter": "D", "text": "Sin subnets", "correct": false, "why": "Incorrecto. VPC requiere subnets para desplegar recursos." }
+      ],
+      "explanation": "Public subnet = route table apunta 0.0.0.0/0 → IGW. Private subnet = sin ruta a IGW (opcionalmente NAT Gateway para egress). Best practice: multi-tier, web=pub, app/DB=priv. BDs SIEMPRE en privadas. VPC default trae 1 subnet por AZ, todas públicas (evitar en producción).",
+      "keywords": ["public private", "IGW", "RDS no internet"],
+      "services": ["VPC", "IGW"],
+      "references": [{ "title": "VPC Subnets" }]
+    },
+    {
+      "id": "q2",
+      "domainId": "technology",
+      "topic": "NAT Gateway",
+      "difficulty": "medium",
+      "scenario": "Una EC2 en subnet privada necesita salir a internet para actualizar paquetes (yum update) pero NO debe recibir conexiones entrantes desde internet.",
+      "question": "¿Qué componente usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "NAT Gateway en subnet pública", "correct": true, "why": "Correcto. NAT Gateway permite EGRESS a internet desde subnets privadas. Managed, HA en la AZ donde se despliega, escala automáticamente. Se coloca en subnet pública; la subnet privada tiene ruta 0.0.0.0/0 → NAT GW." },
+        { "letter": "B", "text": "Internet Gateway directo", "correct": false, "why": "Incorrecto. IGW convierte la subnet en pública; permitiría entrada también. NAT solo egress." },
+        { "letter": "C", "text": "VPC Endpoint", "correct": false, "why": "Cercano. VPC Endpoints permiten acceso privado a servicios AWS (S3, DynamoDB, etc.) sin pasar por internet. No sirve para acceso general a internet (yum repos externos)." },
+        { "letter": "D", "text": "NAT Instance", "correct": false, "why": "Cercano. NAT Instance es EC2 legacy que hace NAT, gestión manual, no HA. Deprecated a favor de NAT Gateway." }
+      ],
+      "explanation": "NAT Gateway = managed egress-only para privadas. HA por AZ (desplegar 1 por AZ). Escala hasta 45 Gbps. Cobra por hora y GB. Alternativas: NAT Instance (legacy), Egress-only IGW (IPv6). Para EGRESS a servicios AWS específicos sin costo: VPC Endpoints (Gateway para S3/DynamoDB, Interface para el resto).",
+      "keywords": ["salida internet", "subnet privada", "yum update"],
+      "services": ["NAT Gateway", "VPC"],
+      "references": [{ "title": "NAT Gateway" }]
+    },
+    {
+      "id": "q3",
+      "domainId": "technology",
+      "topic": "Direct Connect vs VPN",
+      "difficulty": "medium",
+      "scenario": "Una empresa tiene 500 Mbps constantes de tráfico entre su datacenter y AWS. Necesita ancho de banda garantizado, latencia baja y predecible, sin depender de internet.",
+      "question": "¿Qué solución usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Direct Connect (DX)", "correct": true, "why": "Correcto. DX = link dedicado físico (1 o 10 Gbps o subrates via partners) entre datacenter y AWS. No pasa por internet: bandwidth garantizado, latencia baja/predecible. Ideal para tráfico alto, sensitive workloads." },
+        { "letter": "B", "text": "Site-to-Site VPN", "correct": false, "why": "Cercano. VPN va sobre internet: rápida de setup, bandwidth limitado (~1.25 Gbps por túnel), latencia variable. Buena como backup o inicio; no óptima para tráfico sostenido crítico." },
+        { "letter": "C", "text": "Client VPN", "correct": false, "why": "Incorrecto. Client VPN es acceso remoto de usuarios individuales, no site-to-site." },
+        { "letter": "D", "text": "Internet Gateway", "correct": false, "why": "Incorrecto. IGW no es conectividad hybrid." }
+      ],
+      "explanation": "DX = link privado dedicado, semanas para provisionar, bandwidth garantizado, latencia baja/predecible, mejor consistencia. VPN = sobre internet, minutos para provisionar, cifrado IPsec, más económico para bajos volúmenes. Best practice: DX + VPN como backup automático.",
+      "keywords": ["ancho garantizado", "no internet", "latencia predecible"],
+      "services": ["Direct Connect", "VPN"],
+      "references": [{ "title": "AWS Direct Connect" }]
+    },
+    {
+      "id": "q4",
+      "domainId": "technology",
+      "topic": "CloudFront",
+      "difficulty": "easy",
+      "scenario": "Una web sirve videos y imágenes a usuarios globales desde un bucket S3 en us-east-1. Usuarios en Europa/Asia se quejan de lentitud.",
+      "question": "¿Qué servicio mejora la experiencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon CloudFront (CDN)", "correct": true, "why": "Correcto. CloudFront = CDN global con 400+ edge locations. Cachea contenido cerca del usuario. Reduce latencia dramáticamente para contenido estático (videos, imágenes, HTML). Integra con S3, ALB, EC2, custom origins." },
+        { "letter": "B", "text": "Replicar S3 en cada región", "correct": false, "why": "Cercano. Complejo, costo alto, no equivalente a red edge de CloudFront." },
+        { "letter": "C", "text": "Aumentar tamaño EC2", "correct": false, "why": "Incorrecto. Bottleneck es distancia geográfica, no CPU." },
+        { "letter": "D", "text": "S3 Transfer Acceleration", "correct": false, "why": "Cercano. S3TA acelera UPLOADS al bucket, no downloads a usuarios." }
+      ],
+      "explanation": "CloudFront: CDN con 400+ edge locations globales. Cache-first para contenido estático y dinámico. Signed URLs/cookies para contenido privado. Field-level encryption. Integra con WAF, Shield. Lambda@Edge y CloudFront Functions para código en el borde. Reduce latencia y costo de origen.",
+      "keywords": ["CDN", "usuarios globales", "cachear en edge"],
+      "services": ["CloudFront", "S3"],
+      "references": [{ "title": "Amazon CloudFront" }]
+    },
+    {
+      "id": "q5",
+      "domainId": "technology",
+      "topic": "Route 53",
+      "difficulty": "medium",
+      "scenario": "Un equipo necesita: (A) registrar el dominio mycompany.com, (B) resolver DNS a diferentes recursos AWS, (C) enrutar tráfico basado en geolocalización y health checks.",
+      "question": "¿Qué servicio cumple todo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Amazon Route 53", "correct": true, "why": "Correcto. Route 53 = DNS managed. Registrar dominios, hosted zones (públicas y privadas), alias records para recursos AWS, routing policies: simple, weighted, latency, geolocation, geoproximity, failover, multivalue. Health checks integrados." },
+        { "letter": "B", "text": "CloudFront", "correct": false, "why": "Incorrecto. CloudFront es CDN, no DNS." },
+        { "letter": "C", "text": "API Gateway", "correct": false, "why": "Incorrecto. API GW es HTTP API, no DNS." },
+        { "letter": "D", "text": "VPC", "correct": false, "why": "Incorrecto. VPC es red, no DNS resolver público." }
+      ],
+      "explanation": "Route 53: (1) registrar dominios. (2) hosted zones (public + private). (3) alias records = puntero especial AWS (gratis, apunta a ALB/CloudFront/S3, etc.). (4) routing policies: Simple, Weighted (A/B), Latency (a región más cercana), Geolocation (por país), Geoproximity, Failover, Multivalue. (5) Health checks. SLA 100%.",
+      "keywords": ["DNS", "registrar dominio", "geolocation routing"],
+      "services": ["Route 53"],
+      "references": [{ "title": "Amazon Route 53" }]
+    },
+    {
+      "id": "q6",
+      "domainId": "technology",
+      "topic": "Global Accelerator vs CloudFront",
+      "difficulty": "hard",
+      "scenario": "Una app TCP/UDP no HTTP (juego multiplayer o VoIP) necesita reducir latencia y jitter para usuarios globales, con failover regional automático.",
+      "question": "¿Qué servicio es apropiado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Global Accelerator", "correct": true, "why": "Correcto. Global Accelerator = 2 anycast IPs que enrutan tráfico TCP/UDP por la red backbone de AWS. Reduce latencia/jitter, failover automático entre regiones. Ideal para apps NON-HTTP (juegos, VoIP, IoT)." },
+        { "letter": "B", "text": "CloudFront", "correct": false, "why": "Cercano. CloudFront es HTTP/HTTPS/WebSocket. No para TCP/UDP arbitrario." },
+        { "letter": "C", "text": "Route 53 latency routing", "correct": false, "why": "Cercano. Latency routing enruta al startup de conexión (DNS cache); Global Accelerator optimiza cada paquete via anycast." },
+        { "letter": "D", "text": "Direct Connect", "correct": false, "why": "Incorrecto. DX es hybrid on-prem↔AWS, no acelera para end-users globales." }
+      ],
+      "explanation": "Global Accelerator vs CloudFront: Global Accelerator = anycast IPs, TCP/UDP, apps NON-HTTP, failover regional automático, ideal juegos/VoIP/IoT. CloudFront = CDN HTTP(S)/WebSocket, cacheo, ideal web/API. A veces combinables.",
+      "keywords": ["TCP UDP", "juego", "anycast", "no HTTP"],
+      "services": ["Global Accelerator"],
+      "references": [{ "title": "AWS Global Accelerator" }]
+    },
+    {
+      "id": "q7",
+      "domainId": "technology",
+      "topic": "VPC Peering vs Transit Gateway",
+      "difficulty": "hard",
+      "scenario": "Una empresa tiene 50 VPCs en varias cuentas y regiones. Necesita interconectar todas de forma escalable, sin gestionar decenas de VPC Peerings (que no son transitivos).",
+      "question": "¿Qué servicio usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS Transit Gateway (TGW)", "correct": true, "why": "Correcto. TGW = hub central para conectar VPCs, VPNs, DX. Escalable (5000 VPCs), transitivo, multi-cuenta con RAM, cross-region peering. Reemplaza mesh de VPC Peerings." },
+        { "letter": "B", "text": "VPC Peering entre todas", "correct": false, "why": "Cercano. VPC Peering es 1:1 no transitivo; 50 VPCs = 1225 peerings, ingestionable." },
+        { "letter": "C", "text": "Direct Connect", "correct": false, "why": "Incorrecto. DX es on-prem↔AWS, no VPC-a-VPC." },
+        { "letter": "D", "text": "Internet Gateway", "correct": false, "why": "Incorrecto. IGW no conecta VPCs entre sí." }
+      ],
+      "explanation": "VPC Peering = conexión 1:1 entre VPCs, no transitivo, hasta 125 peerings por VPC. Transit Gateway = hub-and-spoke, transitivo, multi-cuenta, cross-region peering. Regla: pocas VPCs y sin transitividad = Peering; muchas VPCs o multi-cuenta = TGW.",
+      "keywords": ["50 VPCs", "hub central", "transitividad"],
+      "services": ["Transit Gateway", "VPC Peering"],
+      "references": [{ "title": "AWS Transit Gateway" }]
+    },
+    {
+      "id": "q8",
+      "domainId": "technology",
+      "topic": "VPC Endpoints",
+      "difficulty": "medium",
+      "scenario": "Una EC2 en subnet privada necesita acceder a S3 sin salir a internet (por compliance) ni pagar tráfico por NAT Gateway.",
+      "question": "¿Qué feature usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "VPC Gateway Endpoint para S3", "correct": true, "why": "Correcto. Gateway Endpoint (S3 y DynamoDB) = ruta privada dentro de la VPC sin costo. La EC2 accede a S3 sin salir a internet ni NAT. Gratis." },
+        { "letter": "B", "text": "NAT Gateway", "correct": false, "why": "Cercano. Funciona pero cobra tráfico y sale por internet route via IGW; el enunciado quiere evitar eso." },
+        { "letter": "C", "text": "Direct Connect", "correct": false, "why": "Incorrecto. DX es hybrid on-prem." },
+        { "letter": "D", "text": "VPN", "correct": false, "why": "Incorrecto. VPN es hybrid." }
+      ],
+      "explanation": "VPC Endpoints: (1) Gateway Endpoint = S3 y DynamoDB, gratis, se agrega a la route table. (2) Interface Endpoint (PrivateLink) = ENIs con IP privada, casi todos los servicios AWS, cobra por hora y datos. Beneficios: seguridad (tráfico no sale de VPC), compliance, ahorro (Gateway) o consistencia (Interface).",
+      "keywords": ["S3 privado", "sin NAT", "sin internet"],
+      "services": ["VPC Endpoint", "S3", "PrivateLink"],
+      "references": [{ "title": "VPC Endpoints" }]
+    },
+    {
+      "id": "q9",
+      "domainId": "technology",
+      "topic": "Elastic Load Balancer types",
+      "difficulty": "medium",
+      "scenario": "Un arquitecto elige ELB: (A) app HTTP con path-based routing y auth, (B) app TCP alto throughput y baja latencia, (C) balancear apps con IPs estáticas y clientes que requieren whitelist.",
+      "question": "¿Qué ELB en cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) ALB (Application, L7), (B) NLB (Network, L4), (C) NLB con Elastic IP", "correct": true, "why": "Correcto. ALB = L7, HTTP/HTTPS/WebSocket, path/host-based routing, integra con Cognito/WAF. NLB = L4, TCP/UDP/TLS, millones de conexiones, latencia µs, soporta IPs estáticas (una por AZ)." },
+        { "letter": "B", "text": "CLB para todo", "correct": false, "why": "Incorrecto. Classic Load Balancer es legacy; usar ALB/NLB." },
+        { "letter": "C", "text": "ALB para todo", "correct": false, "why": "Incorrecto. ALB no da IPs estáticas ni soporta TCP/UDP puros." },
+        { "letter": "D", "text": "NLB para todo", "correct": false, "why": "Incorrecto. NLB no hace L7 routing ni auth Cognito." }
+      ],
+      "explanation": "ELB types: ALB (L7 HTTP) — path/host routing, auth, WebSocket, gRPC, WAF. NLB (L4 TCP/UDP) — µs latency, IPs estáticas por AZ, millones conn/s. GLB (Gateway Load Balancer) — para appliances de seguridad de terceros. CLB — legacy. Elige por protocolo y features L7.",
+      "keywords": ["ALB NLB", "path routing", "IPs estáticas"],
+      "services": ["ALB", "NLB"],
+      "references": [{ "title": "AWS Elastic Load Balancing" }]
+    },
+    {
+      "id": "q10",
+      "domainId": "technology",
+      "topic": "AWS PrivateLink",
+      "difficulty": "hard",
+      "scenario": "Un SaaS provider quiere exponer su API a clientes en sus propias VPCs sin usar internet público, sin overlaps de CIDR, con conexión unidireccional segura.",
+      "question": "¿Qué servicio usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS PrivateLink (VPC Endpoint Service)", "correct": true, "why": "Correcto. PrivateLink permite exponer un servicio (detrás de NLB) como Endpoint Service. Clientes crean Interface Endpoints en sus VPCs. Sin overlaps CIDR, unidireccional, sin internet. Ideal SaaS." },
+        { "letter": "B", "text": "VPC Peering", "correct": false, "why": "Cercano. VPC Peering requiere non-overlapping CIDR y expone toda la red." },
+        { "letter": "C", "text": "Transit Gateway", "correct": false, "why": "Cercano. TGW ayuda a interconectar pero también expone toda la red." },
+        { "letter": "D", "text": "Internet Gateway público", "correct": false, "why": "Incorrecto. Requiere internet público." }
+      ],
+      "explanation": "AWS PrivateLink: expone servicios de forma privada. Provider crea NLB + Endpoint Service. Consumers crean Interface Endpoints en su VPC. Beneficios: sin overlaps CIDR, unidireccional (solo cliente inicia), sin internet, granularidad por servicio. Casos: SaaS, servicios compartidos entre cuentas, integraciones con partners.",
+      "keywords": ["SaaS exponer API", "sin CIDR overlap", "privado unidireccional"],
+      "services": ["PrivateLink", "NLB"],
+      "references": [{ "title": "AWS PrivateLink" }]
+    }
+  ]
+}
