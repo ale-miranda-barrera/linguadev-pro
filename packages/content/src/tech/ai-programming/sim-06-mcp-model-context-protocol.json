@@ -1,0 +1,472 @@
+{
+  "id": "ai-programming-sim-06-mcp-model-context-protocol",
+  "trackId": "ai-programming",
+  "order": 6,
+  "title": "Simulacro 06 — MCP profundo: crear un server, resources/tools/prompts, transports",
+  "focus": "Model Context Protocol de Anthropic — qué es, cómo crear un server, primitives (resources, tools, prompts), transports (stdio, HTTP+SSE), autenticación, permissions, cliente vs server, quién lo soporta 2026.",
+  "areaCoverage": ["agents-tools"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "agents-tools",
+      "topic": "Qué es MCP y por qué se creó",
+      "difficulty": "junior",
+      "scenario": "Un compañero pregunta: 'Ya podemos hacer tool calling con Claude/OpenAI. ¿Para qué se creó MCP en noviembre de 2024? ¿No es reinventar la rueda?'",
+      "question": "¿Cuál es la mejor respuesta al 'por qué existe MCP'?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MCP reemplaza el tool calling de los proveedores con un protocolo propietario de Anthropic.", "correct": false, "why": "Falso. MCP NO reemplaza tool calling — es una capa superior de estandarización sobre CÓMO los agentes descubren y usan tools/data providers. Sigue funcionando por debajo con tool calls al modelo." },
+        { "letter": "B", "text": "MCP es un protocolo abierto (spec pública, SDKs open source) que estandariza CÓMO los clientes de IA (Claude Desktop, Cursor, VS Code, etc.) se conectan a fuentes externas de contexto (filesystem, git, DBs, APIs). Antes, cada cliente reinventaba integraciones N×M; MCP las reduce a N+M: hago un server MCP una vez y funciona con cualquier cliente compatible.", "correct": true, "why": "Correcto. Anthropic lo describe como 'el USB-C de las integraciones de IA'. Sin MCP, cada IDE/app tenía que integrarse con cada servicio; con MCP, cualquier server MCP funciona con cualquier cliente. Es el problema N×M vs N+M que motivó LSP en editores." },
+        { "letter": "C", "text": "MCP es una alternativa a REST/gRPC para APIs de LLMs.", "correct": false, "why": "Confusión: MCP no reemplaza APIs de modelos. Es un protocolo entre CLIENTE DE IA y SERVIDORES DE CONTEXTO/HERRAMIENTAS, no entre cliente y modelo." },
+        { "letter": "D", "text": "MCP es solo para Anthropic Claude, no soportado por otros modelos.", "correct": false, "why": "Falso. MCP es agnóstico al modelo. En 2025-2026 lo adoptaron OpenAI (ChatGPT/Agents SDK), Google, y todos los IDEs mayores." }
+      ],
+      "explanation": "MCP (Model Context Protocol) es un protocolo abierto anunciado por Anthropic en noviembre 2024. Analogía canónica: LSP (Language Server Protocol) hizo que un servidor de lenguaje funcionara con VS Code, Sublime, Vim, JetBrains — sin reescribir para cada editor. MCP hace lo mismo para conectar 'aplicaciones host de IA' a 'proveedores de contexto y capacidades'. La spec vive en modelcontextprotocol.io con SDKs oficiales en TypeScript, Python, Java, Kotlin, C#, Rust, Swift. Arquitectura: 3 partes — HOST (Claude Desktop, Cursor), CLIENT (embebido en host, 1 por server), SERVER (proceso separado que expone primitives).",
+      "realWorld": "Anthropic anunció MCP el 25 nov 2024. En 2025 tuvo adopción rápida: OpenAI lo integró en su Agents SDK y en ChatGPT (marzo 2025), Google DeepMind lo soporta, todos los IDEs de IA (Cursor, Windsurf, Zed, VS Code, JetBrains) lo integraron. Existen cientos de servers en awesome-mcp-servers y en el registro oficial.",
+      "tags": ["mcp", "protocol", "integrations", "fundamentals"],
+      "tech": ["MCP", "Anthropic", "LSP"],
+      "references": [
+        { "title": "modelcontextprotocol.io — Introduction" },
+        { "title": "Anthropic — Introducing the Model Context Protocol (nov 2024)" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "agents-tools",
+      "topic": "Primitives del protocolo — resources, tools, prompts",
+      "difficulty": "junior",
+      "scenario": "Estás diseñando un server MCP para exponer datos de tu CRM al agente. Quieres:\n(1) Leer la lista de clientes recientes (solo lectura).\n(2) Crear un nuevo ticket (acción con side effect).\n(3) Ofrecer una plantilla 'draft_customer_email' que el usuario invoque desde un menú del IDE.",
+      "question": "¿Qué primitive MCP corresponde a cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Resource — solo lectura, identificado por URI. (2) Tool — acción con side effect, invocada por el modelo. (3) Prompt — plantilla parametrizable invocada por el USUARIO (aparece como slash-command o menú).", "correct": true, "why": "Correcto. Las 3 primitives cliente MCP son: Resources (datos de solo lectura, URI-addressable, análogo a GET de una API). Tools (acciones ejecutables por el modelo, análogo a POST). Prompts (templates reusables invocables por el usuario, aparecen en menús del host)." },
+        { "letter": "B", "text": "Los tres son Tools — MCP no distingue.", "correct": false, "why": "Falso. MCP separa explícitamente resources / tools / prompts con propósitos distintos. Es una de sus diferencias clave con el tool calling directo." },
+        { "letter": "C", "text": "(1) Prompt (2) Tool (3) Resource.", "correct": false, "why": "Confunde el propósito: prompts son templates para el usuario, no data reads; resources son data, no templates." },
+        { "letter": "D", "text": "Resources ya no existen en MCP 2026.", "correct": false, "why": "Falso. Resources, tools y prompts siguen siendo las 3 primitives principales del cliente. En 2025 se añadieron sampling, roots y elicitation, pero como capabilities adicionales." }
+      ],
+      "explanation": "MCP define primitives con semántica clara: RESOURCES (URI-addressable, solo lectura, 'lo que el modelo puede LEER'), TOOLS (acciones con side effects, 'lo que el modelo puede HACER'), PROMPTS (templates reusables, 'lo que el USUARIO puede INVOCAR desde el host'). Además hay primitives server → client menos conocidos: SAMPLING (server pide al host que llame al LLM), ROOTS (el host expone al server qué directorios/URIs son relevantes al workspace), y ELICITATION (server pide input al usuario, añadido 2025). Esta separación es más rica que 'todo es una tool' del function calling clásico.",
+      "realWorld": "Los servers oficiales de Anthropic ejemplifican bien: filesystem MCP server expone RESOURCES (archivos leíbles) y TOOLS (write_file, edit). Git MCP tiene tools para commit/branch. Postgres MCP expone RESOURCES (schemas, tablas) y una TOOL query. Los prompts son menos usados pero excelentes para flujos como 'analiza este PR' con parámetros.",
+      "tags": ["mcp", "primitives", "resources", "tools", "prompts"],
+      "tech": ["MCP"],
+      "references": [
+        { "title": "MCP Spec — Server Features" },
+        { "title": "modelcontextprotocol.io — Concepts" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "agents-tools",
+      "topic": "Transports — stdio vs HTTP",
+      "difficulty": "junior",
+      "scenario": "Estás decidiendo cómo desplegar tu MCP server. Opción A: proceso local que el cliente spawnaea (Claude Desktop lanza `node my-server.js`). Opción B: servicio HTTP remoto que muchos usuarios comparten.",
+      "question": "¿Qué transport usarías en cada caso y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(A) Stdio (proceso local, comunicación por stdin/stdout, JSON-RPC). (B) Streamable HTTP (transport introducido en 2025 que reemplazó HTTP+SSE, permite un único endpoint bidireccional para servidores remotos).", "correct": true, "why": "Correcto. Stdio es ideal para servers locales (el host los spawnaea como subproceso). Streamable HTTP (spec MCP versión 2025-03-26) es el transport moderno para servers remotos, reemplazando el diseño anterior de HTTP+SSE que tenía dos endpoints separados." },
+        { "letter": "B", "text": "Siempre HTTP — stdio es legacy.", "correct": false, "why": "Falso. Stdio sigue siendo primer-class citizen en 2026 para servers locales (mucho menos overhead, sin auth, sin puertos)." },
+        { "letter": "C", "text": "gRPC — es el estándar en 2026.", "correct": false, "why": "MCP no usa gRPC. Los transports oficiales son stdio y Streamable HTTP (con websockets como opción secundaria)." },
+        { "letter": "D", "text": "Websockets puros; JSON-RPC directo.", "correct": false, "why": "MCP usa JSON-RPC 2.0 pero encapsulado en transports específicos (stdio, Streamable HTTP). Websockets es una opción menor." }
+      ],
+      "explanation": "MCP soporta dos transports principales en 2026: (1) STDIO — server = subproceso local, mensajes JSON-RPC por stdin/stdout. Ideal para tools de disco/local (filesystem, git). Cero overhead, sin auth. (2) STREAMABLE HTTP — introducido en spec 2025-03-26, reemplaza HTTP+SSE (dos endpoints). Un solo endpoint (/mcp) maneja request/response y streaming. Soporta sessions, resumability, y es el transport recomendado para servers remotos. Soporta auth vía OAuth 2.1. El transport HTTP+SSE legacy sigue soportado para compatibilidad pero deprecado.",
+      "realWorld": "Anthropic actualizó la spec MCP para Streamable HTTP porque HTTP+SSE tenía problemas de proxies, load balancers y resumability. Cloudflare, Vercel y otros publicaron guías para desplegar MCP servers remotos. Los servers oficiales de filesystem/git/github usan stdio; los servers hospedados (ej: Linear, Notion) usan Streamable HTTP con OAuth.",
+      "tags": ["mcp", "transports", "stdio", "http"],
+      "tech": ["MCP", "JSON-RPC", "SSE"],
+      "references": [
+        { "title": "MCP Spec — Transports" },
+        { "title": "modelcontextprotocol.io — Streamable HTTP (2025-03-26)" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "agents-tools",
+      "topic": "MCP vs tool calling directo",
+      "difficulty": "junior",
+      "scenario": "Estás desarrollando un agente propio (no un IDE). Tu app llama al API de Claude directamente. Un compañero pregunta: '¿Deberíamos usar MCP para nuestras integraciones internas o simplemente definir tools directamente en la API?'",
+      "question": "¿Qué guía tiene más sentido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usa MCP si vas a REUSAR integraciones a través de múltiples hosts (tu app + Claude Desktop + Cursor) o si quieres beneficiarte del ecosistema (servers ya existentes). Para integraciones específicas de UN agente propio sin necesidad de compartición, tool calling directo es más simple y con menos overhead.", "correct": true, "why": "Correcto. MCP es útil cuando aportar valor a través de múltiples hosts o consumir el ecosistema (github MCP, filesystem MCP, etc). Para una app propia con integraciones internas y sin necesidad de portabilidad, tool calling directo funciona bien y es más simple." },
+        { "letter": "B", "text": "Siempre MCP — es el estándar 2026.", "correct": false, "why": "Sobregeneralización. MCP añade overhead (proceso separado o llamada HTTP) que no siempre justifica para integraciones internas específicas." },
+        { "letter": "C", "text": "Nunca uses MCP para producción — es solo para dev.", "correct": false, "why": "Falso. MCP tiene deploys serios en producción (Anthropic, Cloudflare, Vercel host servers públicos)." },
+        { "letter": "D", "text": "Solo si escribes en Python (SDK maduro).", "correct": false, "why": "Los SDKs de MCP están maduros en TypeScript, Python, Java, Kotlin, C#, Rust, Swift, Go. La elección no depende del lenguaje." }
+      ],
+      "explanation": "Decisión: (1) MCP es ideal cuando tu integración beneficiaría a múltiples hosts (empresa que quiere que sus datos sean accesibles desde Claude Desktop, ChatGPT, Cursor sin reintegrar). (2) MCP consumidor — usar servers existentes (github, filesystem, postgres) desde tu propio agente. (3) Tool calling directo es adecuado para agentes con integraciones muy específicas donde MCP añade overhead sin beneficio. En 2026 muchos equipos siguen ambos caminos: MCP para lo estándar/compartible, tools directas para lo propietario.",
+      "realWorld": "Anthropic recomienda MCP como opción principal para agentes que consumen tools de terceros. Los agentes internos de Anthropic y OpenAI usan mezcla. Cursor y Claude Code usan MCP como mecanismo de extensión. Notion, Linear, Slack, Sentry publicaron MCP servers oficiales.",
+      "tags": ["mcp", "tool-calling", "decision"],
+      "tech": ["MCP", "Claude", "OpenAI"],
+      "references": [
+        { "title": "MCP FAQ — When should I use MCP?" },
+        { "title": "Anthropic — MCP vs direct tool calling" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "agents-tools",
+      "topic": "Estructura básica de un server MCP",
+      "difficulty": "mid",
+      "scenario": "Debes crear un server MCP en TypeScript que expone una tool `add(a, b)`. Un compañero escribe:\n\n```ts\nimport { Server } from '@modelcontextprotocol/sdk/server/index.js';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';\n\nconst server = new Server({ name: 'math', version: '1.0.0' }, { capabilities: {} });\n// ...\n```\n\nEjecuta el server con `node my-server.js` y no puede llamar la tool desde Claude Desktop.",
+      "question": "¿Cuál es el error más probable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Falta declarar `capabilities: { tools: {} }` al crear el Server para que el cliente sepa que expone tools, y falta registrar los handlers para `ListToolsRequestSchema` y `CallToolRequestSchema`. También hay que conectar el StdioServerTransport con `await server.connect(transport)`.", "correct": true, "why": "Correcto. Un server MCP debe declarar sus capabilities en la construcción, registrar handlers para los requests que responde (ListTools + CallTool), y arrancar el transport con connect(). Es un error clásico de primer server MCP." },
+        { "letter": "B", "text": "El name debe ser único a nivel global; requiere registro en modelcontextprotocol.io.", "correct": false, "why": "Falso. No hay registro obligatorio. Cualquier server puede correr con cualquier name; el host lo referencia por configuración local." },
+        { "letter": "C", "text": "MCP no soporta TypeScript, solo Python.", "correct": false, "why": "Falso. TypeScript es de los SDKs más maduros de MCP." },
+        { "letter": "D", "text": "Debe correr como daemon con systemd.", "correct": false, "why": "Falso. Con stdio transport, el host lo spawnaea como subproceso según necesidad. No requiere daemon." }
+      ],
+      "explanation": "Estructura mínima de server MCP: (1) Crear Server con name/version + capabilities. Declarar solo las capabilities que usa (tools, resources, prompts). (2) Registrar handlers con setRequestHandler para los requests JSON-RPC que responde. Para tools: ListToolsRequestSchema (devuelve array con schemas) y CallToolRequestSchema (ejecuta y devuelve content). (3) Crear transport (StdioServerTransport para local, StreamableHTTPServerTransport para remoto). (4) await server.connect(transport). (5) Configurar el host (ej: claude_desktop_config.json) apuntando al server.",
+      "realWorld": "El template oficial `create-typescript-server` genera exactamente este boilerplate correctamente. Muchos primeros intentos fallan olvidando registrar handlers o declarar capabilities. Los docs de Anthropic tienen un tutorial 'weather server' que es la referencia.",
+      "tags": ["mcp", "server", "sdk", "typescript"],
+      "tech": ["MCP", "TypeScript", "Node.js"],
+      "references": [
+        { "title": "MCP SDK — Building a server" },
+        { "title": "modelcontextprotocol.io — Quickstart" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "agents-tools",
+      "topic": "Configuración del cliente (Claude Desktop)",
+      "difficulty": "mid",
+      "scenario": "Has escrito tu server MCP y quieres usarlo desde Claude Desktop. Está en /Users/tu/mcp-servers/weather/index.js.",
+      "question": "¿Cómo lo registras correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Editar `claude_desktop_config.json` (ubicación por OS) añadiendo entrada en `mcpServers`: `{ 'weather': { 'command': 'node', 'args': ['/Users/tu/mcp-servers/weather/index.js'], 'env': { 'API_KEY': '...' } } }` y reiniciar Claude Desktop.", "correct": true, "why": "Correcto. Claude Desktop usa un JSON de configuración donde declaras cada server MCP como un `command` a spawnaear + args + env vars. La app spawnaea el proceso al iniciar y lo mantiene vivo durante la sesión. Ruta típica: `~/Library/Application Support/Claude/claude_desktop_config.json` en macOS." },
+        { "letter": "B", "text": "Instalar el server como paquete npm y publicarlo en marketplace de Anthropic.", "correct": false, "why": "No hay 'marketplace' obligatorio. Puedes publicar en npm/registry MCP para descubrimiento, pero la configuración local es lo que hace falta para usarlo." },
+        { "letter": "C", "text": "Iniciar el server manualmente en terminal y conectarlo por localhost:port.", "correct": false, "why": "Confunde stdio con HTTP transport. Para servers stdio, Claude Desktop es el que lanza el proceso." },
+        { "letter": "D", "text": "Con configurar `MCP_SERVER_PATH` en variables de entorno del OS.", "correct": false, "why": "No existe tal variable convencional. La configuración va en el archivo JSON del cliente." }
+      ],
+      "explanation": "Cada cliente MCP (host) tiene su forma de registrar servers. Claude Desktop: JSON en `claude_desktop_config.json`. Cursor: `.cursor/mcp.json`. VS Code Copilot: settings o `mcp.json`. Windsurf: config similar. Todos comparten schema: por server, defines `command`, `args`, `env`. Para servers HTTP remotos, defines `url` y auth. Errores comunes: (1) rutas absolutas necesarias. (2) `command` debe estar en PATH o ser absoluto. (3) env vars sensibles no se comparten con el server sin declararlas explícitamente. (4) tras editar, reiniciar el host.",
+      "realWorld": "El primer paso al probar un server MCP es siempre editar este JSON. Anthropic añadió en Claude Desktop UI para gestionar servers (2025), pero editar JSON sigue siendo el método principal. Existen tools como `mcpm` (MCP manager) para gestionar múltiples servers.",
+      "tags": ["mcp", "client", "configuration", "claude-desktop"],
+      "tech": ["MCP", "Claude Desktop", "Cursor"],
+      "references": [
+        { "title": "Claude Desktop — MCP configuration" },
+        { "title": "modelcontextprotocol.io — For users" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "agents-tools",
+      "topic": "Diferencia entre Resources y Tools",
+      "difficulty": "mid",
+      "scenario": "En tu server MCP para GitHub, tienes: (1) `get_pull_request(pr_id)` que consulta el API. (2) `merge_pull_request(pr_id)` que hace merge. (3) Lista de archivos de un PR accesibles por URI `github://repo/pr/123/files/foo.ts`.",
+      "question": "¿Cómo clasificarías correctamente cada uno en MCP?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los 3 son tools.", "correct": false, "why": "Pierdes la semántica de resources. get_pull_request es idempotente y de solo lectura — encaja perfecto como resource si tiene URI." },
+        { "letter": "B", "text": "(1) Podría ser resource (`github://repo/pr/123`) O tool si prefieres invocación explícita del modelo. (2) TOOL — tiene side effect. (3) RESOURCE — idempotente, URI-addressable, contenido de solo lectura.", "correct": true, "why": "Correcto. La regla es: side effects → TOOL. Solo lectura addressable por URI → RESOURCE. Para reads sin URI natural (query con parámetros complejos) puede ir como tool también. La distinción es útil porque el host puede tratarlos diferente: resources pueden aparecer en un @-mention picker o auto-inyectarse en el contexto." },
+        { "letter": "C", "text": "Los 3 son resources porque son parte de GitHub.", "correct": false, "why": "merge_pull_request tiene side effect: no puede ser resource." },
+        { "letter": "D", "text": "MCP no permite mezclar resources y tools en un mismo server.", "correct": false, "why": "Falso. Un server puede exponer las 3 primitives (resources, tools, prompts) simultáneamente." }
+      ],
+      "explanation": "En MCP la distinción resource/tool importa por el UX del host: RESOURCES son 'datos identificables por URI que el usuario o el modelo pueden pedir por nombre'. Muchos hosts muestran resources en un picker (@-mention) para que el usuario los ADJUNTE al contexto proactivamente. TOOLS son 'acciones que el modelo decide invocar durante razonamiento'. Un mismo endpoint conceptual (get PR) puede modelarse como ambos si tiene sentido — algunos servers exponen datos como resource Y como tool para máxima flexibilidad. Regla general: side effect → tool; read-only con URI natural → resource.",
+      "realWorld": "El GitHub MCP server oficial expone PRs, issues como resources (accesibles por URI) y acciones (create issue, merge PR) como tools. Cursor muestra los resources en el @-picker de contexto. Claude Desktop hace lo mismo con menús de attach.",
+      "tags": ["mcp", "resources", "tools", "design"],
+      "tech": ["MCP", "GitHub"],
+      "references": [
+        { "title": "MCP Spec — Resources" },
+        { "title": "MCP Spec — Tools" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "agents-tools",
+      "topic": "Servers oficiales de referencia",
+      "difficulty": "mid",
+      "scenario": "Estás explorando qué integraciones ya existen antes de escribir tu propio server MCP. Un compañero pregunta qué servers 'oficiales/de referencia' hay para que no reinventemos.",
+      "question": "¿Cuáles son ejemplos representativos del ecosistema MCP en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "filesystem, git, github, memory, postgres, sqlite, puppeteer, sequential-thinking, brave-search, fetch, google-drive, slack. Además, muchos vendors publican los suyos (Linear, Sentry, Notion, Stripe, Cloudflare, Atlassian).", "correct": true, "why": "Correcto. El repo servers.modelcontextprotocol.io mantiene una lista de reference servers oficiales de Anthropic y de la comunidad. Vendors mayores publicaron los propios en 2025-2026 con OAuth para acceso a datos de usuarios." },
+        { "letter": "B", "text": "Solo filesystem y web-search — el resto los debe hacer cada equipo.", "correct": false, "why": "Falso. El ecosistema tiene cientos de servers listados." },
+        { "letter": "C", "text": "MCP no publica servers oficiales — es una spec pura.", "correct": false, "why": "Falso. Anthropic mantiene un repo oficial de reference servers como demostración canónica de patterns." },
+        { "letter": "D", "text": "Solo los que están en npm.", "correct": false, "why": "Los servers pueden estar en npm, PyPI, contenedores Docker, o simplemente en repos. No hay canal único." }
+      ],
+      "explanation": "El ecosistema MCP en 2026 tiene tres tirantes: (1) Reference servers de Anthropic (filesystem, git, memory, sequential-thinking, etc.) — demuestran patterns canónicos. (2) Vendor servers oficiales (Linear, Sentry, Notion, Stripe, Cloudflare, Atlassian, GitLab, Cloudflare Workers, Neon, Supabase, PayPal, Square) — expuestos con OAuth y hosting oficial. (3) Community servers (awesome-mcp-servers) — cientos, calidad variable. Antes de escribir uno propio, revisa siempre si existe. Existen registries como mcp.so, glama.ai, y el oficial de Anthropic.",
+      "realWorld": "En 2025 Anthropic lanzó el 'Desktop Extensions' para hacer trivial la instalación de MCP servers (drag-and-drop en Claude Desktop). Cloudflare permite deployar MCP servers en su edge network con OAuth (2025). Sentry y Linear publicaron guías de cómo su MCP server integra con Claude Code.",
+      "tags": ["mcp", "servers", "ecosystem"],
+      "tech": ["MCP"],
+      "references": [
+        { "title": "modelcontextprotocol.io — Servers" },
+        { "title": "github.com/modelcontextprotocol/servers" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "agents-tools",
+      "topic": "Sampling — server pide al cliente que llame al modelo",
+      "difficulty": "mid",
+      "scenario": "Estás escribiendo un MCP server que en respuesta a una tool call necesita GENERAR texto (ej: `summarize_document(doc_id)` debe llamar a un LLM para resumir). Un compañero pregunta: '¿El server debe traer su propio cliente de OpenAI y su propia API key?'",
+      "question": "¿Cuál es el patrón idiomático en MCP?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar SAMPLING — capability opcional del server: el server pide AL HOST que ejecute un completion con el modelo del usuario. El host aprueba y devuelve el resultado. Así, el server no maneja API keys ni tiene que decidir qué modelo usar, y el usuario mantiene control.", "correct": true, "why": "Correcto. Sampling es la primitive de server→client que permite al server pedir generaciones LLM sin traer su propio provider. El host presenta la solicitud al usuario (aprueba/rechaza/edita), llama al modelo con sus credenciales, y devuelve la respuesta. Preserva control, cost y credentials en el usuario." },
+        { "letter": "B", "text": "Sí, cada server debe traer su propia API key.", "correct": false, "why": "Contradice el modelo de MCP. Provocaría fragmentación de billing, seguridad, y elección de modelo. Sampling existe exactamente para evitar esto." },
+        { "letter": "C", "text": "Sampling está deprecado en MCP 2026.", "correct": false, "why": "Falso. Sampling sigue siendo parte de la spec y en 2025 se refinó junto con elicitation." },
+        { "letter": "D", "text": "El server debe hacer HTTP directo al API de Claude/OpenAI del host.", "correct": false, "why": "El server no tiene forma de reusar las credenciales del host directamente. Sampling es el mecanismo protocolizado." }
+      ],
+      "explanation": "Primitives server → client en MCP: (1) SAMPLING — server pide al host que ejecute un LLM completion. Preserva credentials, model choice y billing en el usuario. Requiere aprobación humana típicamente. (2) ROOTS — el host informa al server qué directorios/URIs son parte del workspace (útil para file-system servers). (3) ELICITATION — server pide input al usuario en runtime (añadido 2025). Estos permiten servers más ricos y agentic sin que cada server sea un mini-agente independiente. Los hosts mayores implementan sampling con human-in-the-loop.",
+      "realWorld": "Sampling es menos usado que resources/tools/prompts pero clave para servers que necesitan generación. El server 'sequential-thinking' de Anthropic usa sampling para iterar. Claude Desktop y Cursor tienen soporte de sampling con aprobación en UI.",
+      "tags": ["mcp", "sampling", "advanced"],
+      "tech": ["MCP"],
+      "references": [
+        { "title": "MCP Spec — Sampling" },
+        { "title": "modelcontextprotocol.io — Client features" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "agents-tools",
+      "topic": "Elicitation — server pide input al usuario",
+      "difficulty": "mid",
+      "scenario": "Tu MCP server tiene una tool `create_deployment(env)` que a veces requiere confirmación manual del usuario ('¿estás seguro de deployar a prod?') o parámetros adicionales que no vienen del modelo. Un compañero propone hacer la tool wrap en su propia UI con Electron.",
+      "question": "¿Cuál es la forma idiomática en MCP moderno (spec 2025-06+)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar ELICITATION (introducido en spec 2025-06-18): la tool devuelve una petición estructurada al cliente para que solicite input al usuario (formulario, confirmación, opciones). El cliente muestra UI nativa. El resultado vuelve al server que continúa la operación. No requiere UI propia.", "correct": true, "why": "Correcto. Elicitation fue añadida en la spec 2025-06-18 exactamente para este caso. El server describe qué input necesita con un JSON schema; el cliente renderiza UI apropiada (form, confirm dialog); el resultado vuelve al server. Evita que cada server tenga que construir UI propia y da UX consistente al usuario." },
+        { "letter": "B", "text": "Usar solo Sampling (pedirle al modelo que pregunte al usuario).", "correct": false, "why": "Sampling es para pedirle al MODELO que genere, no al usuario que responda. Confunde propósitos." },
+        { "letter": "C", "text": "Bloquear la tool y devolver error hasta que el usuario configure via env vars.", "correct": false, "why": "Terrible UX. Elicitation es exactamente para input interactivo runtime." },
+        { "letter": "D", "text": "Levantar un HTTP server propio con UI y pasar URL al usuario.", "correct": false, "why": "Fragmenta la experiencia. Elicitation existe para no requerirlo." }
+      ],
+      "explanation": "Elicitation (spec 2025-06-18) permite a un server MCP solicitar input al usuario durante la ejecución de una tool. El server envía una request `elicitation/create` con un JSON schema del input esperado (form, confirmación, selección múltiple). El cliente renderiza UI nativa apropiada al host. El usuario puede aceptar (con datos), rechazar o cancelar. El server usa el resultado para continuar o abortar. Casos ideales: confirmaciones de acciones destructivas, parámetros que el modelo no tiene contexto para decidir, autenticación step-up.",
+      "realWorld": "Antes de elicitation, servers como database migration tools construían su propia UI o hacían workarounds con stdin. Con elicitation, un server de deployment puede pedir '¿confirmar deploy a prod?' y el cliente muestra un dialog nativo. Anthropic añadió esta feature basado en feedback de servers reales que necesitaban input runtime.",
+      "tags": ["mcp", "elicitation", "human-in-the-loop", "ux"],
+      "tech": ["MCP"],
+      "references": [
+        { "title": "MCP Spec — Elicitation (2025-06-18)" },
+        { "title": "modelcontextprotocol.io — Elicitation guide" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "agents-tools",
+      "topic": "Autenticación en servers remotos",
+      "difficulty": "mid",
+      "scenario": "Tu empresa quiere exponer un MCP server de datos de clientes remotamente, accesible desde ChatGPT y Claude Desktop. Cada usuario debe ver solo SUS datos. Un compañero propone: 'usemos un header X-API-Key que el usuario configure'.",
+      "question": "¿Cuál es el enfoque correcto en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar OAuth 2.1 (con PKCE) — es el mecanismo de auth estandarizado por MCP para servers remotos desde la spec 2025-03-26. El cliente inicia flow OAuth, el server valida el token JWT/opaque en cada request, y las tools/resources tienen scoping por identidad del usuario.", "correct": true, "why": "Correcto. MCP spec 2025-03-26 estandarizó OAuth 2.1 con PKCE para servers HTTP remotos. Soporta discovery, dynamic client registration, y refresh tokens. Es el modelo que usan los servers oficiales de Linear, Notion, Sentry en 2026." },
+        { "letter": "B", "text": "API keys estáticas por usuario en la config del cliente.", "correct": false, "why": "Frágil: rotar keys es doloroso, exposición si se filtra el JSON de config, no soporta scopes finos ni expiración corta." },
+        { "letter": "C", "text": "Sin auth — el server confía en el cliente.", "correct": false, "why": "Inaceptable para datos multiuser. Cualquiera con la URL accedería a datos ajenos." },
+        { "letter": "D", "text": "mTLS con certificados por usuario.", "correct": false, "why": "Muy operativamente complejo para el usuario final. OAuth es el estándar en MCP." }
+      ],
+      "explanation": "MCP spec 2025-03-26 añadió Authorization framework basado en OAuth 2.1: (1) DISCOVERY — el server publica su OAuth metadata en un endpoint conocido. (2) DYNAMIC CLIENT REGISTRATION — el cliente MCP puede registrarse dinámicamente si el server lo permite. (3) PKCE es obligatorio (protege contra intercept de code). (4) TOKENS — Bearer tokens en Authorization header. (5) SCOPES — el server declara qué scopes existen; el consent screen del OAuth los expone al usuario. Refresh tokens permiten mantener sesiones largas. Muchos servers usan providers de auth ya existentes (Auth0, Clerk, Okta) para no reinventar.",
+      "realWorld": "Cloudflare publicó una guía de deploying MCP servers en Workers con OAuth. Linear MCP server oficial usa OAuth de Linear. Anthropic actualizó Claude Desktop y Cursor para soportar OAuth flows para servers remotos (login abre browser, callback vuelve al app).",
+      "tags": ["mcp", "auth", "oauth", "security"],
+      "tech": ["MCP", "OAuth 2.1", "PKCE"],
+      "references": [
+        { "title": "MCP Spec — Authorization" },
+        { "title": "RFC 8252 — OAuth 2.0 for Native Apps" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "agents-tools",
+      "topic": "Quién soporta MCP en 2026",
+      "difficulty": "junior",
+      "scenario": "Un compañero pregunta: '¿MCP quedó como cosa solo de Claude o realmente se estandarizó?'",
+      "question": "¿Cuál refleja mejor el estado 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MCP se adoptó ampliamente: Claude (Desktop, Code, API), OpenAI (Agents SDK, ChatGPT), Google DeepMind, todos los IDEs de IA mayores (Cursor, Windsurf, Zed, VS Code Copilot, JetBrains), y cientos de servers de vendors. Es de facto el estándar de integración de contexto para agentes en 2026.", "correct": true, "why": "Correcto. Aunque nació en Anthropic, en 2025 tuvo adopción rápida y cross-vendor. OpenAI y Google DeepMind lo integraron explícitamente. La spec y SDKs son open source (Apache 2.0). Es análogo a LSP: dominante en el espacio." },
+        { "letter": "B", "text": "MCP es de Anthropic; OpenAI usa su propio protocolo incompatible.", "correct": false, "why": "Falso. OpenAI adoptó MCP en 2025 en su Agents SDK y en features de ChatGPT. Anthropic + OpenAI también colaboran en el steering committee." },
+        { "letter": "C", "text": "MCP quedó nicho — la mayoría usa tool calling directo.", "correct": false, "why": "Falso. En 2026 MCP es lo estándar para integraciones cross-host." },
+        { "letter": "D", "text": "MCP fue reemplazado por A2A (Google) en 2026.", "correct": false, "why": "A2A (Agent-to-Agent, Google 2025) es un protocolo COMPLEMENTARIO enfocado en agente↔agente, no compite con MCP (que es agente↔contexto). Ambos coexisten." }
+      ],
+      "explanation": "En 2026 el mapa de MCP: HOSTS/CLIENTES (Claude Desktop, Claude Code, Cursor, Windsurf, Zed, VS Code Copilot, JetBrains AI, ChatGPT Desktop, muchos otros). PROVIDERS/SERVERS (miles, entre reference de Anthropic y de la comunidad + vendor-official). SDKs oficiales (TS, Python, Java, Kotlin, C#, Rust, Swift, Go). Governance ampliada — no solo Anthropic. Analogía con LSP es completa: nació en Microsoft (2016), pero rápidamente todos los editores lo adoptaron y hoy es estándar de facto.",
+      "realWorld": "OpenAI anunció soporte oficial de MCP en marzo 2025 con su Agents SDK. Google DeepMind confirmó soporte poco después. Las conferencias de developer (Google I/O 2025, OpenAI DevDay, Anthropic Build) todas mencionaron MCP. Cloudflare, Vercel, Neon, Supabase publicaron guías de deployment.",
+      "tags": ["mcp", "adoption", "ecosystem"],
+      "tech": ["MCP", "Claude", "OpenAI", "Google"],
+      "references": [
+        { "title": "OpenAI — MCP integration in Agents SDK (2025)" },
+        { "title": "modelcontextprotocol.io — Ecosystem" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "agents-tools",
+      "topic": "MCP vs LangChain tools",
+      "difficulty": "mid",
+      "scenario": "Un equipo usa LangChain para su agente y ya tiene 30 tools implementadas como funciones Python decoradas con `@tool`. Están debatiendo si migrar a MCP.",
+      "question": "¿Cuál es el análisis más equilibrado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MCP y LangChain tools resuelven distintos niveles: LangChain tools son abstracción DENTRO de un agente (framework-specific, Python). MCP es un protocolo INTER-PROCESO que permite que tools funcionen con múltiples clientes cross-language. LangChain incluso tiene adaptador para consumir MCP servers como tools. Migración no es todo o nada: pueden exponer sus tools valiosas como MCP server y consumirlas desde LangChain o desde Claude Desktop.", "correct": true, "why": "Correcto. Son capas complementarias. LangChain sigue siendo válido como framework de orquestación; MCP añade portabilidad. La migración típica es hacer wrap de tools genéricas como MCP servers para reusar cross-tool." },
+        { "letter": "B", "text": "MCP reemplaza LangChain — deberían migrar todo.", "correct": false, "why": "MCP no reemplaza framework de orquestación; solo el protocolo de exponer tools/data. LangChain sigue añadiendo valor en chains, memory, agent loops." },
+        { "letter": "C", "text": "LangChain es superior — MCP es una moda pasajera.", "correct": false, "why": "Falso. MCP tiene adopción masiva y solventa el problema de N×M integraciones que ningún framework resolvió." },
+        { "letter": "D", "text": "Son 100% incompatibles.", "correct": false, "why": "Falso. LangChain publicó `langchain-mcp-adapters` para consumir servers MCP directamente." }
+      ],
+      "explanation": "Nivel de abstracción: LangChain / LangGraph / Autogen / CrewAI son FRAMEWORKS de agentes (loops, memory, chains, orquestación). MCP es PROTOCOLO de integraciones (tools/resources/prompts). Complementarios. Muchos equipos usan ambos: LangGraph orquesta agents, cada tool puede ser una función local O un MCP server remoto. LangChain publicó adaptador oficial. OpenAI Agents SDK hace lo mismo. Ventaja de MCP: exposes una integración una vez, funciona con múltiples frameworks/hosts. Ventaja de tools nativas: menos overhead, más simple para casos ad-hoc.",
+      "realWorld": "LangChain publicó `langchain-mcp-adapters` en 2025. LlamaIndex también. Anthropic publicó cómo consumir MCP desde el Anthropic Agents SDK. Adopción práctica: equipos exponen tools 'públicas' (github, jira) como MCP servers y mantienen tools 'privadas' internas como funciones nativas del framework.",
+      "tags": ["mcp", "langchain", "framework"],
+      "tech": ["MCP", "LangChain", "LangGraph"],
+      "references": [
+        { "title": "LangChain — MCP adapters" },
+        { "title": "MCP FAQ — Framework compatibility" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "agents-tools",
+      "topic": "Roots — informar al server el workspace",
+      "difficulty": "mid",
+      "scenario": "Tu MCP filesystem server permite `read_file(path)`. En Claude Code, el usuario abre un proyecto en `/Users/x/proj-a` y otro en `/Users/x/proj-b`. Quieres que el server sepa cuáles directorios son parte del workspace actual y NO acceda fuera.",
+      "question": "¿Qué primitive MCP se usa para esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ROOTS — el cliente informa al server los file:// URIs (o URIs en general) que forman parte del workspace actual. El server puede usarlo como boundary de acceso. El cliente emite notifications si los roots cambian.", "correct": true, "why": "Correcto. Roots es la primitive cliente → server que declara el workspace vigente. El filesystem server puede validar que cada `read_file` esté dentro de los roots. Es cómo Cursor/Claude Code delimitan qué archivos el server puede tocar." },
+        { "letter": "B", "text": "El server debe adivinar del contexto del modelo.", "correct": false, "why": "Frágil e inseguro. Roots existe precisamente para no depender del prompt." },
+        { "letter": "C", "text": "Se pasan como argumento en cada tool call.", "correct": false, "why": "Ineficiente y depende del modelo pasarlos correctamente. Roots es una capability negociada al iniciar." },
+        { "letter": "D", "text": "Se configura como env var estática.", "correct": false, "why": "No cambia dinámicamente. Roots permite cambios en runtime cuando el usuario abre otro workspace." }
+      ],
+      "explanation": "ROOTS es una capability opcional del cliente MCP: al iniciar, negocia si soporta roots. Si sí, envía al server la lista de URIs (típicamente file://) que forman el workspace. El server puede: (1) validar accesos contra los roots, (2) enumerar contenido solo dentro de los roots, (3) escuchar notifications de cambios (usuario abre otro proyecto). Es la primitive para seguridad y contexto en servers que operan sobre datos locales. filesystem, git, editor-related MCP servers usan roots como boundary de acceso.",
+      "realWorld": "El filesystem reference server usa roots para restringir accesos: si el usuario tiene `/proj-a` abierto, el server rechaza `/etc/passwd`. Claude Code envía roots del proyecto activo. Cursor los actualiza cuando cambias de workspace.",
+      "tags": ["mcp", "roots", "security", "workspace"],
+      "tech": ["MCP", "Filesystem"],
+      "references": [
+        { "title": "MCP Spec — Roots" },
+        { "title": "MCP filesystem reference server" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "agents-tools",
+      "topic": "Errores comunes al escribir un server",
+      "difficulty": "senior",
+      "scenario": "Un compañero escribió un MCP server. Sintomas: (1) el server crashea al recibir un request desconocido, (2) los tool results a veces vuelven como string enorme sin estructura, (3) al reiniciar el cliente, el server no se limpia y quedan procesos zombie, (4) los logs del server contaminan el stdout y rompen el protocol.",
+      "question": "¿Cuál es el diagnóstico + fix más completo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estos son 4 errores clásicos: (1) implementar handlers robustos que devuelvan error JSON-RPC en vez de crash. (2) devolver content array con items tipados (text, image, resource). (3) manejar SIGTERM/close para cleanup. (4) MUY IMPORTANTE con stdio transport: logs SIEMPRE a stderr (nunca stdout, que se usa para el protocolo JSON-RPC).", "correct": true, "why": "Correcto. Los 4 son bugs canónicos de primera implementación de MCP server. El (4) es especialmente traumático: cualquier `console.log` o `print` contamina el pipe y rompe el parseo JSON del cliente. Regla dura: stdio transport ⇒ logs a stderr." },
+        { "letter": "B", "text": "Es normal — la spec MCP tolera todos estos casos.", "correct": false, "why": "Falso. Especialmente el punto 4: contaminar stdout rompe el protocolo." },
+        { "letter": "C", "text": "Solo se debe cambiar a HTTP transport.", "correct": false, "why": "No resuelve los otros problemas y stdio sigue siendo válido si se implementa bien." },
+        { "letter": "D", "text": "Usar `sys.stdout` con flush inmediato.", "correct": false, "why": "Empeora: escribir logs a stdout es exactamente el problema; hay que redirigir a stderr." }
+      ],
+      "explanation": "Checklist de errores al escribir MCP server: (1) HANDLERS ROBUSTOS — nunca dejar unhandled exceptions escapar; devolver JSON-RPC errors con código y mensaje. (2) CONTENT TIPADO — tools devuelven `content: [{type: 'text', text: '...'}]` o image/resource; nunca strings raw. (3) LIFECYCLE — implementar cleanup en SIGTERM/close (cerrar DB, threads, sockets). (4) LOGGING — con stdio, TODOS los logs a stderr (`console.error` en Node, `logging` a stderr en Python). (5) TIMEOUTS — no hacer tools que cuelguen indefinidamente. (6) VALIDACIÓN — validar input de tools con zod/pydantic antes de ejecutar. (7) VERSIONING — declarar version correcta para que clientes puedan diagnosticar.",
+      "realWorld": "Anthropic publica troubleshooting guide con estos errores. Casos comunes en awesome-mcp-servers: servers que rompen el cliente por logs a stdout. Cursor logs stderr de MCP servers en un panel dedicado — muy útil para debugging.",
+      "tags": ["mcp", "server", "debugging", "pitfalls"],
+      "tech": ["MCP", "Node.js", "Python"],
+      "references": [
+        { "title": "MCP Spec — Error handling" },
+        { "title": "modelcontextprotocol.io — Debugging guide" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "agents-tools",
+      "topic": "Notifications y streaming en MCP",
+      "difficulty": "senior",
+      "scenario": "Tu server MCP ejecuta un `run_test_suite()` que tarda minutos. Quieres que el cliente muestre progreso en tiempo real (tests que van pasando, output, errores) en vez de bloquear hasta el final.",
+      "question": "¿Cómo lo implementas correctamente en MCP?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar NOTIFICATIONS de progress: el server emite `notifications/progress` con progressToken (recibido del request original en `_meta.progressToken`) y valores incrementales. El cliente muestra el progreso en su UI. También puede emitir `notifications/message` para logs. Streamable HTTP soporta streaming bidireccional.", "correct": true, "why": "Correcto. MCP tiene progress notifications explícitas ligadas a request tokens. El cliente asocia el progress al request original y muestra UI adecuada. Streamable HTTP transport (2025-03-26) permite este streaming eficientemente." },
+        { "letter": "B", "text": "Devolver múltiples tool_results desde el server.", "correct": false, "why": "Un tool call = un result. Para streaming se usan notifications separadas, no múltiples results." },
+        { "letter": "C", "text": "Abrir un websocket paralelo.", "correct": false, "why": "MCP tiene su propio canal de notifications sobre el transport existente. No hace falta canal separado." },
+        { "letter": "D", "text": "MCP no soporta streaming — es síncrono.", "correct": false, "why": "Falso. Streamable HTTP y progress notifications habilitan streaming desde 2025." }
+      ],
+      "explanation": "MCP soporta streaming/notifications bidireccional: (1) PROGRESS NOTIFICATIONS — cliente envía en `_meta.progressToken` cuando quiere progreso; server emite `notifications/progress` con {progressToken, progress, total?}. (2) MESSAGE NOTIFICATIONS — server envía `notifications/message` con severity (debug/info/warning/error/etc.) para logs que el cliente puede mostrar. (3) RESOURCE UPDATES — server puede notificar cambios en resources subscritos. (4) TOOLS/RESOURCES LIST CHANGED — server notifica si sus listas cambian dinámicamente. Streamable HTTP transport es el que mejor soporta esto con streaming eficiente.",
+      "realWorld": "Servers de test runners, deployment tools, ML training MCP servers usan progress notifications. Claude Desktop y Cursor renderizan progress bars con base en estos eventos. El server puppeteer emite notifications cuando cambia el estado del browser.",
+      "tags": ["mcp", "notifications", "streaming", "progress"],
+      "tech": ["MCP", "JSON-RPC"],
+      "references": [
+        { "title": "MCP Spec — Notifications" },
+        { "title": "MCP Spec — Progress" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "agents-tools",
+      "topic": "Permission model y seguridad",
+      "difficulty": "senior",
+      "scenario": "Tu empresa quiere aprobar MCP servers de terceros para uso interno. Preocupación: un server malicioso podría exfiltrar datos, ejecutar código arbitrario, o abusar credenciales. Un compañero propone: 'ejecutamos todos los servers en el mismo proceso del cliente para simplicidad'.",
+      "question": "¿Qué guía de seguridad debería aplicar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ejecutar cada server en su propio proceso aislado (default con stdio). Aplicar allow-list de servers aprobados. Para servers remotos, revisar auth scopes solicitados. Aplicar sandboxing adicional (Docker, gVisor, macOS App Sandbox, Windows containers) para servers de terceros no confiables. Auditoria: revisar cada request de tool que hace side effects. Aplicar permission prompts para acciones sensibles.", "correct": true, "why": "Correcto. Defensa en profundidad: aislamiento de proceso (stdio ya lo da), sandboxing para untrusted code, allow-list de servers, review de OAuth scopes, permission prompts human-in-the-loop para acciones destructivas, logs y audit." },
+        { "letter": "B", "text": "Confiar en la spec MCP — Anthropic garantiza seguridad.", "correct": false, "why": "Falso. La spec no garantiza que servers de terceros sean seguros; delega la security al operador/usuario." },
+        { "letter": "C", "text": "Ejecutar todos en el proceso del cliente para performance.", "correct": false, "why": "Ese es exactamente el anti-patrón: si un server malicioso corre in-process, tiene acceso a todo lo del cliente." },
+        { "letter": "D", "text": "Prohibir todos los MCP servers — riesgo demasiado alto.", "correct": false, "why": "Extremo innecesario; con controles apropiados es gestionable." }
+      ],
+      "explanation": "Modelo de seguridad de MCP: (1) AISLAMIENTO — stdio da proceso separado por default. (2) ALLOW-LIST — enterprises típicamente aprueban una lista corta de servers de vendors confiables. (3) SANDBOXING adicional (Docker, gVisor, sandbox APIs del OS) para servers de terceros/comunidad. (4) OAUTH SCOPES revisados — evitar servers que piden scopes excesivos. (5) HUMAN-IN-THE-LOOP para acciones destructivas o de alto valor. (6) LOGGING/AUDIT de tool calls. (7) NETWORK EGRESS control (proxy) para prevenir exfiltración. Anthropic publicó best practices; algunos enterprises usan mcpm o similar como broker central.",
+      "realWorld": "En 2025 hubo reportes de MCP servers maliciosos en marketplaces no oficiales exfiltrando datos. Cloudflare, Anthropic y otros publicaron guías de securing MCP. Anthropic añadió permission prompts más granulares en Claude Desktop 2025. OWASP tiene guía específica de LLM+MCP en su LLM Top 10 (actualizada 2025-2026).",
+      "tags": ["mcp", "security", "sandboxing", "permissions"],
+      "tech": ["MCP", "Docker", "gVisor"],
+      "references": [
+        { "title": "OWASP — LLM & MCP security" },
+        { "title": "Anthropic — MCP security best practices" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "agents-tools",
+      "topic": "Versionado del protocolo y compatibilidad",
+      "difficulty": "senior",
+      "scenario": "Tu server MCP fue escrito con SDK 0.5 en 2024 y sigue en producción. Un cliente nuevo (2026) le envía requests con features que no reconoce (elicitation, structured tool output). Un compañero pregunta: '¿tenemos que reescribir el server cada vez que cambian la spec?'",
+      "question": "¿Cómo maneja MCP la evolución del protocolo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MCP usa negociación de capabilities al establecer la conexión (`initialize` request). Cliente y server anuncian qué features soportan. El cliente NO envía requests de features que el server no declaró soportar. Además, la spec tiene versiones fechadas (ej: 2025-03-26, 2025-06-18); ambos negocian una versión compatible. Actualizar SDK aporta soporte de nuevas capabilities, pero un server viejo sigue funcionando para lo que declaró.", "correct": true, "why": "Correcto. Negociación de capabilities + versionado explícito por fecha permite evolución no-breaking. El cliente respeta las capabilities anunciadas por el server. La única razón para reescribir es querer USAR nuevas features." },
+        { "letter": "B", "text": "El servidor debe reescribirse en cada release menor de spec.", "correct": false, "why": "Falso. Compat backward está diseñada explícitamente en el protocolo vía capability negotiation." },
+        { "letter": "C", "text": "La versión del protocolo se determina por User-Agent.", "correct": false, "why": "Falso. Se determina en el request `initialize` con versión y capabilities explícitas." },
+        { "letter": "D", "text": "MCP no tiene versionado; siempre es la última.", "correct": false, "why": "Falso. La spec tiene versiones fechadas y el initialize las negocia." }
+      ],
+      "explanation": "Evolución de MCP: (1) VERSIONING por fecha (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25 etc.) — cada versión de spec es un snapshot. (2) INITIALIZE handshake — cliente propone versión, server acepta la más alta que ambos soporten (o falla si no hay overlap). (3) CAPABILITIES declaradas — cada lado dice qué features soporta (tools, resources, prompts, sampling, roots, elicitation, subscribe). (4) FEATURES OPCIONALES — un server nuevo puede omitir features nuevas sin romper clients viejos, y viceversa. (5) BREAKING CHANGES entre versiones son documentadas explícitamente. Este modelo evita la fragmentación que tuvieron protocolos como SOAP.",
+      "realWorld": "Entre 2024-11 y 2025-11 MCP añadió Streamable HTTP, Authorization, Elicitation, Structured Output for Tools sin romper servers viejos. Cada release documenta 'Changes since previous version'. Anthropic y OpenAI participan en el steering committee para evolución.",
+      "tags": ["mcp", "versioning", "compatibility", "spec"],
+      "tech": ["MCP"],
+      "references": [
+        { "title": "MCP Spec — Versioning" },
+        { "title": "modelcontextprotocol.io — Changelog" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "agents-tools",
+      "topic": "Prompts primitive — cuándo usarlos",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene 4 flujos comunes: 'summarize this PR', 'draft release notes', 'security review file', 'analyze SQL query'. Actualmente los usuarios copipegan un prompt template largo cada vez. Un compañero pregunta si MCP puede ayudar.",
+      "question": "¿Cuál es la mejor solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Exponer los 4 flujos como PROMPTS en un MCP server. Cada prompt declara nombre, description, argumentos parametrizables. El host los muestra al usuario (típicamente como slash-commands o menús), el usuario elige, el host aplica el template con los args, y el resultado se inserta en el chat como si el usuario lo hubiera escrito.", "correct": true, "why": "Correcto. Prompts es exactamente el primitive para esto: templates parametrizables invocables por el usuario desde el host. Reduce copy-paste, mantiene templates centralizados, y aprovecha UX nativa (slash-commands en Claude Desktop, Cursor, VS Code)." },
+        { "letter": "B", "text": "Guardar los templates en un README y que los usuarios copipeguen.", "correct": false, "why": "Es el status quo — MCP prompts elimina exactamente esta fricción." },
+        { "letter": "C", "text": "Definirlos como tools que devuelven el prompt como string.", "correct": false, "why": "Anti-patrón: los tools son para el modelo, no para el usuario. Prompts primitive es el correcto para user-invoked templates." },
+        { "letter": "D", "text": "Usar Sampling desde el server.", "correct": false, "why": "Sampling es para que el server pida generaciones — no aplica al caso." }
+      ],
+      "explanation": "Prompts primitive de MCP: templates de mensajes reusables, parametrizables, invocables por el USUARIO desde el host. Estructura: name, description, arguments (list of {name, description, required}). El host los expone en UI (slash-commands, menús, pickers). Al invocar, el host pide los args, aplica el template, y el resultado se envía al modelo como turno del usuario. Casos ideales: workflows repetitivos, playbooks de análisis, templates de reporte. Menos usado que tools/resources pero valioso para estandarizar flujos comunes en un equipo.",
+      "realWorld": "Claude Desktop y Cursor exponen prompts de MCP servers como slash-commands. El repo 'promptcraft' tiene ejemplos. Muchos equipos exponen playbooks de incident response, code review, security review como prompts de un server MCP privado. Sourcegraph, Notion también.",
+      "tags": ["mcp", "prompts", "templates", "ux"],
+      "tech": ["MCP"],
+      "references": [
+        { "title": "MCP Spec — Prompts" },
+        { "title": "modelcontextprotocol.io — Prompts guide" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "agents-tools",
+      "topic": "Composición: múltiples servers + un solo cliente",
+      "difficulty": "senior",
+      "scenario": "En Claude Code tienes activos 5 MCP servers: filesystem, git, github, postgres, jira. Cada uno expone tools con nombres genéricos: `list`, `search`, `create`. El modelo a veces llama a la tool `search` del server equivocado.",
+      "question": "¿Cuál es la solución correcta a nivel diseño?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El PROTOCOLO no impone namespacing global, pero el HOST típicamente prefija los tool names con el server name antes de presentarlos al modelo (ej: `filesystem__search`, `postgres__search`). Además, cada server debería usar tool names semánticamente específicos (`search_files`, `search_issues`, `query_sql`) en vez de genéricos. Recomendación: diseñar tools con nombres autoexplicativos para reducir ambigüedad incluso sin namespacing.", "correct": true, "why": "Correcto. Es responsabilidad conjunta del server (nombres claros) y del host (namespacing al presentar al modelo). Claude Code, Cursor, ChatGPT hacen namespacing automático. Aun así, si el server usa `search` en vez de `search_issues`, el modelo puede confundirse en descriptions similares." },
+        { "letter": "B", "text": "Es imposible tener múltiples servers activos.", "correct": false, "why": "Falso. Es escenario normal y ampliamente soportado." },
+        { "letter": "C", "text": "MCP prohíbe tool names duplicados a nivel global.", "correct": false, "why": "Falso. La spec no requiere unicidad global; es responsabilidad del host manejar colisiones." },
+        { "letter": "D", "text": "El modelo siempre elige bien; no es un problema real.", "correct": false, "why": "Falso — colisiones de nombres + descriptions similares causan mal routing. Es un problema documentado." }
+      ],
+      "explanation": "Con múltiples servers activos: (1) HOST namespacing — la mayoría de hosts prefijan tool names con el server (ej: `github__create_issue`). (2) CONVENCIÓN — servers bien diseñados usan nombres específicos (`search_issues`, `search_pull_requests`) en vez de genéricos (`search`). (3) DESCRIPCIONES DISCRIMINANTES — dejar claro en la description qué contexto/data cubre esta tool específica. (4) SUBSET DINÁMICO — algunos hosts permiten activar/desactivar servers por sesión para reducir cardinalidad. (5) TOOL BUDGET — con >30 tools en total, hay degradación de selection accuracy; considerar dividir en sub-agentes o rotar servers según contexto.",
+      "realWorld": "Claude Code muestra tools prefijadas con el server name. Cursor permite habilitar/deshabilitar servers por proyecto. El equipo de Sentry publicó guidelines para naming de tools en su MCP server para evitar colisión con GitHub tools comunes. Anthropic guide 'building effective agents' menciona el problema de tool cardinalidad.",
+      "tags": ["mcp", "composition", "namespacing", "naming"],
+      "tech": ["MCP", "Claude Code", "Cursor"],
+      "references": [
+        { "title": "MCP Spec — Server naming conventions" },
+        { "title": "Anthropic — Building effective agents" }
+      ]
+    }
+  ]
+}

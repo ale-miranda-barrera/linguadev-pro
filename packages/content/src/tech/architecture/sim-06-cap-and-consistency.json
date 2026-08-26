@@ -1,0 +1,418 @@
+{
+  "id": "architecture-sim-06-cap-and-consistency",
+  "trackId": "architecture",
+  "order": 6,
+  "title": "Simulacro 06 — CAP, PACELC y modelos de consistencia reales",
+  "focus": "CAP theorem sin mitos, modelos de consistencia (strong, causal, eventual, monotonic reads, read-your-writes), quorums (N/W/R en Dynamo/Cassandra), CRDTs, resolución de conflictos y por qué 'AP' o 'CP' rara vez son elecciones puras.",
+  "areaCoverage": ["db-choice", "scalability", "resilience"],
+  "timeLimitMin": 28,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "db-choice",
+      "topic": "CAP theorem — el mito más malinterpretado",
+      "difficulty": "senior",
+      "scenario": "En una entrevista para staff engineer te preguntan: 'Cassandra es AP y MongoDB es CP, ¿verdad?'. El candidato jr al lado responde: 'Sí, y por eso Cassandra escala más'.",
+      "question": "¿Cuál es la respuesta MÁS precisa desde el conocimiento moderno de CAP?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El jr tiene razón: elegir AP significa sacrificar consistencia por escalabilidad, y Cassandra lo hace mejor.", "correct": false, "why": "Confusión clásica. CAP NO habla de 'escalabilidad'. CAP dice que ANTE UNA PARTICIÓN de red, un sistema replicado debe elegir entre Consistencia (rechazar el request) o Disponibilidad (responder con datos posiblemente stale). En operación NORMAL (sin partición), la mayoría de sistemas ofrecen ambas. Además Cassandra puede ser 'consistente' si configuras W+R>N." },
+        { "letter": "B", "text": "CAP es un teorema sobre lo que pasa DURANTE una partición de red. Fuera de particiones no aplica. Además, Cassandra y DynamoDB permiten elegir consistencia por operación (quorum tunable). PACELC (Abadi) es el modelo moderno: incluso sin partición, hay tradeoff Latencia vs Consistencia (else L/C).", "correct": true, "why": "Correcto. Daniel Abadi extendió CAP a PACELC: 'IF partition (P), tradeoff Availability vs Consistency; ELSE tradeoff Latency vs Consistency'. Esto captura la realidad: incluso en op normal, un sistema como Spanner paga latencia por strong consistency (TrueTime waits), mientras Dynamo paga consistencia por latencia baja. Cassandra es PA/EL — AP en partición, favorece latencia sobre consistencia sin partición." },
+        { "letter": "C", "text": "CAP demuestra que solo puedes tener 2 de 3 propiedades permanentemente.", "correct": false, "why": "Malinterpretación común de la formulación de Brewer 2000. Eric Brewer mismo aclaró en 2012 ('CAP Twelve Years Later') que el tradeoff solo aplica DURANTE particiones, y que casi nadie renuncia a P (las particiones son un hecho de la red, no una elección). La verdadera elección es A vs C durante P." },
+        { "letter": "D", "text": "MongoDB es CP porque siempre bloquea en el primary durante failover.", "correct": false, "why": "Simplificación peligrosa. MongoDB con readConcern majority + writeConcern majority se acerca a CP, pero con readPreference secondary tiene lecturas stale (AP-ish). La 'letra' de CAP para un sistema depende de la CONFIGURACIÓN, no del logo." }
+      ],
+      "explanation": "CAP fue una CONJETURA (Brewer 2000), probada por Gilbert-Lynch 2002 con un modelo formal restringido (linearizabilidad + total availability). En la práctica es una guía imprecisa. PACELC (Abadi 2010) es más útil: incluso sin partición hay tradeoff latencia/consistencia. Sistemas modernos casi siempre son 'tunables': Cassandra permite ONE/QUORUM/ALL por operación; DynamoDB tiene ConsistentRead flag; MongoDB tiene readConcern. La pregunta correcta no es '¿qué letra elegí?' sino '¿qué consistencia necesita CADA operación?'. Un carrito quizá tolera eventual; un balance bancario exige linearizable.",
+      "realWorld": "Amazon Dynamo paper (2007) explícitamente eligió A sobre C: 'always writeable' era un requisito para el shopping cart en Black Friday — perder un write costaba dinero. En cambio Google Spanner (2012) invirtió en TrueTime (GPS + relojes atómicos) para poder ofrecer external consistency global, pagando latencia (~14ms mínimo por commit). Dos empresas gigantes, elecciones opuestas por caso de uso opuesto.",
+      "tags": ["CAP", "PACELC", "consistency", "partition tolerance"],
+      "tech": ["Cassandra", "DynamoDB", "MongoDB", "Spanner"],
+      "references": [{ "title": "Eric Brewer — 'CAP Twelve Years Later: How the Rules Have Changed', IEEE 2012" }, { "title": "Daniel Abadi — 'Consistency Tradeoffs in Modern Distributed Database System Design' (PACELC)" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "db-choice",
+      "topic": "Quorums N/W/R en Dynamo/Cassandra",
+      "difficulty": "staff",
+      "scenario": "Configuras Cassandra con RF=3 (replication factor). Necesitas garantizar que un read ve el último write. ¿Qué combinación de writeConsistency y readConsistency garantiza 'read-your-writes' incluso si un nodo se cae?",
+      "question": "¿Cuáles combinaciones N=3 son válidas para strong consistency? (marca todas)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "W=QUORUM (2) + R=QUORUM (2). W+R=4 > N=3 → intersecta en al menos 1 nodo.", "correct": true, "why": "Correcto. La regla clásica de Dynamo: W+R>N garantiza que cualquier read overlap con al menos 1 nodo que tiene el último write. QUORUM en Cassandra = ceil(RF/2)+1 = 2 con RF=3. Tolera 1 nodo caído y sigue consistente." },
+        { "letter": "B", "text": "W=ALL (3) + R=ONE (1). W+R=4 > N=3.", "correct": true, "why": "Correcto matemáticamente (W+R>N). PROBLEMA práctico: W=ALL falla si CUALQUIER nodo está caído — sacrificas availability para escrituras. Es válido si tu use case tolera esa fragilidad (poca escritura, mucha lectura muy barata)." },
+        { "letter": "C", "text": "W=ONE (1) + R=ALL (3). W+R=4 > N=3.", "correct": true, "why": "Correcto matemáticamente y simétrico al anterior: writes rápidos, reads caros y frágiles (si 1 nodo cae, falla el read). Útil en workloads write-heavy con lecturas raras pero críticas." },
+        { "letter": "D", "text": "W=ONE + R=ONE. Ambos rapidísimos.", "correct": false, "why": "W+R=2 < N=3. NO garantiza intersección: puedes escribir en nodo A y luego leer del nodo B que aún no recibió la replicación. Es AP puro, eventual consistency. Aceptable para métricas o feed sociales, mortal para stock o balance." },
+        { "letter": "E", "text": "W=QUORUM + R=ONE con read repair habilitado.", "correct": false, "why": "W+R=3, NO > N. Read repair es asincronía — el read puede devolver stale y luego reparar en background. NO es strong consistency, es 'eventual consistency mejorada'. Confundir read repair con consistencia es error frecuente." }
+      ],
+      "explanation": "La fórmula W+R>N asegura que cualquier conjunto de W nodos donde se escribió intersecta con cualquier conjunto de R nodos donde se lee — al menos un nodo tendrá el valor más reciente, y con vector clocks/timestamps el read puede elegir el ganador. Trade-off: aumentar W penaliza escrituras; aumentar R penaliza lecturas; hacer ambos QUORUM balancea. Cuidado: 'strong consistency' vía quorum NO es linearizabilidad estricta si hay hinted handoffs o read repairs asincrónicos. Para linearizabilidad real, Cassandra ofrece LWT (Lightweight Transactions) con Paxos — pero cuestan 4x en latencia.",
+      "realWorld": "Netflix usa Cassandra con QUORUM/QUORUM para user profiles críticos y ONE/ONE para telemetry masiva. DynamoDB por defecto es eventually consistent (barato); ConsistentRead=true duplica el costo (RCU 2x) porque va al leader. Discord almacena billones de mensajes en Cassandra/ScyllaDB, tuning quorums por tabla según criticidad.",
+      "tags": ["quorum", "N/W/R", "consistency", "Dynamo"],
+      "tech": ["Cassandra", "DynamoDB", "ScyllaDB"],
+      "references": [{ "title": "DeCandia et al. — 'Dynamo: Amazon's Highly Available Key-Value Store', SOSP 2007" }, { "title": "Apache Cassandra Docs — 'Configuring Data Consistency'" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "db-choice",
+      "topic": "Modelos de consistencia — jerarquía",
+      "difficulty": "staff",
+      "scenario": "Un colega dice: 'Nuestro sistema es eventualmente consistente'. Otro pregunta: '¿Pero ofrece read-your-writes al menos? ¿Y monotonic reads?'. El primero no sabe qué responder.",
+      "question": "¿Cómo se ORDENAN estos modelos del MÁS FUERTE al MÁS DÉBIL?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Linearizable > Sequential > Causal > Read-your-writes / Monotonic reads > Eventual.", "correct": true, "why": "Correcto. Linearizabilidad (Herlihy-Wing 1990) = real-time order + atómica. Sequential (Lamport 1979) = todos ven mismo orden pero no real-time. Causal preserva causa-efecto (Lamport 1978). Session guarantees (Terry 1994) — read-your-writes, monotonic reads, monotonic writes — son más débiles que causal. Eventual = solo garantiza convergencia si dejas de escribir. La jerarquía es fundamental para razonar sobre qué garantías necesita cada operación." },
+        { "letter": "B", "text": "Strong > Weak > Eventual — solo hay 3 niveles.", "correct": false, "why": "Simplificación errónea. Kleppmann en DDIA capítulo 9 dedica 40 páginas precisamente a mostrar el rico espectro. Confundir 'strong' con linearizable pierde matices críticos (sequential no es linearizable pero mucha gente los mezcla)." },
+        { "letter": "C", "text": "ACID > BASE > Eventual.", "correct": false, "why": "Confunde propiedades TRANSACCIONALES (ACID, atomicidad multi-op) con propiedades de CONSISTENCIA DE REPLICA. Son dimensiones ortogonales. Una DB puede ser ACID single-node y eventual entre replicas (ej. Postgres con async replicas)." },
+        { "letter": "D", "text": "Serializable > Snapshot Isolation > Read Committed > Eventual.", "correct": false, "why": "Mezcla ISOLATION LEVELS de transacciones (Serializable, SI, RC — Adya 1999) con consistency models de replicación. Son dimensiones DISTINTAS: puedes tener Serializable en una DB replicada async → serializable + eventual." }
+      ],
+      "explanation": "Dos jerarquías ortogonales que se confunden: (1) Isolation levels de transacciones concurrentes en single-node (Read Uncommitted → RC → RR → SI → Serializable). (2) Consistency models entre replicas distribuidas (Eventual → session guarantees → Causal → Sequential → Linearizable). Se combinan: Spanner ofrece 'external consistency' = Serializable + Linearizable global. Postgres primary + async replicas: Serializable single-node + eventual entre replicas. Elegir depende de la operación: un like en Instagram tolera eventual; una transferencia bancaria requiere Serializable+Linearizable. Herramientas como Jepsen (Kyle Kingsbury) prueban estas garantías bajo particiones — muchos vendors mentían hasta que Jepsen les auditó.",
+      "realWorld": "Jepsen ha destruido claims de consistency de MongoDB, Redis Sentinel, Elasticsearch, Aerospike, entre otros — encontrando que 'linearizable' vendido era en realidad eventual bajo particiones. Google Spanner es de los pocos sistemas que ofrece linearizabilidad global comprobada. Facebook TAO ofrece 'per-object sequential + read-your-writes' — suficiente para el social graph, más barato que linearizable.",
+      "tags": ["consistency models", "linearizability", "causal", "session guarantees"],
+      "tech": ["Spanner", "CockroachDB", "MongoDB", "Cassandra"],
+      "references": [{ "title": "Kleppmann — DDIA, Cap. 9 Consistency and Consensus" }, { "title": "Herlihy, Wing — 'Linearizability: A Correctness Condition for Concurrent Objects', TOPLAS 1990" }, { "title": "Jepsen.io — Analyses" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "db-choice",
+      "topic": "Read-your-writes — el bug invisible",
+      "difficulty": "senior",
+      "scenario": "Un usuario edita su perfil (POST /profile), la app hace redirect a /profile (GET). El usuario ve los datos VIEJOS. Recarga y aparecen los nuevos. La app usa Postgres primary para writes y 5 read replicas para reads.",
+      "question": "¿Cuál es el problema y qué soluciones son VÁLIDAS?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "El problema es 'replication lag': el write fue al primary pero el read fue a una replica que aún no recibió la replicación. Es un fallo de 'read-your-writes consistency'.", "correct": true, "why": "Correcto diagnóstico. Async replication tiene lag típico 10ms-2s (o más bajo estrés). El usuario que HIZO el write espera verlo — es una session guarantee básica que sin cuidado se rompe." },
+        { "letter": "B", "text": "Después de un write, la sesión de ese usuario lee del primary durante N segundos (o hasta que el lag alcance la LSN del write).", "correct": true, "why": "Correcto. Es la solución canónica: 'sticky primary read after write'. Implementaciones: guardar timestamp/LSN del write y comparar con replica lag; o redirigir al primary por X segundos. Google Bigtable y Facebook TAO usan variantes de esto." },
+        { "letter": "C", "text": "Leer el resultado del write desde caché de la app tras hacer el POST y usarlo para renderizar, sin re-consultar la DB.", "correct": true, "why": "Correcto pragmático. Si tienes el objeto en memoria tras el write, úsalo. Muchos ORMs (Rails, Django) hacen esto: return del create devuelve el objeto ya materializado. Evita el round-trip entero." },
+        { "letter": "D", "text": "Aumentar el número de read replicas para reducir el lag.", "correct": false, "why": "Al contrario: MÁS replicas típicamente aumenta el lag (más nodos que sincronizar). El lag depende del throughput del primary y la red, no del número de replicas. Es una intuición errónea muy común." },
+        { "letter": "E", "text": "Ignorar el problema — 'eventual consistency' es aceptable siempre.", "correct": false, "why": "Falacia. Eventual es aceptable para datos que el usuario NO acaba de escribir (feeds, listados). Es INACEPTABLE para 'read-your-writes' — rompe la mental model del usuario y genera tickets de soporte." }
+      ],
+      "explanation": "Session guarantees (Terry et al. Bayou 1994) son un compromiso pragmático: no necesitas linearizabilidad global, solo garantías por sesión. Read-your-writes, Monotonic Reads (nunca ves el tiempo yendo atrás), Monotonic Writes (tus writes se aplican en orden), Writes-follow-reads. La mayoría de apps web SOLO necesitan read-your-writes; implementarlo es barato. Herramientas: pgbouncer + routing por role; ProxySQL; DynamoDB con ConsistentRead solo para el path afectado; Cassandra con LOCAL_QUORUM. Costo de router lag-aware: unos ms de complejidad, evita el 90% de bug reports de 'la app perdió mis cambios'.",
+      "realWorld": "GitHub tuvo bugs famosos donde tras hacer push, el usuario veía la rama en estado anterior por unos segundos — replication lag. Facebook implementó 'read-your-writes' via TAO leader stickiness. Twitter migró la timeline a un modelo que garantiza read-your-writes para el autor pero eventual para followers, exactamente lo que la UX requiere.",
+      "tags": ["read-your-writes", "session guarantees", "replication lag"],
+      "tech": ["PostgreSQL", "MySQL", "PgBouncer", "ProxySQL"],
+      "references": [{ "title": "Terry et al. — 'Session Guarantees for Weakly Consistent Replicated Data', PDIS 1994" }, { "title": "Kleppmann — DDIA, Cap. 5 Replication" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "db-choice",
+      "topic": "CRDTs — cuándo y por qué",
+      "difficulty": "staff",
+      "scenario": "Diseñas un editor colaborativo estilo Google Docs / Figma. Varios usuarios editan el mismo documento simultáneamente, offline y online. Necesitas que las ediciones converjan sin perder datos ni requerir un coordinador central en tiempo real.",
+      "question": "¿Qué tecnología encaja mejor y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Una DB SQL con locks pesimistas por documento.", "correct": false, "why": "Anti-patrón para colaboración real-time: usuario B no puede editar mientras A tiene lock. Además offline no funciona (¿cómo lockeas si estás sin red?). Los locks distribuidos son frágiles (¿y si el lock holder se cae?). Para colaboración concurrente, locks pierden." },
+        { "letter": "B", "text": "CRDTs (Conflict-free Replicated Data Types) — estructuras que garantizan convergencia matemática sin coordinación. Automerge, Yjs son implementaciones production-ready. Cada réplica aplica ops locales y sincroniza con las demás cuando puede; el merge es determinista y sin conflictos.", "correct": true, "why": "Correcto. CRDTs (Shapiro et al. 2011) resuelven el problema del merge distribuido: cada tipo (G-Counter, LWW-Set, RGA para texto, etc.) define operaciones commutativas o estados semi-latticeable que convergen sin conflict resolution manual. Yjs es la base de tldraw, JupyterLab collaborative, Notion; Automerge está detrás de muchas apps offline-first." },
+        { "letter": "C", "text": "Operational Transformation (OT) como Google Docs original.", "correct": false, "why": "OT es una alternativa VÁLIDA pero más frágil: requiere un servidor central que transforme operaciones según la historia; los algoritmos correctos son notoriamente difíciles (Google Wave tuvo bugs de convergencia por años). Los CRDTs son más simples formalmente y peer-to-peer. Google migró Docs de OT a Realtime API con enfoques híbridos; la tendencia industrial se movió hacia CRDTs." },
+        { "letter": "D", "text": "Last-write-wins usando timestamps del cliente.", "correct": false, "why": "Pierde datos: si A y B editan concurrentemente, el que llegue después borra al otro. Además timestamps de cliente NO son confiables (relojes drift). LWW es un CRDT muy simple (Register), pero para texto colaborativo es incorrecto." }
+      ],
+      "explanation": "CRDTs se dividen en dos familias: state-based (CvRDTs) — sincronizan enviando el estado completo, el merge es join sobre un semi-lattice — y op-based (CmRDTs) — sincronizan operaciones que deben ser commutativas. Ejemplos comunes: G-Counter (contador solo suma), PN-Counter (suma y resta), LWW-Register, OR-Set (add/remove), RGA/YATA/LSEQ para texto. Costos: metadata (cada op lleva vector clock o similar), garbage collection difícil (Automerge históricamente crecía sin límite; ha mejorado). Yjs ganó adopción por su implementación optimizada (2020+) — usada por Linear, tldraw, JupyterLab, Rocicorp Zero. Facebook usa un CRDT-inspired para Messenger cross-device sync.",
+      "realWorld": "Figma NO usa CRDTs — usan un servidor central autoritativo con OT-like para tener control fino (ver blog 'How Figma's multiplayer technology works'). Linear usa Zero + CRDTs para sync local-first. Redis desde 4.0 tiene CRDBs (Active-Active Geo Distribution) para multi-region. La lección: CRDTs brillan en offline-first / peer-to-peer; para real-time con servidor confiable, arquitecturas híbridas ganan.",
+      "tags": ["CRDT", "collaborative editing", "conflict resolution", "offline-first"],
+      "tech": ["Yjs", "Automerge", "Redis CRDB"],
+      "references": [{ "title": "Shapiro et al. — 'A comprehensive study of Convergent and Commutative Replicated Data Types', INRIA 2011" }, { "title": "Yjs Docs — 'What is Yjs?'" }, { "title": "Figma Blog — 'How Figma's multiplayer technology works'" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "db-choice",
+      "topic": "LWW y el problema del reloj",
+      "difficulty": "senior",
+      "scenario": "Sistema distribuido usa 'last-write-wins' (LWW) basado en System.currentTimeMillis() del nodo que hace el write. Un nodo tiene el reloj adelantado 5 minutos por drift NTP. Todos sus writes 'ganan' contra writes reales más recientes de otros nodos.",
+      "question": "¿Qué mecanismo resuelve este problema RAÍZ?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sincronizar NTP más agresivamente (chrony cada 100ms).", "correct": false, "why": "Mitiga PERO no resuelve. NTP tiene drift residual (~ms a segundos), y una VM pausada por hypervisor puede saltar minutos. Cassandra tuvo bugs famosos por esto. Confiar en wall-clock para ordenar eventos distribuidos es fundamentalmente frágil." },
+        { "letter": "B", "text": "Vector clocks o version vectors: cada réplica mantiene un vector [nodeA:v, nodeB:v...]. Un write incrementa la posición del nodo autor. Comparación DETECTA concurrencia (writes incomparables) y el sistema puede mostrar conflicto al usuario o aplicar merge lógico.", "correct": true, "why": "Correcto. Vector clocks (Lamport, Fidge/Mattern) capturan la relación causal sin depender de tiempo físico. Si Va<Vb → a happened-before b (orden claro). Si son incomparables → concurrent, hay conflicto real. Dynamo usó vector clocks originalmente. Riak los expone al cliente. Deja al usuario/app decidir qué hacer con conflictos concurrentes en vez de silenciosamente descartar datos." },
+        { "letter": "C", "text": "Usar solo el reloj del leader.", "correct": false, "why": "Elimina el problema del drift ENTRE nodos pero requiere un leader (mata multi-master), y el leader mismo puede tener drift o hacer failover con timestamps inconsistentes. Además no funciona en sistemas realmente descentralizados." },
+        { "letter": "D", "text": "Google TrueTime: hardware GPS + relojes atómicos con intervalo de incertidumbre [earliest, latest].", "correct": false, "why": "Es una solución REAL y elegante (Spanner) pero requiere infraestructura hardware que solo Google/AWS (usando TimeSync) pueden proveer. No es realista replicarla en on-prem o SaaS pequeño. Vector clocks son el mecanismo lógico general y accesible." }
+      ],
+      "explanation": "El orden en sistemas distribuidos es difícil porque 'tiempo real' es una ilusión: relojes NTP tienen drift, VMs se pausan, redes tienen skew. Lamport (1978) propuso logical clocks — happens-before relation. Vector clocks los extienden para detectar concurrencia (Fidge/Mattern 1988). Hybrid Logical Clocks (Kulkarni 2014) combinan wall-clock con lógica para el mejor de ambos mundos — usado en CockroachDB, YugabyteDB, MongoDB 3.6+. TrueTime (Google) es la solución hardware. LWW puro con wall-clock es 'good enough' para datos poco críticos, pero silenciosamente pierde datos bajo drift o writes concurrentes. La regla staff: nunca uses wall-clock del cliente para conflict resolution en producción distribuida.",
+      "realWorld": "Cassandra usa LWW con microsecond timestamps por default — Aphyr (Jepsen) mostró pérdida de datos silenciosa bajo particiones + clock skew. DynamoDB usa vector-like versioning internamente. CockroachDB usa HLC + intervalos de incertidumbre para linearizabilidad sin GPS. En 2012 Cloudflare tuvo un incidente por leap-second causando cascada de fallos en muchos sistemas basados en wall-clock.",
+      "tags": ["vector clocks", "LWW", "clock skew", "HLC"],
+      "tech": ["Cassandra", "Riak", "CockroachDB", "Spanner"],
+      "references": [{ "title": "Lamport — 'Time, Clocks, and the Ordering of Events in a Distributed System', CACM 1978" }, { "title": "Kulkarni et al. — 'Logical Physical Clocks', OPODIS 2014" }, { "title": "Aphyr — 'Jepsen: Cassandra'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "scalability",
+      "topic": "Split-brain en multi-master",
+      "difficulty": "staff",
+      "scenario": "Tenéis MySQL en configuración multi-master (dos primaries que se replican entre sí). Una partición de red aísla los DCs 5 minutos. Ambos primaries aceptan writes al mismo user_id, cada uno actualizando 'balance'. Cuando la red vuelve, la replicación tiene conflictos irresolubles.",
+      "question": "¿Qué opción refleja mejor la realidad y las soluciones profesionales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-master es la solución idiomática para alta disponibilidad; solo hay que aumentar el timeout de replicación.", "correct": false, "why": "Anti-patrón peligroso. Multi-master MySQL con async replication no tiene forma sana de resolver writes conflictivos al mismo row. La MayoríA de expertos lo desaconseja explícitamente para datos con integridad numérica (balance, stock, contadores)." },
+        { "letter": "B", "text": "Multi-master ACID clásico es incompatible con particiones — durante split-brain ambos lados aceptan writes divergentes irreconciliables. Soluciones reales: (1) single-writer con failover (Galera/Aurora garantizan un solo primary a la vez); (2) consenso (Spanner, CockroachDB usan Raft/Paxos para writes globales); (3) diseñar como CRDT para operaciones commutativas (balance como PN-Counter).", "correct": true, "why": "Correcto. La realidad es dura: si dos primaries independientes deciden restar 100 del mismo balance de 150, cuando la red vuelve tienes -50 lógico. Las soluciones production son: (a) sharding por user_id — cada shard tiene un solo master; (b) consensus algorithms — todo write requiere quorum global (Spanner, TiDB); (c) modelado CRDT para operaciones que sí commutan (contadores). No hay 'multi-master fácil' para writes conflictivos." },
+        { "letter": "C", "text": "Usar LWW basado en timestamp para resolver conflictos automáticamente.", "correct": false, "why": "Pérdida silenciosa de writes. Si primary A resta 50 y primary B resta 30 concurrentemente, LWW elige uno y el otro DESAPARECE — el usuario podría haber pagado dos veces pero solo se registra uno. Para datos financieros, catastrófico." },
+        { "letter": "D", "text": "Bloquear todas las escrituras durante particiones para evitar el problema.", "correct": false, "why": "En async replication los nodos NO SABEN que están particionados hasta que la partición termina. No pueden 'bloquear proactivamente' sin coordinación, que es exactamente lo imposible durante partición. Requiere quorum-based (consensus), que es la opción B." }
+      ],
+      "explanation": "Split-brain es el escenario de pesadilla del multi-master async. Soluciones industrialmente probadas: (1) Single writer with fast failover — Aurora, Patroni, ProxySQL routing. Solo un nodo escribe; failover con fencing. Pierde alta disponibilidad de writes durante failover (~seg). (2) Consensus-based writes — cada commit requiere mayoría de nodos (Spanner, CockroachDB, YugabyteDB, TiDB). Paga latencia (RTT quorum) por linearizabilidad. (3) CRDT modeling — reformula el problema para que las ops commuten. Balance como delta (PN-Counter) suma correctamente. No sirve para 'reserva de stock' donde el orden importa. (4) Application-level conflict resolution — Riak/Dynamo devuelven siblings al cliente, que decide. Difícil UX. La regla: si tus datos toleran eventual consistency, multi-master + CRDT. Si necesitas invariantes (balance ≥ 0), single-master o consensus.",
+      "realWorld": "GitHub tuvo un famoso incidente en Octubre 2018: split-brain de MySQL Orchestrator promocionó dos primaries, con 40 segundos de writes divergentes en East vs West. La reconciliación manual tomó 24 horas y bloqueó writes. Post-mortem público es lectura obligatoria. Aurora, Vitess, PlanetScale evitan multi-master precisamente por esto. Cosmos DB ofrece multi-master con conflict resolution declarativa (LWW o custom), no ACID.",
+      "tags": ["split-brain", "multi-master", "consensus", "failover"],
+      "tech": ["MySQL", "Aurora", "Galera", "CockroachDB"],
+      "references": [{ "title": "GitHub Engineering — 'October 21 post-incident analysis' (2018)" }, { "title": "Kleppmann — DDIA, Cap. 5 Multi-Leader Replication" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "db-choice",
+      "topic": "DynamoDB — strong vs eventual read",
+      "difficulty": "mid",
+      "scenario": "Un compañero configura ConsistentRead=true en TODAS las lecturas de DynamoDB 'por seguridad'. La factura se dispara 100%.",
+      "question": "¿Cuál es la explicación correcta y el criterio de uso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ConsistentRead=true cuesta 2 RCUs por lectura vs 1 RCU en eventual. Además tiene mayor latencia (va al leader) y puede fallar si el leader no está disponible. Usar SOLO en operaciones donde stale reads causan bugs de negocio.", "correct": true, "why": "Correcto. DynamoDB por default lee de una réplica cualquiera (eventual, ~lag <1s típicamente). Con ConsistentRead va al leader — 2x costo, mayor p99, y ThrottlingException si el leader está saturado. Uso apropiado: read-after-write en el mismo request, sección crítica de saga, verificación pre-condición. Uso inapropiado: listados, dashboards, feeds." },
+        { "letter": "B", "text": "ConsistentRead no cuesta más; el compañero probablemente aumentó el throughput por otra razón.", "correct": false, "why": "Fácticamente falso. AWS documenta explícitamente que Strongly Consistent Read consume 2x RCUs. Es parte del pricing model desde 2012." },
+        { "letter": "C", "text": "Es una buena práctica siempre — la consistencia siempre justifica el costo.", "correct": false, "why": "Falacia. La mayoría de lecturas toleran eventual (usuario ve su feed hace 500ms, no importa). Pagar 2x por 'seguridad' cuando no aporta valor es waste. Elegir consistency por operación es la práctica senior." },
+        { "letter": "D", "text": "ConsistentRead solo aplica en tablas Global Tables multi-región.", "correct": false, "why": "Falso. ConsistentRead aplica a lecturas single-region. Para Global Tables entre regiones, DynamoDB solo ofrece eventual (multi-master async) — no hay strong consistency global sin transacciones especiales." }
+      ],
+      "explanation": "DynamoDB divide sus operaciones en RCUs (Read Capacity Units) y WCUs. 1 RCU = 1 strongly consistent read de item ≤4KB O 2 eventually consistent reads. Transactional reads cuestan 2 RCUs (equivalen a snapshot isolation). Regla práctica: default a eventual, subir a consistent solo donde el bug de stale read es concreto y demostrable. Para read-after-write en el mismo flujo, es más barato usar el objeto devuelto por PutItem (con ReturnValues) que hacer un GetItem consistent. En DAX (cache), consistent reads NO van al cache — pierdes el beneficio. Modelar single-table con GSIs bien pensados suele evitar la necesidad de consistent reads.",
+      "realWorld": "Amazon.com usa DynamoDB para carts con eventual reads por default — el usuario tolera que el badge del cart se actualice con 1s de lag. Alexa usa DynamoDB con selective consistency solo en el path de auth. AWS Well-Architected Framework explícitamente recomienda 'default a eventually consistent unless you need strong'.",
+      "tags": ["DynamoDB", "consistency", "cost optimization"],
+      "tech": ["DynamoDB"],
+      "references": [{ "title": "AWS Docs — 'DynamoDB Read Consistency'" }, { "title": "AWS Well-Architected Framework — Cost Optimization Pillar" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "scalability",
+      "topic": "Sharding — trampas comunes",
+      "difficulty": "staff",
+      "scenario": "Tenéis 10TB de datos en Postgres y decidís shardear por 'created_at' (por mes). Un ingeniero dice: 'así las queries recientes van a un solo shard, rápidas'.",
+      "question": "¿Cuál es el problema PRINCIPAL de shardear por created_at y qué estrategias son mejores?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Hotspot: TODOS los writes nuevos van al shard actual, mientras los antiguos están fríos. Escalada horizontal se pierde para escrituras.", "correct": true, "why": "Correcto. Sharding por tiempo genera un patrón 'write skew' extremo: el shard 'diciembre 2026' recibe el 100% de escrituras, los otros 11 shards están ociosos. Este es el anti-patrón #1 de sharding. La escala horizontal solo funciona si el load se DISTRIBUYE." },
+        { "letter": "B", "text": "Consistent hashing por user_id (o tenant_id) distribuye load uniformemente y mantiene todos los datos de un usuario juntos (queries del usuario van a UN shard).", "correct": true, "why": "Correcto. Consistent hashing (Karger et al. 1997) minimiza reshuffling al añadir/quitar nodos. Shardear por entidad de negocio (usuario, cuenta, tenant) preserva locality: 99% de queries de un usuario tocan UN shard, no requieren scatter-gather. Este es el patrón dominante (Vitess, Citus, MongoDB, Cassandra)." },
+        { "letter": "C", "text": "Range sharding con auto-splitting cuando un rango crece (CockroachDB, Spanner) previene hotspots sin perder queries de rango.", "correct": true, "why": "Correcto. Range sharding con splits automáticos (basados en tamaño/load) permite queries de rango eficientes y balancea load dinámicamente. Spanner y CockroachDB implementan esto con Raft por rango. Trade-off: más complejo operacionalmente que hash sharding." },
+        { "letter": "D", "text": "Shardear por hash del PK previene hotspots pero rompe queries por rango.", "correct": false, "why": "La afirmación es correcta pero mal etiquetada como 'mejor'. Es un trade-off, no una elección universalmente mejor. Si tu app hace muchas queries por rango (ej. 'órdenes de este mes'), hash sharding las convierte en scatter-gather (query a todos los shards). Elegir depende del access pattern dominante." },
+        { "letter": "E", "text": "Añadir un cache Redis delante resuelve el problema del hotspot.", "correct": false, "why": "Cache ayuda para reads del hot shard pero NO cambia el hotspot de writes — el shard actual sigue recibiendo 100% de escrituras. Cache no resuelve write skew." }
+      ],
+      "explanation": "Sharding tiene tres estrategias principales: (1) Range — divide por rangos de PK (a-f, g-m...). Buenas queries de rango, riesgo de hotspots si el PK es monotónico (ej. timestamp, autoincrement). (2) Hash — hash(PK) distribuye uniformemente. Sin hotspots, pero queries de rango se vuelven scatter-gather. (3) Directory-based — tabla de mapeo shard-lookup, flexible pero introduce hop extra. Consistent hashing es una variante crítica: al añadir/quitar shards, minimiza qué datos se remueven (K/N vs K). Elegir shard key es DECISIÓN IRREVERSIBLE — cambiarla requiere re-shard masivo. Regla: shard por entidad de negocio principal (user_id, tenant_id), no por atributos temporales o autoincrement. Herramientas modernas (Vitess, Citus, CockroachDB, TiDB, PlanetScale) abstraen mucho pero no eliminan la decisión.",
+      "realWorld": "Instagram shardeó por user_id desde temprano — cada shot va a UN shard, timeline se construye por fan-out. Slack shardeó por workspace_id — TODOS los datos de un workspace en un shard, evita cross-shard joins. Discord migró de MongoDB a Cassandra particionando por (channel_id, bucket) — bucketing por tiempo dentro del canal balancea load. Figma escribió sobre cómo shardearon Postgres a mano usando Vitess-inspired approach.",
+      "tags": ["sharding", "hotspot", "consistent hashing", "shard key"],
+      "tech": ["Vitess", "Citus", "MongoDB", "CockroachDB"],
+      "references": [{ "title": "Karger et al. — 'Consistent Hashing and Random Trees', STOC 1997" }, { "title": "Figma Blog — 'How Figma's databases team lived to tell the scale'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "db-choice",
+      "topic": "Isolation levels — anomalías reales",
+      "difficulty": "senior",
+      "scenario": "En READ COMMITTED, dos transacciones concurrentes actualizan el balance de la misma cuenta. T1 lee 100, calcula 100-30=70, escribe 70. T2 (concurrente) lee 100, calcula 100-50=50, escribe 50. Resultado final: 50. Se perdieron 30€.",
+      "question": "¿Cómo se llama esta anomalía y cómo se resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Se llama 'dirty read', se resuelve subiendo a READ COMMITTED.", "correct": false, "why": "El escenario YA es READ COMMITTED. Dirty read es leer datos no committed — este caso lee datos committed pero desactualizados por la concurrencia. Confusión de anomalías." },
+        { "letter": "B", "text": "Es 'lost update'. Se resuelve con: (1) SELECT ... FOR UPDATE (lock explícito); (2) UPDATE atómico con expresión (UPDATE ... SET balance = balance - 30); (3) subir isolation a REPEATABLE READ o SNAPSHOT (que en Postgres detecta el conflicto); (4) versionado optimista (columna version + CAS).", "correct": true, "why": "Correcto. Lost Update (Berenson et al. 1995) es la anomalía. Soluciones: (a) locking pesimista con FOR UPDATE — simple, penaliza throughput; (b) update atómico que hace el cálculo en la DB — resuelve el read-modify-write en single statement; (c) snapshot isolation con detección de write-write conflict — Postgres/Oracle abortan una de las tx; (d) optimistic con version bump — cliente reintenta si version cambió. Cada uno con trade-offs." },
+        { "letter": "C", "text": "Es 'phantom read', se resuelve con SERIALIZABLE.", "correct": false, "why": "Phantom read es sobre queries que retornan diferente conjunto de rows por INSERTs concurrentes (Berenson et al. 1995). Aquí es UPDATE del mismo row — es Lost Update, no phantom." },
+        { "letter": "D", "text": "El problema no existe: la DB garantiza que el segundo UPDATE espera al primero.", "correct": false, "why": "Falso en READ COMMITTED. Ambas tx leen 100 (snapshot), computan independientemente, y el segundo UPDATE simplemente sobrescribe. No hay lock automático sobre el row leído. Solo REPEATABLE READ/SNAPSHOT con detección, o locks explícitos, previenen esto." }
+      ],
+      "explanation": "Isolation levels ANSI/ISO definen 4 fenómenos evitables: Dirty Read (leer uncommitted), Non-Repeatable Read (mismo query da distinto resultado en misma tx), Phantom Read (mismo range query da distintas rows), Lost Update (implicit en Berenson). Cada level bloquea un conjunto: RU permite todo, RC bloquea dirty, RR bloquea también non-repeatable, Serializable todo. Postgres 'REPEATABLE READ' es en realidad Snapshot Isolation — detecta write-write conflicts y aborta uno (ERROR 40001, retry en el cliente). Serializable en Postgres es SSI (Serializable Snapshot Isolation, Cahill 2008) — detecta anomalías más sutiles como write skew. Regla staff: siempre saber en qué level operas y qué anomalías te expones. En finanzas y stock, casi siempre Serializable + retry loop.",
+      "realWorld": "Kyle Kingsbury (Jepsen) mostró que muchos vendors mentían sobre sus isolation levels. MongoDB antes de 4.0 no tenía multi-doc transactions. MySQL InnoDB REPEATABLE READ NO previene lost update sin FOR UPDATE — bug histórico documentado. Adya (1999) formalizó anomalías más allá de ANSI SQL. CockroachDB y Spanner ofrecen Serializable por default; Postgres y Oracle default a Read Committed (más rápido pero requiere cuidado).",
+      "tags": ["isolation", "lost update", "serializable", "snapshot"],
+      "tech": ["PostgreSQL", "MySQL", "Oracle", "CockroachDB"],
+      "references": [{ "title": "Berenson et al. — 'A Critique of ANSI SQL Isolation Levels', SIGMOD 1995" }, { "title": "Cahill et al. — 'Serializable Isolation for Snapshot Databases', SIGMOD 2008" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "scalability",
+      "topic": "Eventual consistency — cuándo es aceptable",
+      "difficulty": "mid",
+      "scenario": "Product manager pide 'consistencia fuerte en todo por seguridad'. Como arquitecto, debes explicar qué casos toleran (o requieren) eventual consistency.",
+      "question": "¿Cuáles operaciones son APROPIADAS para eventual consistency? (marca todas)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Contador de vistas de un post (like counter en Twitter/Instagram).", "correct": true, "why": "Correcto. Un delta de 1s en el conteo es imperceptible al usuario. Instagram/Twitter agregan likes en counter services eventualmente consistentes — pagar consistency estricto por un +1 sería derrochar recursos masivos. Se tolera divergencia de 1-2% entre replicas." },
+        { "letter": "B", "text": "Feed de noticias / timeline de social network.", "correct": true, "why": "Correcto. Ver un post 500ms después que otro usuario es aceptable. Facebook TAO explícitamente ofrece eventual consistency para el social graph con read-your-writes solo para el autor. Optimizar para latencia (viewers) sobre linearizabilidad global." },
+        { "letter": "C", "text": "Registro de nuevos usuarios (unicidad de email).", "correct": false, "why": "REQUIERE consistencia: si dos requests concurrentes registran el mismo email en réplicas distintas, terminas con duplicados y bugs de auth. Esto requiere linearizabilidad o al menos unique constraint en un master (consenso). Uno de los ejemplos canónicos de 'no eventual'." },
+        { "letter": "D", "text": "Transferencia bancaria entre cuentas.", "correct": false, "why": "REQUIERE consistencia + atomicidad. Sin ella: dinero desaparece o se duplica. Aunque muchos bancos usan eventual con reconciliación offline, la operación LÓGICA debe ser ACID (típicamente sagas con compensación + reconciliación auditada)." },
+        { "letter": "E", "text": "Búsqueda en catálogo de productos.", "correct": true, "why": "Correcto. Elasticsearch/Algolia son eventuales por diseño (refresh interval ~1s). Un producto nuevo tarda ~seg en aparecer en búsqueda — aceptable. Nadie espera que el catálogo del competidor se sincronice instantáneamente." }
+      ],
+      "explanation": "Regla práctica: eventual consistency es apropiado cuando (a) el usuario NO acaba de escribir el dato, (b) el impacto de ver stale es bajo (UX, no dinero/auth), (c) los cambios convergen sin conflicto irresoluble (contadores, feeds). Requiere consistencia fuerte cuando (a) invariantes de negocio (balance ≥ 0, stock ≥ 0, email único), (b) read-your-writes en la misma sesión, (c) coordinación cross-entity (transferencia). Un sistema real MEZCLA: BFF hace strong reads para dashboards de dinero, eventual para métricas cosméticas. Cada endpoint declara su necesidad. El error de junior es 'todo strong' (caro y lento) o 'todo eventual' (bugs sutiles); el senior elige por operación.",
+      "realWorld": "Amazon carts: eventual — 'always writeable' era el requisito de Dynamo. Amazon checkout: strong con locks pesimistas y saga. Twitter timeline: eventual (Manhattan/Gizzard). Twitter DMs: sequential per-user (más fuerte). Facebook TAO: read-your-writes para el autor + eventual para readers. La granularidad de la elección se paga con conocimiento del dominio.",
+      "tags": ["eventual consistency", "tradeoffs", "read-your-writes"],
+      "tech": ["Cassandra", "DynamoDB", "Elasticsearch"],
+      "references": [{ "title": "Werner Vogels — 'Eventually Consistent', ACM Queue 2008" }, { "title": "Bronson et al. — 'TAO: Facebook's Distributed Data Store', ATC 2013" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "db-choice",
+      "topic": "Idempotencia y deduplicación",
+      "difficulty": "senior",
+      "scenario": "Sistema de pagos con Stripe. El cliente hace POST /charge. Timeout en la respuesta. Cliente reintenta. Sin cuidado, cobras 2 veces.",
+      "question": "¿Cuál es el patrón correcto y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cliente envía un Idempotency-Key único (UUID). Servidor deduplica: si ya procesó ese key, devuelve la respuesta cacheada; si no, procesa y guarda (key → response) con TTL.", "correct": true, "why": "Correcto. El header Idempotency-Key (Stripe, PayPal, GitHub, RFC draft-ietf-httpapi) es el estándar de facto. El cliente genera un UUID por operación LÓGICA (no por retry). El servidor mantiene una tabla (key, request_hash, response, expires_at). Al reintentar con el mismo key, devuelve la respuesta original — no procesa dos veces. Requiere que la tabla sea transaccionalmente consistente con la operación." },
+        { "letter": "B", "text": "Servidor detecta duplicados por (user_id, amount, minute-bucket).", "correct": false, "why": "Frágil: dos pagos legítimos del mismo monto en el mismo minuto colisionan. Además ¿bucket de minuto exacto? Bug de timezone/clock. La solución correcta pasa por un identificador EXPLÍCITO del cliente." },
+        { "letter": "C", "text": "Usar POST + optimistic locking en la DB con versión.", "correct": false, "why": "Optimistic locking previene lost update sobre un recurso existente, pero no previene DOBLE CREACIÓN del mismo pago. El cliente reintenta POST → crea otro row con otro id → aunque cada uno tenga version=1 correctamente, tienes dos charges." },
+        { "letter": "D", "text": "Confiar en que el retry del cliente sea 'sabio' — no reintentar POST.", "correct": false, "why": "El cliente NO SABE si el POST llegó (respuesta perdida = ambigüedad total). Si no reintenta, pierde operaciones legítimas ante fallos transitorios. La responsabilidad de dedup DEBE estar en el server con idempotency key." }
+      ],
+      "explanation": "Idempotencia es la piedra angular de sistemas distribuidos confiables. HTTP semántica: GET/PUT/DELETE son idempotentes por diseño (mismo resultado si se ejecutan N veces). POST no lo es sin ayuda. Idempotency-Key transforma POST en idempotente. Consideraciones: (1) key debe cubrir la operación completa (una compra, no cada retry). (2) TTL adecuado (24-72h en pagos típicamente). (3) La tabla de dedup debe estar en la MISMA DB de la operación (o en una tx distribuida) — sino, race entre 'check key' y 'process'. (4) Si el body difiere entre requests con misma key, algunos APIs devuelven error 409 (Stripe) — protege contra reuso incorrecto. Exactly-once delivery en messaging es un mito (Kafka lo aproxima con idempotent producer + transactions); exactly-once PROCESSING se logra con idempotencia + at-least-once delivery.",
+      "realWorld": "Stripe expone Idempotency-Key formalmente desde ~2015 (blog 'Designing robust and predictable APIs with idempotency'). AWS S3 usa mecanismos similares para uploads multipart. GitHub API expone idempotency para operaciones críticas. La regla de plataformas serias: TODA API que muta estado externo debe aceptar idempotency key.",
+      "tags": ["idempotency", "retries", "deduplication", "exactly-once"],
+      "tech": ["HTTP", "Stripe API", "AWS SDK"],
+      "references": [{ "title": "Stripe Engineering — 'Designing robust and predictable APIs with idempotency'" }, { "title": "IETF draft-ietf-httpapi-idempotency-key-header" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "scalability",
+      "topic": "Fencing tokens y locks distribuidos",
+      "difficulty": "staff",
+      "scenario": "Usas Redlock (Redis distributed lock) para asegurar que solo un worker procesa una tarea. Worker A adquiere el lock, se pausa 10s por GC. Mientras, el lock expira. Worker B lo adquiere y empieza a procesar. Worker A despierta y también procesa, creyendo aún tener el lock. Colisión.",
+      "question": "¿Cuál es el problema y cuál es la solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aumentar el TTL del lock a 60s para evitar expiración durante GC.", "correct": false, "why": "Mitigación pobre: un GC largo, VM pausada, network freeze pueden superar cualquier TTL. Y aumentar TTL empeora la latencia de recovery cuando un worker sí muere. No resuelve la raíz." },
+        { "letter": "B", "text": "El problema es fundamental: cualquier lock distribuido con TTL sufre esto. Solución: fencing tokens — el lock devuelve un número monotónicamente creciente (token). El recurso destino REJECT operaciones con token menor al último visto. Así Worker A con token=17 falla al escribir cuando el recurso ya vio token=18 de Worker B.", "correct": true, "why": "Correcto. Martin Kleppmann publicó el análisis definitivo ('How to do distributed locking', 2016) mostrando que Redlock NO es seguro sin fencing tokens. La solución requiere que el recurso destino (DB, storage) valide el token — el lock por sí solo nunca puede ser 'safe' sin ese soporte. Zookeeper y etcd exponen fencing tokens (zxid, revision). Redlock no los expone nativamente." },
+        { "letter": "C", "text": "Usar Redis Sentinel para failover automático del lock.", "correct": false, "why": "Sentinel no resuelve el problema del CLIENT pausado — el problema no es Redis caído sino el cliente que pausó y no sabe que perdió el lock. Además Sentinel tiene sus propios problemas (Kleppmann mostró que Redlock con failover puede violar mutex bajo network delays)." },
+        { "letter": "D", "text": "Simplemente no usar locks distribuidos.", "correct": false, "why": "Consejo tentador pero simplista. A veces necesitas exclusión. La respuesta correcta es diseñar el sistema para tolerar re-ejecución (idempotencia + fencing) O usar coordination service correcto (Zookeeper, etcd) con fencing tokens." }
+      ],
+      "explanation": "Locks distribuidos son notoriously difíciles. Problemas fundamentales: (1) TTL vs client pause — si el cliente se pausa más que TTL, otro cliente adquiere el lock; el original despierta y sigue creyendo tenerlo. (2) Failover del lock service puede duplicar locks. (3) Network partitions crean split-brain de locks. La solución REAL es fencing tokens: cada adquisición devuelve un número creciente; el RECURSO destino (DB, S3, etc.) rechaza operaciones con token stale. Requiere colaboración del recurso — muchos no lo soportan. Alternativas: (a) diseño idempotente (procesar dos veces produce mismo resultado); (b) leader election con consenso real (Raft/Paxos vía etcd/Zookeeper) + fencing; (c) evitar el lock — particionar el trabajo por hash para que naturalmente un solo worker toque cada partición.",
+      "realWorld": "Kleppmann vs Antirez (autor de Redis) tuvieron un debate público célebre 2016 sobre Redlock. Kleppmann demostró que sin fencing tokens Redlock no es un mutex correcto bajo network delay o clock skew. Google Chubby (paper 2006) es el sistema de locks distribuidos de referencia — usa fencing tokens (sequencers) desde el diseño original. Kafka usa epoch numbers para el mismo propósito (leader epoch fencing).",
+      "tags": ["distributed lock", "fencing tokens", "Redlock", "consensus"],
+      "tech": ["Redis", "Zookeeper", "etcd", "Chubby"],
+      "references": [{ "title": "Martin Kleppmann — 'How to do distributed locking' (2016)" }, { "title": "Burrows — 'The Chubby lock service for loosely-coupled distributed systems', OSDI 2006" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "db-choice",
+      "topic": "Causal consistency práctica",
+      "difficulty": "staff",
+      "scenario": "Facebook TAO ejemplo: usuario A comenta 'ojalá renuncie mi jefe'. Usuario A borra el comentario. Usuario B (amigo de A) responde antes de que se propague el delete. Otro usuario C ve la respuesta de B sin ver el comentario original de A.",
+      "question": "¿Qué modelo de consistencia resolvería esta anomalía y cómo se implementa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Causal consistency: si un evento E1 causó E2, todos los observadores ven E1 antes que E2. Se implementa con vector clocks o hybrid logical clocks propagados con las operaciones.", "correct": true, "why": "Correcto. Causal consistency (Ahamad et al. 1995) garantiza que la relación happens-before (Lamport) se preserva en todas las replicas. Implementación práctica: cada write lleva metadata causal (vector clock, version vector, HLC); las réplicas retienen writes hasta que sus dependencias causales estén satisfechas. COPS (Lloyd et al. 2011) y Eiger son sistemas académicos que la implementan; en producción Cosmos DB ofrece 'consistent prefix' + session, que aproxima causal." },
+        { "letter": "B", "text": "Linearizable global. Es la única forma de garantizar orden.", "correct": false, "why": "Sobre-restrictivo. Linearizable requiere consenso global (latencia alta, coste). Causal es estrictamente MÁS DÉBIL que linearizable pero suficiente para el ejemplo — y mucho más barato de implementar en un sistema geodistribuido masivo como Facebook." },
+        { "letter": "C", "text": "Eventual consistency más un TTL de 5 segundos en el cache.", "correct": false, "why": "Eventual no da NINGUNA garantía sobre orden. Un TTL no impone causalidad; solo mitiga probabilísticamente. El bug puede seguir ocurriendo. Es exactamente el nivel actual que causa el problema." },
+        { "letter": "D", "text": "Read repair anti-entropy tras cada escritura.", "correct": false, "why": "Read repair es un mecanismo de convergencia asincrónica, no proporciona ordering causal. Además penaliza latencia sin resolver el problema fundamental de dependencies entre writes." }
+      ],
+      "explanation": "Causal consistency es el 'sweet spot' teórico según muchos investigadores (Bailis, Ghodsi et al.): es el modelo MÁS FUERTE que se puede implementar sin renunciar a disponibilidad bajo partición (teorema de Attiya-Ellis-Morrison 2015 lo formaliza para SEC — Strong Eventual Consistency + causal). En práctica, implementarlo requiere metadata por operación: (1) vector clocks — pesados si el número de clientes es grande; (2) HLC — combina wall+logical, adopción creciente (MongoDB, Cockroach); (3) explicit dependency tracking (COPS). Dificultades: garbage collection de metadata, tolerar clientes offline por horas/días, compact representation. Cosmos DB expone 5 niveles nombrados: strong, bounded staleness, session, consistent prefix, eventual. Session ≈ causal en la práctica común. AWS TimeSync ofrece clock sync sub-ms para permitir HLC-style enforcement.",
+      "realWorld": "Facebook TAO usa 'per-object sequential' + read-your-writes por sesión — más débil que causal completo pero suficiente para el social graph. WhatsApp implementó ordering causal para messages (el problema del 'seen' que llega antes que el message es exactamente causal). COPS y Eiger son papers de referencia académica. Riak ofrece causal consistency opcional con dotted version vectors.",
+      "tags": ["causal consistency", "HLC", "vector clocks", "TAO"],
+      "tech": ["Cosmos DB", "MongoDB", "Riak"],
+      "references": [{ "title": "Lloyd et al. — 'Don't Settle for Eventual: Scalable Causal Consistency for Wide-Area Storage with COPS', SOSP 2011" }, { "title": "Bronson et al. — 'TAO: Facebook's Distributed Data Store', ATC 2013" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "db-choice",
+      "topic": "Bounded staleness",
+      "difficulty": "mid",
+      "scenario": "Product team quiere dashboards en tiempo real, pero acepta hasta 5 segundos de retraso en los números. Insisten en 'linearizable' porque 'suena más profesional'.",
+      "question": "¿Qué modelo se ajusta MEJOR al requerimiento real y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Linearizable global con Spanner-like.", "correct": false, "why": "Over-engineered. Linearizabilidad global pagará latencia alta (RTT quorum, TrueTime waits ~7ms mínimo en Spanner) por un requerimiento que EXPLÍCITAMENTE tolera 5s de lag. Waste de recursos y complejidad." },
+        { "letter": "B", "text": "Bounded staleness: garantiza que las lecturas ven un estado como máximo X tiempo (o Y operaciones) atrás. Es más barato que linearizable y da SLA explícito de freshness — 'ves datos de hace ≤5s'.", "correct": true, "why": "Correcto. Bounded staleness (Cosmos DB lo ofrece nombrado; también implementable en Cassandra vía LOCAL_QUORUM con lag monitoring) es exactamente lo que pide el use case: freshness bounded, no strict. Barato porque permite lecturas locales/replicas mientras el lag esté dentro del bound." },
+        { "letter": "C", "text": "Eventual consistency sin más — 'eventually' es suficiente.", "correct": false, "why": "Eventual NO garantiza el bound de 5s — bajo carga o partición el lag puede subir a minutos silenciosamente y el dashboard mentiría sin alerta. Bounded staleness incluye monitoring/enforcement del bound." },
+        { "letter": "D", "text": "Snapshot isolation.", "correct": false, "why": "Snapshot isolation es un ISOLATION level para transacciones concurrentes, no un consistency model para réplicas. Confundir estos dos ejes es error frecuente." }
+      ],
+      "explanation": "Bounded staleness es un modelo pragmático: 'strict enough' con SLA cuantificable. Cosmos DB lo expone directamente con parámetros (K=número de operaciones, T=tiempo). Sistemas que replican async pueden implementar bounded staleness monitoreando el lag (LSN diff en Postgres, replica lag metrics) y rehusando servir de una réplica que exceda el bound (routing al primary o error). Ventajas: SLA claro para el consumer, más barato que linearizable, más útil que eventual puro. Trade-off: durante partition, se degrada a rechazar reads (mantener bound) o servir stale (violar bound). Cosmos elige rechazar por default. En Postgres, extensiones como pglogical exponen lag; PgBouncer + custom router pueden implementar bounded staleness a mano.",
+      "realWorld": "Cosmos DB documenta los 5 modelos con SLA formal — Microsoft publica papers sobre por qué bounded staleness es popular en enterprise. AWS DynamoDB Global Tables no ofrece bounded staleness formal (solo eventual entre regiones); apps que necesitan freshness bound deben implementar el monitoring encima. Netflix EVCache monitorea lag entre regiones y sirve stale con marca cuando excede thresholds.",
+      "tags": ["bounded staleness", "SLA", "Cosmos DB", "consistency levels"],
+      "tech": ["Cosmos DB", "DynamoDB", "Postgres"],
+      "references": [{ "title": "Azure Docs — 'Consistency levels in Azure Cosmos DB'" }, { "title": "Microsoft Research — 'Consistency Analysis in Bloom' (Bailis)" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "scalability",
+      "topic": "Conflict resolution strategies",
+      "difficulty": "senior",
+      "scenario": "Sistema multi-master (Riak, DynamoDB Global Tables, o Cosmos multi-region). Dos writes concurrentes al mismo key en regiones distintas. ¿Cómo se resuelve?",
+      "question": "¿Qué estrategias existen y cuál es el trade-off? (marca todas las VÁLIDAS)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Last-Write-Wins (LWW) por timestamp: simple pero pierde datos silenciosamente bajo clock skew o writes concurrentes reales.", "correct": true, "why": "Correcto. LWW es el default más común (DynamoDB Global Tables, Cassandra) por simplicidad. Trade-off: pierde el write 'perdedor' sin notificación. Aceptable para datos idempotentes o donde 'último gana' es semánticamente correcto (perfil de usuario), catastrófico para contadores o listas." },
+        { "letter": "B", "text": "Merge automático via CRDT (contadores como PN-Counter, sets como OR-Set): sin pérdida de datos si la operación commutta.", "correct": true, "why": "Correcto. Redis CRDBs, Riak Data Types, Azure Cosmos exponen CRDTs directamente. Cada operación se conmuta correctamente sin coordinación. Limitación: no toda estructura tiene CRDT natural (listas ordenadas son difíciles; strings requieren RGA/Yjs-like)." },
+        { "letter": "C", "text": "Devolver 'siblings' al cliente y dejarlo decidir (Riak, Dynamo original).", "correct": true, "why": "Correcto. Dynamo devolvía múltiples versiones concurrentes (vector clock incomparable) al cliente. El cliente/app decide cómo mergear (ejemplo Amazon: union de carts, aceptando falsos positivos como 'un ítem que borré vuelve' — mejor para el negocio que 'perdí mi cart entero'). UX difícil, poder máximo." },
+        { "letter": "D", "text": "Custom resolution function definida por la app (server-side merge lógico).", "correct": true, "why": "Correcto. Cosmos DB permite stored procedures como conflict resolvers. Riak permite conflict resolution callbacks. Poder max, complejidad max. Útil cuando la lógica de merge es específica al dominio." },
+        { "letter": "E", "text": "Bloquear writes globalmente hasta que el conflicto se resuelva.", "correct": false, "why": "Anti-patrón: elimina el beneficio de multi-master (disponibilidad ante partición). Si bloqueas, no hay multi-master real. Esto es cambiar a single-master." }
+      ],
+      "explanation": "Estrategias por complejidad creciente y potencia creciente: (1) LWW — trivial, silenciosamente perdedor de datos. (2) CRDT — sin pérdida si operaciones commutan; limitado a estructuras que la soportan. (3) Siblings — máximo poder, empuja complejidad al cliente. (4) Custom merge — max flexibilidad, alta complejidad, se paga en bugs. Regla: siempre entender qué hace TU sistema por default. Muchos ingenieros creen usar 'multi-master consistente' y en realidad usan LWW silencioso perdiendo writes. Auditar (Jepsen-style) es lo profesional. Amazon shopping cart es el ejemplo canónico de 'merge unión' pragmático — mejor devolver de más que perder items.",
+      "realWorld": "Riak fue pionera exponiendo siblings al cliente; su famoso 'Bruce the app' handbook explica cómo modelar. Cosmos DB documenta las 3 estrategias (LWW, custom merge, custom sync — con stored procs). Redis Enterprise (RedisLabs) implementa CRDBs con OR-Sets, PN-Counters etc. Amazon retail carts explícitamente usan unión (paper Dynamo 2007 lo detalla).",
+      "tags": ["conflict resolution", "LWW", "siblings", "CRDT", "multi-master"],
+      "tech": ["Riak", "DynamoDB Global Tables", "Cosmos DB", "Redis Enterprise"],
+      "references": [{ "title": "DeCandia et al. — 'Dynamo: Amazon's Highly Available Key-Value Store', SOSP 2007" }, { "title": "Azure Docs — 'Conflict resolution policies in Cosmos DB'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "db-choice",
+      "topic": "Linearizability vs Serializability",
+      "difficulty": "staff",
+      "scenario": "Un candidato dice en entrevista: 'nuestro sistema es Serializable, así que también es Linearizable'. Otro asiente.",
+      "question": "¿Cuál es la diferencia y qué sistemas ofrecen qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son sinónimos.", "correct": false, "why": "Falso. Son propiedades ORTOGONALES. Serializability trata sobre TRANSACCIONES (operaciones multi-op agrupadas) apareciendo como si se ejecutaran en algún orden secuencial. Linearizability trata sobre operaciones SIMPLES respetando el orden real-time." },
+        { "letter": "B", "text": "Serializability: transacciones equivalentes a algún orden serial. Linearizability: cada operación aparece atómica en un punto entre invocación y retorno, respetando REAL-TIME. Strict Serializability = ambas. Postgres SERIALIZABLE es serializable pero NO linearizable (snapshot puede reordenar tx serializadas). Spanner ofrece Strict Serializability.", "correct": true, "why": "Correcto. Diferencias sutiles pero críticas. Serializable admite reorderings equivalentes a algún orden serial — puede 'mentir' sobre el tiempo real (una tx completada puede aparecer 'antes' de otra que empezó después). Linearizability es una propiedad de OBJETO ÚNICO (un register, una queue) — respeta wall-clock. Combinarlas = Strict Serializability (external consistency), lo que ofrece Spanner. Postgres SSI es serializable pero NO strict serializable — anomalías de real-time son posibles." },
+        { "letter": "C", "text": "Linearizability implica Serializability.", "correct": false, "why": "Confusión de niveles. Linearizability es sobre single-object; serializability sobre multi-op transactions. Un sistema con register linearizable puede tener transacciones no serializable (dirty writes multi-key). Son axes ortogonales." },
+        { "letter": "D", "text": "Serializability requiere linearizability como base.", "correct": false, "why": "Falso. Postgres implementa Serializable Snapshot Isolation (SSI, Cahill 2008) sin linearizability. Las transacciones aparentan orden serial, pero desde afuera puedes observar violaciones de real-time." }
+      ],
+      "explanation": "Herlihy-Wing 1990 definió Linearizability como corrección para objetos concurrentes (queue, register, etc.). Papadimitriou 1979 definió Serializability para transacciones DB. Adya-Liskov-O'Neil 1999 formalizó Isolation Levels. Strict Serializability (a veces 'external consistency' o 'strong serializability') = ambas — es lo que ofrece Spanner con TrueTime, CockroachDB con HLC + intents, FoundationDB, VoltDB. Postgres SERIALIZABLE = SSI, no strict. Este matiz importa: en tests como Jepsen, un sistema puede parecer 'correcto' según serializability pero mostrar anomalías de tiempo real (write que fue committed en T=1 aparece 'después' de read en T=2 que no lo vio) — bugs raros pero reales, especialmente en analytics multi-region.",
+      "realWorld": "Spanner (Corbett et al. 2012, OSDI) fue el primer sistema production-scale global con Strict Serializability. TrueTime + Paxos por partition + wound-wait locking lo hacen posible. CockroachDB y YugabyteDB son alternativas open-source aproximándose. FoundationDB (Apple) también ofrece serialiability estricta desde 2013. En papers académicos siempre precisar 'linearizable', 'serializable', o 'strict serializable' — cada uno tiene implicaciones distintas para performance y algoritmos.",
+      "tags": ["linearizability", "serializability", "strict serializability", "consistency"],
+      "tech": ["Spanner", "CockroachDB", "PostgreSQL", "FoundationDB"],
+      "references": [{ "title": "Corbett et al. — 'Spanner: Google's Globally-Distributed Database', OSDI 2012" }, { "title": "Herlihy, Wing — 'Linearizability', TOPLAS 1990" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "scalability",
+      "topic": "Read replicas — lag y sus riesgos",
+      "difficulty": "mid",
+      "scenario": "Tenéis Postgres primary + 3 réplicas async. Métricas muestran replica lag oscilando entre 100ms y 30s bajo carga alta. Un dashboard muestra números aleatoriamente inconsistentes según a qué réplica pega.",
+      "question": "¿Qué acciones son APROPIADAS? (marca todas)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Router 'lag-aware': antes de servir de una réplica, chequear su lag; si supera un threshold (ej. 1s), redirigir al primary o a otra réplica.", "correct": true, "why": "Correcto. PgBouncer + ProxySQL o soluciones como AWS RDS Proxy pueden implementar routing con lag awareness. Da bounded staleness práctico." },
+        { "letter": "B", "text": "Session pinning: durante una sesión de usuario, siempre pegar a la misma réplica (o al primary) para garantizar consistencia monotónica per-user.", "correct": true, "why": "Correcto. Monotonic Reads (session guarantee) evita ver 'el tiempo yendo atrás' cuando el load balancer rota entre réplicas con lag distinto. Sticky sessions por cookie/user_id resuelven." },
+        { "letter": "C", "text": "Alertar cuando el lag exceda un threshold (ej. 5s) y considerar el load como degraded.", "correct": true, "why": "Correcto. Lag es un SLI clave. Si lag alto persiste, hay un problema (query pesada en primary, network, IO en replica). Alertar + investigar. Datadog, Grafana, RDS Enhanced Monitoring exponen lag como métrica primaria." },
+        { "letter": "D", "text": "Eliminar todas las réplicas y usar solo el primary para consistencia.", "correct": false, "why": "Elimina el problema eliminando la solución. Réplicas existen para escalar reads; su ausencia sobrecargará el primary. Es tirar el bebé con el agua sucia." },
+        { "letter": "E", "text": "Cambiar a replicación síncrona (synchronous_commit=on con synchronous_standby_names) para eliminar el lag.", "correct": false, "why": "Válido pero costoso: cada write espera commit en al menos una réplica → latencia de writes sube, y si la réplica se cae, los writes se BLOQUEAN. Trade-off severo. Válido solo para datos críticos que justifiquen el costo (financiero), no como default." }
+      ],
+      "explanation": "Replica lag es inevitable en async replication. Estrategias para manejarlo: (1) Monitor y alertar. (2) Router con lag awareness — si lag > threshold, no servir de esa replica. (3) Session guarantees — sticky routing por sesión para monotonic reads. (4) Read-after-write policies — tras un write, forzar reads al primary por N seg (o hasta LSN alcanzado). (5) Sync replication para datos críticos, paga latencia + fragilidad. Postgres 12+ ofrece 'synchronous_commit=remote_apply' que espera hasta que la réplica APLIQUE el cambio (no solo lo reciba), la garantía más fuerte pero más lenta. AWS Aurora usa storage compartido en vez de replication, elimina lag conceptualmente (todas las réplicas leen del mismo storage layer) pero introduce sus propios trade-offs.",
+      "realWorld": "Instagram tuvo bugs históricos por replica lag en el timeline; movieron parte a Cassandra por eso. GitHub explícitamente route reads a primary tras writes (session sticky) — publican mucho sobre esto. AWS Aurora fue una respuesta comercial al problema de lag: separar compute y storage compartido.",
+      "tags": ["replication", "replica lag", "read scaling", "monotonic reads"],
+      "tech": ["PostgreSQL", "MySQL", "AWS RDS", "PgBouncer"],
+      "references": [{ "title": "PostgreSQL Docs — 'Hot Standby and Replication'" }, { "title": "AWS — 'Amazon Aurora architecture'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "db-choice",
+      "topic": "Choosing consistency level per operation",
+      "difficulty": "senior",
+      "scenario": "Diseñas una app de banca digital. Tiene: (a) balance del usuario, (b) historial de transacciones, (c) feed de notificaciones, (d) estado del scoring crediticio (batch, actualizado diariamente). Un colega propone 'todo Serializable + strong reads' para simplificar.",
+      "question": "¿Cuál asignación tiene MÁS SENTIDO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) Serializable + linearizable read; (b) Snapshot / read-your-writes; (c) Eventual + read-your-writes; (d) Eventual sin más — se actualiza en batch nocturno.", "correct": true, "why": "Correcto. Consistency es COSTO — asigna donde APORTA valor. Balance: money, invariante balance≥0, tx atómica → Serializable + linearizable read para 'saldo disponible' que gates decisiones (no puedes ver saldo stale para autorizar pago). Historial: append-only, no cambia; solo necesita ver los propios movimientos tras hacerlos (read-your-writes). Notificaciones: eventual es OK (nadie muere si una notif tarda 500ms), pero read-your-writes evita que 'marcar como leído' rebote de vuelta a no leído. Scoring: batch diario, eventual perfecto." },
+        { "letter": "B", "text": "Todo Serializable + linearizable para máxima seguridad.", "correct": false, "why": "Sobrepasa el requerimiento con costo altísimo. Notificaciones y scoring en Serializable == waste de recursos, latencia global, complejidad. La banca real diferencia por criticidad." },
+        { "letter": "C", "text": "Todo eventual — la banca puede reconciliar offline.", "correct": false, "why": "Falso para balance disponible en tiempo de autorización. Si autorizas un pago con balance stale, permites overdraft indeseado. El core banking sí necesita strong para autorizaciones online. Solo el reporting/analytics puede ser eventual." },
+        { "letter": "D", "text": "Todo Snapshot Isolation — buen balance entre performance y consistency.", "correct": false, "why": "Aplicación uniforme sin criterio. Snapshot Isolation es un ISOLATION LEVEL (transactions), no aborda el eje de replicación. Además scoring batch no gana nada con SI, y balance necesita más que SI (SI permite write skew, peligroso para invariantes cross-account)." }
+      ],
+      "explanation": "El arte de la arquitectura de datos senior es asignar consistency por operación. Regla mental: (1) Money → Serializable + linearizable (Spanner-like o single-master con locks). (2) User content editado por el propio user → read-your-writes al menos. (3) Feeds/notifications de terceros → eventual + monotonic. (4) Analytics/reporting → eventual. (5) Batch derivations → eventual, refresh explícito. Costo por nivel (aprox): eventual < causal < session < snapshot < serializable < linearizable ≈ strict serializable. Cada salto = latencia + throughput cost. En banca real: core banking suele estar en mainframe con COBOL + DB2 con serializable estricto. Front-end web usa eventual con cache. Reconciliación nocturna aúna todo. La 'arquitectura de datos' es en gran medida esta asignación.",
+      "realWorld": "Revolut/N26/Chime combinan cores strong-consistent para dinero con caches eventuales para UI. Wise (TransferWise) publicó blog sobre cómo separan hot path (transfer execution, strong) de cold path (reporting, eventual). Amazon retail: cart eventual pero inventory decrement estrictamente serializable durante checkout. Diferenciar por use case es literalmente millones de dólares en infraestructura ahorrada.",
+      "tags": ["consistency assignment", "cost tradeoffs", "banking architecture"],
+      "tech": ["Spanner", "Postgres", "DynamoDB", "Cassandra"],
+      "references": [{ "title": "Kleppmann — DDIA, Cap. 9" }, { "title": "Werner Vogels — 'Eventually Consistent', ACM Queue 2008" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "db-choice",
+      "topic": "Anti-entropy y Merkle trees",
+      "difficulty": "junior",
+      "scenario": "Cassandra periódicamente ejecuta 'repair' entre réplicas. ¿Cómo detecta eficientemente las diferencias sin transferir todos los datos?",
+      "question": "¿Qué estructura de datos permite comparar dos réplicas y encontrar solo las diferencias?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Merkle trees: cada nodo hoja hash de un rango de datos; cada nodo interno hash de sus hijos. Comparando roots detecta diferencias; descendiendo por subárboles divergentes se localiza exactamente qué keys difieren, transfiriendo solo esas.", "correct": true, "why": "Correcto. Merkle trees (Ralph Merkle 1979, usados en Git, Bitcoin, Cassandra, Dynamo, IPFS) permiten comparación eficiente O(log N) para localizar diferencias en dos conjuntos grandes. Cassandra 'nodetool repair' usa Merkle trees. Sin ellos, la 'anti-entropy' requiere transferir todo o comparar row-by-row." },
+        { "letter": "B", "text": "Bloom filters.", "correct": false, "why": "Bloom filters detectan MEMBERSHIP probabilístico (¿está esta key en el set?), no detectan diferencias en valores ni permiten localización eficiente. Cassandra usa Bloom filters para saber si un SSTable puede contener una key (evita disk reads), pero no para repair." },
+        { "letter": "C", "text": "B-Trees.", "correct": false, "why": "B-Trees son estructura de indexación en disco (Postgres, MySQL), no comparación eficiente entre nodos. Confusión de uso." },
+        { "letter": "D", "text": "Transferir todo el dataset y diff.", "correct": false, "why": "Correcto pero terriblemente ineficiente para datasets grandes (TB entre nodos). Es exactamente lo que Merkle trees evitan." }
+      ],
+      "explanation": "Merkle trees son estructura hash de árbol donde cada hoja es hash de un chunk de datos y cada nodo interno es hash de la concatenación de sus hijos. Propiedades: (1) Verificación de integridad — modificar un byte cambia todos los hashes en el camino a la raíz. (2) Comparación eficiente — dos árboles con misma raíz son idénticos; distinta raíz permite bisección para localizar diferencias en O(log N). (3) Usos: Git (commits son Merkle DAGs), Bitcoin (block Merkle root para SPV clients), IPFS (content addressing), Cassandra/Dynamo (anti-entropy repair), Amazon S3 (multipart upload verification). Anti-entropy es un mecanismo eventual: en background, réplicas se sincronizan para converger; Merkle acelera la detección. Otras técnicas: gossip protocols (SWIM, Serf) para membership; read repair para reparación bajo demanda; hinted handoff para writes durante failures cortos.",
+      "realWorld": "Cassandra 'nodetool repair' es operación crítica de mantenimiento en producción — sin repair regular, tombstones y divergencias crecen. Amazon Dynamo paper (2007) describe Merkle trees para anti-entropy. Git internamente es un Merkle DAG — cada commit hash depende de contenidos + parent hash. Bitcoin usa Merkle root en cada block para permitir 'Simple Payment Verification' (SPV) sin bajar toda la chain.",
+      "tags": ["Merkle trees", "anti-entropy", "repair", "Dynamo"],
+      "tech": ["Cassandra", "DynamoDB", "Git", "Bitcoin"],
+      "references": [{ "title": "Merkle — 'A Digital Signature Based on a Conventional Encryption Function', CRYPTO 1987" }, { "title": "DeCandia et al. — 'Dynamo', SOSP 2007" }]
+    }
+  ]
+}

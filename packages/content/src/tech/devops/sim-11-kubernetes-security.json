@@ -1,0 +1,420 @@
+{
+  "id": "devops-sim-11-kubernetes-security",
+  "trackId": "devops",
+  "order": 11,
+  "title": "Simulacro 11 — Kubernetes Security",
+  "focus": "RBAC (Roles, ClusterRoles, RoleBindings), ServiceAccounts, Pod Security Standards, Network Policies aplicadas a security, admission controllers (OPA Gatekeeper, Kyverno), image pull secrets, runtime security (Falco), secrets management (Vault CSI, External Secrets Operator).",
+  "areaCoverage": ["security", "kubernetes"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "kubernetes",
+      "topic": "RBAC — Role vs ClusterRole",
+      "difficulty": "junior",
+      "scenario": "Necesitas darle permisos a un dev: leer Pods en namespace 'team-a' pero nada más. Y también un permiso a un operator: leer Nodes cluster-wide.",
+      "question": "¿Qué son Role, ClusterRole, RoleBinding, ClusterRoleBinding?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Role: define permisos DENTRO de un namespace ('get, list, watch pods en team-a'). ClusterRole: define permisos cluster-wide (aplicables a resources cluster-scoped como nodes, PVs, o a namespaced resources across all namespaces). RoleBinding: asigna Role (o ClusterRole) a users/groups/ServiceAccounts DENTRO de un namespace. ClusterRoleBinding: asigna ClusterRole cluster-wide. Regla: Role solo puede bindearse con RoleBinding; ClusterRole con RoleBinding (scope namespace) o ClusterRoleBinding (scope cluster).", "correct": true, "why": "Correcto. RBAC K8s es namespaced vs cluster. Distinction crítica: RoleBinding + ClusterRole = 'use these cluster-defined permissions but only in THIS namespace'. Powerful pattern para reuse (ClusterRole 'reader' bindeable en múltiples namespaces via RoleBinding)." },
+        { "letter": "B", "text": "Role y ClusterRole son sinónimos.", "correct": false, "why": "Falso. Role scope=namespace; ClusterRole scope=cluster o cross-namespace. Semantic distinta." },
+        { "letter": "C", "text": "RoleBinding puede bindearse a un Role solamente.", "correct": false, "why": "Puede referenciar Role O ClusterRole (aplicando las permissions solo dentro del namespace del binding)." },
+        { "letter": "D", "text": "Todos los users son cluster-admin por default.", "correct": false, "why": "K8s tiene 'principle of least privilege' — sin bindings explícitos, no permissions." }
+      ],
+      "explanation": "RBAC objects: (1) Role (namespaced) — rules for resources en ese ns; (2) ClusterRole (cluster-scoped) — rules for cluster resources OR reusable across namespaces; (3) RoleBinding (namespaced) — grants Role/ClusterRole to subjects EN ese ns; (4) ClusterRoleBinding (cluster-scoped) — grants ClusterRole cluster-wide. Subjects: User, Group, ServiceAccount. Rules: verbs (get, list, watch, create, update, patch, delete, deletecollection), apiGroups, resources, resourceNames. Aggregation: ClusterRoles con label aggregation include otros ClusterRoles (view, edit, admin, cluster-admin). Common pattern: use ClusterRoles predefined (view, edit) + RoleBinding to namespace + user/group.",
+      "realWorld": "K8s ships con predefined ClusterRoles (view, edit, admin, cluster-admin). AWS EKS integrates with IAM (aws-auth ConfigMap maps IAM roles to K8s users). GKE integrates con Google IAM. Azure AD integration en AKS. Most auth issues are RBAC misconfig — user can't do X = check bindings.",
+      "tags": ["rbac", "role", "clusterrole", "authorization"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Using RBAC Authorization" }, { "title": "kubernetes.io — Default Roles and Role Bindings" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "kubernetes",
+      "topic": "ServiceAccounts — identidad de Pods",
+      "difficulty": "junior",
+      "scenario": "Tu app en un Pod necesita hablar con el K8s API (para listar Pods, watch ConfigMaps). ¿Qué identidad usa?",
+      "question": "¿Qué es un ServiceAccount y cómo autentica un Pod al API server?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ServiceAccount es la IDENTIDAD que un Pod usa para hablar con el K8s API. Cada Pod tiene un SA asignado (default: 'default' SA del namespace). K8s inyecta automáticamente credentials en el Pod: (1) montaje del token JWT en /var/run/secrets/kubernetes.io/serviceaccount/token; (2) ca.crt; (3) namespace. Cliente K8s (kubectl, sdks) usa el token para autenticar al API. Los permisos del SA se definen via RoleBinding/ClusterRoleBinding referenciando el SA.", "correct": true, "why": "Correcto. Sin SA explícito, Pod usa 'default' SA con NO permissions (best practice). Crear SA dedicado por app + assignar solo los permisos necesarios. Token es JWT firmado por el cluster." },
+        { "letter": "B", "text": "Los Pods autentican con username/password.", "correct": false, "why": "K8s no usa username/password para in-cluster auth. JWT tokens firmados." },
+        { "letter": "C", "text": "El SA es solo para admins.", "correct": false, "why": "Todo Pod tiene un SA — es su identidad. Admins usan users external (kubeconfig)." },
+        { "letter": "D", "text": "El token del SA nunca expira.", "correct": false, "why": "K8s 1.22+ token es bounded (default 1h, renovado por kubelet automáticamente). Legacy tokens indefinidos deprecated." }
+      ],
+      "explanation": "ServiceAccount lifecycle: (1) create SA (namespaced); (2) grant permissions via (Cluster)RoleBinding; (3) reference SA en Pod spec (spec.serviceAccountName); (4) K8s auto-mounts token+ca+ns. Best practices: (1) unique SA per app (not shared 'default'); (2) minimum permissions (Principle of Least Privilege); (3) disable auto-mount if Pod doesn't need API access (automountServiceAccountToken: false). Modern: token projection with audience + expiration (secure vs legacy static tokens). Cloud integration: (a) AWS IAM Roles for Service Accounts (IRSA) — SA annotation maps to IAM role, workloads assume role sin static creds; (b) GKE Workload Identity — similar; (c) Azure Workload Identity.",
+      "realWorld": "IRSA (EKS) standard pattern for AWS workloads (no static credentials in Pods). Workload Identity (GKE) similar. AKS Workload Identity (Azure AD). Older pattern kube2iam and kiam deprecated in favor of IRSA. Netflix Titus similar concept.",
+      "tags": ["serviceaccount", "identity", "auth", "irsa"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Managing Service Accounts" }, { "title": "AWS — IAM Roles for Service Accounts" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "kubernetes",
+      "topic": "Pod Security Standards",
+      "difficulty": "mid",
+      "scenario": "Un Pod corre como root, monta hostPath a /, tiene capability CAP_SYS_ADMIN. Un attacker compromises la app → escalate to full node.",
+      "question": "¿Qué son Pod Security Standards y qué niveles definen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Pod Security Standards (PSS): 3 niveles predefined por Kubernetes SIG-Security. (1) Privileged — sin restrictions (fits system Pods, DaemonSets con hostPath); (2) Baseline — prevents known privilege escalations (no hostPath, no host network, no privileged containers); (3) Restricted — hardened (runAsNonRoot, readOnlyRootFilesystem, drop ALL capabilities, no privileged escalation). Elegir el más restrictive que la app tolere.", "correct": true, "why": "Correcto. Standards documentados en K8s docs. Cada nivel is más restrictivo. Restricted es best practice para app workloads. Baseline mínimo aceptable. Privileged solo para system components." },
+        { "letter": "B", "text": "Pod Security Admission (PSA): built-in admission controller (K8s 1.25+ GA) que enforces PSS labels en namespaces. Label: pod-security.kubernetes.io/enforce=baseline (or restricted). Modes: enforce (block), audit (log), warn (warn CLI). Reemplaza PodSecurityPolicy (deprecated 1.21, removed 1.25).", "correct": true, "why": "Correcto. PSA implementa PSS. Simple: labels en namespaces. Different modes support gradual rollout (audit first, then enforce). No YAML complex como PSP." },
+        { "letter": "C", "text": "PodSecurityPolicy (PSP) fue el mecanismo previous — deprecated 1.21, REMOVED 1.25. Migration path: PSA (native), OPA Gatekeeper, or Kyverno.", "correct": true, "why": "Correcto. PSP era demasiado complex (auth binding + PSP resource + tricky ordering). PSA is much simpler. Third-party admission (OPA, Kyverno) para casos complex más allá de PSA." },
+        { "letter": "D", "text": "Restricted permite runAsUser=0.", "correct": false, "why": "Restricted requires runAsNonRoot=true. root user (UID 0) blocked. Common issue when migrating apps that assumed root." },
+        { "letter": "E", "text": "PSA replaces the need for NetworkPolicies.", "correct": false, "why": "PSA es Pod-level security (SecurityContext, hostPath, etc.). NetworkPolicies son network-level firewall entre Pods. Complementarios, distintos concerns." }
+      ],
+      "explanation": "PSS niveles detallados: (1) Privileged: básicamente permit all; (2) Baseline: blocks host namespaces (hostPID, hostIPC, hostNetwork), privileged containers, hostPath volumes, dangerous capabilities (SYS_ADMIN, NET_ADMIN, etc.); (3) Restricted: adds runAsNonRoot required, seccompProfile: RuntimeDefault, capabilities drop ALL + add NET_BIND_SERVICE only if needed, no allowPrivilegeEscalation, readOnlyRootFilesystem strongly recommended. Migration to PSA: (a) apply audit label to see violations; (b) fix Pods; (c) apply warn label; (d) apply enforce. Namespace-scoped: different levels per ns (kube-system privileged, apps restricted). Common issues migrating: apps que asumen root, apps que write to filesystem (fix with volume mounts).",
+      "realWorld": "PSP removed en 1.25 (2022). Kubernetes SIG-Auth published migration guide. GKE Autopilot enforces Baseline by default. Rancher, OpenShift have own overlay. Common finding en audits: privileged Pods (many DaemonSets need it), rootful Pods (poor app design).",
+      "tags": ["pod-security", "pss", "psa", "hardening"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Pod Security Standards" }, { "title": "kubernetes.io — Pod Security Admission" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "kubernetes",
+      "topic": "SecurityContext — configurando el Pod",
+      "difficulty": "mid",
+      "scenario": "Necesitas correr un Pod que: (a) no como root; (b) filesystem read-only; (c) drop all capabilities excepto NET_BIND_SERVICE; (d) seccomp profile default.",
+      "question": "¿Cómo se configura securityContext en un Pod para hardening?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SecurityContext puede setearse a nivel Pod (spec.securityContext) o container (containers[].securityContext). Fields comunes: runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 2000, readOnlyRootFilesystem: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}, seccompProfile: {type: RuntimeDefault}. Container-level overrides Pod-level para ese container.", "correct": true, "why": "Correcto. Multiple settings con specific meaning. runAsNonRoot: enforcement (Pod fails to start si image intenta ser root). readOnlyRootFilesystem con volumeMounts para paths writable (tmpfs, emptyDir). seccompProfile filters syscalls." },
+        { "letter": "B", "text": "SecurityContext no requiere config — K8s hardens automáticamente.", "correct": false, "why": "Falso. Sin config, Pods pueden run as root, con caps default, sin seccomp. Explicit hardening required." },
+        { "letter": "C", "text": "readOnlyRootFilesystem afecta el fs del nodo.", "correct": false, "why": "Solo afecta el filesystem del CONTAINER (root fs). Node fs not affected. Mounts (emptyDir, PVC) siguen writable." },
+        { "letter": "D", "text": "Capabilities son irrelevantes en K8s.", "correct": false, "why": "Muy relevantes. Linux capabilities determine what root-only operations un proceso puede hacer. Drop capabilities reduce attack surface — should DROP ALL and ADD specific only if needed." }
+      ],
+      "explanation": "Hardening checklist per container: (1) runAsNonRoot: true + runAsUser: <non-zero-uid>; (2) readOnlyRootFilesystem: true + emptyDir para /tmp; (3) allowPrivilegeEscalation: false; (4) capabilities: drop: [ALL] add only NET_BIND_SERVICE if binding to <1024 port; (5) seccompProfile: RuntimeDefault (filters ~40+ dangerous syscalls); (6) apparmor/selinux profiles for extra defense. Test with kube-score, polaris, or kubeaudit tools. Common issues: (a) apps que asumen root cannot run non-root without image changes; (b) apps que write to arbitrary filesystem paths need volume mounts; (c) some apps require CAP_NET_BIND_SERVICE (bind port 80) — better to use non-privileged port (8080) + Service.",
+      "realWorld": "Distroless images (Google) enforce non-root by design. Alpine, ubi-micro small hardened bases. Prometheus, cert-manager, ArgoCD all restricted-compliant. Netflix Titus similar hardening. GKE Autopilot enforces defaults strongly.",
+      "tags": ["security-context", "hardening", "capabilities", "seccomp"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Configure a Security Context for a Pod" }, { "title": "kubernetes.io — Restrict a Container's Syscalls with seccomp" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "security",
+      "topic": "Admission controllers — validating y mutating",
+      "difficulty": "mid",
+      "scenario": "Necesitas: (1) bloquear Pods sin resource limits; (2) inyectar labels obligatorios; (3) prevent hostPath usage.",
+      "question": "¿Qué son admission controllers y cómo se implementan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Admission controllers: interceptan requests al API server DESPUÉS de auth/authz pero ANTES de persist. Dos types: (1) VALIDATING — accept or reject (no modify); (2) MUTATING — modify request (add default labels, inject sidecar). Built-in: NamespaceLifecycle, LimitRanger, ServiceAccount, ResourceQuota, PodSecurity (PSA), etc. Dynamic: MutatingAdmissionWebhook y ValidatingAdmissionWebhook — externo, tu HTTPS webhook processes request. Kubernetes 1.30+ has native ValidatingAdmissionPolicy con CEL (Common Expression Language) — no webhook needed.", "correct": true, "why": "Correcto. Admission controllers son the enforcement layer. Built-in cover basics. Webhooks extend infinitely. Istio sidecar inject via mutating webhook. cert-manager, external secrets con webhooks. CEL policies (nueva) built-in flexible." },
+        { "letter": "B", "text": "Admission controllers solo son configurables por Google.", "correct": false, "why": "Falso. Custom via webhooks. OPA Gatekeeper, Kyverno populares para custom policies sin webhook code custom." },
+        { "letter": "C", "text": "Solo built-in admission controllers existen.", "correct": false, "why": "Dynamic admission webhooks + policies extend. Rich ecosystem." },
+        { "letter": "D", "text": "Admission controllers no pueden reject requests.", "correct": false, "why": "Validating específicamente rechaza si el request no cumple policy." }
+      ],
+      "explanation": "Admission phases: (1) auth (who); (2) authz (RBAC); (3) admission (validate + mutate). Order: mutating first, then validating (validating sees final version). Common tools: (a) OPA Gatekeeper — Rego policies para constraints; (b) Kyverno — YAML-native policies (no custom language); (c) native ValidatingAdmissionPolicy con CEL (1.28 beta, 1.30 GA para some fields); (d) Kubewarden — WebAssembly policies. Use cases: enforce labels, block privileged, require resource limits, mutate to add defaults (inject sidecar). Trade-offs: policies too strict → dev friction; policies too permissive → security gap. Best practice: audit mode first, then enforce, review violations, adjust.",
+      "realWorld": "Istio sidecar injection via mutating webhook. Datadog agent injection. Cert-manager. Argo Rollouts modifies. Kyverno (CNCF Incubating) growing rapidly. OPA Gatekeeper enterprise standard. Rego learning curve high; Kyverno YAML more accessible.",
+      "tags": ["admission-controllers", "webhook", "opa", "kyverno"],
+      "tech": ["kubernetes", "opa", "kyverno"],
+      "references": [{ "title": "kubernetes.io — Admission Controllers" }, { "title": "kyverno.io" }, { "title": "open-policy-agent.org" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "security",
+      "topic": "OPA Gatekeeper vs Kyverno",
+      "difficulty": "mid",
+      "scenario": "Necesitas policy engine para tu cluster: (1) block latest tag; (2) require labels; (3) block hostPath. Debate OPA vs Kyverno.",
+      "question": "¿Qué diferencia OPA Gatekeeper de Kyverno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "OPA Gatekeeper: policy engine general purpose (Rego language). Rich, powerful, general. Steep learning curve — Rego es declarative logic language. CNCF Graduated (2022). Foundation project OPA usable for API gateway policies too.", "correct": true, "why": "Correcto. OPA es battle-tested. Rego steep pero powerful. Fit para complex policies. Muchos enterprises adopted." },
+        { "letter": "B", "text": "Kyverno: policies in YAML (K8s-native). No custom language — same YAML como manifests. Simpler learning curve. Features: validate, mutate, generate (create new resources), verify images (signature). CNCF Incubating.", "correct": true, "why": "Correcto. Kyverno YAML policies accessible a K8s users. 'Generate' feature unique — create resources automatically (default NetworkPolicy per namespace). Signature verification built-in." },
+        { "letter": "C", "text": "Kyverno tiene image signature verification built-in (Cosign integration). OPA requires additional integration. Fit para supply chain security en Kyverno.", "correct": true, "why": "Correcto. Kyverno's verify-images built-in — verifies OCI signatures via Cosign. Increasingly important para supply chain security. OPA can do it pero requires more setup." },
+        { "letter": "D", "text": "Ambos usan admission webhooks under the hood. Rendimiento parecido. Choice depends on team skills (Rego expertise → OPA; YAML preference → Kyverno).", "correct": true, "why": "Correcto. Under the hood: admission webhook. Performance similar. Choice cultural / team skills. Both mature." },
+        { "letter": "E", "text": "OPA está deprecated y todos migran a Kyverno.", "correct": false, "why": "Falso. OPA vibrant, CNCF Graduated. Both coexist. Distinct tradeoffs. Kyverno newer + growing but OPA established." }
+      ],
+      "explanation": "Decision framework: (1) Prefer YAML over new language? → Kyverno; (2) Need policies beyond K8s (API gateway, Terraform)? → OPA (general purpose); (3) Image signature verification native? → Kyverno; (4) Rego expertise en team? → OPA; (5) Want to generate resources? → Kyverno. Common patterns both: (a) require labels/annotations; (b) block dangerous configs; (c) enforce resource limits; (d) restrict images to registry; (e) verify signatures. Policy testing important — dry-run mode first, then enforce. GitOps integration: policies as YAML committed to Git, synced by ArgoCD/Flux.",
+      "realWorld": "Google GKE Policy Controller = Gatekeeper. Azure Policy for AKS uses Gatekeeper. Nirmata (Kyverno company) uses. Kyverno growing rapidly (CNCF Incubating). Both projects maintain hundreds of example policies. Enterprise security teams increasingly require policy engines.",
+      "tags": ["opa", "gatekeeper", "kyverno", "policy"],
+      "tech": ["kubernetes", "opa", "kyverno"],
+      "references": [{ "title": "open-policy-agent.org/docs/latest/kubernetes-introduction" }, { "title": "kyverno.io/policies" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "security",
+      "topic": "Image pull secrets y registries privados",
+      "difficulty": "mid",
+      "scenario": "Tu registry es privado (Harbor, ECR, GCR). K8s no puede pull images sin credentials.",
+      "question": "¿Cómo se configuran image pull secrets y qué alternativas cloud-native hay?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Image Pull Secret: Secret tipo kubernetes.io/dockerconfigjson que contiene credentials del registry. Se referencia en el Pod spec (imagePullSecrets: [name: my-registry-secret]) o attached a un ServiceAccount (todos los Pods usando ese SA lo heredan). Cloud alternatives: (1) AWS ECR + IRSA (IAM Role for Service Account) — no static creds, ECR authorization via IAM; (2) GCR/Artifact Registry + Workload Identity (GCP); (3) ACR + AKS Workload Identity or managed identity. Cloud-native evita static credentials en cluster.", "correct": true, "why": "Correcto. Image pull secrets classic pero require rotation manual. Cloud IAM integrations superior — token issuance based en workload identity, auto-rotated, ties to cluster identity. Best practice." },
+        { "letter": "B", "text": "K8s hace pull images automáticamente sin credentials.", "correct": false, "why": "Solo desde public registries (Docker Hub public, ghcr.io public). Private require auth." },
+        { "letter": "C", "text": "Image pull secrets están encriptados por default.", "correct": false, "why": "Base64-encoded (no encrypted). Sin encryption at rest en etcd, expuestos to who can read Secrets." },
+        { "letter": "D", "text": "Solo Docker Hub soporta pull secrets.", "correct": false, "why": "Cualquier OCI registry (Harbor, ECR, GCR, ACR, GitHub Container Registry, Quay) soporta." }
+      ],
+      "explanation": "Registry auth patterns: (1) Manual static Secret (dockerconfigjson) — simple pero rotation manual, credentials in etcd; (2) SA-attached pull secret — inherited by Pods using SA; (3) Cloud IAM integration (IRSA, Workload Identity) — no credentials en cluster, workload identity chain; (4) Kubernetes 1.20+ Kubelet Credential Provider — kubelet calls binary that returns fresh credentials per pull; (5) ECR credential helper for AWS. Kubelet Credential Provider is EKS/GKE managed for cloud registries. Rotate pull secrets regularly if static. Image pull security also: sign images (Sigstore/Cosign), verify signatures at admission (Kyverno, Notary v2), scan images pre-deploy (Trivy, Snyk).",
+      "realWorld": "EKS ECR access via IRSA standard. GKE Artifact Registry via Workload Identity. Harbor enterprise on-prem popular. Docker Hub rate limits caused many migrations. GitHub Container Registry (ghcr.io) growing.",
+      "tags": ["image-pull-secret", "registry", "irsa", "workload-identity"],
+      "tech": ["kubernetes", "aws-ecr"],
+      "references": [{ "title": "kubernetes.io — Pull an Image from a Private Registry" }, { "title": "kubernetes.io — Kubelet Credential Provider" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "security",
+      "topic": "Falco — runtime security",
+      "difficulty": "senior",
+      "scenario": "Un attacker compromises un container y ejecuta `[curl.sh]` para exfiltrate data, o escala vía sysctl. Necesitas DETECCIÓN en runtime, no solo prevention.",
+      "question": "¿Qué es Falco y cómo detecta amenazas en runtime?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Falco (CNCF Graduated, Sysdig-created): runtime security tool que MONITORIZA syscalls del kernel via eBPF (o kernel module) — detecta actividad sospechosa en tiempo real. Rules-based: 'shell spawned en container', 'sensitive file read (/etc/shadow)', 'crypto miner behavior', 'K8s API called from workload container'. Alerts via webhooks, Slack, Falcosidekick.", "correct": true, "why": "Correcto. Falco es 'IDS para K8s'. Runtime detection — Adobe, Shopify use extensively. Different than admission (pre-deploy) — detects DURING execution." },
+        { "letter": "B", "text": "Ejemplos rules: (1) Terminal shell in container (kubectl exec spawns shell — legit? forensic activity? attack?); (2) Container drift (executable no en original image → possibly downloaded malware); (3) Unauthorized K8s API access (workload SA calling API abnormally); (4) Sensitive mount detected. Rules customizable per environment.", "correct": true, "why": "Correcto. Rules catch various attack patterns. Ejecución rare de shell in container es red flag. Container drift detects downloaded binaries." },
+        { "letter": "C", "text": "Falco corre como DaemonSet — un agent per node. Watches kernel syscalls via eBPF (moderno) o legacy kernel module. Requires privileged access to node (hostPID).", "correct": true, "why": "Correcto. Node-level agent. Privileged because kernel access. Standard deployment pattern. Falco Sidekick forwards alerts." },
+        { "letter": "D", "text": "Falco requires cambio en app code.", "correct": false, "why": "Falso — completely transparent. Observes syscalls from outside, no instrumentation." },
+        { "letter": "E", "text": "Falco es proprietary de Sysdig.", "correct": false, "why": "Open source CNCF Graduated (2024). Sysdig created it but community project. Sysdig has commercial platform on top." }
+      ],
+      "explanation": "Runtime security domain (post-deploy detection): (1) Falco — general syscall-based detection; (2) Tetragon (Isovalent/Cilium) — eBPF-based, similar space, more Cilium-integrated; (3) Aqua Trivy runtime — commercial; (4) Sysdig Secure — commercial extension of Falco. Rules types: (a) file access (sensitive files); (b) network (connections to suspicious IPs, C2 detection); (c) process (unexpected binaries, cryptominer patterns); (d) capabilities (privilege escalation attempts); (e) container drift (modifications post-start). Alerts pipeline: Falco → Falcosidekick → Slack/PagerDuty/webhook. SIEM integration (Splunk, Datadog Security). Anomaly detection: baseline behavior, alert on deviations.",
+      "realWorld": "Adobe, Shopify, Booking.com use Falco. CNCF Graduated 2024. Tetragon growing. Sysdig commercial adoption in enterprises. Kubescape combines runtime + admission. GKE Threat Detection built-in.",
+      "tags": ["falco", "runtime-security", "detection", "ebpf"],
+      "tech": ["kubernetes", "falco", "ebpf"],
+      "references": [{ "title": "falco.org" }, { "title": "Sysdig — Runtime Security in Kubernetes" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "security",
+      "topic": "Vault CSI Provider y External Secrets Operator",
+      "difficulty": "senior",
+      "scenario": "Necesitas secrets in K8s: (a) never in etcd (compliance); (b) auto-rotation; (c) sync from Vault. Debate: Vault CSI vs External Secrets Operator (ESO).",
+      "question": "¿Qué diferencia hay entre Vault CSI Provider y External Secrets Operator?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Vault CSI: mount secrets directly como volume (via CSI driver + Vault provider). Secrets NUNCA existen como K8s Secrets — se leen from Vault, mounted como files. Compliance-friendly (nothing in etcd). Trade-off: cambio en Vault requires Pod restart (or reload webhook) para propagate. External Secrets Operator (ESO): watches ExternalSecret CRs → sync from Vault/AWS SM/GCP SM/Azure KV → CREATES K8s Secret. Refresh interval refresca. Familiar model (apps consume K8s Secrets como siempre). Trade-off: secret exists en etcd (menor security posture pero mucho más práctico).", "correct": true, "why": "Correcto. Vault CSI: highest security (nothing en etcd) pero less flexible. ESO: practical + productivity (apps unchanged) with slightly less strict security. Choice: compliance requirement vs operational complexity." },
+        { "letter": "B", "text": "Vault CSI y ESO son idénticos.", "correct": false, "why": "Approaches distintos. CSI mount direct; ESO syncs to K8s Secret. Different security postures." },
+        { "letter": "C", "text": "ESO requires Vault license.", "correct": false, "why": "ESO supports many stores: AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, HashiCorp Vault, IBM Cloud Secrets, GitLab variables, etc. No Vault license required (if using cloud SM)." },
+        { "letter": "D", "text": "Vault CSI hace K8s Secrets automáticos.", "correct": false, "why": "No — precisamente el punto es NO crear K8s Secret. Mounts directly como files." }
+      ],
+      "explanation": "Secrets in K8s solutions: (1) Native Secret con encryption at rest (KMS provider en API server) — good baseline; (2) External Secrets Operator (ESO) — sync from external store to K8s Secret; (3) Vault CSI Provider (or Secrets Store CSI) — mount as files, never K8s Secret; (4) Vault Agent Injector — sidecar container reads Vault, writes to shared volume; app reads file. Choice matrix: (a) simplest baseline: native Secret + KMS encryption; (b) most operational value: ESO (apps unchanged); (c) highest security: Vault CSI or Vault Agent (secrets never in etcd); (d) cloud-native: ESO with AWS/GCP/Azure store. Common patterns: prod uses ESO with cloud store; dev uses static Secrets committed encrypted (Sealed Secrets).",
+      "realWorld": "External Secrets Operator (CNCF Incubating) rapidly adopted. Vault CSI Provider maintained by HashiCorp. AWS Secrets Manager + ESO common in EKS. Azure Key Vault + ESO. GCP Secret Manager + ESO. Vault Enterprise widely adopted regulated industries.",
+      "tags": ["vault", "external-secrets", "csi", "secrets-management"],
+      "tech": ["kubernetes", "vault", "external-secrets"],
+      "references": [{ "title": "external-secrets.io" }, { "title": "secrets-store-csi-driver.sigs.k8s.io" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "security",
+      "topic": "Supply chain security — image signing y provenance",
+      "difficulty": "senior",
+      "scenario": "SolarWinds attack, XZ backdoor. Supply chain attacks son real. Tu cluster deploya images de Docker Hub — ¿cómo asegurar que sean legit?",
+      "question": "¿Cómo se asegura la supply chain de container images?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SIGN images con Sigstore/Cosign: firma criptográfica de OCI artifacts. Public transparency log (Rekor). Sigstore keyless signing (usa OIDC — GitHub Actions, Google, Microsoft accounts → cert efímero). Simple: cosign sign myapp:v1. Verify: cosign verify myapp:v1.", "correct": true, "why": "Correcto. Sigstore (Linux Foundation) es standard emergente. Keyless especially clean — no static keys to manage. Widely adopted en 2024." },
+        { "letter": "B", "text": "SBOM (Software Bill of Materials): documento que declara qué componentes/dependencies contiene la image. Formats: SPDX, CycloneDX. Tools: Syft (Anchore), Trivy. Attached to image via OCI referrers. Enables vulnerability tracking upstream (log4j discovered → query SBOMs para affected images).", "correct": true, "why": "Correcto. SBOM es required por Executive Order 14028 (US Gov). Enables rapid response to CVEs. Log4Shell teach us urgency." },
+        { "letter": "C", "text": "SLSA (Supply-chain Levels for Software Artifacts): framework de niveles de rigor (Level 1-4). Level 1: basic provenance. Level 4: hermetic reproducible builds. Google/Linux Foundation.", "correct": true, "why": "Correcto. SLSA (pronounced 'salsa') is standard framework. Level 3+ requires isolated build environment + provenance signing. Growing adoption." },
+        { "letter": "D", "text": "Verify signatures at admission time: Kyverno/OPA verifica signatures antes de deploy. verifyImages rule. Blocks unsigned images o de untrusted signers.", "correct": true, "why": "Correcto. Enforcement layer. Sin verification en admission, signing es teatral. Kyverno's verifyImages es popular integration." },
+        { "letter": "E", "text": "Docker Hub verified images son suficientemente seguros — signing es paranoia.", "correct": false, "why": "Falso. Even 'official' Docker Hub images had incidents (crypto miners inserted). Verification defensive. Real attacks (XZ, event-stream, colors.js) validate paranoia." }
+      ],
+      "explanation": "Supply chain security layers: (1) SOURCE — code signing (git commits), branch protection, review; (2) BUILD — reproducible, isolated builds (Tekton Chains, SLSA); (3) ARTIFACT — image signing (Cosign), SBOM (Syft, Trivy); (4) TRANSFER — registry with RBAC + scanning (Harbor); (5) DEPLOY — admission verification (Kyverno verifyImages, OPA); (6) RUNTIME — Falco detection. Modern stack: build in Tekton/GitHub Actions → sign with cosign keyless → attach SBOM → push to Harbor/ECR → Kyverno at admission verifies → Falco monitors runtime. Framework: SLSA levels guide maturity. Regulations pushing: EU CRA, US EO 14028.",
+      "realWorld": "Sigstore/Cosign widely adopted (CNCF Incubating). SBOM required by US government contracts. Trivy (Aqua) most popular SBOM generator. Harbor + Cosign + Kyverno common enterprise stack. SolarWinds pushed industry attention. Log4Shell demonstrated urgency.",
+      "tags": ["supply-chain", "cosign", "sbom", "slsa"],
+      "tech": ["cosign", "sigstore", "trivy"],
+      "references": [{ "title": "sigstore.dev" }, { "title": "slsa.dev" }, { "title": "sbom-tool.github.io" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "security",
+      "topic": "NetworkPolicy — zero trust networking",
+      "difficulty": "senior",
+      "scenario": "Cluster con 50 microservicios. Default open (todos hablan con todos). Un compromiso lateral se propaga fácilmente. Necesitas zero trust.",
+      "question": "¿Cómo implementar zero trust con NetworkPolicies?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Zero trust NetworkPolicy pattern: (1) Global 'deny-all' policy per namespace (podSelector: {} sin rules) — todo traffic denied by default; (2) Allow-only-what-needed policies específicas (frontend can talk to backend but nothing else); (3) Always allow DNS (kube-system:53); (4) Egress rules for external (specific domains via Cilium FQDN o IPs). Requiere CNI que soporta NetworkPolicy (Calico, Cilium — NOT Flannel). Progressive rollout: audit first (Cilium can log traffic that would be denied), then enforce.", "correct": true, "why": "Correcto. Default open es weakness. Deny-all + explicit allow es zero trust básico. Audit mode facilita rollout — see traffic first, then policy." },
+        { "letter": "B", "text": "NetworkPolicies son opcionales para security.", "correct": false, "why": "Fundamentales. Sin ellas, cualquier compromise de un Pod puede escalear lateralmente. Compliance requires network segmentation." },
+        { "letter": "C", "text": "Zero trust no aplica a K8s.", "correct": false, "why": "Al contrario — K8s' shared cluster model makes zero trust MÁS relevante. Múltiple workloads en shared infra." },
+        { "letter": "D", "text": "Zero trust = solo mTLS. NetworkPolicy irrelevante.", "correct": false, "why": "Complementarios. mTLS: identity + encryption; NetworkPolicy: firewall. Zero trust needs both." }
+      ],
+      "explanation": "Zero trust en K8s stack: (1) Network layer — NetworkPolicies (firewall) + Service Mesh mTLS (encryption + identity); (2) Identity layer — SPIFFE/SPIRE (workload identity) or SA-based; (3) Admission — verify images, block risky configs; (4) Runtime — Falco detection. Layered defense. NetworkPolicy limitations: L3/L4 only (no L7); requires CNI support; some CNIs implement subset. Cilium extensions: L7 policies (allow HTTP GET /api/*), FQDN policies (allow only *.stripe.com), Kafka topic policies. Enterprise pattern: base restrictive policies via GitOps + team-specific allows added as needed. Test with debug Pod (netshoot) to verify blocks working.",
+      "realWorld": "Netflix, Airbnb use extensive NetworkPolicies. Datadog Cilium adoption partly for L7 policies. Adobe Cilium migration blog. CNCF NetworkPolicy WG documents patterns. Common finding: NetworkPolicy exists but too permissive to be useful.",
+      "tags": ["network-policy", "zero-trust", "segmentation"],
+      "tech": ["kubernetes", "cilium", "calico"],
+      "references": [{ "title": "kubernetes.io — Network Policies" }, { "title": "cilium.io — L7 Policy Enforcement" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "security",
+      "topic": "Audit logs y compliance",
+      "difficulty": "senior",
+      "scenario": "Compliance requires: 'log todos los cambios al cluster: who did what, when'. Debes configurar audit.",
+      "question": "¿Cómo se configura Kubernetes audit logging?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Audit logs: API server registra requests con detalle. Policy file (AuditPolicy YAML) define QUÉ logear a QUÉ level: None (skip), Metadata (who/what/when — sin body), Request (con request body), RequestResponse (con response body también). Rules por resource, verb, user, namespace. Backend: log a file, o send to webhook (Splunk, DataDog, Elasticsearch). Common policy: log all writes at Metadata; specific resources (secrets) at RequestResponse.", "correct": true, "why": "Correcto. Audit policy es powerful pero requires design. Sin policy → no audit. Too much (RequestResponse everywhere) = huge volume, cost. Balance is design decision." },
+        { "letter": "B", "text": "K8s auditea todo automáticamente.", "correct": false, "why": "Falso. Requiere explicit AuditPolicy + audit backend config en API server. Managed K8s (GKE/EKS/AKS) may enable defaults." },
+        { "letter": "C", "text": "Audit logs solo capturan errors.", "correct": false, "why": "Depende de policy — pueden capturar todas requests (con volume implications). Success + failure both." },
+        { "letter": "D", "text": "Audit logs son estáticos y no configurables.", "correct": false, "why": "Fully configurable via policy YAML." }
+      ],
+      "explanation": "Audit levels: (1) None — skip; (2) Metadata — 'who, what, when, from where' (no bodies); (3) Request — includes request body; (4) RequestResponse — includes response body (largest). Common design: (a) core resources at Metadata; (b) Secrets, ServiceAccounts at RequestResponse; (c) noisy status endpoints at None. Backends: (a) log file → shipped by Fluent Bit; (b) webhook → sent to central system. Compliance requirements: PCI-DSS, HIPAA, SOC 2 require audit trails. Retention: typically 1+ year. Managed K8s: EKS logs to CloudWatch, GKE to Cloud Logging, AKS to Azure Monitor. Enterprise: Falco can enrich (workload identity + security context of who acted).",
+      "realWorld": "EKS control plane logging must be explicitly enabled (AWS). GKE audit standard. AKS via Azure Monitor. Splunk + K8s audit common enterprise. Netflix, Uber have custom audit pipelines. Common finding: audit misconfigured, missing critical events.",
+      "tags": ["audit", "compliance", "logging"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Auditing" }, { "title": "kubernetes.io — Audit Policy" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "security",
+      "topic": "Escalation via ServiceAccount tokens",
+      "difficulty": "senior",
+      "scenario": "Un attacker compromises un Pod. El SA de ese Pod tiene permission 'get secrets' cluster-wide. Attacker lee ALL secrets → total compromise.",
+      "question": "¿Cómo prevent este escalation path?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Principle of Least Privilege en RBAC: SA solo tiene los permissions que la app NEEDS. Auditar SAs periódicamente (which permissions? still used?). Herramientas: audit2rbac (audit logs → suggest tight RBAC), kubectl-can-i, rbac-lookup, KubiScan.", "correct": true, "why": "Correcto. Los permissions son la superficie de ataque post-compromise. Sin PoLP, un pod comprometido = cluster comprometido. Regular audits catch drift ('we added get-secrets temporarily' que nunca se removió)." },
+        { "letter": "B", "text": "automountServiceAccountToken: false para Pods que NO necesitan API access. Reduce blast radius — sin token, attacker no puede hablar con API. Sorprendentemente común: Pods que no llaman API pero tienen token mounted.", "correct": true, "why": "Correcto. Default is automount=true — must disable explicitly if not needed. Many apps no need K8s API access." },
+        { "letter": "C", "text": "Bounded tokens (K8s 1.22+ default): tokens tienen expiration corta (1h default). Kubelet renueva automatically. Contra: attacker que copia token de container tiene ventana limitada.", "correct": true, "why": "Correcto. Old-style unbounded tokens (indefinite) fully deprecated. Bounded tokens default. Improves posture significantly." },
+        { "letter": "D", "text": "Audience-restricted tokens: token es only valid for specific audience (K8s API vs otro service). Reduces token utility if leaked (attacker cant use it elsewhere).", "correct": true, "why": "Correcto. Token projection con audience validation. Advanced hardening." },
+        { "letter": "E", "text": "SA tokens no representan riesgo alguno.", "correct": false, "why": "Grave. SA tokens dan acceso al K8s API con permissions del SA. Un token con 'cluster-admin' = cluster ownership. Container escape → read token → escalation." }
+      ],
+      "explanation": "SA compromise attack path: (1) attacker exploits app en Pod; (2) reads SA token from /var/run/secrets/kubernetes.io/serviceaccount/token; (3) uses token to call K8s API con SA permissions; (4) enumerates resources based on permissions; (5) escalates by creating pods with different SA, modifying RBAC, etc. Defenses: (1) PoLP RBAC — minimum permissions; (2) automountServiceAccountToken: false when not needed; (3) bounded + audience tokens; (4) NetworkPolicy denying egress to API server if not needed; (5) admission controllers preventing certain operations (Kyverno block create Pods that mount root); (6) Falco detecting suspicious API calls from workload SAs. Layered defense.",
+      "realWorld": "Tesla K8s crypto-jacking incident (2018): compromise via K8s dashboard, escalated via SA. Docker Hub tokens leaked lead to K8s cluster compromise. rbac-lookup by ReactiveOps popular tool. Audit findings frequently reveal wildcard permissions.",
+      "tags": ["rbac", "serviceaccount", "escalation", "least-privilege"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Configure Service Accounts for Pods" }, { "title": "audit2rbac tool" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "security",
+      "topic": "Cluster hardening — CIS benchmark",
+      "difficulty": "senior",
+      "scenario": "Necesitas hacer 'security review' de tu cluster. ¿Qué framework industry-standard usar?",
+      "question": "¿Qué es el CIS Kubernetes Benchmark y qué cubre?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CIS Kubernetes Benchmark: framework de Center for Internet Security con ~100+ controls concretos para hardening. Categorías: (1) Control Plane Components (API server flags, controller-manager, scheduler, etcd); (2) Worker Nodes (kubelet config); (3) Policies (RBAC, PSA, NetworkPolicy); (4) Managed services (EKS, GKE specific). Tools: kube-bench (Aqua) auto-audita cluster vs CIS. Level 1 (baseline) vs Level 2 (defense-in-depth).", "correct": true, "why": "Correcto. CIS is industry-standard. Kube-bench auto-checks. Tool of choice para security audits. Compliance frameworks (PCI, HIPAA) reference CIS." },
+        { "letter": "B", "text": "K8s tiene su propio 'security score' automático.", "correct": false, "why": "Falso. K8s no ships con security scanner. External tools (kube-bench, Trivy, kubescape, KICS)." },
+        { "letter": "C", "text": "Cluster hardening es opcional para producción.", "correct": false, "why": "Compliance frameworks (SOC 2, PCI-DSS, HIPAA) require cluster hardening. Non-optional para regulated industries." },
+        { "letter": "D", "text": "CIS Benchmark solo aplica a on-prem clusters.", "correct": false, "why": "Aplica a on-prem + managed. Managed clouds tienen adjusted benchmarks (many control plane items handled by cloud provider)." }
+      ],
+      "explanation": "K8s security assessment tools: (1) kube-bench — CIS Benchmark checker; (2) Trivy (Aqua) — vuln scan images + K8s misconfigurations; (3) kubescape — CIS + NSA/CISA framework + MITRE ATT&CK mapping; (4) polaris — best practices scanner; (5) kubeaudit — audit specific things; (6) Snyk — commercial; (7) Prisma Cloud (Palo Alto) — enterprise. Coverage areas: (1) control plane (API server flags, encryption at rest); (2) node hardening (kubelet auth, anonymous access); (3) auth (RBAC, ServiceAccounts); (4) network (policies, encryption); (5) workload (PSS, SecurityContext); (6) supply chain (image signing). Continuous scanning: integrate into CI/CD, GitOps pipelines.",
+      "realWorld": "kube-bench standard tool. GKE Sandbox meets many CIS controls automatically. EKS with recommended settings passes many. Managed K8s reduces control plane items but workload items remain your responsibility. Sysdig, Palo Alto Prisma commercial. NSA/CISA published 'Kubernetes Hardening Guidance' (2022).",
+      "tags": ["cis-benchmark", "hardening", "kube-bench", "audit"],
+      "tech": ["kubernetes", "kube-bench"],
+      "references": [{ "title": "cisecurity.org — Kubernetes Benchmark" }, { "title": "aquasecurity/kube-bench" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "security",
+      "topic": "Container escape y kernel isolation",
+      "difficulty": "senior",
+      "scenario": "Un attacker compromises un container. Explota kernel bug (CVE) → escapa al host. Ahora ve otros Pods, secrets del kubelet, todo.",
+      "question": "¿Cómo se defiende contra container escape?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Restricted PSS: baseline security prevents obvious escape vectors (privileged, hostPath, hostPID, dangerous caps). No es defensa completa (kernel CVEs remain) pero baseline necesario.", "correct": true, "why": "Correcto. PSS restricted es primer layer. Sin él, escape es trivial (hostPath / read etc/kubernetes)." },
+        { "letter": "B", "text": "gVisor: kernel de usuario space (Google) — implementa syscalls en userspace, isolates real kernel. Contain kernel CVEs (kernel bug no reaches host kernel). Overhead: ~10-30% latency, memory. Fit para untrusted workloads. Google App Engine, Cloud Run use it.", "correct": true, "why": "Correcto. gVisor is 'application kernel' — traps syscalls, evaluates in userspace. Container escape becomes escape from gVisor sandbox (harder). Trade-off perf." },
+        { "letter": "C", "text": "Kata Containers: lightweight VM per Pod (Firecracker or QEMU). Real kernel isolation. Overhead: ~50-100MB memory per Pod, some latency. AWS Fargate, Fly.io use Firecracker.", "correct": true, "why": "Correcto. VM-level isolation, hardware assist (VT-x). Higher overhead pero best isolation. Untrusted workloads use case (multi-tenant SaaS)." },
+        { "letter": "D", "text": "AppArmor / SELinux profiles: additional MAC (Mandatory Access Control) layer. Restricts what container can do beyond capabilities. Docker/K8s support both. Distros ship default profiles.", "correct": true, "why": "Correcto. Defense in depth. AppArmor/SELinux add layers even if kernel bug exploited." },
+        { "letter": "E", "text": "Containers son secure por default — escape impossible.", "correct": false, "why": "Grave falsedad. runc CVE-2019-5736, others. Kernel bugs. Escape es realista threat. Defense in depth necessary." }
+      ],
+      "explanation": "Container isolation layers (weakest to strongest): (1) Standard runc containers — Linux namespaces + cgroups + capabilities + seccomp; (2) Hardened containers — restricted PSS + AppArmor/SELinux + seccomp default; (3) gVisor — user-space kernel; (4) Kata Containers — lightweight VM; (5) Full VM per workload. Trade-offs: isolation vs performance/density. Standard runc is 99% of production. When untrusted workloads (multi-tenant SaaS running customer code): gVisor / Kata / Firecracker. AWS Fargate uses Firecracker microVMs for each task. GKE Sandbox uses gVisor. Fly.io Firecracker. Real attacks: Dirty COW, runc CVE-2019-5736 (container breakout), NotPetya used similar techniques.",
+      "realWorld": "Fly.io built platform on Firecracker (customer code). AWS Fargate Firecracker. GKE Sandbox gVisor. Multi-tenant SaaS uses container isolation stacks. Cluster escapes documented: Tesla (2018), Docker Hub (2019). Kubernetes CVE tracking growing.",
+      "tags": ["container-escape", "gvisor", "kata", "sandboxing"],
+      "tech": ["kubernetes", "gvisor", "kata-containers", "firecracker"],
+      "references": [{ "title": "gvisor.dev" }, { "title": "katacontainers.io" }, { "title": "firecracker-microvm.github.io" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "security",
+      "topic": "Encryption at rest para etcd",
+      "difficulty": "senior",
+      "scenario": "Un attacker consigue acceso a etcd (backup file exposed, disk cloned). Lee ALL secrets, ALL configmaps, ALL cluster state en plain.",
+      "question": "¿Cómo habilitar encryption at rest en Kubernetes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "EncryptionConfiguration en API server flag --encryption-provider-config. YAML define: (1) resources encriptados (secrets, configmaps, custom resources); (2) providers ordered — first used for encryption; all attempted for decryption. Providers: (a) aescbc (aes-cbc-256, keys en config file); (b) aesgcm (aes-gcm); (c) secretbox; (d) kms (external KMS — AWS KMS, GCP KMS, Vault, Azure KV). Best practice: KMS provider (keys en HSM/managed KMS, no en config file). Migration: cambiar config, restart API server, run `kubectl get secrets -A -o json | kubectl replace -f -` para re-encrypt existing.", "correct": true, "why": "Correcto. KMS provider es best — keys managed externally, rotation, audit. Others (aescbc) store keys en config file en API server disk = risk. Managed K8s (EKS/GKE/AKS) often has KMS enabled by default." },
+        { "letter": "B", "text": "K8s encripta secrets by default.", "correct": false, "why": "En self-managed K8s: no. Managed (GKE, AKS) suele tener defaults enabled. Verify explicitly." },
+        { "letter": "C", "text": "Solo secrets pueden encriptarse.", "correct": false, "why": "Cualquier resource type especificado en config. Common: secrets, configmaps (contain sensitive data often), custom resources con sensitive data." },
+        { "letter": "D", "text": "Habilitar encryption re-encripta existing data automatically.", "correct": false, "why": "Solo NEW writes. Existing require explicit re-encryption (kubectl replace loop) o gradual as they update." }
+      ],
+      "explanation": "Encryption at rest layers: (1) Etcd nivel — encrypts K8s resources en etcd (per resource type); (2) Etcd disk — encrypted disk (LUKS, EBS encrypted volumes) — defends etcd file backup exposure; (3) Backup encryption — encrypt etcd snapshots. All three recommended defense in depth. KMS provider especially good: (a) keys en external HSM; (b) auditable; (c) rotatable; (d) no key material en API server disk. Alternatives: (a) plaintext + defense via strict RBAC (weak); (b) aescbc en config (better than plaintext, keys still on disk). Managed K8s: check whether encryption enabled + which provider (GKE Application Layer Secrets defaults, EKS with envelope encryption). Verify: `kubectl get secret -o json | jq -r '.data...'` — should be encrypted.",
+      "realWorld": "EKS supports envelope encryption with KMS. GKE Application-layer Secrets Encryption. AKS with Azure Key Vault. Compliance frameworks (PCI, HIPAA, SOC 2) require. Cloudflare 2020 postmortem discussed encryption details.",
+      "tags": ["encryption", "etcd", "kms", "secrets"],
+      "tech": ["kubernetes", "etcd", "aws-kms"],
+      "references": [{ "title": "kubernetes.io — Encrypting Secret Data at Rest" }, { "title": "AWS EKS — Envelope Encryption" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "security",
+      "topic": "Image vulnerability scanning",
+      "difficulty": "senior",
+      "scenario": "Estás por deployar image myapp:latest. Log4j CVE recent. ¿Cómo evitar deployar images vulnerable?",
+      "question": "¿Cómo se integra image scanning en el pipeline y en admission?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-stage scanning: (1) CI/CD — scan images post-build (Trivy, Snyk, Grype, Anchore) — fail build si CVE severity > threshold; (2) Registry — Harbor/ECR/GCR con vulnerability scanner integrated, block push si vulnerable; (3) Admission — Kyverno/OPA verify image is scanned + no critical CVEs before allowing deploy; (4) Runtime — periodic re-scan (new CVEs discovered in old images — vuln DB updates continuously). Trivy es leading open source scanner.", "correct": true, "why": "Correcto. Defense in depth. Shift left (scan en CI) catches early. Admission enforces at deploy. Runtime catches new CVEs in already-deployed images. Trivy CNCF Graduated, free, comprehensive." },
+        { "letter": "B", "text": "K8s scans images automáticamente.", "correct": false, "why": "K8s no ships scanner. Managed clouds may have (ECR scanning, GCR vulnerability scanning) pero require explicit enablement." },
+        { "letter": "C", "text": "Solo escanear cuando un CVE se anuncia public.", "correct": false, "why": "Continuous scanning necessary. New CVEs discovered daily. Batch scanning misses window." },
+        { "letter": "D", "text": "Un scan es suficiente — no necesitas re-escanear.", "correct": false, "why": "CVE databases update continuously. Image scanned clean today may have CVE tomorrow. Re-scan periodically (daily typical)." }
+      ],
+      "explanation": "Vulnerability management workflow: (1) BUILD — Trivy scan Dockerfile + base image; (2) PUSH — Registry scans image (Harbor, ECR); (3) DEPLOY — Kyverno verifyImages checks signature + scan status; (4) RUNTIME — periodic re-scan Falco/Sysdig runtime detection. CVE severity levels (CVSS): Critical > 9.0, High 7.0-8.9, Medium 4.0-6.9, Low. Policies: block Critical, warn High. Exceptions: some CVEs may not apply (unused library — use SBOM to verify). Trivy features: OS packages, language dependencies (npm, pip, go modules), config scanning (Terraform, K8s YAML). Alternative: Grype (Anchore), Snyk, Prisma Cloud, Aqua Security. SBOM enables 'is my system affected by CVE X?' queries.",
+      "realWorld": "Log4Shell (2021) drove urgency of continuous scanning. Trivy CNCF Graduated widely adopted. Harbor integrated scanner. Snyk commercial. Aqua Security enterprise. GitHub Dependabot for dependencies. Chainguard Images (distroless, minimal CVEs) alternative approach.",
+      "tags": ["scanning", "cve", "trivy", "vulnerability"],
+      "tech": ["kubernetes", "trivy"],
+      "references": [{ "title": "trivy.dev" }, { "title": "Harbor — Vulnerability Scanning" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "security",
+      "topic": "Attack scenarios end-to-end",
+      "difficulty": "staff",
+      "scenario": "Un pentester attempt de attack chain: (1) exploit RCE en public webapp; (2) find SA token; (3) list secrets; (4) find cloud IAM key; (5) exfiltrate data from S3.",
+      "question": "¿Qué defensas en cada step reducen o previenen el chain?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Defense per step: (1) exploit RCE — image scanning + PSS restricted + WAF + regular patching; (2) SA token — automountServiceAccountToken: false o token bounded; (3) list secrets — RBAC PoLP (no 'get secrets' if not needed) + audit logging alerts; (4) IAM key — IRSA/Workload Identity (no static keys en cluster); (5) exfiltrate — NetworkPolicy egress deny + VPC flow logs + DNS monitoring. Cada layer reduces success probability. Layered defense es la doctrina.", "correct": true, "why": "Correcto. Kill chain analysis reveals defense opportunities at each step. Ninguna defense es perfecta — chain works if any layer fails. Defense in depth es doctrine." },
+        { "letter": "B", "text": "Una sola defensa es suficiente — no necesitas layers.", "correct": false, "why": "Falso. Single point of failure. Real attacks bypass individual defenses. Layers create redundancy." },
+        { "letter": "C", "text": "Todos los attacks son prevenibles con firewall.", "correct": false, "why": "Firewall es un layer. RCE bypass firewall (comes via legitimate HTTPS). Post-compromise, firewall doesn't help. Multiple layers needed." },
+        { "letter": "D", "text": "K8s hardening no impacta attack success.", "correct": false, "why": "Cada layer reduces attacker success probability. Real security is layered, defense in depth." }
+      ],
+      "explanation": "Attack chain mitigations (defense in depth): (1) PREVENT — patch mgmt, WAF, image scanning, hardening, encrypt-at-rest, NetworkPolicy segmentation; (2) DETECT — Falco runtime detection, audit logs, VPC flow logs, IDS/EDR; (3) RESPOND — incident response playbooks, containment (NetworkPolicy quick disable), forensics; (4) RECOVER — backups tested, immutable snapshots, IR team. Each stage is opportunity. MITRE ATT&CK for Containers framework maps techniques → defenses. Kubescape maps against MITRE. Modern SOC combines K8s audit + cloud logs + endpoint + application logs. Blameless postmortems drive continuous improvement.",
+      "realWorld": "Tesla K8s crypto-jacking (2018) walked through this chain. Capital One breach (2019) exposed IAM/SSRF weakness. Docker Hub tokens leaked lead to cluster compromise. Colonial Pipeline (2021) similar pattern. Palo Alto Unit 42 threat reports document real attacks.",
+      "tags": ["attack-chain", "defense-in-depth", "mitre-attck"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "MITRE ATT&CK for Containers" }, { "title": "NSA/CISA — Kubernetes Hardening Guidance" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "security",
+      "topic": "Zero trust workload identity — SPIFFE/SPIRE",
+      "difficulty": "staff",
+      "scenario": "Multi-cluster + multi-cloud. Workloads necesitan identity verifiable universalmente — no depende de cloud IAM.",
+      "question": "¿Qué es SPIFFE/SPIRE y cómo complementa K8s security?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SPIFFE (Secure Production Identity Framework For Everyone): estándar para workload identity. Cada workload tiene un SPIFFE ID (spiffe://trust-domain/workload-path). Independent de cloud, K8s, mesh. SPIRE (SPIFFE Runtime Environment): reference implementation. Emite short-lived X.509 SVIDs o JWTs para workloads. Federation across trust domains.", "correct": true, "why": "Correcto. SPIFFE es 'passport' universal para workloads. Independent de infrastructure. Multi-cluster, multi-cloud unifica identity. CNCF Graduated project." },
+        { "letter": "B", "text": "Integration con Istio, Envoy (mTLS con SPIFFE certs), Vault (SPIFFE auth), K8s (SA integration). Standard identity substrate.", "correct": true, "why": "Correcto. Ecosystem integration extensive. Istio mesh uses SPIFFE identities. Enables mTLS entre workloads across clusters con universally-verifiable identity." },
+        { "letter": "C", "text": "SPIFFE enables zero-trust: workloads authenticate to each other with cryptographic identity + attestation (K8s SA + node label + custom claims). Complements NetworkPolicy (network-layer) with identity-layer.", "correct": true, "why": "Correcto. NetworkPolicy: 'can this IP reach this Pod?'; SPIFFE: 'is this REALLY workload X?'. Together enable true zero-trust." },
+        { "letter": "D", "text": "SPIFFE reemplaza K8s ServiceAccounts.", "correct": false, "why": "Complementa — bridges K8s SA to workload identity useful outside K8s. SA is K8s-specific; SPIFFE ID is universal." },
+        { "letter": "E", "text": "SPIFFE es proprietary.", "correct": false, "why": "Open source, CNCF Graduated. Community-driven standard." }
+      ],
+      "explanation": "SPIFFE/SPIRE arquitectura: (1) SPIFFE ID — URI identifying workload; (2) SVID (SPIFFE Verifiable Identity Document) — X.509 cert or JWT proving identity; (3) Trust Domain — administrative boundary; (4) Federation — cross-trust-domain trust. SPIRE Server + SPIRE Agent (per node): agent uses attestation (K8s SA + node metadata) to prove workload identity to server, server issues SVID. Certs short-lived (5min typical) — rotation continuous. Use cases: (1) mesh mTLS (Istio); (2) DB access (Vault authenticates SPIFFE); (3) service-to-service auth. Cloud identity comparison: IRSA (AWS-specific), Workload Identity (GCP-specific); SPIFFE unifies across clouds.",
+      "realWorld": "Uber uses SPIFFE. Bloomberg. Netflix. HP. Growing adoption. CNCF Graduated 2022. Istio uses SPIFFE format for mesh identities. Vault SPIFFE auth methods. Complements existing identity providers.",
+      "tags": ["spiffe", "spire", "workload-identity", "zero-trust"],
+      "tech": ["kubernetes", "spiffe", "spire"],
+      "references": [{ "title": "spiffe.io" }, { "title": "spire.io" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "security",
+      "topic": "Security posture management",
+      "difficulty": "staff",
+      "scenario": "Tu empresa opera 20 clusters. Cada uno tiene decenas de configs de security. ¿Cómo mantener visibility + compliance continuous?",
+      "question": "¿Qué herramientas y approaches usar para continuous security posture management (KSPM)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Kubernetes Security Posture Management (KSPM): categoría de tools que scan clusters continuously vs security standards (CIS, NSA, PCI-DSS, custom). Reportes de findings, remediation guidance, trends. Ejemplos: Kubescape (CNCF, open source), Prisma Cloud (Palo Alto), Sysdig Secure, Aqua Security, Wiz, Orca Security.", "correct": true, "why": "Correcto. KSPM emergent category. Continuous vs one-shot audits. Multi-cluster visibility. Compliance frameworks integrated. Enterprise standard." },
+        { "letter": "B", "text": "Integration con SIEM y SOC: cluster findings + audit logs + runtime alerts (Falco) → central SIEM (Splunk, Elastic, Datadog Security) para correlation con enterprise attack detection. K8s no vive aislado — integrar con enterprise security.", "correct": true, "why": "Correcto. Aislated K8s security misses connections. E.g., IAM key exfiltrated from Pod → subsequent S3 access — SIEM correlates. Enterprise mature integration." },
+        { "letter": "C", "text": "Policy as Code: security policies committed to Git (Kyverno, OPA policies), applied via GitOps. Enables review, versioning, testing. No manual policy changes.", "correct": true, "why": "Correcto. Policies como código standard. Review process for changes. Testing policies antes de enforce. Consistent multi-cluster." },
+        { "letter": "D", "text": "Continuous compliance scanning + auto-remediation: findings automatically create tickets (Jira, ServiceNow) or trigger remediation (add missing NetworkPolicy). Reduces MTTR of security findings.", "correct": true, "why": "Correcto. Sin auto pipeline, findings accumulate. Auto-remediation controversy (safety) — often start with ticket creation, human review, then automated fix for well-understood issues." },
+        { "letter": "E", "text": "Security es responsibility solo del team de security.", "correct": false, "why": "Falso. Shift left — developers, DevOps ownership. Security team enables, doesn't gate. DevSecOps philosophy." }
+      ],
+      "explanation": "KSPM mature approach: (1) INVENTORY — todos los clusters, workloads, configs visible; (2) ASSESS — continuous vs standards + custom policies; (3) PRIORITIZE — risk-based (Critical exposed to internet first); (4) REMEDIATE — automatic where safe, guided elsewhere; (5) MONITOR — trends, drift, MTTR. Metrics: findings by severity, mean time to remediate, policy exceptions, compliance %. Enterprise stack: KSPM tool (Kubescape/Wiz/etc.) + policy engine (Kyverno) + runtime security (Falco) + SIEM correlation + IR playbooks. Cloud native security is complex — mature program integrates multiple layers + continuous improvement. Shift-left: security in CI, not gate at prod.",
+      "realWorld": "Wiz, Orca Security, Prisma Cloud commercial KSPM leaders. Kubescape (Armo, CNCF) open source. Sysdig Secure. Enterprises with 100+ clusters need automation. GKE Security Posture built into GKE. EKS with GuardDuty + Config integration.",
+      "tags": ["kspm", "security-posture", "compliance", "devsecops"],
+      "tech": ["kubernetes", "kubescape", "falco"],
+      "references": [{ "title": "kubescape.io" }, { "title": "NSA/CISA — Kubernetes Hardening Guidance" }]
+    }
+  ]
+}

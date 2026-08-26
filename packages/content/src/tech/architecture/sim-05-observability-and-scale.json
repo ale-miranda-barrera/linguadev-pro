@@ -1,0 +1,421 @@
+{
+  "id": "architecture-sim-05-observability-and-scale",
+  "trackId": "architecture",
+  "order": 5,
+  "title": "Simulacro 05 — Observabilidad, escalabilidad y hot partition",
+  "focus": "Cómo se observa un sistema en producción (logs vs métricas vs tracing), SLIs/SLOs, cardinality, sampling, patrones para escalar sin colapsar por hot partition o cache stampede.",
+  "areaCoverage": ["observability", "scalability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "observability",
+      "topic": "Logs vs métricas vs tracing — cuándo cada uno",
+      "difficulty": "senior",
+      "scenario": "Un CEO te pregunta: '¿cuánto tarda nuestra API en el p99?'. Respondes rápido con Grafana en 3 segundos. Otra pregunta: '¿por qué esta request específica de user X tardó 8 segundos?'. Necesitas 20 minutos rebuscando logs. La tercera: '¿el error 500 de las 3AM ayer, cuántos usuarios afectó?'. Otra hora perdida.",
+      "question": "¿Cuál es la 'trinity' de observabilidad y cómo asignar cada pregunta a la herramienta correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo logs — todo se puede sacar con grep sofisticado.", "correct": false, "why": "En sistemas con millones de requests/día, grep no escala: costoso, lento, y agregaciones (percentiles) requieren re-computar TB de logs. La observabilidad moderna separa las 3 señales por eficiencia." },
+        { "letter": "B", "text": "Métricas para pregunta 1 (agregación numérica, high-frequency), tracing para pregunta 2 (una request específica end-to-end con spans), logs para pregunta 3 (búsqueda de contexto textual detallado en un momento). Las tres son complementarias.", "correct": true, "why": "Correcto. Métricas (Prometheus, CloudWatch) son numéricas y agregadas — óptimas para 'cuánto/cuántos'. Logs (ELK, CloudWatch Logs) son textuales — óptimas para 'qué exactamente pasó'. Tracing (Jaeger, X-Ray, Datadog APM) sigue una request a través de todos los servicios — óptima para 'dónde se fue el tiempo'." },
+        { "letter": "C", "text": "Solo tracing. Es la más completa.", "correct": false, "why": "Tracing es caro (sampling requerido) y no responde bien a 'cuántas requests fallaron' — necesitas contar spans lo cual es una métrica. Además tracing no captura logs libres." },
+        { "letter": "D", "text": "APM (Application Performance Monitoring) hace las 3.", "correct": false, "why": "APM (Datadog, New Relic) INTEGRA las 3 en una UI pero por debajo son 3 pipelines distintos. Entender la distinción te permite arquitectar cost-effective." }
+      ],
+      "explanation": "'Observability trinity' (Cindy Sridharan): Metrics, Logs, Traces. Cada uno responde preguntas distintas: métricas 'qué está pasando ahora' (high-level, agregado), logs 'qué pasó exactamente' (detalle), traces 'dónde se fue el tiempo' (causal, distribuido). Costo relativo: métricas < logs < traces. Estrategia: métricas SIEMPRE (barato, esencial para alerting), logs con retención decreciente, traces sampled.",
+      "realWorld": "Google popularizó Monarch (metrics), Sawmill (logs), Dapper (tracing). OpenTelemetry (2020) unificó estándares. Netflix procesa TBs de traces/día con sampling agresivo.",
+      "tags": ["observability", "metrics", "logs", "tracing", "trinity"],
+      "tech": ["Prometheus", "Jaeger", "OpenTelemetry", "CloudWatch"],
+      "references": [{ "title": "Cindy Sridharan — Distributed Systems Observability" }, { "title": "Ben Sigelman — The Three Pillars of Observability" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "observability",
+      "topic": "SLI vs SLO vs SLA — cómo usar",
+      "difficulty": "senior",
+      "scenario": "El equipo quiere definir 'objetivos de calidad' para el servicio. Un jr propone: 'SLA: 99.99% uptime'. Un senior responde: 'estás mezclando conceptos'.",
+      "question": "¿Cuál es la distinción correcta y qué debe medir el equipo internamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SLI = qué mides (ej. % requests < 200ms). SLO = compromiso interno (ej. 99.9% de requests < 200ms). SLA = compromiso con el cliente + penalidad. Regla: SLO más estricto que SLA — margen para reaccionar.", "correct": true, "why": "Correcto. SLI es la MEDIDA (numérica). SLO es el TARGET interno del equipo. SLA es el CONTRATO EXTERNO. Ejemplo: SLA = 99.9%, SLO = 99.95%: si rompes SLO activas medidas antes de romper SLA." },
+        { "letter": "B", "text": "Los tres son sinónimos con nombres para audiencias distintas.", "correct": false, "why": "Confusión común pero costosa. Mezclarlos lleva a 'target' sin medir (sin SLI) o a comprometerte sin margen (SLA = SLO)." },
+        { "letter": "C", "text": "SLA es solo para clientes enterprise; startups no lo necesitan.", "correct": false, "why": "SLA puede ser implícito. Startups B2C tienen expectativas — si el servicio se cae 20%, pierden usuarios. Definir SLOs aún sin SLA es maduro." },
+        { "letter": "D", "text": "Solo importa el uptime del 99.99%. Los otros son distracciones.", "correct": false, "why": "Uptime binario es burdo. Un servicio 'up' con p99=10s está roto para el usuario. SLIs modernos miden usuario-percibido: latencia, error rate, availability." }
+      ],
+      "explanation": "Error budget: Si SLO es 99.9%, tienes 0.1% de tiempo permitido de degradación en el mes. Si aún hay budget, puedes deployar features arriesgadas. Si consumiste el budget, freeze de features y foco en reliability. Este framework alinea al equipo con métricas objetivas. SLIs típicos: latency (p50/p95/p99), error rate, availability. RED (Rate/Errors/Duration) y USE (Utilization/Saturation/Errors) son mnemónicos populares.",
+      "realWorld": "Google publicó su libro SRE. Netflix, Slack, GitHub, Amazon siguen estas prácticas. Sin SLIs/SLOs claros, cada incidente se debate 'era grave o no' sin criterio.",
+      "tags": ["SLI", "SLO", "SLA", "error budget", "SRE"],
+      "tech": ["Prometheus", "SRE"],
+      "references": [{ "title": "Google SRE Book — Ch. 4 Service Level Objectives" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "scalability",
+      "topic": "Hot partition — el enemigo silencioso",
+      "difficulty": "senior",
+      "scenario": "Tienes DynamoDB con partition key = userId. Un usuario 'famoso' (millón de seguidores) genera 10x más writes que el promedio. DynamoDB comienza a throttlear. Total capacidad tiene suficiente pero UN partition está saturado.",
+      "question": "¿Qué es hot partition y cómo se resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aumentar la capacity global (más RCU/WCU).", "correct": false, "why": "No resuelve. Cada PARTITION tiene un límite (~1000 WCU). Si todos los writes van a UNA partition, el resto del capacity es inútil." },
+        { "letter": "B", "text": "Hot partition = todos los writes/reads a la misma partition key. Solución: 'write sharding' — sufijo aleatorio (userId#0..9) creando 10 subpartitions. Los reads deben agregar las 10.", "correct": true, "why": "Correcto. Patrón 'random suffix' o 'write sharding'. Trade-off: writes escalan lineal, reads más caros. Alternativas: (a) partition key más granular; (b) mover el hot user a otra tabla; (c) partition key = timestamp bucket." },
+        { "letter": "C", "text": "Hot partition = servidor caliente físicamente por load. Solución: enfriar el datacenter.", "correct": false, "why": "Broma aparte, 'hot' es semántico: partition con carga desproporcionada." },
+        { "letter": "D", "text": "Migrar a RDS que no tiene este problema.", "correct": false, "why": "RDS tiene otros problemas de escala. Todos los sistemas distribuidos tienen equivalentes de hot partition." }
+      ],
+      "explanation": "Hot partition es endémico de sistemas particionados: DynamoDB, Cassandra, HBase, Kafka, sharded SQL. Diseño preventivo: (1) analizar la distribución real (Pareto 80/20); (2) evitar keys temporales; (3) considerar sharding si hay hotspots predecibles. AWS ofrece 'Adaptive Capacity' que mitiga hasta cierto punto.",
+      "realWorld": "Twitter tuvo problemas con celebrity tweets (Obama = millones de reads a UN row) — solución: cache agresivo + fan-out on write. Instagram parecido con famosos.",
+      "tags": ["hot partition", "sharding", "DynamoDB"],
+      "tech": ["DynamoDB", "Cassandra", "Kafka"],
+      "references": [{ "title": "AWS — DynamoDB Best Practices for Partition Keys" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "observability",
+      "topic": "Structured logging — por qué JSON",
+      "difficulty": "junior",
+      "scenario": "Tu app loguea así: `console.log('User', userId, 'requested', endpoint, 'in', duration, 'ms')`. Cuando quieres saber 'cuántos requests del usuario 42 tardaron >500ms', debes grep con regex frágil.",
+      "question": "¿Cuál es la mejor práctica moderna para logs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Structured logging con JSON: `{\"level\":\"info\",\"userId\":42,\"endpoint\":\"/api/orders\",\"durationMs\":523}`. Herramientas (ELK, CloudWatch, Loki) parsean automáticamente y permiten queries tipo `userId=42 AND durationMs>500`.", "correct": true, "why": "Correcto. JSON estructurado convierte logs en 'datos' consultables. Librerías: pino (Node), structlog (Python), logback (Java), zap (Go). Los índices son fields, no búsquedas de texto." },
+        { "letter": "B", "text": "Text plano — es más legible para humanos.", "correct": false, "why": "Falso beneficio en producción. Los logs se consultan por máquinas antes que por humanos. Un tail humano ocasional es viable con `jq` sobre JSON." },
+        { "letter": "C", "text": "XML — más verboso pero más completo.", "correct": false, "why": "XML es 3x más verboso que JSON, más lento de parsear, y ninguna herramienta moderna de logging lo soporta bien." },
+        { "letter": "D", "text": "Binary logs (Protobuf) — máxima eficiencia.", "correct": false, "why": "Solo tiene sentido a escala Netflix. Para 99% de casos, JSON es el balance óptimo entre eficiencia, legibilidad y tooling." }
+      ],
+      "explanation": "Structured logging cambia el paradigma: en vez de escribir strings que luego regex-eas, escribes eventos con campos. La ganancia es exponencial cuando quieres agregaciones ('percentil de latencia por endpoint'), correlaciones (correlation IDs) o filtros complejos. Costo: los devs deben aprender a pensar en 'qué campos necesita el consumidor del log', no en 'cómo lo leo yo'.",
+      "realWorld": "Loki (Grafana) fue construido desde cero para logs estructurados. Datadog Logs, ELK, Splunk todos favorecen JSON. Uber y Airbnb estandarizaron structured logging a nivel de plataforma.",
+      "tags": ["structured logging", "JSON", "log parsing"],
+      "tech": ["pino", "structlog", "zap", "logback"],
+      "references": [{ "title": "Grafana — Loki logging best practices" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "observability",
+      "topic": "Correlation IDs — trazar requests distribuidas",
+      "difficulty": "mid",
+      "scenario": "Un usuario reporta que un request tardó 8 segundos. Tu request pasa por: API Gateway → Service A → Service B → DB. Cada servicio loguea por separado. ¿Cómo unes los logs de esa request específica?",
+      "question": "¿Qué es un correlation ID y cómo se propaga correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un UUID generado en el edge (API Gateway) o front-end, propagado como header `X-Request-ID` o `traceparent` a todos los servicios downstream. Cada log incluye ese ID. Buscas por ese ID y ves los logs de los 4 servicios en orden.", "correct": true, "why": "Correcto. Es el patrón estándar. W3C Trace Context (`traceparent` header) es el estándar moderno adoptado por OpenTelemetry. Sin correlation ID, unir logs entre servicios es una pesadilla." },
+        { "letter": "B", "text": "Usar el timestamp de cada request y correlacionar por proximidad temporal.", "correct": false, "why": "Absolutamente frágil. Múltiples requests concurrentes en el mismo ms hacen imposible correlacionar. Además, clock skew entre servidores puede desalinear timestamps." },
+        { "letter": "C", "text": "El userId ya sirve como correlation ID.", "correct": false, "why": "Un usuario puede tener múltiples requests concurrentes. Necesitas identificar UNA request específica, no todas las del usuario." },
+        { "letter": "D", "text": "Cada servicio genera su propio ID; luego los unes por convención de nombres.", "correct": false, "why": "IDs distintos por servicio no se pueden unir sin metadata externa. El punto es UN identificador único que viaja con la request." }
+      ],
+      "explanation": "Correlation IDs son la base de tracing distribuido. Propagación: el edge (API Gateway, load balancer) inyecta el header si no existe; cada servicio downstream lo lee, incluye en TODOS sus logs, y lo pasa a servicios que llama. OpenTelemetry estandariza esto con `traceparent` (W3C). Bonus: puedes correlacionar logs con traces (mismo ID) — literalmente la puerta a observabilidad completa. Attention: propagar el ID en llamadas async (Kafka, SQS) requiere trabajo extra — el header no viaja solo.",
+      "realWorld": "Twitter usa 'trace_id' en cada request. Zipkin (creado en Twitter) fue el primer sistema abierto de tracing distribuido. Google Dapper inspiró toda la industria.",
+      "tags": ["correlation ID", "distributed tracing", "W3C Trace Context"],
+      "tech": ["OpenTelemetry", "Zipkin", "Jaeger"],
+      "references": [{ "title": "W3C Trace Context specification" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "observability",
+      "topic": "Cardinality explosion en métricas",
+      "difficulty": "senior",
+      "scenario": "Tu equipo añadió un nuevo label a las métricas de Prometheus: `userId`. La cardinalidad de la métrica `http_requests_total` pasó de 100 (endpoint × status) a 10 millones (endpoint × status × userId). Prometheus consumió 40GB RAM en 2 días y crasheó.",
+      "question": "¿Qué es cardinality explosion y cómo se evita?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cardinality = número de series únicas (combinaciones de labels). Prometheus guarda una serie temporal POR combinación. Con `userId` como label y 10M usuarios × 20 endpoints × 5 status = 1000M series posibles. Cada serie consume RAM.", "correct": true, "why": "Correcto. Prometheus modela cada combinación única de labels como una time series independiente. La memoria y CPU escalan con el número de series, no con el volumen de requests." },
+        { "letter": "B", "text": "Regla: labels con cardinalidad ILIMITADA (userId, requestId, sessionId, IP) NUNCA van en métricas. Van en logs o traces (que sí soportan alta cardinalidad, con costo distinto).", "correct": true, "why": "Correcto. Labels válidos: endpoint (~docenas), status (~5), region (~decenas), tenantId (~cientos). Prohibidos: userId, IP, requestId, timestamp exacto." },
+        { "letter": "C", "text": "Para saber 'requests por usuario', usar logs con userId como field o tracing sampled. NO métricas.", "correct": true, "why": "Correcto. La analítica per-usuario es un antipatrón de métricas. Herramientas: logs con Loki/ELK, traces con Jaeger, o databases OLAP como ClickHouse para high-cardinality analytics." },
+        { "letter": "D", "text": "Aumentar la memoria de Prometheus a 100GB.", "correct": false, "why": "Postpone el crash. Cada nuevo usuario/día empeora. Además, queries lentas: Prometheus escanea series linealmente." },
+        { "letter": "E", "text": "Usar histograms con muchos buckets (100+ buckets) para reemplazar.", "correct": false, "why": "Histograms también crecen: cada bucket es una serie. Regla común: max 10-15 buckets por histogram." }
+      ],
+      "explanation": "Cardinality explosion es la #1 causa de problemas con Prometheus. Regla mental: 'si el valor tiene infinidad de posibles valores, no es un label — es un field de log'. Alternativas para high-cardinality analytics: (1) sampling — muestrear 1% de traces con user info; (2) OLAP DB (ClickHouse, Druid) para queries analíticas post-hoc; (3) exemplars — attach un traceID a un histogram bucket, permite drill-down sin explotar cardinalidad. VictoriaMetrics y Mimir son alternativas Prometheus-compatible optimizadas para high-cardinality.",
+      "realWorld": "Uber tuvo un famoso outage por añadir hostname (miles de hosts) como label. GitLab documenta esta lección en su handbook. Cloudflare escribió sobre migrar de Prometheus a M3 por cardinalidad.",
+      "tags": ["cardinality", "prometheus", "métricas", "labels"],
+      "tech": ["Prometheus", "Grafana", "ClickHouse"],
+      "references": [{ "title": "Prometheus docs — cardinality" }, { "title": "Cindy Sridharan — high-cardinality observability" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "observability",
+      "topic": "Log levels — cuándo usar cada uno",
+      "difficulty": "junior",
+      "scenario": "Tu compañero loggea todo como `log.error(...)`, incluyendo 'user X logged in' y 'DB reconnect (transient)'. Ahora tu alerta 'errores > 100/min' se dispara constantemente sin ningún problema real.",
+      "question": "¿Cuál es la convención correcta de log levels?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ERROR = necesita intervención (pager). WARN = anomalía que puede necesitar acción. INFO = eventos de negocio (login, order created). DEBUG = detalle de flujo para dev. TRACE = ultra-verbose. Cada nivel filtra en producción.", "correct": true, "why": "Correcto. Regla mental: 'si escribo ERROR, alguien debería mirar el log en horario de trabajo. Si es 3AM y estoy on-call, ¿me pagearía?'. Login exitoso es INFO, no ERROR. DB reconnect transient es WARN o INFO (dependiendo). Solo cosas realmente rotas son ERROR." },
+        { "letter": "B", "text": "Loguear todo como ERROR para no perder nada.", "correct": false, "why": "Ruido masivo. Convierte ERROR en 'nada', las alertas se ignoran, y cuando llega el error real nadie lo ve. Anti-patrón conocido." },
+        { "letter": "C", "text": "Solo usar INFO — los otros son legacy.", "correct": false, "why": "Los levels existen para filtrar. Sin ellos, produces GB de logs por día y las queries por 'errores reales' son imposibles." },
+        { "letter": "D", "text": "Depende del framework — no hay convención universal.", "correct": false, "why": "Hay convención de facto: syslog levels (RFC 5424) que la mayoría de frameworks respetan. La ambigüedad está en WARN/INFO/DEBUG, no en ERROR." }
+      ],
+      "explanation": "Log levels son un contrato entre el desarrollador y el operador. ERROR debería ser 'algo se rompió y necesita atención'. WARN es 'algo raro pero manejable' (retry funcionó, fallback usado). INFO es 'evento de negocio importante' (user logged in, order placed). DEBUG es 'detalle interno útil para dev'. En producción típicamente filtras DEBUG y TRACE. Herramienta: `LOG_LEVEL=info` como env var estándar.",
+      "realWorld": "Netflix documenta su convención en blog público. Google SRE Book dedica capítulo a alerting philosophy: 'every alert should be actionable'. Datadog cobra por volumen de logs — un mal uso de levels puede duplicar tu factura.",
+      "tags": ["log levels", "alerting", "actionable alerts"],
+      "tech": ["syslog RFC 5424"],
+      "references": [{ "title": "Google SRE Book — Ch. 6 Monitoring" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "observability",
+      "topic": "Alerting fatigue — cómo evitarla",
+      "difficulty": "senior",
+      "scenario": "Tu on-call rotation recibe 20 pages por noche. La mitad son falsos positivos (disk warning que se auto-resuelve), la otra mitad son 'FYI' no accionables. El equipo está exhausto y empieza a ignorar alertas.",
+      "question": "¿Cuáles son los principios para alertas sanas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Toda alerta debe ser ACCIONABLE — el on-call debe saber qué hacer. Si no, no debe ser alerta (debe ser dashboard o log).", "correct": true, "why": "Correcto. Google SRE dice: 'every page should be either a real problem or a bug in the alerting'. Si te pageas por algo que no requiere acción, arregla la alerta." },
+        { "letter": "B", "text": "Multi-window burn rate alerts: alertar solo si la tasa de consumo del error budget indica que se agotará en <X horas. Reduce ruido de picos transitorios.", "correct": true, "why": "Correcto. Multi-window burn-rate (Google SRE workbook Ch. 5) usa 2 ventanas (ej. 5min y 1h) — solo dispara si AMBAS superan el umbral. Filtra picos transitorios y detecta degradación real." },
+        { "letter": "C", "text": "Alertar en síntomas (user-facing: latency, error rate) NO en causas (CPU high, memory high). Los síntomas son estables; las causas cambian con la arquitectura.", "correct": true, "why": "Correcto. 'CPU high' puede o no impactar al usuario. 'p99 latency > 500ms' SÍ impacta directamente. Alertar en síntomas te da menos alertas, más señal." },
+        { "letter": "D", "text": "Alerta siempre que un valor supere threshold, sin importar duración.", "correct": false, "why": "Genera ruido masivo. Un spike momentáneo no es un problema — hay que esperar sostenido." },
+        { "letter": "E", "text": "Post-mortem por CADA alerta que se disparó — hace pensar 2x antes de crearlas.", "correct": false, "why": "Sobrecarga proceso. Mejor: quarterly review de todas las alertas, matar las inútiles, ajustar las ruidosas." }
+      ],
+      "explanation": "Alerting fatigue mata la reliability. El operador exhausto ignora la alerta REAL. Framework Google SRE: (1) alertar en SLIs user-facing; (2) burn rate multi-window; (3) cada page debe tener un runbook accionable; (4) revisar alertas trimestralmente, matar las que causan >20% de falsos positivos; (5) medir MTTR y usarlo como indicador de calidad de alertas. Herramientas: PagerDuty tiene analytics de alertas. Squadcast y Grafana OnCall similares.",
+      "realWorld": "Google SRE Workbook Ch. 5 detalla multi-window burn rate. Amazon PagerDuty tiene 'noise reduction' como feature core. Charity Majors (Honeycomb) escribe frecuentemente sobre alerting fatigue.",
+      "tags": ["alerting", "burn rate", "actionable", "SRE"],
+      "tech": ["PagerDuty", "Prometheus Alertmanager", "Grafana OnCall"],
+      "references": [{ "title": "Google SRE Workbook — Ch. 5 Alerting on SLOs" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "observability",
+      "topic": "Sampling de traces — head, tail, adaptive",
+      "difficulty": "staff",
+      "scenario": "Tu app produce 100k traces/segundo. Guardar todos costaría $50k/mes. Necesitas guardar 'los interesantes' (errores, latency alta) al 100% y muestrear los normales.",
+      "question": "¿Cuáles son las estrategias de sampling y sus trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Head sampling: decide en el EDGE (primer servicio) si esta trace se guarda. Simple y barato (no bufferea), pero no puedes decidir basado en resultado — si guardas 1%, verás 1% de los errores.", "correct": true, "why": "Correcto. Head sampling es fácil de implementar (probabilidad fija en el punto de entrada) pero pierde información: no sabes qué traces serán interesantes al inicio." },
+        { "letter": "B", "text": "Tail sampling: bufferea la trace COMPLETA en el collector; después decide guardarla o no basado en resultado (error, latencia). Captura 100% de errores. Costo: buffer memoria + latencia + complejidad de infra.", "correct": true, "why": "Correcto. Tail sampling es lo que quieres para observabilidad de calidad, pero requiere OTel Collector con memoria significativa y decisiones sincronizadas cross-service. OpenTelemetry Collector implementa tail sampling." },
+        { "letter": "C", "text": "Adaptive sampling: ajusta la tasa dinámicamente según carga y patrones. Alto sampling en momentos de anomalía.", "correct": true, "why": "Correcto. Datadog, New Relic implementan variantes. Ejemplo: 'si error rate >5%, subir sampling a 100% temporalmente'. Requiere feedback loops sofisticados." },
+        { "letter": "D", "text": "Guardar solo 1% de todas las traces — simple y barato.", "correct": false, "why": "Pierdes 99% de los errores y edge cases. Es lo que hacen equipos que no invirtieron en observabilidad. Insuficiente para debugging serio." },
+        { "letter": "E", "text": "No samplear nunca — es una mala práctica.", "correct": false, "why": "Sin sampling, tracing es prohibitivamente caro a escala. Todos los grandes samplean; la pregunta es cómo, no si." }
+      ],
+      "explanation": "Sampling es el arte del tracing distribuido. Estrategia común combinada: (1) Head sampling al 1% para línea base (traces representativos); (2) Tail sampling al 100% para errores y latency > p99; (3) Adaptive para incidentes. La decisión de sampling debe ser CONSISTENTE cross-service — si servicio A samplea 'no', servicio B no puede samplear 'sí' o pierdes spans. OpenTelemetry propagate el sampling decision en el `traceparent` header (flag bit).",
+      "realWorld": "Google Dapper sampled al 0.001% pero podía subir dinámicamente. Facebook Canopy usa tail sampling. Uber Jaeger fue diseñado con adaptive sampling. Startups suelen empezar con head sampling barato y evolucionar a tail.",
+      "tags": ["sampling", "tracing", "head vs tail", "adaptive"],
+      "tech": ["OpenTelemetry", "Jaeger", "Datadog"],
+      "references": [{ "title": "OpenTelemetry — Sampling documentation" }, { "title": "Facebook — Canopy paper (SOSP 2017)" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "observability",
+      "topic": "Health checks — liveness vs readiness vs startup",
+      "difficulty": "mid",
+      "scenario": "Tu servicio en Kubernetes reinicia constantemente. El health check hace `SELECT 1` a la DB. Cuando la DB está lenta, el probe timeouts, Kubernetes mata el pod y arranca uno nuevo. El nuevo también timeouts. Cascade failure.",
+      "question": "¿Cuál es la diferencia entre liveness, readiness y startup probes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Liveness = '¿está el proceso vivo?' — si falla, K8s REINICIA el pod. Readiness = '¿puede atender tráfico?' — si falla, K8s NO envía tráfico pero NO reinicia. Startup = '¿ya terminó de arrancar?' — deshabilita liveness/readiness durante boot largo.", "correct": true, "why": "Correcto. La distinción es crítica: liveness debe ser BAJO nivel (proceso responde), readiness es más estricto (puede procesar). Poner `SELECT 1` en liveness es antipatrón porque un problema de DB tumba todos los pods. Debería ir en readiness (no reinicia, solo saca del pool)." },
+        { "letter": "B", "text": "Son sinónimos para el mismo concepto de health check.", "correct": false, "why": "No — tienen efectos distintos en el runtime. Confundirlos causa cascades como la del enunciado." },
+        { "letter": "C", "text": "Liveness debe hacer chequeo profundo (DB, cache, servicios externos) para saber si el pod está sano.", "correct": false, "why": "Anti-patrón. Chequeos profundos en liveness causan cascades. Regla: liveness solo verifica 'el proceso responde y no está deadlocked'." },
+        { "letter": "D", "text": "Solo se necesita liveness — readiness es opcional.", "correct": false, "why": "Sin readiness, K8s envía tráfico al pod DURANTE su boot. Requests fallan hasta que esté listo. Readiness es esencial." }
+      ],
+      "explanation": "Regla de oro K8s: liveness es 'estoy vivo, no me mates' (basic), readiness es 'estoy listo para tráfico' (deeper), startup es 'todavía arrancando, dame tiempo' (opcional pero útil para apps con boot lento como JVMs). Anti-patrón común: `SELECT 1` en liveness — si la DB se cae, todos los pods se reinician, saturas conexiones al recuperarse. Correcto: `SELECT 1` en readiness (saca pods del pool, DB se recupera, vuelven).",
+      "realWorld": "Kubernetes docs oficial cubre este en detalle. Un famoso post-mortem de Envoy cubre este exact issue. Datadog blog: 'Design your health checks carefully' es referencia obligada.",
+      "tags": ["health checks", "kubernetes", "liveness", "readiness"],
+      "tech": ["Kubernetes", "Envoy"],
+      "references": [{ "title": "Kubernetes docs — Configure Liveness, Readiness and Startup Probes" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "observability",
+      "topic": "Métricas RED vs USE",
+      "difficulty": "mid",
+      "scenario": "Vas a instrumentar un nuevo servicio con métricas. Un compañero pregunta: '¿qué métricas mínimas debo exponer para tener observabilidad decente?'",
+      "question": "¿Cuáles son los mnemónicos RED y USE, y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RED (Tom Wilkie): Rate (requests/s), Errors (rate de fallos), Duration (latencia p50/p95/p99). Para SERVICIOS de request/response. USE (Brendan Gregg): Utilization (% ocupado), Saturation (queue length), Errors. Para RECURSOS (CPU, disk, network).", "correct": true, "why": "Correcto. RED se aplica al servicio (endpoint HTTP, RPC). USE se aplica a recursos (CPU, memoria, red). Combinados dan observabilidad completa: si RED muestra alta latencia, USE te dice qué recurso está saturado." },
+        { "letter": "B", "text": "RED y USE son sinónimos — dos nombres para lo mismo.", "correct": false, "why": "No — miden capas distintas. RED es el 'qué experimentan los usuarios', USE es el 'por qué está pasando'." },
+        { "letter": "C", "text": "Solo se necesita uno de los dos.", "correct": false, "why": "Complementarios. Sin RED no sabes si tu servicio funciona; sin USE no sabes por qué falla." },
+        { "letter": "D", "text": "Ambos son obsoletos — usa OpenTelemetry Semantic Conventions.", "correct": false, "why": "OTel Semantic Conventions RESPETA estos mnemónicos y define nombres estándar (http.server.duration, system.cpu.utilization) alineados con RED/USE." }
+      ],
+      "explanation": "RED (Rate/Errors/Duration): Wilkie (Weaveworks) — mide el servicio desde el punto de vista del cliente. USE (Utilization/Saturation/Errors): Gregg (Netflix) — mide recursos desde el punto de vista del sistema. RED es 'qué', USE es 'por qué'. Instrumentación mínima: RED por endpoint + USE por recurso crítico (CPU, memoria, IO, network). Ambos son estables — sirven durante toda la vida del servicio; contrastan con métricas ad-hoc que crecen sin control.",
+      "realWorld": "Weaveworks popularizó RED. Netflix popularizó USE. Prometheus community adoptó ambos como estándar. Datadog dashboards default siguen el patrón.",
+      "tags": ["RED", "USE", "métricas", "mnemónicos"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "Tom Wilkie — The RED Method" }, { "title": "Brendan Gregg — The USE Method" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "scalability",
+      "topic": "Bimodal distribution — el peligro del promedio",
+      "difficulty": "senior",
+      "scenario": "Tu servicio muestra latency PROMEDIO de 100ms. Los usuarios se quejan de que 'a veces la app va lentísima'. Tu jefe pregunta: '¿pero si el promedio es 100ms, cuál es el problema?'",
+      "question": "¿Por qué el promedio esconde problemas y qué debes reportar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Distribuciones bimodales: 80% de requests en 50ms, 20% en 300ms. Promedio = 100ms se ve OK pero 20% de usuarios sufren. Reportar percentiles: p50, p95, p99, p99.9. El p99 revela el 'long tail'. Amazon dice: 'p99 latency is what users remember'.", "correct": true, "why": "Correcto. Promedios son enemigos en distribuciones bimodales/skewed (la mayoría de sistemas reales). Percentiles p95/p99 muestran user experience real. Con 100 requests por usuario, ese 1% ES cada minuto para él. Facebook, Amazon, Google todos reportan percentiles." },
+        { "letter": "B", "text": "El promedio es la mejor métrica. Los percentiles complican innecesariamente.", "correct": false, "why": "Falso. Promedio es útil para monitoreo top-level pero MIENTE en distribuciones no gaussianas. Sistemas web nunca son gaussianos (colas, cache misses, GC pauses)." },
+        { "letter": "C", "text": "Reportar solo mediana (p50). Es más robusta que promedio.", "correct": false, "why": "p50 es mejor que promedio pero también esconde tail. Necesitas p50 Y p95/p99 juntos." },
+        { "letter": "D", "text": "Reportar máximo — es el peor caso.", "correct": false, "why": "Máximo es super volátil (1 outlier lo domina). Percentiles filtran outliers extremos manteniendo la señal." }
+      ],
+      "explanation": "Distribuciones reales de latencia son SKEWED (log-normal es común). Media y mediana pueden estar bien mientras p99 es 10x. Regla mental: cuentas 100 requests con p99=1s. Un usuario haciendo 100 requests VE ese 1s. Con 10 requests concurrentes, es un p90 de sesión = 1s. Amazon publicó que cada 100ms de latencia reduce sales 1% — y esa latencia es percentil, no promedio. Herramientas como HDR Histogram te dan percentiles precisos con memoria constante.",
+      "realWorld": "Gil Tene tiene una charla famosa 'How NOT to Measure Latency' — es lectura obligatoria. Amazon publica p99 en sus dashboards internos. Netflix mide 'startup latency' como p95 (no promedio).",
+      "tags": ["percentiles", "p99", "bimodal", "long tail"],
+      "tech": ["HDR Histogram", "Prometheus histograms"],
+      "references": [{ "title": "Gil Tene — How NOT to Measure Latency" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "scalability",
+      "topic": "Stateless design — la clave para escalar horizontal",
+      "difficulty": "mid",
+      "scenario": "Tu app guarda el carrito del usuario en memoria del pod. Cuando escalas a 3 pods con round-robin, el usuario ve el carrito 'aparecer y desaparecer' según a qué pod cayó su request.",
+      "question": "¿Por qué falla y cuál es el patrón correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El estado del carrito está EN un pod específico. Otros pods no lo tienen. Solución: mover estado a un store compartido (Redis, DB) — pods son stateless, se pueden matar/escalar libremente. Sticky sessions es un parche que impide escalar bien.", "correct": true, "why": "Correcto. Stateless design es LA regla para horizontal scaling. Estado va en: (1) DB persistente (data importante); (2) Redis/cache compartido (session, cart); (3) el CLIENT (localStorage, JWT). NUNCA en memoria del pod." },
+        { "letter": "B", "text": "Usar sticky sessions (session affinity) en el load balancer para que el usuario siempre vaya al mismo pod.", "correct": false, "why": "Parche que rompe cuando ese pod se muere/reinicia. Además, previene rebalanceo — pods pueden estar over-loaded mientras otros idle. Escala mal." },
+        { "letter": "C", "text": "Aumentar la memoria del pod para caber todo el estado.", "correct": false, "why": "No resuelve — el problema es que otros pods no tienen el estado, no que un pod no tenga memoria." },
+        { "letter": "D", "text": "Correr solo 1 pod para que el estado siempre esté ahí.", "correct": false, "why": "Elimina la posibilidad de escalar y de high availability. Si el pod cae, todo el servicio cae." }
+      ],
+      "explanation": "12-factor app (Heroku, Adam Wiggins) codifica esto: 'Store state in stateful backing services'. Los servicios stateless son fungibles — cualquier pod atiende cualquier request, K8s los recicla libremente, autoscaling funciona. Estado va en Postgres/Redis/S3. Excepción: connection state (WebSocket) puede ser sticky, pero incluso ahí, el mensaje state debe ir a store externo. JWT elimina session state completamente (con sus propios trade-offs de invalidation).",
+      "realWorld": "Netflix pioneered stateless microservices. Heroku publicó 12-factor. AWS ALB soporta sticky sessions pero AWS docs recomiendan evitarlas.",
+      "tags": ["stateless", "12-factor", "sticky sessions", "horizontal scaling"],
+      "tech": ["Redis", "Kubernetes", "Heroku"],
+      "references": [{ "title": "12-Factor App" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "scalability",
+      "topic": "Auto-scaling — HPA basado en qué",
+      "difficulty": "senior",
+      "scenario": "Configuras Kubernetes HPA (Horizontal Pod Autoscaler) para escalar al 70% CPU. Bajo carga real, tu latencia se dispara aunque CPU está al 40%. Investigas: los pods están esperando en I/O (DB queries).",
+      "question": "¿Por qué CPU es mala métrica para escalar y qué usar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CPU no captura I/O wait. Un pod bloqueado en DB tiene bajo CPU pero está saturado desde perspectiva de usuario. Escalar por CPU 'no ayuda' porque el bottleneck está río abajo.", "correct": true, "why": "Correcto. CPU utilization mide 'trabajo activo'. Un servicio I/O-bound (99% de servicios web) espera más de lo que computa — CPU nunca sube, pero latency sí." },
+        { "letter": "B", "text": "Mejor métrica: request rate + latency percentil. Ejemplo: escalar si p95 > 500ms sostenido. Alinea con user experience directamente.", "correct": true, "why": "Correcto. HPA soporta 'custom metrics' via Prometheus Adapter. Métricas basadas en carga real (RPS, latency) escalan cuando importa." },
+        { "letter": "C", "text": "Concurrency (concurrent requests) es útil especialmente en serverless / autoscaling agresivo.", "correct": true, "why": "Correcto. Knative escala por concurrency por default (más intuitivo que CPU). Lambda escala 1:1 request. La idea: cada pod maneja N concurrentes, cuando la cola sube, añade pods." },
+        { "letter": "D", "text": "CPU es la única métrica confiable para autoscaling.", "correct": false, "why": "Solo funciona para workloads CPU-bound (batch processing, ML inference, compression). Web/API rara vez es CPU-bound." },
+        { "letter": "E", "text": "Autoscaling siempre debe basarse en la métrica del negocio (revenue), no en técnica.", "correct": false, "why": "Métricas de negocio son útiles para dashboards pero no reactivas — el revenue no baja en 30 segundos como el CPU sube." }
+      ],
+      "explanation": "Autoscaling correcto: (1) identifica el bottleneck real (CPU, memoria, I/O, red); (2) escala por métrica alineada; (3) define límites (min/max pods) para evitar runaway. K8s HPA soporta custom metrics via Metrics Server + Prometheus Adapter. Alternativas: KEDA para autoscaling event-driven (Kafka lag, SQS depth). AWS: ECS con CloudWatch metrics, Fargate similar. Serverless (Lambda, Cloud Run) escala automático por request rate — 1 request = 1 unit.",
+      "realWorld": "Netflix escala su API por concurrent requests (Falcor). Uber usa custom metrics de queue depth. Twitter tuvo problemas históricos escalando por CPU en un servicio I/O-bound.",
+      "tags": ["autoscaling", "HPA", "custom metrics", "I/O bound"],
+      "tech": ["Kubernetes", "KEDA", "Prometheus Adapter"],
+      "references": [{ "title": "Kubernetes docs — Horizontal Pod Autoscaler" }, { "title": "KEDA — Kubernetes Event-Driven Autoscaling" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "scalability",
+      "topic": "Backpressure y load shedding",
+      "difficulty": "senior",
+      "scenario": "Tu servicio recibe 10x su capacidad normal durante un pico. Sin protección, cada request se acumula en cola, timeout eventualmente todos, y el servicio colapsa (memory + timeout cascade). ¿Cómo defenderte?",
+      "question": "¿Qué son backpressure y load shedding y cómo se implementan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Backpressure: comunicar upstream 'estoy saturado, reduce rate'. Ejemplo: TCP window, HTTP 429, gRPC RESOURCE_EXHAUSTED. El cliente/proxy respeta y espera o retry con backoff.", "correct": true, "why": "Correcto. Backpressure es la solución 'cortés' — le dices al upstream que te está saturando. Requiere que el cliente respete la señal (retry con backoff, no infinite loop)." },
+        { "letter": "B", "text": "Load shedding: rechazar activamente requests cuando estás saturado. HTTP 503 antes de agotar recursos. Prefiere rechazar 10% a colapsar 100%. Netflix Concurrency Limits library implementa esto.", "correct": true, "why": "Correcto. Load shedding es defensa activa. Mejor rechazar rápido (503) que aceptar y timeoutear (peor UX). Prioridad: mantener servicio funcional para los que ya conectaron." },
+        { "letter": "C", "text": "Priority queues: procesar requests premium/críticas primero, degradar o rechazar bajas.", "correct": true, "why": "Correcto. Bajo saturación, no todas las requests valen igual. Aidoo/Envoy soportan priority classes. Ejemplo: user paid > free tier > bots." },
+        { "letter": "D", "text": "Aumentar timeouts para dar más tiempo a cada request.", "correct": false, "why": "Contraproducente. Aumenta el memory footprint por request y prolonga la agonía. Reducir timeouts (fail fast) libera recursos más rápido." },
+        { "letter": "E", "text": "Ignorar picos — 'ya pasará'.", "correct": false, "why": "Sin defensa, un pico se convierte en outage sostenido. El colapso libera menos rápido de lo que la carga llega." }
+      ],
+      "explanation": "Regla: 'un sistema debe degradarse en vez de colapsar'. Backpressure comunica saturación. Load shedding rechaza activamente. Circuit breakers protegen del downstream. Bulkheads aíslan recursos. Netflix Hystrix y Resilience4j implementan estos patrones. Adaptive concurrency (Netflix) ajusta dinámicamente cuántas requests concurrentes aceptas basado en latencia observada (algoritmo de Little).",
+      "realWorld": "Netflix Concurrency Limits library es referencia. Envoy tiene 'admission control' feature. Envoy circuit breakers built-in. Google SRE Book Ch. 22 dedica extenso análisis. Facebook publicó Cambodian Cascade paper analizando esto.",
+      "tags": ["backpressure", "load shedding", "circuit breaker", "resilience"],
+      "tech": ["Envoy", "Hystrix", "Resilience4j", "Netflix Concurrency Limits"],
+      "references": [{ "title": "Google SRE Book — Ch. 22 Addressing Cascading Failures" }, { "title": "Netflix TechBlog — Performance Under Load" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "scalability",
+      "topic": "Rate limiting — algoritmos",
+      "difficulty": "senior",
+      "scenario": "Necesitas implementar rate limiting: 100 requests/minuto por usuario. Ves 3 algoritmos: fixed window, sliding window, token bucket. Un compañero pregunta '¿cuál usar?'",
+      "question": "¿Cuáles son las diferencias y trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Fixed window: cuenta requests en ventana fija (00:00-00:59, 01:00-01:59). Simple pero permite 'burst' en los bordes: 100 en 00:59 + 100 en 01:00 = 200 en 2 segundos.", "correct": true, "why": "Correcto. Fixed window es el más simple (INCR en Redis por minuto) pero tiene el problema de borde. En muchos casos aceptable si el burst puntual no rompe nada." },
+        { "letter": "B", "text": "Sliding window: cuenta requests en los últimos N segundos rolling. Más justo pero más caro (necesita guardar timestamp de cada request o aproximación).", "correct": true, "why": "Correcto. Sliding window log (guarda cada timestamp) es preciso pero memory-heavy. Sliding window counter aproxima con 2 buckets — buen balance. Redis Zset + expiry es implementación común." },
+        { "letter": "C", "text": "Token bucket: 'burstable' — tienes un balde de N tokens, cada request consume 1, se rellena a X/segundo. Permite bursts controlados sin exceder rate promedio.", "correct": true, "why": "Correcto. Es la elección más común en APIs modernas. AWS API Gateway, Stripe, la mayoría de rate limiters serios usan token bucket. Combina 'burst' natural + rate estable." },
+        { "letter": "D", "text": "Leaky bucket: variante que garantiza rate CONSTANTE de salida. Menos burstable que token bucket.", "correct": true, "why": "Correcto. Leaky bucket es para casos donde el downstream tolera solo rate constante (ej. modem, hardware con capacity fija). Menos común en APIs modernas." },
+        { "letter": "E", "text": "Todos son equivalentes — elige el más rápido de implementar.", "correct": false, "why": "Tienen trade-offs distintos. Fixed window puede permitir 2x el rate en burst; sliding window es preciso pero caro; token bucket balancea. Elige según tolerancia a burst y accuracy requeridos." }
+      ],
+      "explanation": "Rate limiting es fundamental en APIs. Elección: (1) Fixed window para casos simples (rate diarios); (2) Sliding window cuando accuracy importa (SLAs de rate estrictos); (3) Token bucket para APIs (permite bursts, respeta rate promedio); (4) Leaky bucket para downstream con capacity fija. Implementación distribuida: Redis con Lua scripts (atómico), o dedicated services (Envoy rate limit, Kong plugin). Return HTTP 429 con `Retry-After` header — clientes bien construidos respetan.",
+      "realWorld": "Stripe usa token bucket (documentado). GitHub API tiene rate limits complejos por endpoint. Twitter rate limits fueron infames para desarrolladores. Cloudflare Workers rate limiting usa sliding window counter aproximado.",
+      "tags": ["rate limiting", "token bucket", "sliding window", "429"],
+      "tech": ["Redis", "Envoy", "AWS API Gateway"],
+      "references": [{ "title": "Stripe Engineering — Scaling your API with rate limiters" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "observability",
+      "topic": "OpenTelemetry — el nuevo estándar",
+      "difficulty": "senior",
+      "scenario": "Estás decidiendo el stack de observabilidad. Opciones: (a) instrumentar con Datadog SDK propietario, (b) usar OpenTelemetry, (c) escribir tu propia librería.",
+      "question": "¿Por qué OpenTelemetry es la elección canónica en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenTelemetry es estándar CNCF (fusión de OpenTracing + OpenCensus, 2019). Instrumenta una vez, exporta a CUALQUIER backend (Jaeger, Datadog, New Relic, Grafana, X-Ray). Sin vendor lock-in. Soporta traces, metrics, logs.", "correct": true, "why": "Correcto. OTel elimina la trampa histórica: 'instrumento con SDK X, luego migrar cuesta un año'. Con OTel, cambias solo el exporter. Soporte first-class de todos los grandes vendors + Prometheus, Jaeger open source." },
+        { "letter": "B", "text": "OpenTelemetry es una moda pasajera; SDK del vendor es más estable.", "correct": false, "why": "OTel es proyecto CNCF con contribuciones de Google, Microsoft, Datadog, New Relic, AWS. Es la apuesta segura a largo plazo. Vendors mantienen sus SDKs pero migran hacia OTel." },
+        { "letter": "C", "text": "OpenTelemetry solo soporta traces; para metrics y logs necesitas otras herramientas.", "correct": false, "why": "Falso. OTel Metrics es GA desde 2022, Logs desde 2023. Los 3 pilares en un solo SDK." },
+        { "letter": "D", "text": "OpenTelemetry es lento comparado con SDKs nativos.", "correct": false, "why": "Overhead comparable a SDKs propietarios. Benchmark de Java Agent OTel: <1% overhead típico." }
+      ],
+      "explanation": "OpenTelemetry (OTel) es el estándar CNCF para observabilidad. Componentes: (1) API — clases estables para instrumentar código; (2) SDK — implementación default; (3) Auto-instrumentation — instrumenta libraries populares (HTTP, gRPC, DB) sin cambiar código; (4) Collector — pipeline agnóstico que recibe/transforma/exporta. Ventajas: portabilidad, comunidad grande, soporte oficial vendor. Migración típica: empezar con auto-instrumentation → añadir custom spans donde importa. En Java, .NET, Python, Go, Node — todos maduros. Rust, Ruby, PHP menos.",
+      "realWorld": "AWS, Google, Microsoft todos empujan OTel. Datadog, New Relic, Honeycomb tienen exporters oficiales. Kubernetes recomienda OTel. La era de SDKs propietarios locked-in está terminando.",
+      "tags": ["OpenTelemetry", "OTel", "observability", "CNCF"],
+      "tech": ["OpenTelemetry", "CNCF"],
+      "references": [{ "title": "OpenTelemetry official docs" }, { "title": "CNCF blog — Why OpenTelemetry matters" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "observability",
+      "topic": "PII redaction — logs seguros",
+      "difficulty": "senior",
+      "scenario": "Tu app loguea el request completo: `{\"user\":{\"email\":\"john@company.com\",\"ssn\":\"123-45-6789\"},\"payload\":{...}}`. Auditoría GDPR/HIPAA descubre estos logs. Multa potencial: millones.",
+      "question": "¿Cómo hacer logging seguro sin perder utilidad debugging?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Redact PII antes de logear: email → `j***@company.com` o hash, SSN → `[REDACTED]`, credit cards → `**** **** **** 1234`. Framework-level (middleware/interceptor) para consistencia.", "correct": true, "why": "Correcto. Redaction en el punto de logging previene fugas. Nunca confíes en 'todos van a redactar' — implementa a nivel framework/library que todos usan." },
+        { "letter": "B", "text": "Structured logging + campos taggeados: usar `@sensitive` en el schema; el logger detecta y redact automáticamente. Menos error-prone que redaction manual.", "correct": true, "why": "Correcto. TypeScript branded types o Kotlin @Sensitive annotation + logger plugin. Detecta a nivel de compilación qué campos son sensibles." },
+        { "letter": "C", "text": "Nunca logear objetos completos — logear campos individuales explícitos. Whitelist approach vs blacklist.", "correct": true, "why": "Correcto. Whitelist es MÁS seguro: si añades un campo sensitivo, no se logea por default. Blacklist (redact known-sensitive) falla cuando alguien añade un nuevo campo sin marcar." },
+        { "letter": "D", "text": "Encriptar logs at-rest resuelve el problema.", "correct": false, "why": "Encryption at-rest protege del acceso al disco, pero no del acceso a la herramienta de logging (Datadog, Splunk). Los ingenieros con acceso a logs verían el PII en claro." },
+        { "letter": "E", "text": "GDPR no aplica a logs — es solo para databases.", "correct": false, "why": "GDPR aplica a cualquier tratamiento de datos personales, incluidos logs. Un log con PII es un dato personal procesado." }
+      ],
+      "explanation": "Compliance logging: (1) Redaction library (pino-redact, structlog processors); (2) Schema con annotations (`@Sensitive` / `@PII`); (3) Retention limitada (GDPR: solo lo necesario); (4) Access controls (no todos ven todos los logs). Datadog tiene 'log processing rules' para redact patterns. Splunk field aliases. Alternativa avanzada: pseudonymization (reversible hash con key) — permite tracing sin exponer PII a operators.",
+      "realWorld": "Google Cloud has Data Loss Prevention API para redact. Uber tuvo incidente famoso con Slack messages con PII. GDPR ha impuesto multas millonarias por logs con emails no redactados (BA, Marriott).",
+      "tags": ["PII", "GDPR", "HIPAA", "redaction", "compliance"],
+      "tech": ["pino-redact", "structlog"],
+      "references": [{ "title": "OWASP Logging Cheat Sheet" }, { "title": "GDPR Art. 32 — Security of processing" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "scalability",
+      "topic": "N+1 queries en escala",
+      "difficulty": "senior",
+      "scenario": "Tu endpoint devuelve una lista de 100 órdenes con su usuario y sus items. ORM code: `Order.all.each { |o| puts o.user.name; o.items.each { |i| puts i.name } }`. En producción, esto genera 1 + 100 + 100 queries. Con carga, DB se satura.",
+      "question": "¿Qué es N+1 y cómo se detecta/resuelve?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "N+1: 1 query inicial + N queries adicionales, una por cada elemento del resultado. Anti-patrón clásico de ORMs con lazy loading. Solución: eager loading (SQL JOIN explícito o preload).", "correct": true, "why": "Correcto. `Order.includes(:user, :items)` en Rails, `select_related`/`prefetch_related` en Django, `join fetch` en Hibernate, `.include()` en Prisma. Todos preload las asociaciones en 1-3 queries totales." },
+        { "letter": "B", "text": "Detectar en dev: assertions que fallan si N+1 detectado (Bullet gem en Rails, django-debug-toolbar, Hibernate statistics). También en tests unitarios.", "correct": true, "why": "Correcto. Herramientas de detección son críticas — N+1 se cuela fácil en code review. Bullet gem alerta 'preload esto'. Query count assertions en tests previenen regresiones." },
+        { "letter": "C", "text": "En sistemas GraphQL, DataLoader batches queries por request (soluciona N+1 automático).", "correct": true, "why": "Correcto. DataLoader (Facebook, open source) coalesce loads dentro de un tick del event loop — 100 `user.load(id)` se convierten en 1 `SELECT users WHERE id IN (...)`. Solución elegante para GraphQL resolvers." },
+        { "letter": "D", "text": "Aumentar el connection pool de la DB resuelve N+1.", "correct": false, "why": "No. N+1 significa MÁS queries totales; el problema no es 'no puedo hacerlas' sino 'estoy haciendo demasiadas'. Ampliar pool solo pospone la saturación." },
+        { "letter": "E", "text": "Cachear cada query individual soluciona el problema.", "correct": false, "why": "Con cache 100% hit, sí ayuda. Pero cache miss = mismo problema. Es defense-in-depth, no la solución primaria." }
+      ],
+      "explanation": "N+1 es probablemente el bug de performance más común en apps con ORM. Signature: latency crece linealmente con tamaño del resultado. Detección: (1) query logs (contar queries por request); (2) tools como Bullet/django-debug-toolbar en dev; (3) APM traces muestran la avalancha. Solución: eager loading al descubrir la relación necesaria. GraphQL: DataLoader coalesce automáticamente. En SQL raw: batch queries manualmente con `WHERE id IN (?, ?, ...)`.",
+      "realWorld": "Shopify escribió sobre 'de-N+1-ing' sus endpoints — mejoras 10x de latency. Rails Bullet gem es standard. Facebook creó DataLoader específicamente para GraphQL N+1. Prisma docs dedican sección a fluent joins.",
+      "tags": ["N+1", "ORM", "eager loading", "DataLoader"],
+      "tech": ["Rails", "Django", "Hibernate", "Prisma", "DataLoader"],
+      "references": [{ "title": "Shopify Engineering — Solving N+1 problems" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "observability",
+      "topic": "Continuous profiling",
+      "difficulty": "staff",
+      "scenario": "Tu app funciona bien pero el CPU está al 70% en horario pico. Metrics no revelan hot spots — solo dicen 'CPU alto'. Necesitas saber qué FUNCIÓN específica consume tanto.",
+      "question": "¿Qué es continuous profiling y por qué es la 4ta señal de observabilidad?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Continuous profiling: capturar profiles (CPU, memoria, goroutines) periódicamente en producción con bajo overhead (<1%). Herramientas: Pyroscope, Parca, Datadog Continuous Profiler, Google Cloud Profiler.", "correct": true, "why": "Correcto. Profiling tradicional era 'punto en el tiempo' — corres perf en local o dev. Continuous profiling es 'siempre corriendo' en producción con sampling ligero. Puedes ver 'qué función consumió CPU la semana pasada a las 3AM'." },
+        { "letter": "B", "text": "Flame graphs (Brendan Gregg) visualizan stacks de manera intuitiva — ancho = tiempo consumido, altura = call depth. Identifican hot paths en segundos.", "correct": true, "why": "Correcto. Flame graphs revolucionaron la visualización de profiles. Instantáneamente ves 'esta función X consume 30% del CPU'. Estándar de la industria en 2026." },
+        { "letter": "C", "text": "Continuous profiling se considera la '4ta señal' de observabilidad (junto a metrics, logs, traces). Grafana llama esto 'the four pillars'.", "correct": true, "why": "Correcto. Grafana Labs y otros están empujando profiling como pilar. Grafana Pyroscope, adoptado 2023, cubre este espacio. Datadog integra profiling en su suite APM." },
+        { "letter": "D", "text": "Profiling siempre tiene alto overhead — no es viable en producción.", "correct": false, "why": "Falso. Sampling profilers modernos (eBPF-based, Java async-profiler) tienen <1% overhead. Diseñados para correr 24/7 en prod." },
+        { "letter": "E", "text": "Los mismos datos se pueden obtener de metrics — profiling es redundante.", "correct": false, "why": "Metrics agregan (CPU %) pero no dicen 'qué función/línea consume'. Profiling responde 'DÓNDE' está el CPU — información completamente distinta." }
+      ],
+      "explanation": "Continuous profiling completa el cuadro. Metrics dicen 'CPU alto', logs 'qué pasó', traces 'dónde se fue el tiempo entre servicios', profiling 'DENTRO DE UN SERVICIO qué función consume'. En 2026 es estándar en empresas serious about performance. Tecnología: eBPF (Linux, cero overhead) para runtimes nativos, async-profiler para JVM, Python cProfile sampling, Go pprof built-in. Grafana Pyroscope (open source), Datadog Continuous Profiler, Google Cloud Profiler son las herramientas principales. Diff view: comparar profile hoy vs semana pasada para detectar regresiones.",
+      "realWorld": "Google Cloud Profiler está en producción desde 2018. Netflix usa async-profiler para JVMs. Grafana adquirió Pyroscope en 2023. Meta open-sourced 'HHVM Contbuf' que inspiró parte del espacio.",
+      "tags": ["continuous profiling", "flame graphs", "eBPF", "4th pillar"],
+      "tech": ["Pyroscope", "Parca", "Datadog Profiler", "async-profiler"],
+      "references": [{ "title": "Grafana Pyroscope docs" }, { "title": "Brendan Gregg — Flame Graphs" }]
+    }
+  ]
+}

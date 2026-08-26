@@ -1,0 +1,470 @@
+{
+  "id": "ai-programming-sim-07-agent-loops-orchestration",
+  "trackId": "ai-programming",
+  "order": 7,
+  "title": "Simulacro 07 — Loops de agentes: ReAct, planning, multi-agent, orquestación",
+  "focus": "Cómo diseñar el loop de un agente: ReAct, planning explícito, límite de pasos, budget, multi-agent (supervisor, swarm, hierarchical), tradeoffs, cuándo NO usar agente.",
+  "areaCoverage": ["agents-tools", "cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "agents-tools",
+      "topic": "ReAct — el patrón base",
+      "difficulty": "junior",
+      "scenario": "Un compañero pregunta: '¿Qué es exactamente ReAct? Vi el paper pero no me queda claro qué añade sobre 'llamar a un LLM en loop con tools'.'",
+      "question": "¿Cuál es la definición más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ReAct (Yao et al. 2022) intercala Thought (razonamiento en lenguaje natural), Action (llamada a tool) y Observation (resultado). El modelo produce trazas explícitas donde razona ANTES de actuar. Esto mejora accuracy vs actuar sin razonar, y da trazabilidad. Es el patrón base sobre el que se construyen agentes más complejos.", "correct": true, "why": "Correcto. ReAct = Reasoning + Acting. Fuerza al modelo a verbalizar el 'por qué' antes del 'qué' hacer. Estudios del paper original mostraron mejora significativa en tareas de QA (HotpotQA) y decision-making. Es la base conceptual de casi todos los agentes modernos." },
+        { "letter": "B", "text": "ReAct es un framework React (Facebook) para agentes.", "correct": false, "why": "Confusión de acrónimo. ReAct de agentes = Reasoning + Acting, no relacionado con React.js." },
+        { "letter": "C", "text": "ReAct es un algoritmo de reinforcement learning.", "correct": false, "why": "Falso. Aunque el nombre suena similar, ReAct es un patrón de prompting/inference, no un algoritmo de RL." },
+        { "letter": "D", "text": "ReAct requiere fine-tuning específico del modelo.", "correct": false, "why": "Falso. Es puramente prompting/inference-time; funciona con cualquier LLM que sepa razonar y llamar tools." }
+      ],
+      "explanation": "ReAct (Reasoning + Acting) de Yao et al. (NeurIPS 2022) es el patrón fundacional: el modelo genera cadenas 'Thought → Action → Observation' iterativamente hasta llegar a una respuesta final. El Thought hace explícito el razonamiento (chain-of-thought), Action ejecuta una tool, Observation es el resultado. Ventajas: (1) mejor accuracy en tareas multi-step. (2) trazabilidad — puedes leer QUÉ razonó el modelo antes de cada acción. (3) fácil de debuggear. Prácticamente todos los agentes modernos (LangChain agent, OpenAI Assistants, Claude tool use) implementan variantes de ReAct por debajo.",
+      "realWorld": "El paper original (arxiv 2210.03629) sigue siendo referencia. LangChain popularizó ReAct como 'agent type' por defecto. Anthropic recomienda pedir explícitamente 'think step by step before calling tools' que es esencialmente ReAct. Sonnet 3.7+ y Claude 4 tienen 'extended thinking' que es una evolución (thinking tokens separados del output).",
+      "tags": ["react", "agent-loop", "prompting", "fundamentals"],
+      "tech": ["Claude", "OpenAI", "LangChain"],
+      "references": [
+        { "title": "Yao et al. — ReAct: Synergizing Reasoning and Acting (arxiv 2210.03629)" },
+        { "title": "LangChain — ReAct agents" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "agents-tools",
+      "topic": "Max iterations — por qué necesarias",
+      "difficulty": "junior",
+      "scenario": "Un agente de scraping en producción entró en bucle: consultaba `list_pages`, no encontraba lo que buscaba, volvía a llamar `list_pages`. Consumió 500k tokens y $80 antes de que un humano lo detuviera.",
+      "question": "¿Cuál es la primera defensa a añadir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un límite duro de iteraciones (max_iterations, típicamente 10-30 según tarea) que corta el loop cuando se alcanza y devuelve error o resultado parcial al llamador.", "correct": true, "why": "Correcto. Es la defensa más simple y efectiva. Todo framework de agentes (LangChain, LangGraph, Autogen, CrewAI) tiene este parámetro. Sin límite explícito, cualquier bug de prompt o entorno puede causar un loop infinito costoso." },
+        { "letter": "B", "text": "Bajar la temperatura del modelo a 0.", "correct": false, "why": "No previene loops si el modelo determinísticamente decide repetir la acción. Temperature 0 puede empeorar loops determinísticos." },
+        { "letter": "C", "text": "Cambiar a un modelo más grande.", "correct": false, "why": "No hay garantía. Modelos grandes también entran en loops si el prompt/estado los induce." },
+        { "letter": "D", "text": "Añadir print de cada iteración para debug.", "correct": false, "why": "Ayuda a debug pero no PREVIENE el gasto. Necesitas un límite duro." }
+      ],
+      "explanation": "Todo agente en producción necesita al menos 3 límites duros: (1) MAX ITERATIONS — típicamente 10-30, depende de tarea (tareas simples 5-10, tareas complejas hasta 50). (2) MAX TOKENS por sesión — costo cap. (3) MAX WALL TIME — cortar tras N minutos. Al alcanzar cualquier límite: NO seguir, devolver 'aborted with reason X' + partial result. Adicionalmente: detección de loop (misma acción 3+ veces consecutivas → forzar corte o intervención humana). Estos límites son la primera línea de defensa contra bugs y costo runaway.",
+      "realWorld": "Casos públicos de agentes runaway: AutoGPT (2023) tenía loops que consumían cientos de dólares. En 2024 se reportó un agente de Devin que hizo loop consumiendo créditos hasta que timeout duro cortó. LangGraph y LangChain documentan recursion_limit como parámetro obligatorio.",
+      "tags": ["agent-loop", "max-iterations", "safety", "budget"],
+      "tech": ["LangChain", "LangGraph"],
+      "references": [
+        { "title": "LangChain — Agent max_iterations" },
+        { "title": "Anthropic — Safety patterns for agents" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "cost-inference",
+      "topic": "Budget de tokens y costo",
+      "difficulty": "junior",
+      "scenario": "Un compañero pregunta: '¿Cómo controlo costo en un agente que puede llamar tools 20 veces? El input crece cada turno porque acumulo historial + tool results.'",
+      "question": "¿Cuáles son las técnicas más efectivas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combinar: (1) budget de tokens/dinero por sesión con corte duro. (2) prompt caching para amortizar system + tools defs. (3) trimming del historial (truncar tool results largos, resumir turnos viejos). (4) elegir modelo apropiado por complejidad (Haiku para pasos triviales, Sonnet para razonamiento). (5) parallel tool calls para reducir turnos.", "correct": true, "why": "Correcto. Control de costo es multi-frente: budget hard cap, caching agresivo, trimming/compression del contexto, model routing por complejidad, y paralelización. Ningún parche único basta." },
+        { "letter": "B", "text": "Solo caching resuelve el 100% del costo.", "correct": false, "why": "Caching amortiza el PREFIJO fijo (system + tools), pero el historial creciente NO se cachea. Necesitas también trimming." },
+        { "letter": "C", "text": "Usar siempre el modelo más barato.", "correct": false, "why": "Puede degradar calidad y forzar más iteraciones — a veces sale más caro. Router por complejidad es mejor." },
+        { "letter": "D", "text": "No hay forma de controlar costo hasta que Anthropic baje precios.", "correct": false, "why": "Falso. Hay muchas técnicas efectivas ya." }
+      ],
+      "explanation": "Estrategias de cost control en agentes: (1) BUDGET HARD CAP — límite $ o tokens por sesión, matar al pasarse. (2) PROMPT CACHING — reduce ~90% costo del prefijo repetido. (3) CONTEXT TRIMMING — resumir turnos viejos, truncar tool results grandes, expulsar mensajes que no aportan. (4) MODEL ROUTING — Haiku/GPT-4o-mini para pasos triviales; Sonnet/GPT-4o para razonamiento complejo. (5) PARALLEL TOOL CALLS — reducir número de turnos. (6) STRUCTURED OUTPUT en vez de tool call para extracción (menos overhead). (7) MEDIR — LangSmith/Braintrust muestran costo por sesión; identifica los outliers.",
+      "realWorld": "Cursor documentó que su cost per task bajó ~60% con caching + model routing. Anthropic recomienda cache de tool defs para agentes con muchas tools. El equipo de Perplexity habla de 'cost optimization' como área de trabajo mensual.",
+      "tags": ["cost", "budget", "optimization", "context"],
+      "tech": ["Claude", "OpenAI", "LangChain"],
+      "references": [
+        { "title": "Anthropic — Cost optimization guide" },
+        { "title": "OpenAI — Managing costs for assistants" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "agents-tools",
+      "topic": "Cuándo NO usar un agente",
+      "difficulty": "junior",
+      "scenario": "Un compañero propone construir un 'agente' que reciba una URL de producto de e-commerce, extraiga precio + título + imagen, y los guarde en la BD. Argumenta que es una \"tarea de agente\" porque llama a una tool (fetch URL) y a otra (save DB).",
+      "question": "¿Cuál es la crítica más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "No es un agente — es un WORKFLOW determinista con 2 pasos fijos: fetch → parse (con LLM structured output) → save. Un agente añade overhead y variabilidad (el LLM 'decide' qué hacer, con posibilidad de errores). Anthropic distingue explícitamente 'workflows' (paths predefinidos con LLM en pasos) de 'agents' (LLM dirige el flujo). Este caso es claramente workflow.", "correct": true, "why": "Correcto. Anthropic publicó 'Building effective agents' (dic 2024) donde separa workflows vs agents. Workflows son deterministas con LLM invocado en pasos concretos. Agents dejan al LLM decidir dinámicamente. La regla: usa el más simple que funcione. Los workflows son más baratos, predecibles y debuggables." },
+        { "letter": "B", "text": "Está bien — todo lo que use LLM es un agente.", "correct": false, "why": "Sobreuso del término. LLM en pipelines fijos = workflow, no agente." },
+        { "letter": "C", "text": "Debería usar 5+ tools para justificar ser 'agente'.", "correct": false, "why": "Confunde cantidad con naturaleza. Un agente se define por AUTONOMÍA de decisión, no por número de tools." },
+        { "letter": "D", "text": "Sí, y añadir memory de largo plazo.", "correct": false, "why": "Añadir complejidad innecesaria empeora el problema." }
+      ],
+      "explanation": "Distinción canónica (Anthropic Dec 2024): WORKFLOWS = LLM invocado en pasos predefinidos por código. Predecible, barato, debuggable. AGENTS = LLM decide dinámicamente qué hacer siguiente, en loop. Flexible pero más lento, caro, error-prone. Regla: prefiere workflow cuando la tarea es descomponible en pasos conocidos. Usa agente cuando NO puedes anticipar los pasos (research abierto, debugging, code editing complejo). Muchas apps 'de agente' son en realidad workflows con nombre inflado.",
+      "realWorld": "Anthropic's blog 'Building effective agents' (dic 2024) es la referencia. Los patrones descritos: prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer — la mayoría son workflows. Casos válidos de agente: Devin (code tasks abiertos), Manus (research abierto), Claude Code (edición de código con exploración).",
+      "tags": ["workflow-vs-agent", "design-decision", "simplicity"],
+      "tech": ["Anthropic", "LangGraph"],
+      "references": [
+        { "title": "Anthropic — Building effective agents (dic 2024)" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "agents-tools",
+      "topic": "Plan-and-execute vs ReAct puro",
+      "difficulty": "mid",
+      "scenario": "Un agente ReAct puro está tardando y consumiendo tokens en tareas de análisis largo (ej: 'analiza este repositorio y genera reporte de calidad'). El equipo propone: 'que primero PLANIFIQUE los pasos completos y luego los ejecute'.",
+      "question": "¿Cuáles son los tradeoffs plan-and-execute vs ReAct puro?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PLAN-AND-EXECUTE (planner LLM produce lista de pasos → executor los ejecuta): más eficiente cuando los pasos son razonablemente predecibles, permite paralelizar, reduce turnos. PERO: si el plan resulta incorrecto al descubrir realidad, hay que replanear, con costo extra. ReAct puro: adaptable en cada paso, pero puede desviarse. Muchos frameworks (LangGraph, plan-and-solve papers) combinan ambos: plan inicial + revisión cada N pasos o al detectar desviación.", "correct": true, "why": "Correcto. Ninguno es superior universalmente. Plan-and-execute brilla en tareas descomponibles (research, análisis, reports). ReAct brilla en tareas exploratorias donde cada paso depende del anterior. La combinación (plan-execute-reflect) es hoy el enfoque más común en agentes serios." },
+        { "letter": "B", "text": "Plan-and-execute es superior siempre — ReAct es obsoleto.", "correct": false, "why": "Falso. Para tareas exploratorias (debugging, browsing web) ReAct es más eficiente." },
+        { "letter": "C", "text": "Son equivalentes — solo diferencia estética.", "correct": false, "why": "Falso. Impactan directamente en tokens, latencia y adaptabilidad." },
+        { "letter": "D", "text": "Plan-and-execute solo funciona con GPT-4.", "correct": false, "why": "Falso. Funciona con cualquier LLM capaz de razonar/planear (Claude, Gemini, Llama 3+, etc.)." }
+      ],
+      "explanation": "Comparativa: ReAct puro — el modelo decide next-step en cada iteración basado en observación reciente. Adaptable pero puede 'perderse'. PLAN-AND-EXECUTE — un planner LLM genera lista de pasos, un executor los procesa. Menos turnos, permite paralelismo, pero rigidez al plan. VARIANTES POPULARES: (1) 'Plan-and-Solve' (Wang et al.) — plan simple upfront. (2) 'ReWOO' — separa planning de tool execution. (3) 'LLM Compiler' — planning + parallel execution. (4) 'Reflexion' — plan + ejecución + auto-crítica + replaning. En LangGraph: se implementan como state machines con nodos 'planner' y 'executor'.",
+      "realWorld": "Manus (agente de research chino, 2025) usa plan-and-execute agresivo con planning multi-nivel. Devin usa mezcla: plan explícito + reflection. El paper 'Plan-and-Solve Prompting' (Wang et al. 2023) es referencia. LangGraph tiene templates prebuilt para plan-and-execute.",
+      "tags": ["plan-execute", "react", "orchestration", "patterns"],
+      "tech": ["LangGraph", "Devin", "Manus"],
+      "references": [
+        { "title": "Wang et al. — Plan-and-Solve Prompting (arxiv 2305.04091)" },
+        { "title": "LangGraph — Plan-and-execute template" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "agents-tools",
+      "topic": "Reflection / self-critique",
+      "difficulty": "mid",
+      "scenario": "Un agente de code generation genera código que compila pero tiene bugs sutiles (off-by-one, edge cases). El equipo prueba añadir un paso: después de generar, el mismo LLM CRITICA el código y lo mejora.",
+      "question": "¿Es efectivo y cuál es el patrón formal?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí. Es REFLECTION (o self-critique / evaluator-optimizer). Paper 'Reflexion' (Shinn et al. 2023) formaliza: agente actúa → auto-evaluador critica → agente refina. Mejora accuracy 20-40% en tareas de código y matemáticas. Costoso (2-4× tokens) pero valioso donde precisión importa más que velocidad. Variante robusta: evaluador DIFERENTE del generador (otro LLM o rules) para reducir sycophancy.", "correct": true, "why": "Correcto. Reflection es patrón bien establecido. El paper Reflexion y otros (Self-Refine, Constitutional AI) muestran mejoras significativas. Trade-off explícito: más tokens/latencia por más calidad. Evaluador separado reduce el problema del generator 'aprobándose a sí mismo'." },
+        { "letter": "B", "text": "No sirve — el modelo aprueba su propio output.", "correct": false, "why": "Es un riesgo real (sycophancy), pero empíricamente sí mejora, especialmente con evaluador separado o criterios explícitos." },
+        { "letter": "C", "text": "Solo funciona con RLHF fine-tuning.", "correct": false, "why": "Falso. Es inference-time pattern; funciona con cualquier LLM." },
+        { "letter": "D", "text": "Necesita un modelo especializado 'critic model'.", "correct": false, "why": "Un LLM general puede actuar como crítico con el prompt adecuado. Modelos críticos especializados existen pero no son obligatorios." }
+      ],
+      "explanation": "REFLECTION patterns: (1) SELF-REFINE (Madaan et al.) — mismo modelo genera → critica → refina. (2) REFLEXION (Shinn et al.) — mantiene 'memoria' de intentos previos y sus fallos. (3) EVALUATOR-OPTIMIZER (Anthropic) — evaluador separado (LLM o rules) da feedback estructurado. (4) CONSTITUTIONAL AI — critica basada en principios explícitos. Costo típico 2-4× por ganar 20-40% accuracy. IMPORTANTE: para reducir sycophancy, usar evaluador DIFERENTE (otro modelo, rules deterministas, tests que corren, linter) en vez de el mismo prompt. Test-driven development con agent es una forma efectiva: el agente escribe código, corre tests, refina si fallan.",
+      "realWorld": "Cursor y Claude Code implementan variantes: código se corre, si falla el linter/tests el agente refina. Devin tiene loop iterativo de 'try → observe → fix'. Anthropic 'evaluator-optimizer' workflow en su blog. El paper Reflexion es del top más citado en 2023-2024.",
+      "tags": ["reflection", "self-critique", "reflexion", "iteration"],
+      "tech": ["Claude Code", "Cursor", "Devin"],
+      "references": [
+        { "title": "Shinn et al. — Reflexion: Language Agents with Verbal Reinforcement Learning (arxiv 2303.11366)" },
+        { "title": "Madaan et al. — Self-Refine (arxiv 2303.17651)" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "agents-tools",
+      "topic": "Supervisor-worker pattern",
+      "difficulty": "mid",
+      "scenario": "Necesitas un agente que investigue un tema, cree un plan, delegue tareas específicas (research, coding, writing) a 'sub-agentes' especializados, y consolide resultados.",
+      "question": "¿Qué patrón de multi-agent aplica mejor y cómo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SUPERVISOR-WORKER (a.k.a. orchestrator-workers): un agente supervisor descompone el trabajo, delega a workers especializados (cada uno con su system prompt y toolset), y consolida resultados. LangGraph, Autogen, CrewAI tienen abstracciones nativas. Ventajas: separación de concerns, tools/context específicos por rol, mejor scaling.", "correct": true, "why": "Correcto. Es el patrón multi-agent más usado en 2026. Supervisor mantiene el 'big picture'; workers ejecutan sub-tareas con contexto acotado. Escala razonablemente y es debuggable. Anthropic 'orchestrator-workers' es un workflow oficial en 'building effective agents'." },
+        { "letter": "B", "text": "Un solo agente monolítico con todas las tools.", "correct": false, "why": "Escala mal: demasiadas tools reduce accuracy de selection, y un solo contexto se satura." },
+        { "letter": "C", "text": "Swarm horizontal donde todos los agentes hablan con todos.", "correct": false, "why": "Complejidad emergente que dificulta debug/control. Aplica en algunos casos pero es sobrecomplejo aquí." },
+        { "letter": "D", "text": "Chain of chats manuales sin coordinación.", "correct": false, "why": "Frágil y difícil de mantener. Frameworks proveen abstracciones mejores." }
+      ],
+      "explanation": "Patrones multi-agent principales: (1) SUPERVISOR-WORKER (orquestador central que delega). Escala bien, control claro. (2) SEQUENTIAL / PIPELINE — agentes en cadena, uno después del otro. (3) SWARM (peer-to-peer, handoffs entre agentes). OpenAI Swarm (2024) popularizó. Simple para pequeño N. (4) HIERARCHICAL — supervisors de supervisors. Para tareas muy grandes. (5) DEBATE / MULTI-CRITIC — múltiples agentes debaten para consensuar. En LangGraph: state machine con nodos por rol y edges por handoff. En Autogen (Microsoft): conversation-first paradigm. En CrewAI: role-based crew. Regla: empieza simple (supervisor + 2-3 workers), añade complejidad solo si medible.",
+      "realWorld": "Manus y Devin usan supervisor-worker con múltiples 'sub-agentes' especializados (research, code, browser). Anthropic Claude Code introduce 'subagentes' explícitos como feature de scoping y paralelización. OpenAI Swarm demostró handoffs entre agentes de soporte.",
+      "tags": ["multi-agent", "supervisor-worker", "orchestration"],
+      "tech": ["LangGraph", "Autogen", "CrewAI", "Anthropic"],
+      "references": [
+        { "title": "Anthropic — Orchestrator-workers workflow" },
+        { "title": "LangGraph — Multi-agent supervision" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "agents-tools",
+      "topic": "State machines vs freeform agents",
+      "difficulty": "mid",
+      "scenario": "Un compañero implementa un agente de onboarding: 5 pasos claros (verificar email → recolectar datos → sugerir plan → cobrar → confirmar). Actualmente usa un agente ReAct 'libre' con todas las tools disponibles. A veces se salta pasos, otras se queda en un paso indefinidamente.",
+      "question": "¿Cuál es el rediseño correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Modelar como STATE MACHINE / GRAPH explícito (LangGraph, XState style): nodos = estados, edges = transiciones permitidas con conditions. El LLM opera DENTRO de un estado con su subset de tools; las transiciones son deterministas por código o LLM-decided pero restringidas. Elimina flexibilidad innecesaria donde el flujo es predecible.", "correct": true, "why": "Correcto. Cuando la estructura del proceso es conocida, un state machine (workflow orquestado) es superior a agent freeform. LangGraph fue diseñado para este caso: puedes tener LLM nodes con freedom local pero transiciones controladas. Predecible, debuggable, resumable." },
+        { "letter": "B", "text": "Usar temperature=0 y mejorar el prompt.", "correct": false, "why": "Parches. La flexibilidad del agente es el problema estructural; temperature no lo arregla." },
+        { "letter": "C", "text": "Reducir el número de tools a 1.", "correct": false, "why": "Simplifica pero no da estructura de flujo. State machine es la solución adecuada." },
+        { "letter": "D", "text": "Cambiar a plan-and-execute.", "correct": false, "why": "Mejor que ReAct puro pero sigue siendo demasiado flexible. Un onboarding tiene pasos fijos: state machine explícito es superior." }
+      ],
+      "explanation": "Espectro de agentes: (1) HARD-CODED WORKFLOW (código puro con LLM en pasos concretos). Máxima predictibilidad. (2) STATE MACHINE / GRAPH (LangGraph, orquestación explícita). Buena mezcla. (3) FREEFORM AGENT (ReAct con toolset abierto). Flexible pero impredecible. Regla: usa el nivel más restrictivo que resuelva. Casos como onboarding, transaccionales, compliance-heavy → state machine. Casos exploratorios (debug, research) → freeform. Muchos productos combinan ambos: state machine top-level + agent freeform dentro de un nodo.",
+      "realWorld": "Klarna (asistente de shopping) usa state machines con LLM en nodos. Intercom Fin usa arquitectura similar. LangGraph fue creado por LangChain team exactamente para este espacio 'entre workflow y agente'. El estudio Anthropic 'building effective agents' recomienda state machines para procesos predecibles.",
+      "tags": ["state-machine", "workflow", "langgraph", "design"],
+      "tech": ["LangGraph", "XState"],
+      "references": [
+        { "title": "LangGraph — Documentation" },
+        { "title": "Anthropic — Workflows vs Agents" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "cost-inference",
+      "topic": "Model routing en agentes",
+      "difficulty": "mid",
+      "scenario": "Tu agente usa Sonnet en todos los pasos. Métricas muestran que 60% de las llamadas son cosas triviales (parseo, formatting, decisiones binarias). El bill de Anthropic es alto.",
+      "question": "¿Cuál es la optimización con mejor ROI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Model routing: usar Haiku (o GPT-4o-mini, Gemini Flash) para pasos triviales (parseo, clasificación, extracciones simples) y reservar Sonnet/GPT-4o para pasos que requieren razonamiento complejo. Ahorros típicos 50-80% con impacto marginal en calidad si el routing es correcto.", "correct": true, "why": "Correcto. Los modelos small son 10-30× más baratos que los flagship. Para tareas triviales rinden igual. Router puede ser (a) heurístico por tipo de step, (b) clasificador basado en model tag por node en LangGraph, (c) el propio supervisor LLM decidiendo." },
+        { "letter": "B", "text": "Solo cambiar a GPT-4o-mini para todo.", "correct": false, "why": "Peligroso: degrada calidad de los pasos complejos. Router es más quirúrgico." },
+        { "letter": "C", "text": "Renegociar precios con Anthropic.", "correct": false, "why": "No responde a la pregunta técnica; y volúmenes suelen ser insuficientes." },
+        { "letter": "D", "text": "Cachear todos los outputs.", "correct": false, "why": "Prompt caching amortiza inputs, pero si cada request es semánticamente distinto, no ayuda para outputs. Y outputs cambian por naturaleza." }
+      ],
+      "explanation": "Model routing / cascading es de las optimizaciones con mejor costo-beneficio en 2026: (1) small model para pasos triviales (classification, format, extract simple, retrieval), (2) medium/large para pasos que requieren razonamiento complejo. Frameworks (LangGraph, LlamaIndex, Portkey) tienen abstracciones. Reglas heurísticas: si la tarea es 'transform Y into X' predecible → small. Si requiere razonamiento multi-step → large. Además: usar razonamiento explícito (extended thinking, o1-style) solo cuando aporte — es caro.",
+      "realWorld": "Notion AI documentó ahorros ~65% con model cascading. Perplexity usa router entre modelos por tipo de query. Anthropic tiene 'model tiers' explícitos (Haiku, Sonnet, Opus) para exactamente este uso. Router libraries: RouteLLM, Not Diamond.",
+      "tags": ["model-routing", "cost-optimization", "cascading"],
+      "tech": ["Claude", "OpenAI", "Gemini", "Portkey"],
+      "references": [
+        { "title": "Anthropic — Model selection guide" },
+        { "title": "RouteLLM paper (arxiv 2406.18665)" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "agents-tools",
+      "topic": "Timeouts por paso en agentes",
+      "difficulty": "mid",
+      "scenario": "Tu agente ocasionalmente se queda 'colgado': una tool no responde y todo el flujo bloqueado. Un compañero pregunta si basta con un timeout global.",
+      "question": "¿Cómo diseñas timeouts correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combinación de timeouts jerárquicos: (1) por tool call (según su naturaleza — corto para APIs simples, largo para tareas pesadas). (2) por iteración/step del agente. (3) global de sesión. Al hit un timeout: devolver error semántico al modelo (para que decida siguiente paso) o cortar duro si es global. Nunca dejar sin timeout — un fallo silencioso puede colgar el sistema.", "correct": true, "why": "Correcto. Timeouts jerárquicos: granular (tool) para no matar toda la sesión por una tool lenta, y global para límite duro. Al agotar tool timeout, devolver estructurado al modelo (`error: 'timeout after 30s, consider alternative'`) permite recuperación. Global es la salvaguarda final." },
+        { "letter": "B", "text": "Solo timeout global de 5 minutos.", "correct": false, "why": "Corta el síntoma pero pierde granularidad. Una tool bloqueada 5 min desperdicia todo el budget." },
+        { "letter": "C", "text": "No timeout — dejar que el agente decida.", "correct": false, "why": "Peligroso: si una tool no responde, el agente no puede saberlo sin timeout." },
+        { "letter": "D", "text": "Timeout solo por tool, no global.", "correct": false, "why": "Sin límite global, muchos steps rápidos pero muchos pueden agotar tiempo/costo total." }
+      ],
+      "explanation": "Diseño de timeouts en agentes: (1) TOOL-LEVEL — cada tool con su timeout según SLA típico (API rápida: 5s, scraping: 30s, deep computation: 60-300s). Al expirar: retornar error estructurado al modelo, no lanzar excepción bruta. (2) STEP-LEVEL — límite por iteración del agente (típicamente 60-120s). (3) SESSION-LEVEL — límite global (5-30 min según UX). Al hit: cortar limpio con partial result. (4) CANCELLATION propagada (AbortController / asyncio) — al cortar, propagar hacia tools en vuelo para liberar recursos. Frameworks como LangGraph exponen recursion_limit, step_timeout, session_timeout.",
+      "realWorld": "Devin y Manus tienen timeouts multi-nivel (task timeout + step timeout + tool timeout). Claude Code aborta comandos que exceden 2 min por default. LangSmith trazas revelan que un porcentaje significativo de agentes 'colgados' vienen de una sola tool sin timeout.",
+      "tags": ["timeouts", "reliability", "cancellation"],
+      "tech": ["LangGraph", "asyncio"],
+      "references": [
+        { "title": "LangGraph — Timeouts and cancellation" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "agents-tools",
+      "topic": "Handoffs entre agentes (swarm)",
+      "difficulty": "mid",
+      "scenario": "Tu chatbot de soporte tiene 3 agentes: triage, technical, billing. Actualmente un supervisor central decide a cuál delegar. Un compañero sugiere: 'que cada agente pueda hacer HANDOFF al siguiente directamente'.",
+      "question": "¿Cuál es la arquitectura y sus tradeoffs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es el patrón SWARM (popularizado por OpenAI Swarm 2024): cada agente puede transferir la conversación a otro con un `handoff` como tool. Simple, distribuido, cada agente tiene contexto local. TRADEOFFS: sin supervisor central es más difícil implementar políticas globales (auditoría, límites, escalación); posible ping-pong entre agentes si el prompt no está bien definido; mejor para pequeño N (2-5). Supervisor-worker escala mejor para más roles complejos.", "correct": true, "why": "Correcto. Swarm es válido para casos pequeños con roles bien definidos. Simple y elegante para triage → técnico → billing. Para arquitecturas mayores, supervisor-worker suele escalar mejor. OpenAI Swarm y OpenAI Agents SDK formalizan este patrón." },
+        { "letter": "B", "text": "Handoffs son anti-patrón siempre.", "correct": false, "why": "Falso. Para casos pequeños son simples y efectivos." },
+        { "letter": "C", "text": "Solo funciona con OpenAI.", "correct": false, "why": "Falso. Cualquier LLM con tool calling puede implementarlo (usando handoff como tool)." },
+        { "letter": "D", "text": "Es superior a supervisor-worker en toda métrica.", "correct": false, "why": "Falso. Cada patrón tiene sus tradeoffs (ver explicación)." }
+      ],
+      "explanation": "SWARM pattern: agentes hacen handoff directo entre sí como tool call. OpenAI Swarm (2024) → evolucionó a OpenAI Agents SDK. Ventajas: distribución, contexto local por agente, simple mental model. Desventajas: sin supervisor central, políticas globales (auth, límites, escalación) son más difíciles; posible loop de handoffs si el system prompt no lo previene. Mejor para: pequeño N (2-5 agentes), roles claramente delimitados, contexto que puede transferirse limpio. Para orquestaciones grandes: supervisor-worker es más robusto. Hybrid: supervisor top-level + swarm dentro de una capa.",
+      "realWorld": "OpenAI Swarm (open source ejemplo, luego evolucionado a Agents SDK con Runners y Handoffs) es la referencia canónica. Klarna (asistente shopping/support) usa handoffs entre agentes especializados. Anthropic tiene 'agents with handoffs' como ejemplo en su cookbook.",
+      "tags": ["swarm", "handoffs", "multi-agent"],
+      "tech": ["OpenAI Swarm", "OpenAI Agents SDK", "Claude"],
+      "references": [
+        { "title": "OpenAI — Swarm framework" },
+        { "title": "OpenAI Agents SDK — Handoffs" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "agents-tools",
+      "topic": "Evitar bucles infinitos — señales de detección",
+      "difficulty": "mid",
+      "scenario": "Tu agente no siempre entra en bucle, pero cuando lo hace es costoso. Además del max_iterations, quieres detectar loops semánticos: 'llama a la misma tool con args similares varias veces sin progreso'.",
+      "question": "¿Qué heurísticas de detección son razonables?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combinación: (1) tool call idéntico (misma tool + hash de args) N veces seguidas → cortar o reprompt. (2) misma respuesta del modelo (hash de output) 2+ veces → señal de loop. (3) no-progreso: state del agente sin cambios significativos entre iteraciones. (4) tokens acumulados o iteraciones sin resultado final → escalación humana o corte.", "correct": true, "why": "Correcto. Detección de loops es defensa en profundidad más allá de max_iterations. Frameworks como LangGraph permiten hooks/interceptors para estas checks. Detectar patrones semánticos evita gastar tokens en repeticiones inútiles." },
+        { "letter": "B", "text": "Solo max_iterations es suficiente.", "correct": false, "why": "Es la primera defensa pero permite gastar hasta el límite en loops. Detección temprana ahorra costo." },
+        { "letter": "C", "text": "Detectar loops es imposible sin LLM externo.", "correct": false, "why": "Falso. Hashing simple de tool calls + argumentos captura la mayoría de loops obvios." },
+        { "letter": "D", "text": "Los modelos nuevos ya no entran en loops.", "correct": false, "why": "Falso. Menos frecuente pero aún ocurre, especialmente con prompts confusos o tools con outputs raros." }
+      ],
+      "explanation": "Heurísticas de detección de loop: (1) HASH DE TOOL CALL — mantener set de (tool_name, hash(args)) por sesión; si repite N veces → alerta. (2) HASH DE OUTPUT — mismo output del modelo 2+ veces = probable loop. (3) STATE DIFF — si tras N iteraciones el 'estado' relevante no cambió, no hay progreso. (4) BUDGET ACUMULADO — tokens/tiempo sin llegar a stop → señal. (5) PATTERN MINING — algunos frameworks detectan patrones alternantes (A-B-A-B). Al detectar: (a) inyectar mensaje 'estás en un loop, prueba estrategia diferente', (b) escalación humana, (c) cortar con partial result. Nota: son heurísticas, no perfectas — evitar false positives.",
+      "realWorld": "AutoGPT (2023) tenía notorios loops que motivaron muchas de estas heurísticas. Cursor y Claude Code implementan detección tras varias tool calls idénticas. LangGraph tiene ejemplos de custom loop detectors. Post-mortems públicos suelen incluir 'agente en loop' como causa raíz de incidentes de costo.",
+      "tags": ["loop-detection", "safety", "cost-control"],
+      "tech": ["LangGraph"],
+      "references": [
+        { "title": "LangGraph — Loop detection patterns" },
+        { "title": "AutoGPT postmortem lessons (community)" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "agents-tools",
+      "topic": "Sub-agentes vs una sola conversación",
+      "difficulty": "mid",
+      "scenario": "Un agente debe hacer research sobre 5 temas en paralelo, cada uno con 10-20 fuentes. Actualmente lo hace todo en una sola conversación y el contexto explota. Un compañero propone lanzar 5 sub-agentes paralelos, cada uno investigando un tema, y consolidar resultados.",
+      "question": "¿Cuál es la ventaja principal de sub-agentes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ISOLACIÓN DE CONTEXTO: cada sub-agente tiene su propio contexto acotado (no comparte scratch pad con los otros). El supervisor recibe SOLO resultados consolidados (no las 200 páginas investigadas). Ahorra tokens de contexto, evita 'lost in the middle', permite paralelismo real, y da modularidad. Trade-off: coordinación y consolidación tienen overhead propio.", "correct": true, "why": "Correcto. Isolación de contexto es la razón fundamental para sub-agentes. Cada uno con contexto pequeño → mejor razonamiento local + paralelismo. El supervisor consolida summaries en vez de raw data. Es una forma de scaling horizontal del razonamiento LLM." },
+        { "letter": "B", "text": "Son más baratos siempre.", "correct": false, "why": "Depende: los sub-agentes duplican system prompts y coordinación tiene costo. El beneficio principal es contexto/calidad, no directamente costo." },
+        { "letter": "C", "text": "Solo funcionan con Claude, no con OpenAI.", "correct": false, "why": "Falso. Sub-agentes son patrón agnóstico." },
+        { "letter": "D", "text": "Son iguales a threads de conversación.", "correct": false, "why": "Confusión: threads son sesiones separadas de usuario. Sub-agentes son unidades de razonamiento del mismo sistema con contexto aislado." }
+      ],
+      "explanation": "Sub-agentes (feature de Claude Code, patrón de LangGraph subgraphs, OpenAI Agents SDK): unidades con contexto y toolset propio, invocadas por un agente padre. Ventajas: (1) CONTEXT ISOLATION — sub-agentes trabajan sobre corpus grandes sin contaminar contexto del padre. (2) PARALELISMO — múltiples sub-agentes pueden correr concurrentemente. (3) MODULARIDAD — cada sub-agente puede tener su modelo, system prompt, tools específicos. (4) REUSABILIDAD — sub-agente 'researcher' o 'code-reviewer' se puede invocar desde varios lugares. Trade-offs: coordinación overhead, consolidación puede perder detalle, más complejidad. Casos ideales: research paralelo, análisis de repositorios grandes, exploración con múltiples angles.",
+      "realWorld": "Claude Code (2025) introdujo sub-agentes explícitos como feature. Devin y Manus usan sub-agentes para paralelismo de research. LangGraph tiene 'subgraphs' con contexto aislado. Anthropic publicó cookbook sobre 'multi-agent researcher' con este patrón.",
+      "tags": ["sub-agents", "context-isolation", "parallelism"],
+      "tech": ["Claude Code", "LangGraph", "OpenAI Agents SDK"],
+      "references": [
+        { "title": "Anthropic — Claude Code Subagents" },
+        { "title": "LangGraph — Subgraphs" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "agents-tools",
+      "topic": "Compresión de historial en agentes largos",
+      "difficulty": "senior",
+      "scenario": "Un agente de coding pair-programming lleva 3 horas de sesión con 400+ turnos. El contexto tiene 180k tokens (~90% de la ventana). Cada turno nuevo es costoso por el prefijo grande, y el modelo empieza a olvidar decisiones tempranas.",
+      "question": "¿Cuál es la estrategia técnica más completa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combinación: (1) sliding window de últimos N turnos completos. (2) SUMMARIZATION de turnos viejos en un 'system note' que se conserva. (3) mantener 'pinned' contexto crítico (arquitectura, decisiones importantes). (4) offload — datos grandes en tool results se referencian por ID en vez de conservarse inline. (5) selective retention — con embeddings, recuperar sub-set relevante al turno actual (RAG sobre historial propio).", "correct": true, "why": "Correcto. Ningún approach único basta. La combinación de sliding window + summarization + pinning + selective retention es lo que hacen Claude Code, Cursor, Devin en sesiones largas. Trade-off: summarization introduce pérdida (por eso pinning explícito de lo crítico)." },
+        { "letter": "B", "text": "Solo aumentar el context window a 1M tokens.", "correct": false, "why": "Modelos 1M existen (Gemini 1.5 Pro, Claude tuvo experimental) pero: (1) 'lost in the middle' persiste. (2) costo escala. (3) latencia sube. Compresión sigue siendo necesaria." },
+        { "letter": "C", "text": "Reset a los 100 turnos.", "correct": false, "why": "Pierde toda contexto crítica — mala UX para sesiones largas." },
+        { "letter": "D", "text": "Confiar en prompt caching solo.", "correct": false, "why": "Prompt caching amortiza costo pero no ayuda al 'lost in the middle' ni a modelo olvidando." }
+      ],
+      "explanation": "Context management en agentes long-running: (1) SLIDING WINDOW — conservar últimos N turnos. (2) SUMMARIZATION — LLM resume turnos viejos periodicamente; el resumen ocupa 10-30% del original y se preserva como 'system note'. (3) PINNING — decisiones críticas, arquitectura, requisitos marcados como 'no comprimir'. (4) OFFLOAD — tool results grandes van a storage externo (files, DB), se referencian por ID; se recuperan solo si el modelo pide. (5) SELECTIVE RETENTION / RETRIEVAL — embeddings del historial, recuperar chunks relevantes al turno actual (RAG sobre memoria propia). Trade-off: compresión = pérdida; pinning permite proteger lo importante. Anthropic tiene 'context compaction' feature en Claude 4+ y en Claude Code hooks.",
+      "realWorld": "Claude Code (2025+) tiene 'compaction' automática que hace summarization. Cursor implementa selective retention de conversaciones largas. Devin (Cognition) publicó su enfoque de 'context management' para sesiones de días. Sonnet 4 tiene extended context handling con compaction.",
+      "tags": ["context-management", "compression", "long-running-agents"],
+      "tech": ["Claude", "Claude Code", "Cursor"],
+      "references": [
+        { "title": "Anthropic — Long-running agents patterns" },
+        { "title": "Liu et al. — Lost in the Middle" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "cost-inference",
+      "topic": "Tracking de costo por agente/sesión",
+      "difficulty": "senior",
+      "scenario": "Tienes múltiples agentes en producción sirviendo a distintos clientes y features. El bill mensual creció 3× en 2 meses. No sabes qué agente, feature o cliente contribuye más al costo.",
+      "question": "¿Qué instrumentación implementas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cada request al LLM debe emitir métrica/trace con dimensiones: agent_id, session_id, user_id/tenant_id, feature_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_estimated. Agregación en dashboard (Grafana / Datadog / native LangSmith/Braintrust). Permite responder: costo por cliente, por agente, por feature, tendencia temporal. Alerta si algún cliente/agente supera umbral.", "correct": true, "why": "Correcto. Sin dimensiones, tienes un total agregado inútil para decisiones. Instrumentación con contexto rico es indispensable. Frameworks LLM (LangSmith, Braintrust, Langfuse, Portkey) proveen esto out-of-the-box con OpenTelemetry GenAI conventions." },
+        { "letter": "B", "text": "Confiar en el dashboard de Anthropic/OpenAI.", "correct": false, "why": "El dashboard del proveedor te da total y por modelo, pero NO por cliente, feature, agente. Necesitas instrumentación propia." },
+        { "letter": "C", "text": "Estimación mensual con conteos aproximados.", "correct": false, "why": "Insuficiente para producción; no permite detectar outliers rápido." },
+        { "letter": "D", "text": "Cambiar a modelo más barato como solución.", "correct": false, "why": "No responde a la pregunta de observabilidad. Sin datos no sabes qué optimizar." }
+      ],
+      "explanation": "Cost tracking maduro en agentes requiere: (1) MÉTRICAS con dimensiones ricas: agent, session, user/tenant, feature, model, tokens (in/out/cache), cost_estimated. (2) TRACES jerárquicas (LangSmith, Braintrust, Langfuse) — ver el costo de una sesión completa desglosado por step. (3) BUDGETS/LÍMITES — hard cap por tenant/feature, alertas al acercarse. (4) COST ATTRIBUTION — imputar costo a features/tenants correctos para pricing interno. (5) ANOMALÍAS — detectar sesiones con costo >X desviaciones (típicamente loops o abuso). OpenTelemetry tiene GenAI Semantic Conventions con attribute names estandarizados (gen_ai.usage.input_tokens, gen_ai.request.model, etc.).",
+      "realWorld": "Cursor publicó cómo trackea costo por usuario y por action type. Anthropic tiene Bedrock (via AWS) con detailed billing por request. Perplexity tiene equipo dedicado a cost observability. Portkey y LiteLLM son gateways que centralizan tracking cross-provider.",
+      "tags": ["cost-tracking", "observability", "opentelemetry"],
+      "tech": ["OpenTelemetry", "LangSmith", "Braintrust", "Portkey"],
+      "references": [
+        { "title": "OpenTelemetry — GenAI Semantic Conventions" },
+        { "title": "Portkey / LiteLLM — Cost tracking" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "agents-tools",
+      "topic": "Resumibilidad / checkpointing",
+      "difficulty": "senior",
+      "scenario": "Un agente de análisis long-running (60 min típicos) corre en tu backend. Si el proceso crashea o se reinicia (deploy), el usuario pierde todo el progreso y debe empezar de cero.",
+      "question": "¿Cuál es la solución adecuada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Persistencia de estado (checkpointing): serializar el estado del agente (historial de mensajes, resultados de tools, estado interno del workflow) tras cada step a storage durable (DB, S3, Redis). Al reiniciar, cargar checkpoint y continuar. Frameworks como LangGraph tienen checkpointer nativo (memory, sqlite, postgres, redis). Además, idempotencia en tools evita duplicados al re-ejecutar.", "correct": true, "why": "Correcto. Long-running agents necesitan estado persistente y capacidad de resumir. LangGraph tiene checkpointer como feature central. También permite time travel debugging (reproducir estado en cualquier punto)." },
+        { "letter": "B", "text": "Notificar al usuario 'lo siento, reintenta' cuando crashea.", "correct": false, "why": "UX inaceptable para tareas de 60 min. Además, la mayoría de progreso está listo — se desperdicia." },
+        { "letter": "C", "text": "Ejecutar solo en un servidor sin deploys.", "correct": false, "why": "No viable en producción moderna; los deploys son constantes." },
+        { "letter": "D", "text": "Cachear tool results como workaround.", "correct": false, "why": "Ayuda a acelerar re-runs pero no persiste estado del agente." }
+      ],
+      "explanation": "Checkpointing / durable execution en agentes: (1) SERIALIZAR STATE — mensajes, tool results, state interno del workflow, cursor de plan. (2) ESCRIBIR tras cada step atómicamente a storage durable. (3) RESUMIR al reiniciar cargando el último checkpoint. (4) IDEMPOTENCIA en tools con side effects (evita duplicar acciones al re-ejecutar el mismo step). (5) TIME TRAVEL / REPLAY para debugging. Frameworks: LangGraph checkpointers (postgres, sqlite, redis), Temporal + LLM (durable execution), Restate. Producción seria: separar 'trabajo del agente' (worker) de 'orquestación' (durable service).",
+      "realWorld": "Temporal + Anthropic/OpenAI se ha vuelto stack común para agentes durables. Devin usa checkpointing agresivo (puede pausar/resumir tareas de días). LangGraph postgres checkpointer es la referencia. Restate publicó guías sobre 'durable agents'.",
+      "tags": ["checkpointing", "durable-execution", "long-running"],
+      "tech": ["LangGraph", "Temporal", "Restate"],
+      "references": [
+        { "title": "LangGraph — Persistence with checkpointers" },
+        { "title": "Temporal — Durable AI agents" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "agents-tools",
+      "topic": "Human-in-the-loop en agentes",
+      "difficulty": "senior",
+      "scenario": "Tu agente de refactoring hace cambios en repos de producción. El equipo pide 'approval humano antes de commitear' pero no quiere bloquear todo — solo para operaciones sensibles.",
+      "question": "¿Cómo diseñas HITL sin matar la productividad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Interrupt points explícitos en el flujo del agente: acciones clasificadas por riesgo — read-only auto, write reversible con log, destructive/irreversible con approval humano interactivo. LangGraph tiene `interrupt` nativo que pausa el flow, notifica humano, recibe respuesta y continúa (checkpoint intermedio). Approvals granulares (por acción específica) con contexto (qué se afectará, diff), y opción de bulk-approve políticas ('todos los commits en /docs')", "correct": true, "why": "Correcto. HITL efectivo requiere granularidad (no todo, no nada), UX rápida (mostrar diff/impact), y capacidad de policy (auto-approve categorías seguras). LangGraph con checkpointing + interrupt es el enfoque canónico. Claude Code implementa esto con permission modes." },
+        { "letter": "B", "text": "Confirmar cada tool call.", "correct": false, "why": "Mata productividad. Aplicar solo a acciones de alto riesgo." },
+        { "letter": "C", "text": "Sin HITL — trust total.", "correct": false, "why": "Inaceptable para producción con acciones destructivas." },
+        { "letter": "D", "text": "Aprobación batch al final del agente run.", "correct": false, "why": "Tarde — si el agente hizo algo malo intermedio, ya afectó estado. HITL debe ser en el momento correcto." }
+      ],
+      "explanation": "HITL patterns en agentes: (1) INTERRUPT POINTS — el agente pausa en pasos designados y espera aprobación. (2) POLICY-BASED — reglas 'auto-approve X, ask for Y, block Z' evitan preguntar por cosas triviales. (3) DRY-RUN — mostrar el efecto (diff, resources afectados) antes de aprobar. (4) BULK OPERATIONS — 'aprobar los siguientes 10 similares' para no spam. (5) ESCALATION — si el humano no responde en X min, escalación o auto-block. (6) AUDIT trail de todas las aprobaciones. LangGraph tiene `interrupt` primitive; Claude Code permission modes; OpenAI Assistants tiene run steps with require_action.",
+      "realWorld": "Devin tiene 'pull request review' donde el humano aprueba antes de merge. Claude Code introdujo permission modes 2024-2025 con auto-approve, ask, plan mode. Cursor tiene 'YOLO mode' vs 'ask'. Anthropic 'Building safe agents' recomienda HITL para acciones irreversibles.",
+      "tags": ["hitl", "approvals", "safety", "langgraph"],
+      "tech": ["LangGraph", "Claude Code"],
+      "references": [
+        { "title": "LangGraph — Human-in-the-loop" },
+        { "title": "Anthropic — Claude Code Permissions" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "agents-tools",
+      "topic": "Evaluación de agentes (evals)",
+      "difficulty": "senior",
+      "scenario": "Cada vez que cambian el prompt o modelo del agente, no saben si mejoró o empeoró. Reciben feedback de usuarios semanas después. Necesitan sistema de evaluación.",
+      "question": "¿Qué eval stack construyes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Suite de evals off-line con: (1) golden dataset de tareas realistas con outcome esperado. (2) evaluators — algunos deterministas (regex, JSON schema válido, tool call correcto), otros LLM-as-judge para calidad textual. (3) CI integration — cada cambio corre evals antes de deploy; regresión bloquea merge. (4) online metrics complementarias (thumbs, task completion, cost, latency). Frameworks: Braintrust, LangSmith, Phoenix, Inspect (Anthropic).", "correct": true, "why": "Correcto. Evals maduros combinan dataset golden + evaluators múltiples + CI integration. Sin esto, iterar en prompt/modelo es a ciegas. LLM-as-judge tiene sus riesgos (bias, sycophancy) pero es efectivo para calidad textual con criterios claros." },
+        { "letter": "B", "text": "Confiar en feedback de usuarios.", "correct": false, "why": "Latencia semanas + poco cubrimiento. Necesitas eval proactivo." },
+        { "letter": "C", "text": "Testing manual antes de cada release.", "correct": false, "why": "No escala con volumen de iteraciones. Automatización de evals es crítica." },
+        { "letter": "D", "text": "Métricas de negocio a las 2 semanas.", "correct": false, "why": "Complementario pero no reemplaza evals rápidos." }
+      ],
+      "explanation": "Eval stack para agentes: (1) GOLDEN DATASET — 20-500 casos representativos con input + expected outcome/property. (2) EVALUATORS: (a) DETERMINISTICOS — schema validation, contains, regex, tool call correcta, tests corren. (b) LLM-AS-JUDGE para calidad textual con rubrica. (c) HUMAN eval periódico como ground truth. (3) CI INTEGRATION — cada PR corre subset de evals; bloqueo si regresión. (4) A/B testing en producción para cambios grandes. (5) ONLINE METRICS — thumbs, completion rate, latency, cost, escalation rate. Frameworks: Braintrust, LangSmith, Phoenix (Arize), Inspect (Anthropic), Ragas (RAG-specific). Anti-pattern: iterar prompts sin evals.",
+      "realWorld": "Anthropic Inspect (2024) es un framework open source para evals; Braintrust y LangSmith son SaaS mainstream. El equipo de GitHub Copilot publicó su eval framework. Sonnet 4 y Claude Code se testean con miles de evals antes de release. OpenAI tiene 'evals' package open source.",
+      "tags": ["evals", "testing", "llm-as-judge", "ci"],
+      "tech": ["Braintrust", "LangSmith", "Inspect", "Phoenix"],
+      "references": [
+        { "title": "Anthropic — Inspect Evals" },
+        { "title": "Braintrust / LangSmith / Ragas — docs" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "cost-inference",
+      "topic": "Latencia percibida vs latencia real",
+      "difficulty": "senior",
+      "scenario": "Tu agente demora 30-60s en dar respuesta final. Usuarios lo perciben lento aunque el output sea excelente. El equipo pregunta cómo mejorar UX sin degradar calidad.",
+      "question": "¿Qué técnicas atacan latencia percibida?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combinación: (1) STREAMING del thinking/response (mostrar tokens conforme salen). (2) STATUS UPDATES conforme el agente progresa (\"Consultando GitHub...\", \"Analizando código...\"). (3) INTERMEDIATE OUTPUTS — mostrar drafts o hallazgos parciales. (4) EAGER FIRST RESPONSE — modelo rápido da respuesta inicial breve mientras el modelo lento profundiza. (5) OPTIMISTIC UI — asumir éxito y mostrar mientras se ejecuta. Complementar con reducciones reales (parallel tools, model routing).", "correct": true, "why": "Correcto. Latencia percibida ≠ latencia real. UX pattern más importante es feedback continuo. Perplexity, Cursor, ChatGPT invirtieron mucho en esto. Combinado con optimizaciones reales (paralelización, caching) es lo que hace agentes 'sentir rápidos'." },
+        { "letter": "B", "text": "Solo bajar la latencia real bajando modelo.", "correct": false, "why": "Degrada calidad y sigue sin dar feedback durante los 15-20s residuales." },
+        { "letter": "C", "text": "Poner un spinner de \"pensando\" y ya.", "correct": false, "why": "Insuficiente — un spinner sin info se siente eternamente. Los progress updates específicos son mejor." },
+        { "letter": "D", "text": "No hay solución — así son los agentes.", "correct": false, "why": "Falso. UX design puede hacer que un agente de 30s se sienta rápido si hay feedback bueno." }
+      ],
+      "explanation": "Latencia percibida en agentes: (1) STREAMING de tokens — el usuario ve output aparecer, sensación de progreso. (2) STATUS UPDATES semánticos — \"Consultando N fuentes\", \"Encontré X resultados, filtrando\", más informativos que un spinner. (3) INTERMEDIATE OUTPUTS — mostrar sub-resultados conforme se generan (ej: primer draft de resumen mientras profundiza). (4) FAST FIRST ANSWER — modelo pequeño da respuesta inmediata; modelo grande refina en background. (5) OPTIMISTIC UI — asumir éxito, mostrar, rollback si falla. Latencia real también importa: parallel tools, caching, model routing, evitar chain de round-trips innecesarios.",
+      "realWorld": "Perplexity muestra 'Reading N sources' con contadores actualizados. ChatGPT o1 muestra 'Thinking...' con summary del razonamiento. Claude Code y Cursor emiten status por cada tool call ('Running: npm test'). Anthropic publicó UX guidelines para agentes con estos patterns.",
+      "tags": ["latency", "ux", "streaming", "status-updates"],
+      "tech": ["Vercel AI SDK", "Perplexity", "ChatGPT"],
+      "references": [
+        { "title": "Vercel AI SDK — UI/UX patterns for agents" },
+        { "title": "Anthropic — UX guidelines for AI apps" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "agents-tools",
+      "topic": "Debate patterns y ensemble",
+      "difficulty": "senior",
+      "scenario": "Un agente único a veces produce respuestas incorrectas con alta confianza (hallucinations). Estás experimentando con hacer que múltiples agentes 'debatan' o 'voten' para reducir errores.",
+      "question": "¿Cuándo tiene sentido debate/ensemble multi-agent y cuándo NO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TIENE SENTIDO cuando: (1) tarea tiene answer verificable pero ambigua durante generación (matemáticas complejas, razonamiento factual). (2) el costo de error es alto (medical, legal, financial). (3) puedes usar modelos DIFERENTES para diversidad (evitan mismo bias). NO TIENE SENTIDO cuando: (1) tarea es simple (overhead N× sin beneficio). (2) modelos son del mismo family (correlated errors). (3) latencia crítica. Alternativas más simples: self-consistency (múltiples samples del mismo modelo con vote), reflection loop.", "correct": true, "why": "Correcto. Debate/ensemble es útil selectivamente — costo N× debe justificarse. Papers muestran ganancias en razonamiento formal pero marginal en tareas simples. Diversidad de modelos (Claude + GPT + Gemini) da mejor resultado que N × mismo modelo (correlación de errores)." },
+        { "letter": "B", "text": "Siempre — más agentes = mejor.", "correct": false, "why": "Sobregeneralización que multiplica costo sin beneficio proporcional." },
+        { "letter": "C", "text": "Nunca — es demasiado costoso.", "correct": false, "why": "Ignora casos donde el costo del error justifica el overhead." },
+        { "letter": "D", "text": "Solo funciona con fine-tuning específico.", "correct": false, "why": "Falso. Son patterns de prompting/inference-time." }
+      ],
+      "explanation": "Debate / ensemble patterns: (1) SELF-CONSISTENCY (Wang et al.) — mismo modelo genera N samples con temperature>0; vota respuesta más común. Barato, mejora razonamiento matemático. (2) DEBATE (Du et al., Anthropic) — múltiples agentes debaten para converger; efectivo en tareas ambiguas verificables. (3) JURY / ENSEMBLE — N modelos independientes votan; diversidad reduce error correlado. (4) EVALUATOR-OPTIMIZER — un agente genera, otro critica, se refina (variante 1v1). Cuándo usar: alto costo de error, tarea verificable, diversidad de modelos disponible. Cuándo NO: latencia crítica, tarea simple, costo N× no justificado. Estudios muestran ganancias 5-15% típicamente, mayor en razonamiento formal.",
+      "realWorld": "Claude 4 y GPT-5 reasoning modes hacen self-consistency internamente. Anthropic publicó 'Improving Factuality with Multi-Agent Debate'. Bedrock y algunos productos internos usan ensemble para caso legal/medical. Consensus.app (research summarizer) usa multi-model consensus.",
+      "tags": ["debate", "ensemble", "self-consistency", "multi-agent"],
+      "tech": ["Claude", "OpenAI", "Gemini"],
+      "references": [
+        { "title": "Wang et al. — Self-Consistency (arxiv 2203.11171)" },
+        { "title": "Du et al. — Improving Factuality via Multiagent Debate (arxiv 2305.14325)" }
+      ]
+    }
+  ]
+}

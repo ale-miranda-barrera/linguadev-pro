@@ -86,6 +86,8 @@ export class DeepSeekProvider implements AIProvider {
         model: this.model(),
         max_tokens: maxTokens,
         stream: true,
+        // Compatible OpenAI: include_usage hace que el último chunk traiga el usage total.
+        stream_options: { include_usage: true },
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },

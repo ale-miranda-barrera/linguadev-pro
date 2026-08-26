@@ -1,0 +1,426 @@
+{
+  "id": "devops-sim-34-feature-flags-at-scale",
+  "trackId": "devops",
+  "order": 34,
+  "title": "Simulacro 34 — Feature Flags a escala",
+  "focus": "Feature flags types (release, ops, experiment, permission), comparación LaunchDarkly vs Split vs Unleash vs GrowthBook, flag lifecycle management, avoiding flag debt, testing con flags, feature flag SDKs (server-side vs client-side), targeting rules.",
+  "areaCoverage": ["deployment"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "deployment",
+      "topic": "Qué es un feature flag",
+      "difficulty": "junior",
+      "scenario": "Tu equipo está construyendo una nueva feature de checkout. El PM quiere lanzar en 2 semanas. Los devs quieren mergear ya. Un senior sugiere 'ponlo detrás de un feature flag'.",
+      "question": "¿Qué es un feature flag y qué problema resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Feature flag (aka toggle, switch): mecanismo en código para habilitar/deshabilitar features SIN redeploy. El código de la feature vive en producción pero está detrás de un IF que consulta una configuración externa. Resuelve: (1) desacopla DEPLOY (código en producción) de RELEASE (feature visible a users); (2) permite kill switch instant si algo va mal; (3) permite gradual rollout (10% users → 50% → 100%); (4) permite trunk-based development (features WIP en main).", "correct": true, "why": "Correcto. Es LA técnica fundamental para deployment maduro. Deploy y release son 2 eventos separados. Facebook, Google, Netflix rely on flags heavily. Sin flags, trunk-based development es incoherent." },
+        { "letter": "B", "text": "Un comment en el código.", "correct": false, "why": "Trivial y no responde. Comment no cambia comportamiento runtime — flag sí." },
+        { "letter": "C", "text": "Un branch de git.", "correct": false, "why": "Branch es fuera del código en producción. Flag es dentro del código pero desactivable." },
+        { "letter": "D", "text": "Es un environment variable siempre.", "correct": false, "why": "Env var es UNA forma de implementar flag simple pero no la única. Flags maduros usan platforms (LaunchDarkly) con dynamic updates, targeting rules, audit trails — más que env vars." }
+      ],
+      "explanation": "Feature flag código pattern básico: [if (flagService.isEnabled('new-checkout', user)) { renderNewCheckout(); } else { renderOldCheckout(); }]. Flag state controlado externamente (dashboard, config service, remote config). Cambios instantáneos sin redeploy. Types de flags (Pete Hodgson taxonomía): (1) Release flags (temporary, disable feature until ready); (2) Ops flags (long-lived, disable expensive features under load); (3) Experiment flags (A/B testing); (4) Permission flags (feature per user tier). Beneficios: separación deploy/release, kill switches, gradual rollout, A/B testing, dark launches, canary features. Costos: complexity en código, flag debt si no removed post-launch.",
+      "realWorld": "Facebook nació con feature flags (2000s). Google 'Gatekeeper' framework. LaunchDarkly ($3B+ valuation solo con flags como producto). Netflix, Airbnb, Uber all rely on flags. GitHub uses flags heavily for gradual feature rollout. Pete Hodgson wrote seminal article para Martin Fowler.",
+      "tags": ["feature flag", "toggle", "decouple deploy release"],
+      "tech": ["LaunchDarkly", "Split", "Unleash"],
+      "references": [{ "title": "Martin Fowler — FeatureToggle by Pete Hodgson" }, { "title": "LaunchDarkly — Feature Flag Guide" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "deployment",
+      "topic": "Types de flags — taxonomía",
+      "difficulty": "junior",
+      "scenario": "Tu equipo empieza a usar flags. Rápidamente hay flags mezclados: unos temporales (para new features), otros permanentes (para kill switches ops), otros para A/B testing. Se pierde tracking.",
+      "question": "¿Cuáles son los tipos principales de feature flags?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Release toggle: temporary, hides feature until ready to release. Deleted after full rollout. Typical lifetime: días-semanas.", "correct": true, "why": "Correcto. Most common type. Purpose: enable trunk-based development. Should be short-lived — flag debt if kept forever." },
+        { "letter": "B", "text": "Ops toggle: long-lived, controlado por ops/SRE, para disable expensive features under load. Ejemplo: 'if load > 80%, disable recommendation engine'. Kill switches.", "correct": true, "why": "Correcto. Ops toggles legitimately long-lived (o permanent). Se toggles from ops dashboards en incidents. Aceptable persistir años." },
+        { "letter": "C", "text": "Experiment toggle: for A/B testing. Splits users into cohorts (control, variant A, variant B), measure business metrics, decide winner. Lifetime: duration del experiment.", "correct": true, "why": "Correcto. Experiment flags encapsulate A/B logic. Herramientas: Optimizely, Split, LaunchDarkly all support experiments." },
+        { "letter": "D", "text": "Permission toggle: long-lived, enable features per user segment (paid tier, beta users, admins). Ejemplo: '/admin/dashboard visible if user.role === admin'. Effectively authorization en flag form.", "correct": true, "why": "Correcto. Permission flags are essentially business rules. Long-lived, part of application logic. Debatable if they should be flags vs proper authz system — pragmatically both used." },
+        { "letter": "E", "text": "Todos los flags son iguales — no hay tipos.", "correct": false, "why": "Antipatrón. Sin taxonomía, flag management se pierde. Diferentes types tienen diferentes lifecycle expectations." }
+      ],
+      "explanation": "Pete Hodgson taxonomía (2017 Fowler article): (1) Release toggles — decouple deployment de release, short-lived; (2) Ops toggles — kill switches para operational control, long-lived; (3) Experiment toggles — A/B testing, medium-lived; (4) Permission toggles — feature access per user, long-lived. Managing implications: (a) release flags require deletion policy (delete post-launch); (b) ops flags require documentation (what does it kill?); (c) experiment flags tied to experiment lifecycle; (d) permission flags may migrate to proper authz system eventually. Naming conventions: type-prefixed (rel-new-checkout, ops-recommendation-off, exp-checkout-color, perm-admin-panel). Anti-patrón: single flat namespace of untyped flags = flag debt disaster.",
+      "realWorld": "Pete Hodgson article para Martin Fowler (2017) es referencia canónica. LaunchDarkly docs adopt esta taxonomía. Split similar. Empresas maduras tag flags con tipo desde el inicio. GitHub, GitLab uses estos types explicitly.",
+      "tags": ["flag types", "taxonomy", "release", "ops", "experiment", "permission"],
+      "tech": ["LaunchDarkly"],
+      "references": [{ "title": "Martin Fowler — Feature Toggles (Pete Hodgson)" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "deployment",
+      "topic": "LaunchDarkly — arquitectura",
+      "difficulty": "mid",
+      "scenario": "Team evalúa LaunchDarkly. Necesitan entender: ¿cómo funciona técnicamente? ¿Cómo el server sabe qué flag está activo?",
+      "question": "¿Cuál es la arquitectura de LaunchDarkly?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "LaunchDarkly hosted service + SDK en cada app. SDK conecta al service en startup, RECIBE flag configurations, cache local. Streaming updates: cuando flag changes en dashboard, LaunchDarkly pushes update to SDK vía Server-Sent Events. SDK evalúa flag localmente (LOCAL evaluation, no HTTP call per check) — fast, works offline si connection breaks. Evaluación considera targeting rules (user attributes, segments, percentage rollout).", "correct": true, "why": "Correcto. Local evaluation es clave — cada flag check es sub-microsecond (in-memory). Sin llamada network per check. Streaming updates propagan changes en <1 segundo globally. SDK arquitectura es replicable en OSS alternativas (Unleash, GrowthBook)." },
+        { "letter": "B", "text": "SDK hace HTTP call a LaunchDarkly cada flag check.", "correct": false, "why": "Falso. Sería demasiado lento. Local evaluation con streaming updates es design core." },
+        { "letter": "C", "text": "Flags stored en base de datos del cliente.", "correct": false, "why": "Falso. Flag configs son central en LaunchDarkly cloud. Client cache local pero source of truth es central." },
+        { "letter": "D", "text": "LaunchDarkly requires K8s.", "correct": false, "why": "Falso. Cloud service — funciona con cualquier deployment (VMs, K8s, serverless, mobile)." }
+      ],
+      "explanation": "LaunchDarkly SDK components: (1) Startup: connect to LaunchDarkly, receive full flag set; (2) Streaming: SSE connection para real-time updates (fallback: polling); (3) Local evaluation: [ldClient.variation('flag-name', user, defaultValue)] — evaluates against cached rules, no network; (4) Analytics: sends flag evaluation events back to LaunchDarkly (for insights). Server-side SDKs (Node, Python, Java, Go, .NET) vs Client-side SDKs (React, iOS, Android, JS) — different security models. Server-side: receives ALL flag data (safe, only server sees); Client-side: receives ONLY flags relevant to that user (server-side evaluation, then result sent to client — protects sensitive flag targeting rules). Multi-region: LaunchDarkly has global edge presence for low latency SDK connections.",
+      "realWorld": "LaunchDarkly launched 2014, now $3B+ valuation. Adopted by Atlassian, Microsoft, IBM, TrueCar, thousands more. Similar architecture: Split.io (competitor), Statsig, ConfigCat. OSS variants: Unleash, GrowthBook, Flagsmith replicated arquitectura.",
+      "tags": ["LaunchDarkly", "architecture", "SDK", "streaming"],
+      "tech": ["LaunchDarkly", "SDK"],
+      "references": [{ "title": "LaunchDarkly Architecture" }, { "title": "LaunchDarkly SDK reference" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "deployment",
+      "topic": "Comparación de vendors",
+      "difficulty": "mid",
+      "scenario": "CTO pregunta '¿qué feature flag platform adoptamos?'. Comparamos LaunchDarkly (líder), Split, Unleash (OSS), GrowthBook (OSS + experimentación), ConfigCat, Statsig, Flagsmith.",
+      "question": "¿Cuáles son los tradeoffs principales entre platforms?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "LaunchDarkly: líder de mercado, feature-rich, expensive (per-seat + per-MAU pricing), tight enterprise integrations (SSO, RBAC, audit), best-in-class SDKs. Best fit: enterprise, high budget, need premium support.", "correct": true, "why": "Correcto. LaunchDarkly is 'default choice' para enterprise. Pricing prohibitive para small teams o high scale (MAU-based). Feature set most complete." },
+        { "letter": "B", "text": "Split: strong en experimentation (A/B testing) + flags combined. Owned by Split.io. Enterprise pricing similar a LaunchDarkly. Best fit: teams doing lots of experimentation with statistical rigor.", "correct": true, "why": "Correcto. Split diferencia via experimentation focus. Statistical engine para calc significance, guardrails, etc. Good para product-led growth companies." },
+        { "letter": "C", "text": "Unleash (OSS + optional cloud): open source (Apache 2), self-host free, cloud tier paid. Simpler feature set than LaunchDarkly but complete for most needs. Best fit: teams que quieren self-host, cost-sensitive, or values open source.", "correct": true, "why": "Correcto. Unleash es 'the OSS LaunchDarkly'. Self-host = full data control + no per-seat pricing. Cloud tier para conveniencia. Adopted por muchas empresas cost-conscious." },
+        { "letter": "D", "text": "GrowthBook (OSS): feature flags + experimentation + analytics all-in-one. Warehouse-native (queries your data warehouse for experiment analysis). Best fit: teams con existing data warehouse (Snowflake, BigQuery) que quieren experimentation nativa a sus datos.", "correct": true, "why": "Correcto. GrowthBook differentiation: warehouse-native experimentation. No duplicate data flowing. Growing rapidly. Free tier substantial." },
+        { "letter": "E", "text": "Todos son idénticos.", "correct": false, "why": "Falso. Real differences en pricing, features, focus, hosted vs self-host." }
+      ],
+      "explanation": "Vendor comparison summary: | Vendor | Pricing | Self-host | Focus | | LaunchDarkly | $$$ per-seat+MAU | Enterprise on-prem | Flags premier || Split | $$$ per-seat+MAU | Enterprise on-prem | Flags+Experiments premium || Unleash | Free OSS + $ cloud | Yes | Flags simplicity || GrowthBook | Free OSS + $ cloud | Yes | Flags+Warehouse experiments || ConfigCat | $ per-seat | Yes | Flags simple + affordable || Statsig | Free tier + $$$ | No | Product analytics + flags || Flagsmith | Free OSS + $ cloud | Yes | Flags + Segments |. Selection criteria: (1) Budget; (2) Self-host requirement (data residency, security); (3) Experimentation needs (basic vs statistical rigor); (4) Team size (per-seat scales with headcount); (5) Ecosystem integration (LaunchDarkly best in enterprise integrations).",
+      "realWorld": "LaunchDarkly customers: Microsoft, Atlassian, IBM, NBC, IEEE, IBM. Split: WSJ, DailyMotion, Twilio. Unleash: FINN.no, GitLab. GrowthBook: growing fast, Notion, Cypress, Zapier. ConfigCat: MIT, University of Texas. Statsig: Notion, Figma, Brex. Empresas cost-conscious tienden a Unleash/GrowthBook; enterprise mainstream tiende a LaunchDarkly.",
+      "tags": ["LaunchDarkly", "Split", "Unleash", "GrowthBook", "comparison"],
+      "tech": ["LaunchDarkly", "Split", "Unleash", "GrowthBook"],
+      "references": [{ "title": "LaunchDarkly" }, { "title": "getunleash.io" }, { "title": "growthbook.io" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "deployment",
+      "topic": "Targeting rules",
+      "difficulty": "mid",
+      "scenario": "Quieres habilitar new-checkout a: (a) 100% de internal employees; (b) 25% de external users en US; (c) 5% de external users worldwide; (d) usuarios con beta-user flag en su profile.",
+      "question": "¿Cómo se configuran targeting rules en flag platforms?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "User attributes: cada flag evaluation recibe user context (id, email, custom attributes). Rules match user attributes: email domain, country, role, plan, cohort. Priority order: rules evaluadas en orden, first match wins.", "correct": true, "why": "Correcto. User context passed en SDK. [ldClient.variation('flag', {key: 'user123', email: 'x@company.com', country: 'US', role: 'admin'}, false)]. Rules evaluadas contra attributes." },
+        { "letter": "B", "text": "Segments: reusable groupings de rules. Ejemplo: 'internal-users' segment (email domain 'company.com'), reusable across many flags. Evita repetir rules en cada flag.", "correct": true, "why": "Correcto. Segments are DRY para flag rules. LaunchDarkly, Split, Unleash all soportan. Ejemplo real: 'beta-users' segment tagged en profile, referenced by 20 flags." },
+        { "letter": "C", "text": "Percentage rollouts: dividir traffic por hash del user ID. Stable — mismo user siempre en mismo bucket. 5% rollout = users con hash bucket 0-4 (de 100 buckets). Consistent user experience across sessions.", "correct": true, "why": "Correcto. Percentage rollouts crítico. Sin stable hash, users flicker on/off — bad UX. All platforms use consistent hashing." },
+        { "letter": "D", "text": "Combining rules: AND/OR logic. Ejemplo: (country=US AND plan=premium) OR (role=admin). Complex targeting expressed declaratively en dashboard.", "correct": true, "why": "Correcto. Rich rule composition necesario para real business logic. Dashboards con visual rule builders." },
+        { "letter": "E", "text": "Rules aplican random cada flag check (mismo user puede ver on off on off).", "correct": false, "why": "Antipatrón. User experience nightmare. Consistent hashing es requirement para percentage rollouts." }
+      ],
+      "explanation": "Targeting rules composition: (1) Default state (on/off); (2) Individual targeting (specific user IDs always on/off); (3) Segments (reusable groups); (4) Rule-based targeting (attribute matching); (5) Percentage rollouts (stable hash-based). Evaluation order: (a) individual targeting first; (b) segments; (c) rules in order; (d) default. Advanced: (a) prerequisite flags (only enable X if Y is on); (b) time-based (enable X after Y timestamp); (c) A/B split (equal random into 2 variants). Real example: 'new-checkout' flag rules: [Internal employees → 100% on; US premium users → 50% on; Rest of world → 5% on; Default → off]. LaunchDarkly dashboard visual editor makes complex rules manageable. Unleash equivalent con strategies (userIDs, flexibleRollout, gradualRolloutUserId).",
+      "realWorld": "Facebook Gatekeeper has extremely complex rules (cohorts, regions, versions). Netflix similar sophistication. LaunchDarkly, Split, Unleash all soportan patterns similares. E-commerce: geographic targeting común (country-specific rollout). SaaS: plan-based targeting (feature per pricing tier).",
+      "tags": ["targeting rules", "segments", "percentage rollout", "user attributes"],
+      "tech": ["LaunchDarkly", "Split", "Unleash"],
+      "references": [{ "title": "LaunchDarkly — Targeting" }, { "title": "Unleash — Strategies" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "deployment",
+      "topic": "Server-side vs client-side flags",
+      "difficulty": "mid",
+      "scenario": "Team debate: '¿usamos server-side SDK o client-side SDK?'. La app tiene backend Node + frontend React + mobile iOS/Android.",
+      "question": "¿Cuál es la diferencia entre server-side y client-side flag SDKs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Server-side SDK: apps confiables (backend, mobile con embedded secrets). SDK receives ALL flags + rules on startup, evalúa localmente. Sensitive information (like user segmentation rules) safe on server. Client-side SDK: apps untrusted (web frontend). SDK only receives PRE-EVALUATED flag results for the current user (evaluated on server-side proxy or LaunchDarkly's edge). Sensitive rules never exposed to browser. Different security models por design.", "correct": true, "why": "Correcto. Distinción crítica de seguridad. Server-side: full flag data, evaluates locally. Client-side: only evaluated results, rules stay server-side. Sensitive targeting logic ('Show competitor discount to users viewing pricing page') not leaked to browser." },
+        { "letter": "B", "text": "Son idénticos.", "correct": false, "why": "Falso. Diferentes security models fundamentalmente." },
+        { "letter": "C", "text": "Server-side siempre superior.", "correct": false, "why": "Depends on context. Frontend features naturally need client-side. Both used together." },
+        { "letter": "D", "text": "Client-side no requiere SDK.", "correct": false, "why": "SDK provided (React SDK, JS SDK). Just different security semantics." }
+      ],
+      "explanation": "Server-side SDK security: SDK key = 'server-side' key. Downloads full flag configs (rules + segments). Trust: server-controlled environment. Evaluation: local, fast. Client-side SDK security: SDK key = 'client-side' key. Server-side (LaunchDarkly edge) pre-evaluates for current user, sends result. Trust: browser is untrusted. Alternative approach for very sensitive: backend endpoint evaluates flags, frontend consumes via API. Mobile SDKs: hybrid — sometimes server-side (app is trusted), sometimes client-side (concerns about reverse engineering leaked rules). Best practice: use appropriate SDK per environment. Rules containing sensitive business logic (pricing, discount codes, competitor identifiers) NEVER in client SDK.",
+      "realWorld": "LaunchDarkly, Split, Unleash all support both models. Common architecture: backend uses server-side, frontend uses client-side variant of same SDK. Configuration: separate client-side and server-side keys. Anti-patrón: using server-side key en frontend = full flag data exposed en browser DevTools. Real incident: startup exposed competitor targeting rules en frontend flag data. Learned by paying attention to SDK docs.",
+      "tags": ["server-side", "client-side", "SDK", "security"],
+      "tech": ["LaunchDarkly", "Split", "Unleash SDK"],
+      "references": [{ "title": "LaunchDarkly — Server vs Client-side SDKs" }, { "title": "Split SDK docs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "deployment",
+      "topic": "Flag debt — el problema principal",
+      "difficulty": "senior",
+      "scenario": "Después de 2 años, tu codebase tiene 300 feature flags. 80% son 'release toggles' que deberían haberse borrado después del launch. Cada nueva feature requiere entender el estado de flags actuales. Bugs frecuentes 'flag X was disabled when flag Y was enabled = broken state'.",
+      "question": "¿Qué es flag debt y cómo se maneja?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Flag debt: acumulación de flags obsoletos que ya no cambian de estado pero remain en el código. Cada flag adds branch de código (if flag then X else Y). N flags = 2^N potential states. Testing y reasoning explodes.", "correct": true, "why": "Correcto. Combinatorial explosion. 10 flags = 1024 combinations. Testing todas es imposible. Bugs manifest en unusual combinations." },
+        { "letter": "B", "text": "Lifecycle management: cada release flag debe tener OWNER + FECHA DE REMOVAL desde su creación. Post-launch (feature 100% rolled out), flag debe ser eliminated. Automated tracking: dashboards show 'flags older than 30 days que están 100% on/off — candidates para removal'.", "correct": true, "why": "Correcto. Ownership + expiration date. Some platforms flag stale flags automatically. Regular cleanup sprints en teams maduros." },
+        { "letter": "C", "text": "Automated cleanup tools: escanean código para flag references, correlate con flag state en LaunchDarkly, suggest removals. LaunchDarkly Code References feature. Statsig, Split similar. Reduces manual burden.", "correct": true, "why": "Correcto. Automation esencial a scale. Manual scanning = miss. Tools integrate git + platform." },
+        { "letter": "D", "text": "Governance: policy 'flags no pueden vivir >90 días sin justificación'. Quarterly reviews. Platform team owns policy, product teams comply. Metrics: % flags older than N days.", "correct": true, "why": "Correcto. Cultural + process. Sin policy, entropy wins. Regular cleanup = healthy codebase." },
+        { "letter": "E", "text": "Flag debt no es un problema real.", "correct": false, "why": "Antipatrón. Real problema en producción. Facebook publicó papers sobre esto. LinkedIn, Netflix all mention flag debt." }
+      ],
+      "explanation": "Flag debt causes: (1) devs create flag, launch feature, no remove flag; (2) turnover — dev leaves, no one knows what flag does; (3) missing lifecycle policy; (4) fear ('¿qué si necesito reactivarlo?'). Consequences: (1) code complexity (nested ifs); (2) testing burden (combinatorial states); (3) bugs (unusual flag states); (4) onboarding difficulty (new devs confused). Solutions: (1) tag flags con owner + expiration; (2) automated stale-flag detection; (3) quarterly cleanup; (4) code hygiene (linter for old flag refs); (5) 'expiring flag' pattern (flag auto-removes from code post-N-days). LaunchDarkly Code References integrate con GitHub for automated cleanup PRs. Split's approach similar. Unleash tags for flag types + expiration.",
+      "realWorld": "Facebook published research on 'The impact of flags on codebase health'. LinkedIn, Netflix, GitHub all have flag hygiene teams. LaunchDarkly Code References feature born from customer pain. Best practice: newer than X days = active feature; older = candidate for removal.",
+      "tags": ["flag debt", "lifecycle", "cleanup", "hygiene"],
+      "tech": ["LaunchDarkly Code References", "Split"],
+      "references": [{ "title": "LaunchDarkly — Feature Flag Best Practices" }, { "title": "Martin Fowler — Feature Toggles" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "deployment",
+      "topic": "Testing con flags",
+      "difficulty": "senior",
+      "scenario": "Nueva feature tiene 3 flags: (1) new-checkout (release toggle); (2) checkout-recommendation (experiment); (3) express-checkout (permission for premium users). ¿Cómo testear todas las combinations?",
+      "question": "¿Cómo se testea código con feature flags?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Test ambos estados (on/off) de cada flag. Unit tests con mocked flag service. Ejemplo: describe('checkout', () => { test('with new-checkout on', () => { mockFlag('new-checkout', true); ... }); test('with new-checkout off', () => { mockFlag('new-checkout', false); ... }); }.", "correct": true, "why": "Correcto. Both paths must be tested. Otherwise, disabling flag por incident = untested code path = potential disaster." },
+        { "letter": "B", "text": "Test combinations críticas — NOT todas (combinatorial explosion). Focus en: (a) all-off (baseline); (b) all-on (fully rolled out); (c) unusual states que representan real production configurations. Use combinatorial testing tools (Hypothesis, QuickCheck) para explore edge cases.", "correct": true, "why": "Correcto. Full combinations impossible. Prioritize expected combinations + edge cases. Pragmatic approach." },
+        { "letter": "C", "text": "Integration tests: dedicated test environments con controlled flag configurations. 'Staging con new-checkout ON', 'Staging con new-checkout OFF' — separate deploys or dynamic config.", "correct": true, "why": "Correcto. E2E tests need flag control. Some platforms allow test-mode SDK con override capability." },
+        { "letter": "D", "text": "Feature flag SDK debe tener test mode: override flag state programmatically para tests. LaunchDarkly test-mode SDK, similar en otros. Sin test mode, tests dependen de real service = flaky + slow.", "correct": true, "why": "Correcto. Test mode enables deterministic testing. Real SDK usa test client que retorna programmed values." },
+        { "letter": "E", "text": "No testear código detrás de flags — flag disabled means unreachable.", "correct": false, "why": "Antipatrón. Flag can be enabled anytime. Code path must work when enabled." }
+      ],
+      "explanation": "Testing con flags: (1) Unit — mock SDK, test flag on + off; (2) Integration — controlled envs con specific flag states; (3) E2E — flag state as test setup; (4) Contract — assume both states possible. SDK test mode ejemplo: [LDClient.enableTestMode(); LDClient.setFlagValue('flag', true);] then app under test uses set value. Combinatorial: 10 flags = 1024 combinations, impossible to test all. Prioritize: (a) intended production states (current rollout %, planned states); (b) all-on (future rollout); (c) all-off (fallback); (d) known-bad combinations from experience. Testing frameworks integration: Jest/Vitest with SDK mock, pytest with fixture per flag state, JUnit similar. Anti-patterns: (a) untested off state (only tested on because 'feature ready'); (b) untested on state (only tested off because 'not launched'); (c) real SDK in tests (network dep, flaky).",
+      "realWorld": "Netflix tests both states extensively. Facebook has specific testing infrastructure para flag combinations. LaunchDarkly, Split, Unleash all support test-mode SDKs. Cypress + React SDK integration common for E2E. Real bug pattern: flag turned off in incident, code path had regression = incident worse than original.",
+      "tags": ["testing", "flags", "combinations", "mocking"],
+      "tech": ["Jest", "LaunchDarkly test SDK"],
+      "references": [{ "title": "LaunchDarkly — Testing" }, { "title": "Feature Flag Testing Best Practices" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "deployment",
+      "topic": "Flag consistency — stateful reads",
+      "difficulty": "senior",
+      "scenario": "User views cart page (flag says 'new-cart on'). Adds item. Refresca — flag evaluación toma diferente path (por casualidad flag ahora dice 'new-cart off' para este user, o cache expired). Cart broken.",
+      "question": "¿Cómo garantizar consistency de flag values durante user session?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Stable hashing en percentage rollouts: mismo user id → mismo hash bucket → mismo result across sessions. All flag platforms use este pattern por default. User no flicker on/off entre requests.", "correct": true, "why": "Correcto. Consistent hashing es table stakes. Sin él, percentage rollouts causan chaos UX." },
+        { "letter": "B", "text": "Cache flag evaluations en session: primer flag check en request stores en session/cookie/local storage, subsequent checks use cached value. Consistency dentro de session incluso si flag changes real-time.", "correct": true, "why": "Correcto. Especially útil para long-running flows (multi-step forms, checkout wizards) donde flag flip mid-flow = broken." },
+        { "letter": "C", "text": "Snapshot flag values en request start: al inicio del request, snapshot todos los relevant flags, pass them through the request context. Consistency dentro del request incluso si backend updates. Especialmente crítico en microservices donde múltiples services check same flag — snapshot passed downstream.", "correct": true, "why": "Correcto. Distributed consistency: service A checks flag, calls service B, service B checks same flag — if flag changed between calls, inconsistent state. Snapshot from front-door + propagate." },
+        { "letter": "D", "text": "Feature flag SDK asks server on every check.", "correct": false, "why": "Antipatrón. Latency terrible. Local eval + stable hashing es el pattern." },
+        { "letter": "E", "text": "Sticky sessions per user: LB routes user siempre a same server, server caches flag decision per user. Rigid, doesn't scale, sticky sessions have their own problems.", "correct": false, "why": "Antipatrón. Sticky sessions problematic. Better solutions above." }
+      ],
+      "explanation": "Consistency layers: (1) Stable hashing — same user = same bucket (built-in a SDKs); (2) Session cache — first check cached for session duration; (3) Request snapshot — capture flag state at request start, propagate; (4) Client-side caching — mobile/web app caches flag state for session. Trade-offs: (a) consistency vs freshness — consistent means slow to propagate changes; (b) session-cached flags miss real-time updates during long sessions; (c) request snapshots don't help if user has multiple requests. Ops flags (kill switches) INTENTIONALLY don't cache — need real-time effect. Release/experiment flags SHOULD cache for consistency. Testing: verify user experience unchanged mid-flow when flag changes globally. Common bugs: (a) mid-checkout flag flip breaks flow; (b) refresh causes different UI; (c) service-A vs service-B disagree on flag value.",
+      "realWorld": "GitHub deployed flag change mid-flow → users saw different UI post-refresh → confusion + support tickets. Learned to snapshot flags on entry to multi-step flows. Netflix similar patterns for playback (once decided player version, use for whole session). LaunchDarkly docs cover snapshot patterns.",
+      "tags": ["consistency", "stable hashing", "session cache", "snapshot"],
+      "tech": ["LaunchDarkly", "consistent hashing"],
+      "references": [{ "title": "LaunchDarkly — Bucketing" }, { "title": "GrowthBook — Consistent Bucketing" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "deployment",
+      "topic": "Flag audit y compliance",
+      "difficulty": "senior",
+      "scenario": "Regulated industry (banking). Auditor pregunta '¿quién toggled este flag on el 15 de marzo? ¿Por qué? ¿Fue reviewed?'. Team no tiene answers.",
+      "question": "¿Qué audit capabilities necesitan flag platforms en regulated environments?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Audit log complete: cada flag change registered con user, timestamp, before/after state. Immutable log. LaunchDarkly, Split, Unleash all soportan. Exportable a SIEM (Splunk, ELK) para compliance retention.", "correct": true, "why": "Correcto. Basic audit requirement. Sin este, no compliance." },
+        { "letter": "B", "text": "Approval workflows: production flag changes require approval (2-eyes principle). LaunchDarkly, Split enterprise tiers soportan. Change management aligned con existing SOX/ITIL processes.", "correct": true, "why": "Correcto. 2-eyes principle — critical changes requerir approval. Similar a code PR review pattern applied to config." },
+        { "letter": "C", "text": "RBAC (Role-Based Access Control): who can create flags, who can toggle, who can only view. Segregation of duties. Dev may create, ops may toggle en prod, both audited.", "correct": true, "why": "Correcto. RBAC essential in enterprises. Prevents accidental toggles by unauthorized users. All enterprise flag platforms soportan." },
+        { "letter": "D", "text": "Time-bound access: emergency toggles con expiration (after N hours, revoked). Reduces risk of stale privileged access. LaunchDarkly, others enterprise features.", "correct": true, "why": "Correcto. Time-bound access reduces risk. Emergency access for incident, auto-expires. Zero standing privileges principle." },
+        { "letter": "E", "text": "Regulated industries no pueden usar feature flags.", "correct": false, "why": "Falso. Regulados usan flags con proper controls (audit, approval, RBAC). Capital One, Goldman Sachs use LaunchDarkly. Compliant with proper controls." }
+      ],
+      "explanation": "Compliance considerations: (1) Audit log (SOX, ITIL, SOC2 requirement); (2) RBAC + segregation of duties; (3) Approval workflows for production changes; (4) Retention (7 years for financial services); (5) Data residency (EU data stays en EU); (6) Encryption at rest and in transit; (7) SIEM integration for centralized audit. Herramientas: LaunchDarkly Enterprise, Split Enterprise, self-hosted Unleash (control datos entirely). Change management integration: ServiceNow, Jira for change tickets. Blast radius controls: (a) gradual rollout requirements para production flags; (b) automatic revert if metrics degrade; (c) mandatory review for critical flags. Anti-patrón regulated: (a) shared credentials for flag platform; (b) no audit trail; (c) direct production changes sin review; (d) untracked emergency toggles.",
+      "realWorld": "Capital One, JPMorgan Chase, Goldman Sachs use flags con enterprise controls. Financial regulators (FINRA, SEC) accept flag platforms con proper controls. Healthcare (HIPAA) similar. LaunchDarkly SOC2 Type II certified. Split similar. Real audit scenario: 'PayPal toggled fraud detection flag on Dec 15 — who authorized?' Answer must be complete + immutable.",
+      "tags": ["audit", "compliance", "RBAC", "SOX"],
+      "tech": ["LaunchDarkly Enterprise", "Split Enterprise"],
+      "references": [{ "title": "LaunchDarkly — Enterprise Security" }, { "title": "SOC2 for feature flag platforms" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "deployment",
+      "topic": "Dark launches",
+      "difficulty": "senior",
+      "scenario": "New backend service (payment processor v2) built. Necesita validar performance a scale ANTES de exponer users. Facebook technique: 'dark launch'.",
+      "question": "¿Qué es dark launch y cómo se implementa con flags?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dark launch: enviar traffic real al new code path SIN exposing to users. Old service handles user requests as normal; new service processes SAME requests en paralelo (fire-and-forget o mirroring). Users see old behavior. Team observes new service metrics con production load. Flag pattern: [if (flag.dark_launch_v2) { asyncFireAndForget(v2Process(request)); } return v1Process(request);]. Detect performance issues, memory leaks, scaling issues BEFORE users exposed.", "correct": true, "why": "Correcto. Dark launch famoso por Facebook Chat (2008). Chat rolled out para months con dark launches — real users typing simulated messages en frontend, backend received real messages (not delivered) para test scale. Sin dark launch, Chat couldn't have launched at Facebook scale confidently." },
+        { "letter": "B", "text": "Deploy new service without any traffic.", "correct": false, "why": "Falso. Sin traffic real, no scale validation. Dark launch RECIBE real traffic pero users no ven output." },
+        { "letter": "C", "text": "Deploy new service with obscure UI.", "correct": false, "why": "Ese es un beta feature (limited exposure). Dark launch is different — no user-visible feature, just backend processing." },
+        { "letter": "D", "text": "Dark launch = launching at midnight.", "correct": false, "why": "Nombre confuso. Dark en 'dark launch' means 'not visible', not 'nighttime'." }
+      ],
+      "explanation": "Dark launch mechanics: (1) new code path deployed; (2) flag controls whether new path executes (fire-and-forget) alongside old; (3) old path serves user; (4) new path metrics observed. Ideal for: (a) new backend services (payment processor, DB migration, ML model); (b) scaling validation; (c) performance testing con real data patterns. Considerations: (a) side effects — new path shouldn't cause DB writes if not idempotent (or should write to shadow tables); (b) downstream load — dark launch doubles load on shared dependencies; (c) monitoring separately (new path metrics distinct from real). Combined with feature flags: dark launch flag gradual (1% → 100%) allows load testing incrementally. Facebook Chat es case study clásico. Amazon uses para new pricing algorithms.",
+      "realWorld": "Facebook Chat 2008 — months of dark launches con real users typing → backend processed messages (discarded), validated scale. GitHub Search rewrite similar. Netflix new recommendation engine dark-launched extensively. Amazon Prime new inventory system similar. LaunchDarkly Blog post on Facebook technique.",
+      "tags": ["dark launch", "Facebook Chat", "shadow traffic"],
+      "tech": ["LaunchDarkly", "feature flags"],
+      "references": [{ "title": "LaunchDarkly — Dark Launch guide" }, { "title": "Facebook engineering — Chat launch" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "deployment",
+      "topic": "Kill switches",
+      "difficulty": "mid",
+      "scenario": "3AM: producción sufriendo. Nueva feature parece culprit. Rollback tarda 20 min (rebuild + redeploy). Ideal: toggle off en segundos.",
+      "question": "¿Cómo se implementan kill switches efectivos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cada feature high-risk detrás de dedicated ops flag. En incident, on-call toggles flag off en LaunchDarkly dashboard. Cambio propaga en <1 segundo a all servers vía SDK streaming. Feature disabled instantly. Old path (still en código) serves users.", "correct": true, "why": "Correcto. Standard kill switch pattern. LaunchDarkly streaming propagates changes sub-second. Requires old path to still work (backward compat mandatory)." },
+        { "letter": "B", "text": "Ops flags long-lived (permanente ok) — dedicated propósito de emergency shutoff. Different from release toggles (should be deleted). Naming: [ops-] prefix, clear owner.", "correct": true, "why": "Correcto. Ops toggles legítimamente permanent. Ejemplo: 'ops-recommendation-engine' que puede kill recommendation feature under load spikes." },
+        { "letter": "C", "text": "Documentation crítico: cada kill switch documented con: what does it turn off, impact when off, when to use, escalation path. Runbook links to flag console. On-call knows exactly qué toggles hacer.", "correct": true, "why": "Correcto. Kill switch sin documentation = nobody knows what it does en 3AM = decisions paralysis." },
+        { "letter": "D", "text": "Testing: kill switches practiced en game days. Verify: (a) toggling actually works; (b) fallback path robust; (c) rate limit doesn't prevent multiple toggles rapid succession. Real disasters found in practice, not incident.", "correct": true, "why": "Correcto. 'Untested defense is not defense'. Practice using kill switches monthly minimum. Verify assumptions." },
+        { "letter": "E", "text": "Kill switches solo aplican a features grandes.", "correct": false, "why": "Falso. Any risky feature (payment, recommendation, notification) benefits from kill switch. Small features can cause outages." }
+      ],
+      "explanation": "Kill switch patterns: (1) Feature-level (disable one feature); (2) Service-level (disable expensive downstream call); (3) Circuit-breaker level (disable all non-essential when overloaded — 'load shedding'); (4) Region-level (disable feature in specific region). Configuration best practices: (a) permanent flag, not temporary; (b) named consistently ('ops-feature-X'); (c) documented (what does it kill?); (d) accessible from on-call runbook; (e) tested regularly. Rate limits: some platforms rate-limit changes (10 per minute) — verify emergency toggles won't be rate-limited. Fallback paths: (a) return safe default (empty array, null); (b) route to older stable service; (c) show cached data; (d) show degraded UI. Practice: monthly game day — deliberately toggle switch off + verify fallback + toggle back on.",
+      "realWorld": "Netflix Zuul (API gateway) has extensive kill switches for downstream service degradation. Twitter, Facebook use kill switches durante Super Bowl / high-traffic events (disable non-essential features to preserve capacity). Etsy famous engineering post on kill switches. Every mature company has kill switches — the question is whether they're actually tested.",
+      "tags": ["kill switch", "ops flag", "incident response"],
+      "tech": ["LaunchDarkly", "Unleash"],
+      "references": [{ "title": "Martin Fowler — Feature Toggles (Ops toggles)" }, { "title": "Etsy — Kill Switches" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "deployment",
+      "topic": "Circuit breakers con flags",
+      "difficulty": "senior",
+      "scenario": "Servicio depende de external API (payment processor). Cuando API lento, tus users también lentos. Cascading failure risk.",
+      "question": "¿Cómo integrar circuit breakers con feature flags?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Circuit breaker library (Resilience4j, Polly, Hystrix legacy) monitors downstream health, 'opens' cuando failure rate exceeds threshold, short-circuits calls (returns fallback), 'closes' after recovery. Feature flag como manual override: 'ops-payment-processor-enabled' — off = manually break circuit for planned maintenance o incident even if circuit hasn't tripped automatically. Combines automatic (circuit breaker) + manual (flag) control.", "correct": true, "why": "Correcto. Complementary patterns. Circuit breaker automatic; flag manual override. Both give operators tools. Netflix Hystrix (deprecated en favor de Resilience4j) pioneered pattern combined con Archaius (flag system)." },
+        { "letter": "B", "text": "Reemplazar circuit breakers con feature flags.", "correct": false, "why": "Falso. Circuit breakers automatizados por design. Flags son manual. Complementary, not replacing." },
+        { "letter": "C", "text": "Circuit breakers requieren service mesh.", "correct": false, "why": "Service mesh (Istio) provides circuit breaking, but libraries (Resilience4j) also work application-level. Both viable." },
+        { "letter": "D", "text": "Feature flags no aplican a resilience.", "correct": false, "why": "Falso. Ops flags heavily used para resilience (kill switches, degradation)." }
+      ],
+      "explanation": "Circuit breaker states: (1) Closed (normal) — calls pass through; (2) Open (failing) — calls fail-fast without downstream call; (3) Half-open — trial calls to check recovery. Trigger: failure rate + latency thresholds. Feature flag integration patterns: (a) Manual open switch (ops flag disables downstream call); (b) Fallback control (flag toggles between fallback strategies); (c) Circuit breaker configuration (flag adjusts threshold: '99% health under normal, 95% during incident'). Libraries: Resilience4j (Java), Polly (.NET), pybreaker (Python), CircuitBreaker.js (Node). Istio: virtualService circuit breaker config declarative. Full stack: application circuit breaker + service mesh circuit breaker + feature flag kill switch = defense in depth. Testing: chaos engineering intentionally trips breakers to verify fallback.",
+      "realWorld": "Netflix Hystrix (2011) pioneered circuit breakers popularly. Replaced by Resilience4j (2018) after Hystrix maintenance ended. Amazon uses aggressive circuit breakers para dependencies. Facebook similar. Every mature microservices architecture has circuit breakers + flags.",
+      "tags": ["circuit breaker", "Resilience4j", "Hystrix", "resilience"],
+      "tech": ["Resilience4j", "Polly", "Istio"],
+      "references": [{ "title": "Martin Fowler — CircuitBreaker" }, { "title": "Resilience4j docs" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "deployment",
+      "topic": "Distributed flags — multi-service consistency",
+      "difficulty": "senior",
+      "scenario": "Microservices architecture: 30 services. Change flag 'new-payment-api' should propagate to all services simultaneously. Otherwise, service A calls service B with new API but service B still uses old — cascade fail.",
+      "question": "¿Cómo garantizar flag consistency across microservices?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Central flag service (LaunchDarkly, self-hosted Unleash) — all services read from same source. SDK streaming updates propagan changes to all services en <1 sec. Consistency window minimal.", "correct": true, "why": "Correcto. Centralization is key. Sin central source of truth, drift inevitable. Streaming makes propagation near-instant." },
+        { "letter": "B", "text": "Snapshot flag values at request entry: front-door service checks flag, passes decision downstream (via header o context). All downstream services use snapshot decision, no re-check. Consistency dentro del request incluso si flag changes mid-request.", "correct": true, "why": "Correcto. 'Consistent context propagation' pattern. Header X-Feature-Flags contiene evaluated flag decisions. Downstream services trust y use. Prevents mid-flow inconsistencies." },
+        { "letter": "C", "text": "Feature flag as version indicator: if 'new-payment-api' enabled, headers/routes indicate v2, services check version rather than flag directamente. Version negotiation propagates naturalmente.", "correct": true, "why": "Correcto. API versioning pattern. Flag decides version, version propagates. Cleaner separation of concerns." },
+        { "letter": "D", "text": "Cache invalidation coordinado: cuando flag changes, invalidate caches across services simultáneamente. Redis pub/sub, Kafka events. Ensures no service using stale flag value.", "correct": true, "why": "Correcto. Cache invalidation cross-service es complejo. Event-driven invalidation (flag-changed event on Kafka) reasonable pattern." },
+        { "letter": "E", "text": "Each service reads flags independently, occasional inconsistency is fine.", "correct": false, "why": "Peligroso a scale. Inconsistency can cause user-visible bugs (checkout flow with mixed old/new API mid-flow). Explicit consistency strategies needed." }
+      ],
+      "explanation": "Multi-service flag consistency strategies: (1) Central platform (LaunchDarkly, Unleash) — all services from same source; (2) Streaming propagation — sub-second updates via SSE; (3) Snapshot on entry — front-door snapshots, propagates via headers/context; (4) API versioning — flag decides version, version propagates; (5) Event-driven cache invalidation — cross-service coordination. Trade-offs: (a) real-time consistency vs performance (constant SDK checks = latency); (b) consistency vs simplicity (snapshot approach requires context propagation everywhere); (c) tight coupling (all services on same flag platform). Testing: distributed system tests con flag changes mid-flow. Failure modes: (a) service A uses flag on, service B uses flag off = broken state; (b) partial rollout (some services updated, others not) during flag migration; (c) service that doesn't consume flag doesn't get updates. Monitoring: flag evaluation events aggregated show which services see which flag values.",
+      "realWorld": "Uber, Airbnb, Netflix all have distributed flag systems handling this. LaunchDarkly's Relay Proxy allows local mirror of flag data para reduce latency + centralize consistency. Unleash's Edge is similar. Facebook Gatekeeper handles this at massive scale. Real bug: microservice migration donde flag consistency was assumed but not enforced = cross-service bugs.",
+      "tags": ["distributed", "microservices", "consistency", "propagation"],
+      "tech": ["LaunchDarkly Relay Proxy", "Unleash Edge"],
+      "references": [{ "title": "LaunchDarkly — Relay Proxy" }, { "title": "Unleash — Edge" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "deployment",
+      "topic": "Flag observability",
+      "difficulty": "mid",
+      "scenario": "Feature launched a 50% users con flag. How do you know: (a) does 50% actually see it? (b) any metric differences vs 50% que no ve? (c) errors correlated con new path?",
+      "question": "¿Qué observability necesitas para flags?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Flag evaluation events: SDK emits event cada flag evaluation con user context + result. Aggregated: 'flag X evaluated 1M times last hour, 50% true, 50% false'. Confirms actual exposure rate.", "correct": true, "why": "Correcto. All flag platforms emit evaluation events. LaunchDarkly, Split analytics dashboards. Verify actual rollout matches intended." },
+        { "letter": "B", "text": "Correlation con application metrics: tag application metrics con flag context. Ejemplo: [errorCount{flag_new_checkout='true'} vs errorCount{flag_new_checkout='false'}]. Compare error rate por flag variant.", "correct": true, "why": "Correcto. Direct comparison. Prometheus metrics tagged. Some platforms integrate directly (LaunchDarkly + Datadog)." },
+        { "letter": "C", "text": "Traces con flag context: OpenTelemetry span attributes contienen flag decisions. Trace shows: request → serviceA (flag on) → serviceB (also flag on). Debug distributed flag issues.", "correct": true, "why": "Correcto. Distributed tracing + flag context = powerful debugging. See full path with flag decisions." },
+        { "letter": "D", "text": "Logs contain flag decisions: log lines include which flags active para this request. Grep logs for specific flag state to debug incidents.", "correct": true, "why": "Correcto. Structured logging con flag context essential. Post-incident: 'which users had flag X on when incident occurred?' answerable from logs." },
+        { "letter": "E", "text": "No observability necesaria — flag platform dashboard es suficiente.", "correct": false, "why": "Antipatrón. Platform dashboard shows flag stats but doesn't correlate con business/technical metrics. Full observability crítico." }
+      ],
+      "explanation": "Flag observability stack: (1) Platform analytics (LaunchDarkly Data Export, Split Metrics) — flag evaluation counts, targeting effectiveness; (2) Application metrics tagged con flag context — Prometheus labels, Datadog tags; (3) Distributed tracing con flag attributes — OpenTelemetry span attributes; (4) Structured logs con flag context — JSON logs con flag fields; (5) Business metrics correlated with flags — revenue per flag variant. Integration examples: LaunchDarkly + Datadog: automatic flag context en Datadog APM. LaunchDarkly + Segment: flag events streamed. Split + amplitude: flag exposure as user properties. Debug workflow: incident occurs → correlate incident with recent flag changes → identify culprit flag → toggle off → verify recovery. Post-mortem: 'flag change at T-1h caused issue at T-0'. Without observability, this correlation impossible.",
+      "realWorld": "Netflix has extensive flag observability integrated con Atlas metrics. Facebook Gatekeeper events flow to their analytics. LaunchDarkly Data Export enables custom observability. Real bugs found via observability: 'flag targeting rule bug caused unexpected 90% rollout instead of 10%' detected by evaluation metrics.",
+      "tags": ["observability", "flag metrics", "correlation", "tracing"],
+      "tech": ["Prometheus", "OpenTelemetry", "LaunchDarkly Data Export"],
+      "references": [{ "title": "LaunchDarkly — Observability" }, { "title": "OpenTelemetry — Feature flags" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "deployment",
+      "topic": "OpenFeature standard",
+      "difficulty": "staff",
+      "scenario": "Team quiere flexibility para cambiar de LaunchDarkly a Unleash o vice versa sin rewrite. Vendor lock-in concerns.",
+      "question": "¿Qué es OpenFeature y cómo ayuda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenFeature (CNCF Incubating): standard SDK/API para feature flags. Vendor-neutral abstraction — app code interacts con OpenFeature client, provider (LaunchDarkly, Split, Unleash, GrowthBook, ConfigCat, etc.) plugin backing it. Switching vendors = swap provider, no code change. Similar concept to OpenTelemetry para observability.", "correct": true, "why": "Correcto. OpenFeature launched 2022 by CNCF. Vendor-neutral standard reduces lock-in. Provider SPI allows implementing provider for any backend. Multiple vendors have supported (LaunchDarkly, Split, Unleash, GrowthBook, Statsig)." },
+        { "letter": "B", "text": "Es fork de LaunchDarkly.", "correct": false, "why": "Falso. Es standard vendor-neutral, no producto." },
+        { "letter": "C", "text": "Requires abandoning LaunchDarkly.", "correct": false, "why": "Falso. LaunchDarkly is a provider en OpenFeature. Can use LaunchDarkly via OpenFeature abstraction." },
+        { "letter": "D", "text": "Solo funciona con OSS providers.", "correct": false, "why": "Falso. Commercial + OSS providers supported." }
+      ],
+      "explanation": "OpenFeature architecture: (1) App code uses OpenFeature SDK (idiomatic per language); (2) OpenFeature Client abstracts flag operations; (3) Provider (LaunchDarkly, Split, Unleash) plugin implements backend integration; (4) Hooks system: middleware para logging, validation, tracking. Benefits: (a) vendor portability — switch providers with config change; (b) multiple providers (e.g., dev uses local file, prod uses LaunchDarkly); (c) standard tooling (VS Code extensions, testing utilities); (d) telemetry integration (OpenTelemetry hooks). Trade-offs: (a) some provider-specific features lost in abstraction; (b) additional abstraction layer; (c) provider quality varies. Adoption: recent (2022+), growing. Google, IBM, Splunk contributing. Language support: Java, Node, Python, Go, .NET, Ruby, PHP, Kotlin. Best fit: teams valuing vendor flexibility, multi-provider strategies (dev/staging local, prod SaaS), OSS-first orgs.",
+      "realWorld": "OpenFeature launched 2022 by Dynatrace, LaunchDarkly, Split, Cloudbees. CNCF Incubating 2023. Growing adoption. Google Cloud, IBM contributing. Some skeptics say 'abstraction unnecessary if committed to one vendor'; adopters say 'freedom + testing benefits worth it'. Similar debate to OpenTelemetry earlier days.",
+      "tags": ["OpenFeature", "vendor-neutral", "CNCF", "SDK"],
+      "tech": ["OpenFeature"],
+      "references": [{ "title": "openfeature.dev" }, { "title": "CNCF — OpenFeature" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "deployment",
+      "topic": "Flags en CI/CD pipeline",
+      "difficulty": "senior",
+      "scenario": "Deploy new version. Some functionality gated by flags. ¿Cómo interactúan flags con CI/CD? ¿Environment-specific values? ¿Testing?",
+      "question": "¿Cómo integrar flags en CI/CD pipelines?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Environment-specific flag states: dev, staging, prod ALL configured independently en flag platform. Dev tiene 'new-feature: on' para active development; staging: on para QA testing; prod: off (not yet released). Different SDK keys per env keep isolated.", "correct": true, "why": "Correcto. Environment isolation crítico. Each env has own configuration. Same flag key across envs, different values." },
+        { "letter": "B", "text": "Automated tests con multiple flag scenarios: CI runs test suite con flag on + off states. Ensures both paths work antes de merge. Feature-flag-aware CI configuration.", "correct": true, "why": "Correcto. Prevent regressions in either path. Test both explicitly. Extend CI job matrix con flag states." },
+        { "letter": "C", "text": "Flag configuration as code: IaC-like flag configs stored en git, applied via CI/CD. LaunchDarkly Terraform provider, Unleash CLI. Version-controlled flag rules, PR review antes de production changes.", "correct": true, "why": "Correcto. Flag configs deserve same governance as code. Terraform + LaunchDarkly = declarative flag management. Prevents 'ninja changes' en dashboard." },
+        { "letter": "D", "text": "Coordinated deployment + flag change: deploy new code con flag off → verify healthy → toggle flag on. Two-step release. Deployment safer porque code change decoupled from behavior change.", "correct": true, "why": "Correcto. Decouple deploy y release. Modern pattern: continuous deployment de code (flag off) + progressive release via flag (on). Rollback = toggle off (instant), no redeploy." },
+        { "letter": "E", "text": "CI/CD y flags no interactúan.", "correct": false, "why": "Falso. Deeply intertwined en modern deployment." }
+      ],
+      "explanation": "CI/CD + flags patterns: (1) Different SDK keys per environment; (2) Test both states in CI (matrix); (3) Flag configs as code (Terraform, GitOps); (4) Decoupled deploy + release; (5) Feature flag environment approval workflows. Terraform pattern: [resource 'launchdarkly_feature_flag' 'new_checkout' { name = 'new-checkout' ... }; resource 'launchdarkly_flag_config' 'prod_new_checkout' { flag_id = launchdarkly_feature_flag.new_checkout.id; env_key = 'production'; on = false; rules = [...] }]. Applied via CI on merge. Advantages: git audit trail, PR review, rollback via git revert. Trade-offs: real-time flag toggles bypass IaC (drift from configured state). Modern approach: hybrid — release/experiment flags as code, ops flags manual (for incident response speed).",
+      "realWorld": "Netflix, Airbnb, LinkedIn manage flag configs as code. Terraform providers popular. LaunchDarkly's Terraform provider extensively used. Split similar. Real deployment pattern: PR merged → CI deploys code (flag off) → smoke tests → separate PR to enable flag in prod → progressive rollout.",
+      "tags": ["CI/CD", "environments", "flags as code", "Terraform"],
+      "tech": ["Terraform", "LaunchDarkly", "GitHub Actions"],
+      "references": [{ "title": "LaunchDarkly Terraform provider" }, { "title": "Flags as Code best practices" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "deployment",
+      "topic": "Flag failure modes",
+      "difficulty": "staff",
+      "scenario": "Flag platform outage: LaunchDarkly down. Or SDK bug: flag returns wrong value. What happens?",
+      "question": "¿Qué failure modes considerar y cómo mitigar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SDK connection failure: SDK uses last-known cached values (from disk cache). App continues operating con stale but valid flag values. Configurable behavior: fail-fast, fail-safe (default), fail-static.", "correct": true, "why": "Correcto. Mature SDKs (LaunchDarkly, Split) cache locally. Connection failure doesn't crash app. Configurable degradation." },
+        { "letter": "B", "text": "Wrong default value: [ldClient.variation('flag', user, DEFAULT)] — DEFAULT returned si flag not found o error. Default must be SAFE (usually old-behavior 'off'). Careless default = potential broken behavior. Test defaults explicitly.", "correct": true, "why": "Correcto. Default value semantic critical. Default 'on' = new feature enabled si SDK issue = potentially broken production. Default 'off' = safe (old behavior)." },
+        { "letter": "C", "text": "Bootstrap data: SDK receives initial flag config synchronously (from disk file, env vars) para prevent 'flag returns default before SDK initializes' race condition. Critical para serverless (cold start).", "correct": true, "why": "Correcto. Serverless functions restart frequently. Bootstrap flag data = immediate availability. Otherwise, first request per instance may get default. LaunchDarkly, Split all support bootstrap." },
+        { "letter": "D", "text": "Multi-region flag platform: LaunchDarkly runs global edge network. If one region down, SDK connects to healthy region. Redundancy built-in.", "correct": true, "why": "Correcto. Enterprise platforms have multi-region redundancy. Reduces single-point-failure risk." },
+        { "letter": "E", "text": "Flag platform outage requires application shutdown.", "correct": false, "why": "Falso. Well-designed SDKs continue operating con cached flag values durante platform outage. Graceful degradation." }
+      ],
+      "explanation": "Flag failure modes to consider: (1) Platform outage — SDK cache maintains function; (2) Wrong default values — safe defaults + explicit test; (3) SDK initialization timing — bootstrap for immediate availability; (4) Network partitions — regional SDK connectivity; (5) Bug in flag evaluation logic — testing + monitoring; (6) Rate limits — planned emergency toggling could be rate-limited; (7) Human error toggling wrong flag — audit + confirmation dialogs. Mitigations: (1) Local cache mandatory; (2) Sane defaults (old behavior); (3) Bootstrap data; (4) Testing platform outage scenarios; (5) Playbook for platform outages ('LaunchDarkly is down — what do we do?'); (6) Multi-provider fallback (rare, but possible con OpenFeature). Chaos engineering: intentionally break flag platform in test env, verify graceful degradation. Real risk: 'flag platform is critical dependency' — if untested failure mode, discover in real outage.",
+      "realWorld": "LaunchDarkly has had outages. Real users experienced degradation. Post-mortem: SDK cache saved app. Enterprises typically require SLA guarantees from platform provider. Self-hosted (Unleash) provides more control. Real incidents documented: 'we assumed flag platform always up, wasn't, learned to design for outage'.",
+      "tags": ["failure modes", "resilience", "cache", "defaults"],
+      "tech": ["LaunchDarkly SDK", "Unleash SDK"],
+      "references": [{ "title": "LaunchDarkly — Resiliency" }, { "title": "Split — Failure Modes" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "deployment",
+      "topic": "ROI y flag adoption",
+      "difficulty": "staff",
+      "scenario": "CTO pregunta '¿por qué adoptar LaunchDarkly? Cuesta $$$/año. Podemos hacer flags con env vars.'",
+      "question": "¿Cuál es el ROI de una feature flag platform vs DIY?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Env vars son 'poor man's flags': no targeting rules (all users same value), no real-time changes (env var change = redeploy = slow), no audit, no analytics. Adequate para simple boolean toggles, inadequate para gradual rollouts, A/B testing, permission-based access.", "correct": true, "why": "Correcto. Env vars work para simple use cases. Break down cuando: (a) need per-user targeting; (b) need real-time toggling; (c) need rollout percentages; (d) need audit. Platform value increases con complexity of use cases." },
+        { "letter": "B", "text": "Real cost calculation: (dev hours saved on custom flag infrastructure) + (incident MTTR reduced by kill switches) + (feature launch risk reduced) + (experimentation value) vs (platform subscription). Empresas maduras find platform ROI positive at scale (>50 devs).", "correct": true, "why": "Correcto. ROI depends on scale + complexity. Small teams: DIY often sufficient. Large teams: platform ROI positive. Real cost includes engineering time NOT spent on flags = time on product." },
+        { "letter": "C", "text": "OSS alternatives (Unleash, GrowthBook) reduce cost significantly. Self-host = full control + $0 platform cost, only hosting cost. Good middle ground: real platform capabilities without enterprise price tag.", "correct": true, "why": "Correcto. OSS bridge para cost-conscious. Trade-off: operational burden of hosting. Fine para teams con infra ops capability." },
+        { "letter": "D", "text": "Non-financial benefits: engineering discipline (forced to think about flag lifecycle), safer deployments, better ability to experiment, faster incident response. Hard to quantify but real.", "correct": true, "why": "Correcto. Cultural benefits. Team confidence en deployments increases con flag maturity. Enable riskier features safely." },
+        { "letter": "E", "text": "Feature flags no valen la pena — env vars son suficientes siempre.", "correct": false, "why": "Antipatrón dogmatic. Depends on scale + use case. Sophisticated flag use cases require sophisticated tooling." }
+      ],
+      "explanation": "ROI framework: (1) Simple boolean toggles, small team, few features → env vars OK; (2) Multiple environments, gradual rollouts, kill switches → OSS platform (Unleash, GrowthBook) makes sense; (3) Enterprise scale, compliance, experimentation, multi-team → commercial platform (LaunchDarkly, Split) justified. Cost comparison: env vars ($0 platform, expensive engineering time for advanced features), OSS ($0 platform, hosting + operational time), commercial ($$$ platform, $0 operational). Break-even calculation: how many engineers × how much time saved vs subscription cost. Adoption journey: start OSS (Unleash), migrate to commercial when reaching scale threshold. LaunchDarkly typical customer starts around 50+ engineers with growing complexity. Anti-patterns: (a) buying enterprise platform for 5-person team; (b) trying to scale env vars to complex use cases; (c) building custom flag platform (usually reinvent wheel).",
+      "realWorld": "Notion started con custom flags, migrated to Statsig for experimentation scale. Airbnb built custom flag infrastructure years ago, still uses it (large investment already sunk). GitHub built internal system historically, now offers as public feature. Uber, Netflix built custom. Emerging pattern: startups use OSS/LaunchDarkly early, don't build custom.",
+      "tags": ["ROI", "vendor decision", "OSS vs commercial"],
+      "tech": ["LaunchDarkly", "Unleash", "GrowthBook"],
+      "references": [{ "title": "LaunchDarkly ROI Calculator" }, { "title": "Unleash vs LaunchDarkly" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "deployment",
+      "topic": "Progressive delivery + feature flags integration",
+      "difficulty": "staff",
+      "scenario": "Team maduro con Argo Rollouts (canary) + LaunchDarkly (flags). ¿Cómo usar ambos coherently? Overlap o complementary?",
+      "question": "¿Cómo combinar canary deployment con feature flags coherently?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Complementary layers: canary = INFRA-level rollout (nueva version del código); feature flags = APP-level release control (feature visible to users). Deploy nueva version con flag OFF via canary (verifies no regression in existing behavior), then enable flag progressively via LaunchDarkly. Two decoupled dimensions.", "correct": true, "why": "Correcto. Layers separation. Canary validates DEPLOYMENT (new binary healthy); flag validates FEATURE (new behavior desired). Decoupled progression. Different rollback semantics." },
+        { "letter": "B", "text": "Ortogonal rollout: canary rolls out por infra %, flag rolls out por user %. Example: canary at 10% (10 pods) + flag at 5% users on = new feature seen by 5% users who happen to hit any pod. Both dimensions gradually expanded independently.", "correct": true, "why": "Correcto. Two axes of gradualness. Independent tuning based on risk assessment. Canary safety for infra, flag safety for behavior." },
+        { "letter": "C", "text": "Different rollback semantics: canary rollback = infrastructure change (redeploy previous version). Flag rollback = configuration change (toggle off). Feature flag rollback FASTER (<1 sec) — use for behavioral bugs. Canary rollback slower but complete — use for infrastructure/dependency issues.", "correct": true, "why": "Correcto. Choose rollback tool per bug type. Feature bug = flag toggle (fast). Infrastructure bug = canary abort. Different problems, different solutions." },
+        { "letter": "D", "text": "Different observability: canary analysis checks infra metrics (error rate, latency, resource usage) — 'is the new binary healthy?'. Feature flag analysis checks business metrics (conversion, engagement) — 'is the new feature performing?'. Different questions, different answers.", "correct": true, "why": "Correcto. Different metrics for different concerns. Canary catches deployment issues; flag experimentation catches product issues." },
+        { "letter": "E", "text": "Redundant — use only one.", "correct": false, "why": "Falso. Complementary tools. Progressive delivery mature = both. Netflix, Uber, Airbnb use both extensively." }
+      ],
+      "explanation": "Mature progressive delivery pattern: (1) CI/CD builds artifact; (2) Deploy artifact via canary (infra-level progression) — new version, flag off; (3) Canary passes analysis (deployment healthy); (4) Feature flag enabled progressively (behavior-level progression) — 5% → 25% → 100% users; (5) Feature flag analysis (business metrics per variant); (6) Feature launched. If problems: (a) infra issue during canary → canary rollback; (b) feature issue post-launch → flag disable. Each dimension independent. Anti-patrones: (a) canary con flag change simultaneously (can't isolate cause of issue); (b) big-bang deploy con flag on = double risk; (c) skipping flag layer (no kill switch para behavior issues). Combining with A/B testing: three axes (canary %, flag %, experiment %). Complex but powerful for large-scale product experimentation.",
+      "realWorld": "Netflix combines infra rollout (Spinnaker) + feature flags (internal) + experimentation (Kayenta + internal A/B). Facebook Gatekeeper + gradual code rollout. Airbnb similar. Modern deployment maturity = layered approach. LaunchDarkly, Argo Rollouts docs both discuss integration patterns.",
+      "tags": ["progressive delivery", "canary + flags", "layered", "complementary"],
+      "tech": ["LaunchDarkly", "Argo Rollouts", "Spinnaker"],
+      "references": [{ "title": "LaunchDarkly + Argo Rollouts" }, { "title": "Netflix Tech Blog — Deployment infrastructure" }]
+    }
+  ]
+}

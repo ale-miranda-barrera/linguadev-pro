@@ -1,0 +1,428 @@
+{
+  "id": "devops-sim-36-artifact-management-and-caching",
+  "trackId": "devops",
+  "order": 36,
+  "title": "Simulacro 36 — Artifact management y caching en CI/CD",
+  "focus": "Artifact repositories (Nexus, Artifactory, GitHub Packages, ECR), image caching en CI, dependency caching strategies, build caches (Docker BuildKit, Turborepo, Nx), immutable artifacts, semantic versioning enforcement, promotion pipelines.",
+  "areaCoverage": ["vcs-ci"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "vcs-ci",
+      "topic": "Artifact repositories — qué son",
+      "difficulty": "junior",
+      "scenario": "Team compila código, genera .jar files, Docker images, npm packages. Currently: cada dev tiene versión local. Deploy is manual copy. Un compañero senior dice 'necesitamos artifact repository'.",
+      "question": "¿Qué es un artifact repository y por qué es fundamental para CI/CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Artifact repository: sistema central para almacenar builds compilados (binaries, container images, packages, static assets). Cada build genera artifact con metadata (version, commit hash, timestamp). CI/CD produce artifact → repository → deploy pipeline consume desde repository. Beneficios: (1) IMMUTABILITY (una vez uploaded, no cambia); (2) VERSIONING (múltiples versions coexisten); (3) TRACEABILITY (metadata quién/cuándo/qué); (4) DEPLOYMENT source of truth (deploys from repo, no locales); (5) DEPENDENCY caching (build reuses artifacts from before). Ejemplos: Nexus, JFrog Artifactory, GitHub Packages, AWS ECR, Docker Hub, Maven Central, npm registry.", "correct": true, "why": "Correcto. Es fundamental para CI/CD serio. Sin artifact repo: builds locales, drift, no reproducibility. Con repo: builds central, immutable, reproducible. Foundation para todo lo demás (release management, security scanning, deployment automation)." },
+        { "letter": "B", "text": "Un directorio en el server de producción.", "correct": false, "why": "Trivial. Real artifact repos son sistemas dedicados con features específicas." },
+        { "letter": "C", "text": "GitHub por sí solo.", "correct": false, "why": "GitHub tiene Packages feature separada. Git repo mismo NO es artifact repo — git para código, artifact repo para builds." },
+        { "letter": "D", "text": "Sólo aplica a Java/Maven.", "correct": false, "why": "Aplica universally: containers, npm, Python packages, .NET NuGet, Go modules, static assets, mobile builds (APK, IPA), documentation builds." }
+      ],
+      "explanation": "Artifact repository roles: (1) STORAGE — reliable persistence de builds; (2) PROXY — cache de external dependencies (npm registry, Maven Central, Docker Hub) para reduce external dependency + faster builds; (3) PROMOTION — artifact promoted through envs (dev-repo → staging-repo → prod-repo); (4) RETENTION — configurable retention policies (keep last N versions); (5) SECURITY — scan artifacts, vulnerabilities, licenses; (6) ACCESS CONTROL — who can read/write which artifacts. Types comunes: (a) Nexus (Sonatype, established, OSS + Pro); (b) JFrog Artifactory (commercial, enterprise features); (c) GitHub Packages (integrated con GitHub); (d) GitLab Container Registry (integrated con GitLab); (e) AWS ECR (Elastic Container Registry, AWS); (f) Azure Container Registry; (g) Google Container Registry / Artifact Registry; (h) Docker Hub (public + private tiers); (i) language-specific: npm registry, PyPI, Maven Central, RubyGems. Enterprises typically self-host Nexus/Artifactory O usan enterprise services (Artifactory Cloud, GitHub Enterprise Packages).",
+      "realWorld": "Nexus (Sonatype) most widely adopted OSS artifact repo. JFrog Artifactory dominant in enterprises (BestBuy, Ford). GitHub Packages tightly integrated con GitHub Actions. Docker Hub the OG container registry. AWS ECR for AWS-native shops. GitLab Container Registry for GitLab shops. Netflix, Google internal artifact repos. Sonatype Repository Manager originally created para Maven ecosystem.",
+      "tags": ["artifact repository", "Nexus", "Artifactory", "immutability"],
+      "tech": ["Nexus", "Artifactory", "GitHub Packages", "ECR"],
+      "references": [{ "title": "Sonatype Nexus" }, { "title": "JFrog Artifactory" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "vcs-ci",
+      "topic": "Immutable artifacts",
+      "difficulty": "junior",
+      "scenario": "Dev pregunta '¿por qué no puedo re-usar version 1.2.3 de un package? Yo compilé nueva version, quiero re-publicar como 1.2.3'. Senior dice 'no — inmutable'.",
+      "question": "¿Qué son immutable artifacts y por qué son mandatorios?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Immutable artifact: una vez publicado, NUNCA cambia. Si necesitas fix, publish new version (1.2.4). El artifact 1.2.3 permanece exactamente como fue originalmente. Razones: (1) REPRODUCIBILITY — 'build de agosto usa 1.2.3' debe funcionar idéntico en enero; (2) TRUST — customers who validated 1.2.3 pueden trust que sigue igual; (3) CACHING — caches downstream (CDN, CI, deployment) assume immutable, break si cambian; (4) SECURITY — supply chain attacks difíciles si versions inmutables; (5) AUDIT — 'we deployed 1.2.3' has consistent meaning. Anti-patrón: 'republish over existing version' = breaks everyone downstream que asume immutability.", "correct": true, "why": "Correcto. Immutability es principio FOUNDATIONAL. Sin este, artifact management no funciona. npm inicialmente permitía republish, cambió tras 'left-pad' y otros incidents. Docker image tags mutable por default (latest, v1.0) pero content-addressable digests (sha256:xxx) inmutables." },
+        { "letter": "B", "text": "Immutable = solo puedes leer, no escribir.", "correct": false, "why": "Confuso. Puedes escribir NEW versions. No puedes cambiar EXISTING versions." },
+        { "letter": "C", "text": "Solo aplica a containers.", "correct": false, "why": "Aplica universally. npm packages, Maven artifacts, containers — all should be immutable per version." },
+        { "letter": "D", "text": "Puedes republish si es urgente.", "correct": false, "why": "Antipatrón. Breaks downstream. Emergency fixes require new version, not republish." }
+      ],
+      "explanation": "Immutability implementation: (1) Repository rejects uploads to existing version; (2) Deletion optional (usually retained forever o long retention); (3) Content-addressable identifiers (Docker digests) inmutables por construction — digest cambia si content cambia. Semantic versioning + immutability: (a) 1.2.3 published once, never changes; (b) 1.2.4 for fixes; (c) 2.0.0 for breaking changes. Anti-patterns: (a) reusing version tags; (b) force pushing over Git tags; (c) mutable Docker tags in production ('latest'). Real incidents: (a) npm left-pad (2016) — author unpublished package, thousands of builds broke; response: npm restricted unpublish; (b) Docker Hub images being modified silently — some registries logs immutable now. Best practice: use content-addressable references (Docker digests, not tags) in production manifests. Automated tools: CI populates Kubernetes manifests con specific digest (sha256:xxx) not tag (v1.0), ensures immutability.",
+      "realWorld": "npm left-pad 2016 incident — author unpublished, thousands of builds worldwide broke. Response: npm restricted unpublish. Docker digest-based deployment standard. Kubernetes manifests typically pin to digests in production. Airflow, Airbnb use digests. GitLab, GitHub deployments similarly. Semantic versioning + immutability standard practice at scale.",
+      "tags": ["immutability", "reproducibility", "semver"],
+      "tech": ["semantic versioning", "Docker digest"],
+      "references": [{ "title": "npm left-pad incident" }, { "title": "Docker content-addressable storage" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "vcs-ci",
+      "topic": "Container image registries",
+      "difficulty": "mid",
+      "scenario": "Team elige entre Docker Hub, AWS ECR, GitHub Container Registry para storing container images.",
+      "question": "¿Cuáles son los tradeoffs entre las diferentes container registries?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Docker Hub: original public registry. Free tier con rate limits (100 pulls/6h anonymous, 200/6h authenticated). Public images unlimited. Best fit: OSS projects, standard base images, hobbyists.", "correct": true, "why": "Correcto. Docker Hub is de-facto standard for public images. Rate limits added 2020 to combat abuse — force enterprises to migrate or pay. Free tier tight for production." },
+        { "letter": "B", "text": "AWS ECR (Elastic Container Registry): AWS-native, integrated IAM permissions, close a AWS compute (EKS, ECS, Fargate). Best fit: AWS-heavy shops. Pricing: $0.10/GB storage + data transfer.", "correct": true, "why": "Correcto. ECR estándar para AWS shops. Tight integration con EKS/ECS. Cross-region replication features. Enterprise features." },
+        { "letter": "C", "text": "GitHub Container Registry (GHCR): integrated con GitHub Actions, permissions leverage GitHub, free storage para public/private. Best fit: teams already on GitHub, CI/CD flow tied to GitHub.", "correct": true, "why": "Correcto. GHCR es free (dentro de GitHub billing). Native integration con GitHub Actions. Uses GitHub tokens for auth." },
+        { "letter": "D", "text": "Self-hosted (Nexus, Harbor, Artifactory, Distribution): full control, no vendor lock-in, integrable con existing infra. Best fit: enterprises con compliance requirements, air-gapped environments.", "correct": true, "why": "Correcto. Self-hosted opciones para requirements específicos. Harbor (OSS, CNCF Graduated) popular. Sonatype Nexus, JFrog Artifactory enterprise. Distribution (Docker's OSS registry)." },
+        { "letter": "E", "text": "Todos son idénticos.", "correct": false, "why": "Falso. Differences en pricing, integration, features, hosting model." }
+      ],
+      "explanation": "Registry comparison matrix: | Registry | Best for | Pricing | Key features | | Docker Hub | Public OSS | Free public + $$$ private | Ubiquitous | | AWS ECR | AWS-native | Pay per usage | IAM integration | | GHCR | GitHub-native | Free (via GitHub) | GitHub Actions integration | | Azure ACR | Azure-native | Pay per usage | AAD integration | | GCR/AR | GCP-native | Pay per usage | GCP integration | | Harbor | Self-hosted OSS | Free + hosting | CNCF Graduated | | Nexus/Artifactory | Enterprise self-hosted | $$$ | Multi-format (containers + Java + npm + more) |. Features to consider: (1) Vulnerability scanning (built-in vs bring your own); (2) Signing/verification (Notary, Cosign); (3) Access control (RBAC granularity); (4) Replication (multi-region for latency); (5) Immutability (tag protection); (6) Retention policies; (7) API compatibility (Docker Registry v2 standard). Rate limits: Docker Hub famous, others less so. Enterprise features: LDAP/SSO integration, compliance certifications.",
+      "realWorld": "Docker Hub rate limits (2020) prompted many teams to migrate. AWS ECR dominant en AWS. GHCR growing rapidly. Harbor popular self-hosted CNCF option (VMware Tanzu). Notion story: 'Docker Hub rate limits hit CI, moved to ECR'. Enterprises often mix: internal images en Artifactory, public base images cached from Docker Hub via pull-through.",
+      "tags": ["container registry", "Docker Hub", "ECR", "GHCR", "Harbor"],
+      "tech": ["Docker Hub", "AWS ECR", "GitHub Container Registry", "Harbor"],
+      "references": [{ "title": "Docker Hub" }, { "title": "AWS ECR" }, { "title": "Harbor CNCF" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "vcs-ci",
+      "topic": "Docker layer caching",
+      "difficulty": "mid",
+      "scenario": "Docker build takes 15 min cada vez. Team suggests 'usa caching'. Cómo funciona layer caching?",
+      "question": "¿Cómo funciona Docker layer caching y cómo optimizar Dockerfiles?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Docker builds layers per Dockerfile instruction. Cada layer cached separately. Si layer no cambia (misma instruction + mismo context), Docker reuses cached layer. If layer changes, ese layer + TODOS los subsequent layers rebuild. Order matters mucho.", "correct": true, "why": "Correcto. Layer caching es Docker fundamental optimization. Understanding + Dockerfile optimization crítico para fast builds." },
+        { "letter": "B", "text": "Optimize por ordering: instructions que rarely change al TOP (base image, package installs), instructions que change often al BOTTOM (COPY source code). Rebuilds después del cambio solo re-corren instructions after that point.", "correct": true, "why": "Correcto. Classic optimization. Package.json + npm install BEFORE COPY . = si solo code cambia, no need to re-install dependencies. Common Dockerfile pattern." },
+        { "letter": "C", "text": "Use .dockerignore: exclude files que no impact build pero cause cache miss (docs, tests, node_modules local). Missing .dockerignore causes cache misses per file change unrelated to build.", "correct": true, "why": "Correcto. .dockerignore critical. node_modules local can invalidate cache each build even sin real change. Docs changes cause rebuild. Whitelist approach even better." },
+        { "letter": "D", "text": "Multi-stage builds: separate build image (con compilers, dev deps) from runtime image (slim, only runtime deps). Smaller runtime images, security surface reduced, better caching between stages.", "correct": true, "why": "Correcto. Multi-stage estándar moderno. Build en golang image, run en scratch/alpine. Smaller, faster, safer." },
+        { "letter": "E", "text": "Caching es automático — no requires configuration.", "correct": false, "why": "Falso. Local caching automático pero limited. CI caching requires configuration (BuildKit inline cache, remote cache, registry cache)." }
+      ],
+      "explanation": "Docker layer caching patterns: (1) Order instructions least-to-most changing; (2) Consolidate RUN commands into fewer layers where beneficial (reduce image size, group related); (3) .dockerignore excludes unrelated files; (4) Multi-stage builds separate concerns. BuildKit improvements: (1) parallel layer building; (2) mount cache (RUN --mount=type=cache for package managers); (3) secret mounts (RUN --mount=type=secret); (4) SSH mount; (5) improved cache export/import for CI. Common Dockerfile patterns: [FROM node:18 AS build; WORKDIR /app; COPY package*.json ./; RUN npm ci; COPY . .; RUN npm run build; FROM node:18-alpine; COPY --from=build /app/dist ./dist; CMD ['node', 'dist/index.js']]. Multi-stage: build stage has full node, runtime stage minimal alpine. Cache in CI: buildx with cache-from/cache-to registry pointer, GitHub Actions cache, S3 cache backend. Registry cache: push cache layers to registry, pull in next build para reuse.",
+      "realWorld": "GitHub Actions Docker builds with BuildKit cache reduce build time significantly. Companies with slow builds often haven't optimized Dockerfile order. Multi-stage builds standard practice. Distroless images (Google) further reduce runtime image size. Chainguard Wolfi similar. Buildpacks (Cloud Native Buildpacks) automate best practices.",
+      "tags": ["Docker", "layer caching", "multi-stage", "BuildKit"],
+      "tech": ["Docker", "BuildKit", "buildx"],
+      "references": [{ "title": "Docker BuildKit" }, { "title": "Dockerfile best practices" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "vcs-ci",
+      "topic": "Dependency caching en CI",
+      "difficulty": "mid",
+      "scenario": "GitHub Actions build runs [npm install] every build (5min cada uno). Colega dice 'usar caching'.",
+      "question": "¿Cómo se implementa dependency caching en CI pipelines?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cache directorio de dependencies (node_modules, .m2, .gradle, pip cache) usando cache action. Key: hash of dependency manifest (package-lock.json, pom.xml, requirements.txt). Cache hit = restore de cache; miss = install fresh + save. Standard en all CI providers.", "correct": true, "why": "Correcto. Standard pattern. GitHub Actions: actions/cache. CircleCI: save_cache / restore_cache. GitLab: cache keyword. All support this pattern." },
+        { "letter": "B", "text": "Cache key strategy: primary key (exact hash of lock file) + restore keys (partial match). Ejemplo: primary 'npm-{hash}', fallback 'npm-'. Exact match = full reuse; partial match = still faster than fresh (npm ci uses cached partials).", "correct": true, "why": "Correcto. Layered fallback strategy. Even outdated cache faster than nothing. All CI providers support restore-keys." },
+        { "letter": "C", "text": "Package-manager-specific commands: npm ci (deterministic, faster than npm install), pip install --cache-dir, mvn dependency:go-offline. Combine with cache action for maximum benefit.", "correct": true, "why": "Correcto. npm ci designed for CI (assumes lock file, faster, cleaner). Package manager specifics matter." },
+        { "letter": "D", "text": "Shared cache across branches: main branch cache shared with feature branches (via restore-keys). Feature branch first build reuses main's cache, saves time.", "correct": true, "why": "Correcto. Cross-branch cache sharing common. GitHub Actions doesn't share between branches automatically but restore-keys enable it." },
+        { "letter": "E", "text": "Rebuild dependencies from scratch every build para 'consistency'.", "correct": false, "why": "Antipatrón. Caching doesn't compromise consistency (lock files still enforce versions). Just wastes time + resources." }
+      ],
+      "explanation": "Dependency caching patterns: (1) Cache key from lock file hash — invalidates when deps change; (2) Restore keys for partial matches; (3) Package-manager-specific optimizations; (4) Layer with Docker BuildKit cache for containerized builds. Different ecosystems: (a) Node — cache node_modules OR ~/.npm; npm ci for install; (b) Python — cache ~/.cache/pip, use pip cache dir; (c) Java Maven — cache ~/.m2; use dependency:go-offline; (d) Java Gradle — cache ~/.gradle; (e) Go — cache ~/go/pkg/mod; go mod download; (f) Rust — cache ~/.cargo, target/; cargo fetch. GitHub Actions: [actions/cache@v3 with path: node_modules; key: node-modules-{hash of package-lock.json}]. Similarly for other CI providers. CircleCI orbs (community shortcuts). GitLab CI's cache built-in. Cache size limits: providers typically 5-10GB per repo. Rotate/cleanup old caches. Considerations: cache invalidation (change in dep version = new cache key = miss); cache poisoning (compromised cache in shared build = attack vector, mitigations exist).",
+      "realWorld": "GitHub Actions cache reduced Node build times 5min → 30sec at many companies. Similar improvements across languages. Anti-example: teams NOT caching, running fresh installs every build, wasting time + resources + $$. GitLab, Circle similar patterns.",
+      "tags": ["dependency caching", "npm ci", "cache key", "CI"],
+      "tech": ["GitHub Actions", "actions/cache", "CircleCI"],
+      "references": [{ "title": "GitHub Actions cache" }, { "title": "CircleCI caching" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "vcs-ci",
+      "topic": "Docker BuildKit inline cache",
+      "difficulty": "senior",
+      "scenario": "Docker build en CI toma 10min. Layer caching local not preserved (fresh runner each build). Need to persist cache across builds.",
+      "question": "¿Cómo persistir Docker build cache across CI runs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "BuildKit inline cache: [docker buildx build --cache-from type=registry,ref=myimage:cache --cache-to type=inline]. Cache layers embedded in the image itself (as manifest attachment). Push image to registry, next build pull cache layers, use them.", "correct": true, "why": "Correcto. Inline cache is simplest BuildKit cache pattern. Cache in registry as attachment. Requires BuildKit + buildx." },
+        { "letter": "B", "text": "Registry cache with type=registry: [--cache-to type=registry,ref=myimage-cache]. Separate image for cache. More flexible than inline (can cache multi-stage build stages selectively).", "correct": true, "why": "Correcto. Separate cache image better for complex multi-stage. Cleaner separation. Common enterprise pattern." },
+        { "letter": "C", "text": "GHA cache backend: [--cache-to type=gha]. Native GitHub Actions cache integration. No registry pushes needed. Automatic in GitHub Actions workflows.", "correct": true, "why": "Correcto. GHA-specific but seamless para GitHub Actions users. Uses actions/cache backend transparently." },
+        { "letter": "D", "text": "S3 or blob storage cache: [--cache-to type=s3]. Distributed cache in cloud storage. Good for multi-runner scenarios (shared cache across geographic locations).", "correct": true, "why": "Correcto. S3 cache for enterprise/multi-runner setups. AWS-integrated. Alternatives: azblob, gcs." },
+        { "letter": "E", "text": "Docker builds cannot be cached across CI runs.", "correct": false, "why": "Falso. Multiple mechanisms exist. Docker BuildKit specifically designed para this." }
+      ],
+      "explanation": "BuildKit cache backends: (1) inline — embedded en image manifest; (2) registry — separate cache image; (3) local — filesystem (for local dev); (4) gha — GitHub Actions cache; (5) s3/azblob/gcs — cloud storage; (6) filesystem — mounted volume. Setup: [docker buildx create --use --name mybuilder; docker buildx build --push --cache-from type=registry,ref=cache-image --cache-to type=registry,ref=cache-image,mode=max -t myimage:latest .]. Modes: min (only exported layers) vs max (all layers, including intermediate stages). Max = bigger cache but better hits. Multi-stage builds: BuildKit can cache each stage separately. Trade-offs: (a) inline simple but cache mixed with image; (b) registry separates but requires 2 images; (c) GHA integrated but locked to GitHub; (d) S3 flexible but requires setup. Real improvement: builds from 10min → 2min with cache hits.",
+      "realWorld": "Docker BuildKit standard since 2018+, mandatory for modern optimizations. GitHub Actions with docker/build-push-action + type=gha cache is common pattern. Kubernetes ecosystem heavy adopter. Real story: teams migrating from Docker Build to BuildKit see 3-10x build time improvements.",
+      "tags": ["BuildKit", "inline cache", "registry cache", "buildx"],
+      "tech": ["BuildKit", "buildx", "GHA cache"],
+      "references": [{ "title": "Docker BuildKit docs" }, { "title": "buildx cache backends" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "vcs-ci",
+      "topic": "Turborepo y Nx",
+      "difficulty": "senior",
+      "scenario": "Monorepo con 20 packages. [npm run build] rebuilds everything cada vez, incluso si solo 1 package cambió. 10min+ builds unnecessary.",
+      "question": "¿Cómo Turborepo y Nx aceleran builds en monorepos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Task-level caching: Turborepo/Nx analyze inputs (source files, dependencies) por task. Fingerprint inputs → hash. Cache hit = skip execution, restore outputs. Cache miss = execute, save outputs + hash.", "correct": true, "why": "Correcto. Similar concepto a Bazel/Buck. Fine-grained task caching. Skip work when inputs identical." },
+        { "letter": "B", "text": "Dependency graph awareness: solo rebuild affected packages + their dependents. If package A changed and B depends on A, both rebuild. C independent of A/B doesn't rebuild.", "correct": true, "why": "Correcto. Graph-based incremental builds. Analyze imports, understand dependency tree, minimal rebuild." },
+        { "letter": "C", "text": "Remote caching: shared cache across team + CI. Dev's local build populates cache, CI reuses. CI populates cache, other CIs reuse. Turborepo Cloud, Nx Cloud provide remote cache SaaS. Self-host options available.", "correct": true, "why": "Correcto. Remote cache game-changer. Team benefits collectively. First build slow, everyone else fast." },
+        { "letter": "D", "text": "Parallel execution: independent tasks (e.g., build packages A, B, C que no dependen entre ellos) run in parallel. CPU utilization maximizado.", "correct": true, "why": "Correcto. Parallelism aprovecha multi-core. Task scheduler optimal. Sequential unnecessary if independent." },
+        { "letter": "E", "text": "Turborepo y Nx solo funcionan con JavaScript.", "correct": false, "why": "Turborepo es primarily JS/TS but Nx supports many languages. Bazel, Pants más language-agnostic." }
+      ],
+      "explanation": "Monorepo build tools: (1) Turborepo (Vercel, focused JS/TS, simple config); (2) Nx (Nrwl, more powerful, multiple languages, generators); (3) Bazel (Google, most powerful, complex, language-agnostic); (4) Pants (Twitter, similar to Bazel); (5) Rush (Microsoft, JS/TS). Key concepts: (1) Task pipeline (define dependencies between tasks); (2) Affected/incremental (only rebuild what changed); (3) Local cache (~/.turbo or ~/.cache/nx); (4) Remote cache (shared team cache); (5) Parallelization. Turborepo config: turbo.json defines pipeline (build depends on ^build of deps). Nx config: nx.json + project.json per package. Bazel BUILD files per directory. Remote cache providers: Turborepo Cloud (Vercel), Nx Cloud (Nrwl), self-host (Bazel Remote Cache, custom). Cost/benefit: teams with monorepos see 10x+ build improvements with caching enabled. Anti-patrones: (a) always rebuild everything; (b) no shared cache; (c) sequential builds when parallelizable.",
+      "realWorld": "Vercel uses Turborepo for their monorepo. Nx used by Nrwl, ANZ Bank, Cisco. Bazel used by Google (internal Blaze), Uber (partial), Dropbox, Airbnb. Remote caching adoption growing rapidly. Real improvements: monorepos going from 30min builds to 3min with proper caching. Enables 'incremental CI' patterns.",
+      "tags": ["Turborepo", "Nx", "monorepo", "task caching"],
+      "tech": ["Turborepo", "Nx", "Bazel"],
+      "references": [{ "title": "Turborepo docs" }, { "title": "Nx docs" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "vcs-ci",
+      "topic": "Semantic versioning enforcement",
+      "difficulty": "mid",
+      "scenario": "Team publishes libraries. Sometimes minor version bumps break customers. Sometimes 'major' bumps only add features. Semver not enforced.",
+      "question": "¿Cómo enforcer semantic versioning consistently?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Conventional Commits: standard commit message format (feat:, fix:, feat!:, BREAKING CHANGE:). Tools parse commits, auto-determine version bump (feat = minor, fix = patch, ! or BREAKING = major). Standardized por Angular team, adopted broadly.", "correct": true, "why": "Correcto. Conventional Commits foundational. Tools (semantic-release, changeset) build on this. Reduces human decision on version bumps." },
+        { "letter": "B", "text": "semantic-release: automated tool. Reads commits, determines version bump, publishes automatically. Requires Conventional Commits. Removes 'forgot to bump version' errors.", "correct": true, "why": "Correcto. semantic-release standard tool. Fully automated versioning + release. Widely used en npm ecosystem." },
+        { "letter": "C", "text": "Changesets: alternative to semantic-release. PR authors declare intent (patch/minor/major) via changeset files. Combined during release. Popular in monorepos (independent versioning per package).", "correct": true, "why": "Correcto. Changesets popular en monorepos (Turborepo, pnpm workspaces). More explicit than automatic detection. Per-package flexibility." },
+        { "letter": "D", "text": "API breaking change detection: tools that scan API surface (public exports, function signatures) and detect breaking changes automatically. If breaking detected sin major bump, fail CI. Ejemplos: api-extractor (Microsoft), Semver Checker (Rust), lib-detector.", "correct": true, "why": "Correcto. Automated detection. Rust has semver-checker en cargo. Microsoft api-extractor for TS. Prevents 'accidentally breaking API in minor version'." },
+        { "letter": "E", "text": "Manual version bumps by devs.", "correct": false, "why": "Antipatrón. Human error inevitable. Devs forget, make mistakes, don't understand semver nuances. Automation essential." }
+      ],
+      "explanation": "Semver enforcement stack: (1) Conventional Commits — standardize commit messages; (2) Automated tools (semantic-release, changesets) — determine version from commits; (3) API surface analysis — detect breaking changes; (4) Release automation — publish tagged, immutable artifacts; (5) CHANGELOG generation — human-readable from commits; (6) Release notes — GitHub Releases from tags. Tools ecosystem: (1) commitlint — enforce commit format; (2) husky — pre-commit hooks; (3) semantic-release — full release automation; (4) changesets — manual intent capture; (5) release-please (Google) — automatic PR generation for releases. Conventional Commits format: [type(scope): description]. Types: feat, fix, docs, style, refactor, test, chore. Breaking: !type: or BREAKING CHANGE: footer. Example: [feat(auth): add OAuth support]. Bumps: minor. Example: [feat(auth)!: rename login method]. Bumps: major. Automated pipelines: PR merges → CI reads commits → determines version → publishes to registry → tags git → creates GitHub release. Zero human intervention needed.",
+      "realWorld": "Angular team originated Conventional Commits. Node ecosystem heavy adopters. Rust cargo has semver-check. Facebook uses similar internal tooling. Companies migrating to automated versioning report fewer 'accidental breaking changes' incidents. Anti-example: 'library maintainer bumped patch version, but changed function signature, all customers broken'.",
+      "tags": ["semver", "conventional commits", "semantic-release", "changesets"],
+      "tech": ["semantic-release", "changesets", "commitlint"],
+      "references": [{ "title": "conventionalcommits.org" }, { "title": "semantic-release" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "vcs-ci",
+      "topic": "Artifact promotion pipelines",
+      "difficulty": "mid",
+      "scenario": "Build creates image myapp:1.2.3. Deployed to dev. Passes tests. Deployed to staging. Passes. Deployed to prod. But each 'deploy' rebuilds — different image each time.",
+      "question": "¿Qué es artifact promotion y por qué NUNCA re-buildear entre entornos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Artifact promotion: SAME artifact tested en dev → promoted (retagged, moved) a staging → promoted a prod. Never rebuild. Reason: rebuild = potentially different artifact (dependencies changed, timing, environment differences). If you rebuild for prod, you're deploying UNTESTED artifact. Promotion = 'this exact bytes was tested successfully at each stage'. Implementation: single CI build produces artifact, subsequent stages promote by tagging (myapp:1.2.3 → myapp:staging → myapp:prod) o copiar a different registry.", "correct": true, "why": "Correcto. Promotion is foundational deployment principle. 'Build once, deploy many' pattern. Prevents 'works in staging, breaks in prod' due to rebuild differences. Every mature CI/CD implements promotion, not rebuild-per-env." },
+        { "letter": "B", "text": "Rebuild per environment para 'freshness'.", "correct": false, "why": "Antipatrón. 'Fresh' rebuild = different from tested artifact = potential differences. Non-determinism disaster." },
+        { "letter": "C", "text": "Solo aplica a containers.", "correct": false, "why": "Aplica a all artifacts: jars, npm packages, mobile app builds, static sites. Universal principle." },
+        { "letter": "D", "text": "Promotion es sinónimo de deployment.", "correct": false, "why": "Related but distinct. Promotion moves artifact through repositories/tags. Deployment actually runs artifact in env." }
+      ],
+      "explanation": "Promotion patterns: (1) Retag in same registry — myapp:1.2.3 retagged myapp:1.2.3-staging, myapp:1.2.3-prod; (2) Copy between registries — dev registry → staging registry → prod registry (immutable per env); (3) Metadata-only promotion — artifact stays, metadata updates ('promoted-to: staging'). Rationale for 'build once': (a) reproducibility (same bytes tested is deployed); (b) faster (skip rebuild); (c) traceability (single source of truth); (d) rollback trivial (previous artifact still exists). CI/CD pipeline: build → test → promote-to-staging → test-staging → promote-to-prod. Feature flags decouple release (feature visible) from deploy (artifact running). Environment differences via CONFIG, not build. Config injected at runtime (env vars, config service, feature flags). Same artifact + different config = different behavior. Anti-patrones: (a) build per env (different artifacts, non-deterministic); (b) config baked into artifact (can't reuse across envs); (c) latest tag in prod (mutable, non-determinism).",
+      "realWorld": "Amazon 'Deployment principles' emphasize build once. Netflix Spinnaker orchestrates artifact promotion. GitHub Actions with proper workflow: build once at PR merge, promote through envs. Anti-example: startup rebuilds Docker image for prod = different Node version pulled = production breakage. Common at teams new to CD.",
+      "tags": ["promotion", "build once", "immutable", "traceability"],
+      "tech": ["Spinnaker", "artifact promotion"],
+      "references": [{ "title": "Continuous Delivery — Jez Humble" }, { "title": "Twelve-Factor App — Build/Release/Run" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "vcs-ci",
+      "topic": "Multi-arch images",
+      "difficulty": "senior",
+      "scenario": "Team en ARM Macs (M1/M2). Prod runs x86 servers. Docker image built on Mac fails on prod (wrong architecture). Also mobile emulators need ARM. Need multi-arch.",
+      "question": "¿Cómo se buildean y distribuyen multi-arch container images?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Docker manifest lists: single image tag (myapp:1.2.3) can reference multiple platform variants (amd64, arm64, arm/v7). Client automatically pulls variant matching its architecture. Backward compatible with single-arch clients.", "correct": true, "why": "Correcto. Manifest lists es el mecanismo. Cliente Docker on ARM pulls ARM variant; x86 pulls x86 variant. Transparente." },
+        { "letter": "B", "text": "buildx multi-arch build: [docker buildx build --platform linux/amd64,linux/arm64 -t myapp:1.2.3 --push .]. BuildKit + QEMU emulation build multiple architectures en single command. Push manifest list a registry.", "correct": true, "why": "Correcto. buildx is standard tool. QEMU handles cross-platform emulation. Registry stores all variants + manifest list." },
+        { "letter": "C", "text": "Native builders per arch: dedicated ARM runner build ARM image, x86 runner build x86 image. Faster than QEMU emulation (native execution) but requires runner infrastructure per arch.", "correct": true, "why": "Correcto. Faster para large images. GitHub Actions ARM runners recently added. AWS Graviton (ARM) runners available." },
+        { "letter": "D", "text": "Cross-compilation en app code: para compiled languages (Go, Rust), compile natively per target platform sin emulation. Faster than QEMU.", "correct": true, "why": "Correcto. Cross-compile: [GOOS=linux GOARCH=arm64 go build]. Rust similar con --target. Skip emulation, native speed." },
+        { "letter": "E", "text": "Multi-arch not needed en cloud.", "correct": false, "why": "Falso. AWS Graviton (ARM) 20-40% cost savings vs x86. Adoption growing. Multi-arch increasingly relevant." }
+      ],
+      "explanation": "Multi-arch build strategies: (1) buildx + QEMU (single builder, all archs, slower per arch); (2) Native builders per arch + manifest merge (faster, more infra); (3) Cross-compilation en language + minimal container (fastest for compiled langs). Manifest list structure: 'myapp:1.2.3' — index containing pointers to platform-specific images. Client's containerd reads Accept-Header, requests appropriate variant. Registry support: Docker Hub, GHCR, ECR, Harbor, all support manifest lists. Testing multi-arch: emulate in CI, sanity test. Common architectures: linux/amd64 (Intel/AMD 64-bit), linux/arm64 (ARM 64-bit, Graviton, M1/M2), linux/arm/v7 (Raspberry Pi 32-bit). buildx caveat: QEMU emulation slow (5-20x native). Better strategies for large images. GitHub Actions: docker/build-push-action supports multi-arch via buildx. Real workflows: build amd64 natively (default runner), build arm64 emulated (or use ARM runner if available), push combined manifest.",
+      "realWorld": "AWS Graviton (ARM) adoption growing 30-40% cost savings. GitHub added ARM runners 2023. Apple Silicon (M1/M2) forced dev workflows to be multi-arch. Docker Hub statistics show multi-arch adoption doubling yearly. Kubernetes supports multi-arch clusters. Real story: teams historically built x86-only, now must support ARM = infrastructure work.",
+      "tags": ["multi-arch", "buildx", "manifest list", "ARM"],
+      "tech": ["buildx", "QEMU", "Docker manifest"],
+      "references": [{ "title": "Docker buildx docs" }, { "title": "Multi-arch images" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "vcs-ci",
+      "topic": "Vulnerability scanning",
+      "difficulty": "senior",
+      "scenario": "Images tienen vulnerabilities (Log4Shell, others). Need automated scanning en pipeline. Options: Trivy, Snyk, Grype, Clair.",
+      "question": "¿Cómo integrar vulnerability scanning para container images?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Scan en CI: post-build, before push to registry. Fail build if HIGH/CRITICAL vulnerabilities. Trivy (Aqua Security, OSS), Grype (Anchore, OSS), Snyk (commercial + free tier). Standard integration.", "correct": true, "why": "Correcto. Shift-left security. Detect antes de deploy. Fail build para block risky artifacts. Standard pattern." },
+        { "letter": "B", "text": "Scan en registry: some registries have built-in scanning (Harbor, ECR, GHCR, Docker Hub). Scan on push, automatic. Notifications for new CVEs on existing images.", "correct": true, "why": "Correcto. Registry-native scanning. AWS ECR con Inspector integration. Harbor Trivy scanner. GHCR partnership con vulnerability providers." },
+        { "letter": "C", "text": "Runtime scanning: also scan running images para detect vulnerabilities in production. Falco, Aqua Security, Sysdig for runtime. Complements build-time scanning (catches issues discovered post-deploy).", "correct": true, "why": "Correcto. Multi-layer defense. Build-time + registry + runtime. Runtime catches CVEs discovered después del deploy." },
+        { "letter": "D", "text": "SBOM generation: Software Bill of Materials, list of all components in image. Syft (Anchore) generates SBOM. Standard formats: SPDX, CycloneDX. Enables tracking, compliance, incident response.", "correct": true, "why": "Correcto. SBOM increasingly required (US Executive Order 14028). Enables 'do we use vulnerable library X?' questions. Standardized formats." },
+        { "letter": "E", "text": "Scan solo local en dev machine.", "correct": false, "why": "Antipatrón. Dev may forget. Automation en CI + registry required." }
+      ],
+      "explanation": "Vulnerability scanning stack: (1) Build-time — Trivy, Grype, Snyk in CI; (2) Registry — ECR Enhanced Scanning, Harbor + Trivy, GHCR + partnerships; (3) Runtime — Falco, Sysdig, Aqua for monitoring running containers; (4) SBOM — Syft, CycloneDX/SPDX for component tracking; (5) Signing — Cosign, Notary for image integrity. Trivy usage: [trivy image myimage:tag]. Reports CVEs, misconfigs, secrets. Fail thresholds: [--exit-code 1 --severity HIGH,CRITICAL]. Integration: GitHub Actions, GitLab CI, Jenkins pipelines. Trade-offs: (a) noise (many CVEs, most not exploitable in your context); (b) fatigue (constant alerts, ignore); (c) supply chain (base images inherit vulnerabilities). Best practices: (1) minimal base images (distroless, scratch); (2) pin base image digests; (3) rebuild regularly (pull in updates); (4) SBOM for traceability; (5) prioritize by exploitability, not just severity. Ecosystem: US Executive Order 14028 (2021) increased SBOM importance para federal contractors. Cosign + Sigstore emerging as signing standards. Kubernetes admission controllers (Kyverno, OPA Gatekeeper) enforce policies (only allow signed + scanned images).",
+      "realWorld": "Log4Shell (Dec 2021) massive scanning surge. SolarWinds attack drove SBOM adoption. US EO 14028 mandates SBOM for federal. Trivy widely adopted (Aqua). Snyk popular commercial. Sigstore (Linux Foundation) building signing infrastructure. Real story: 'Log4Shell exposed by realizing what images used log4j via SBOM'.",
+      "tags": ["vulnerability scanning", "Trivy", "SBOM", "Cosign"],
+      "tech": ["Trivy", "Grype", "Snyk", "Syft"],
+      "references": [{ "title": "Trivy docs" }, { "title": "Sigstore" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "vcs-ci",
+      "topic": "Registry as proxy cache",
+      "difficulty": "senior",
+      "scenario": "Team pulls Docker images from Docker Hub. Rate limits hit. Also npm registry pulls slow (external network). Need to cache external dependencies internally.",
+      "question": "¿Cómo usar artifact registries como proxy cache?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pull-through cache: internal registry (Nexus, Artifactory, Harbor) configured as PROXY for external registry (Docker Hub, npm registry, Maven Central). First request fetches from external + caches; subsequent requests served from internal. Benefits: (1) reduces external bandwidth; (2) avoids rate limits; (3) faster (internal network); (4) survives external outages (cached copies available); (5) security (control what enters environment).", "correct": true, "why": "Correcto. Pull-through cache es standard pattern. Nexus, Artifactory native support. Harbor also. Similarly, npm, Maven, PyPI proxies. Widely used at scale." },
+        { "letter": "B", "text": "Manually download images and re-upload.", "correct": false, "why": "Antipatrón. Manual, error-prone, drift. Pull-through automatic." },
+        { "letter": "C", "text": "Only cache own artifacts, not external.", "correct": false, "why": "Missed opportunity. External caching same benefits. Standard enterprise practice." },
+        { "letter": "D", "text": "External dependencies solved by making faster internet.", "correct": false, "why": "Rate limits + reliability aren't solved by bandwidth. Cache addresses root cause." }
+      ],
+      "explanation": "Pull-through cache mechanics: (1) Internal registry configured as proxy for external URL; (2) Client requests myinternal/library/postgres:15 (aliased from docker.io/library/postgres:15); (3) Internal registry checks cache — miss → fetch from Docker Hub + cache + serve; hit → serve from cache; (4) Metadata refreshed periodically (check for updates on external). Configuration examples: Nexus 'docker-hub-proxy' repository; Artifactory 'remote' repositories; Harbor 'proxy cache' project. Similar for language ecosystems: (a) npm proxy (Nexus, Artifactory, Verdaccio); (b) Maven proxy (Nexus, Artifactory); (c) PyPI proxy (devpi, Bandersnatch, Nexus); (d) NuGet proxy (Nexus, Artifactory). Enterprise benefits: (a) network egress cost reduction; (b) faster builds (internal network); (c) rate limit avoidance; (d) offline capability (during external outages); (e) security control (block certain packages); (f) SBOM/audit (all deps tracked internally). Anti-patrones: (a) direct external pulls in production (rate limits, dependency risk); (b) only manual mirroring (drift, incomplete); (c) no proxy configured (surprised by rate limits later).",
+      "realWorld": "Docker Hub rate limits (2020) accelerated proxy cache adoption. Enterprise Nexus deployments universal. Artifactory Cloud growing. Harbor OSS popular alternative. Google internal caches. Real cost story: 'company saved $X/month on egress by caching external deps'.",
+      "tags": ["pull-through cache", "proxy", "Nexus", "Artifactory"],
+      "tech": ["Nexus", "Artifactory", "Harbor"],
+      "references": [{ "title": "Nexus proxy repositories" }, { "title": "Artifactory remote repos" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "vcs-ci",
+      "topic": "Retention policies",
+      "difficulty": "mid",
+      "scenario": "Registry has 50,000 images accumulated over years. Storage costs skyrocketing. Team never cleaned up. Also concerns about which images still in use.",
+      "question": "¿Cómo diseñar retention policies para artifact registries?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Time-based retention: delete images older than N months (except tagged releases). Ejemplo: 'delete unpinned images older than 90 days'. Storage bounded, old cruft removed automatically.", "correct": true, "why": "Correcto. Time-based standard. Balances storage vs 'we might need it'. 90-180 days common." },
+        { "letter": "B", "text": "Tag-based retention: preserve tagged releases (v1.0, v2.0) indefinitely; auto-clean untagged intermediate builds. Semantic meaning preserved.", "correct": true, "why": "Correcto. Tags represent meaningful releases. Intermediate SHA-tagged builds mostly disposable. Balance space vs meaningful history." },
+        { "letter": "C", "text": "Version count: keep last N versions per artifact. Ejemplo: keep last 10 major.minor versions of each image. Older versions auto-deleted.", "correct": true, "why": "Correcto. Volume-based bounds. Keeps recent history without unlimited growth." },
+        { "letter": "D", "text": "Reference-based: don't delete images currently referenced en Kubernetes deployments, git tags, etc. Prevents accidental delete of production-in-use. Requires integration with deployment systems.", "correct": true, "why": "Correcto. Reference tracking prevents disaster. AWS ECR lifecycle policies can check ECS/EKS references. Advanced feature." },
+        { "letter": "E", "text": "Keep everything forever.", "correct": false, "why": "Antipatrón. Storage costs unbounded. Compliance issues (retention limits). Search performance degrades." }
+      ],
+      "explanation": "Retention policy design: (1) Semantic tags (v1.0.0) — indefinite retention (compliance, historical); (2) Feature branch builds (branch-name:SHA) — 30-90 days; (3) PR builds — delete after PR merged/closed; (4) Nightly builds — 30 days; (5) SBOM/manifest — sometimes longer for compliance. Implementation: (a) AWS ECR lifecycle policies (JSON rules); (b) Nexus scheduled tasks (Groovy scripts); (c) Artifactory garbage collection + policies; (d) Harbor tag retention rules; (e) GHCR automatic cleanup via API. Considerations: (1) audit requirements (some industries require 7-year retention); (2) rollback ability (need recent versions available); (3) cost (storage $$$ at scale); (4) legal holds (litigation may pause deletion). Automation: policies defined as code (Terraform, Pulumi), version-controlled, reviewed. Anti-patrones: (a) no retention (unbounded growth); (b) manual cleanup (never happens); (c) too aggressive (accidentally delete needed images); (d) inconsistent (some products cleaned, others not).",
+      "realWorld": "AWS ECR lifecycle policies widely adopted. Companies with mature registries typically 30-90 day retention for unfrozen tags. Real story: 'startup accumulated $10k/month in ECR storage from years of untagged builds — cleanup saved $$$'. Enterprise Artifactory deployments have sophisticated retention. Harbor similar.",
+      "tags": ["retention", "lifecycle", "cleanup", "storage"],
+      "tech": ["AWS ECR lifecycle", "Nexus retention"],
+      "references": [{ "title": "AWS ECR lifecycle policies" }, { "title": "Nexus retention" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "vcs-ci",
+      "topic": "Signing y provenance",
+      "difficulty": "staff",
+      "scenario": "Post-SolarWinds attack, requirements crecen: 'how do you know the image you're deploying is what you built?'. Supply chain security.",
+      "question": "¿Cómo se implementa image signing + provenance?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cosign (Sigstore): OSS tool for signing containers. Signs image manifest with private key, verifies with public key. Keyless signing via OIDC (GitHub, Google) — no long-lived keys. Standard emerging. Verifies image not tampered.", "correct": true, "why": "Correcto. Cosign is standard emerging. Sigstore (Linux Foundation project) building signing infrastructure. Keyless via OIDC innovative. Kubernetes admission controllers verify signatures." },
+        { "letter": "B", "text": "SLSA (Supply-chain Levels for Software Artifacts): Google-originated framework para provenance. Levels 1-4 of increasing security. Provenance = 'how was this artifact built' (source repo, commit, build system, timestamp).", "correct": true, "why": "Correcto. SLSA is framework para provenance. Supported by GitHub Actions, Google Cloud Build, others. Provenance attestations signed alongside artifacts." },
+        { "letter": "C", "text": "In-toto attestations: standardized format para provenance metadata. 'Attestation' = signed metadata about artifact (built by X, includes Y dependencies, tested Z, etc.). Complements SBOM.", "correct": true, "why": "Correcto. in-toto standard formato. Cosign supports attestations. Enables verifiable claims about artifact build process." },
+        { "letter": "D", "text": "Notary v2 / Docker Content Trust: earlier signing mechanism. Notary v1 largely replaced by Cosign. Notary v2 (still developed) integrates with OCI standard.", "correct": true, "why": "Correcto. Historical + emerging alternatives. Cosign gained more traction than Notary. OCI standard emerging." },
+        { "letter": "E", "text": "Signing not necessary — registries are trusted.", "correct": false, "why": "Antipatrón. SolarWinds proved 'trusted' registries can be compromised. Zero-trust approach: verify everything." }
+      ],
+      "explanation": "Supply chain security stack: (1) Signing (Cosign, Notary) — cryptographic proof image not tampered; (2) Provenance (SLSA, in-toto) — verifiable build metadata; (3) SBOM (Syft, CycloneDX) — component inventory; (4) Verification (admission controllers, policy engines) — enforce policies. Cosign workflow: [cosign sign --key cosign.key myimage:tag]. Verification: [cosign verify --key cosign.pub myimage:tag]. Keyless: [cosign sign --identity-token $ID_TOKEN myimage] — no keys needed, OIDC identity. SLSA levels: L1 (basic build script), L2 (hosted build system), L3 (isolated builders), L4 (2-person review). Adopting: GitHub Actions' provenance attestations emit SLSA level 3 automatically. Kubernetes verification: Sigstore Policy Controller, Kyverno, OPA Gatekeeper — verify signature at admission time. Anti-patrones: (a) sign-then-forget (never verify); (b) hardcoded public keys (rotation issues); (c) allow unsigned images (defeats purpose). US EO 14028 requires SBOM + supply chain security for federal contractors.",
+      "realWorld": "SolarWinds Attack (Dec 2020) exposed supply chain risks. US EO 14028 (May 2021) mandates security. Sigstore launched 2021 (Linux Foundation, Red Hat, Chainguard, Google). Cosign rapid adoption. GitHub Actions attestations native support. Chainguard building 'chainguard-images' — signed, provenance-attested distroless base images. Real risk: 'compromised CI/CD → malicious image pushed to registry → deployed to prod'.",
+      "tags": ["signing", "Cosign", "SLSA", "provenance", "supply chain"],
+      "tech": ["Cosign", "Sigstore", "SLSA"],
+      "references": [{ "title": "Sigstore" }, { "title": "SLSA framework" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "vcs-ci",
+      "topic": "Language-specific package registries",
+      "difficulty": "senior",
+      "scenario": "Team publishes internal libraries: npm packages, Python packages, Maven jars. Each has separate ecosystem. Different registries needed?",
+      "question": "¿Cómo gestionar packages across language ecosystems?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Multi-format registries: Nexus, Artifactory support MANY formats (npm, PyPI, Maven, NuGet, RubyGems, Docker) en single instance. Single tool para operations, permissions, retention.", "correct": true, "why": "Correcto. Multi-format registries dominant enterprise pattern. One tool, one source of truth. Nexus + Artifactory both support 20+ formats." },
+        { "letter": "B", "text": "GitHub Packages: supports npm, Maven, RubyGems, NuGet, Docker via GHCR. Integrated con GitHub permissions. Free tier substantial. Good for GitHub-centric shops.", "correct": true, "why": "Correcto. GitHub Packages consolidates. Especially compelling if organization already on GitHub. Auth via GitHub tokens." },
+        { "letter": "C", "text": "Language-specific registries: verdaccio (npm), devpi (PyPI). Focused single-language. Simpler but requires multiple tools for polyglot orgs.", "correct": true, "why": "Correcto. OSS single-language options. Verdaccio popular for npm-only shops. Combining multiple = more moving parts." },
+        { "letter": "D", "text": "Cloud provider offerings: AWS CodeArtifact, Azure Artifacts, Google Artifact Registry. Cloud-native, integrated with IAM/AAD.", "correct": true, "why": "Correcto. Cloud provider offerings if fully committed to that cloud. Integrated with IAM. Costs bundled." },
+        { "letter": "E", "text": "Publish everything as npm packages regardless of language.", "correct": false, "why": "Antipatrón. Wrong ecosystem = broken toolchains. Language-appropriate packaging required." }
+      ],
+      "explanation": "Multi-format registry benefits: (1) single tool to learn/operate; (2) unified authentication; (3) consistent permissions; (4) centralized retention/audit; (5) proxy cache for all external ecosystems; (6) SBOM/scanning integration. Enterprise choice: Nexus (Sonatype, OSS + Pro) or Artifactory (JFrog, commercial). Pricing: Nexus free tier substantial; Nexus Pro paid features. Artifactory purely commercial. Both mature, both enterprise-adopted. Feature parity mostly, cultural fit + existing tooling drives choice. Configuration: (a) internal repositories (publish your artifacts); (b) proxy repositories (cache external); (c) group repositories (aggregate multiple for consumption). Format-specific concerns: (a) npm — scopes for org packages; (b) Maven — group IDs; (c) Docker — image names + tags; (d) PyPI — package names. Migration between registries: standardized formats simplify (upload/download same format). Anti-patrones: (a) each team choosing different registry (fragmentation); (b) mixing hosting models awkwardly; (c) no strategy (accumulate registries organically).",
+      "realWorld": "Nexus market share dominates enterprise. Artifactory strong second. Fortune 500 typically Artifactory. Mid-market Nexus. GitHub Packages growing for GitHub-heavy orgs. Cloud providers offering less popular currently (fewer features). Verdaccio popular for pure npm shops (simple, fast).",
+      "tags": ["Nexus", "Artifactory", "GitHub Packages", "polyglot"],
+      "tech": ["Nexus", "Artifactory", "verdaccio"],
+      "references": [{ "title": "Nexus formats" }, { "title": "Artifactory package types" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "vcs-ci",
+      "topic": "Distributed cache challenges",
+      "difficulty": "senior",
+      "scenario": "Turborepo remote cache shared across team + CI. Reports of 'cache misses when should be hits'. Also security concerns ('can someone poison cache?').",
+      "question": "¿Qué challenges tienen distributed build caches?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cache key correctness: any difference in inputs (source files, env vars, tool versions) causes miss. Non-deterministic inputs (timestamps, random data) always miss. Hidden inputs (env vars not accounted) cause 'wrong' cache hits.", "correct": true, "why": "Correcto. Fundamental challenge. Deterministic builds required for effective caching. Hidden inputs common source of confusion." },
+        { "letter": "B", "text": "Cache poisoning: attacker with write access to cache can inject malicious outputs. Downstream consumers get compromised. Mitigations: signed cache entries, RBAC, immutable cache backends.", "correct": true, "why": "Correcto. Real security risk. Bazel Remote Cache research on this. Signing solutions emerging. RBAC + audit critical." },
+        { "letter": "C", "text": "Cache eviction: bounded storage means old entries evicted. Evict wrong entries = frequent misses. LRU vs LFU tradeoffs. Some tools have manual pinning.", "correct": true, "why": "Correcto. Cache management complexity. Balance between size + hit rate. Trade-offs in algorithms." },
+        { "letter": "D", "text": "Network latency vs local: remote cache faster than rebuild but slower than local cache. Balance: local fast, remote fallback, rebuild if none.", "correct": true, "why": "Correcto. Latency hierarchy. Turborepo, Nx, Bazel all have local + remote layered." },
+        { "letter": "E", "text": "Distributed caches are always beneficial without downsides.", "correct": false, "why": "Falso. Challenges exist. Careful engineering needed." }
+      ],
+      "explanation": "Distributed cache design considerations: (1) Deterministic keys — hash inputs correctly, no hidden inputs; (2) Signing/verification — prevent poisoning; (3) RBAC — control write access; (4) Eviction policies — LRU, LFU, TTL; (5) Consistency — cache invalidation across regions; (6) Latency — local + remote layers; (7) Cost — storage, bandwidth. Tools: (a) Turborepo Cloud — managed remote cache; (b) Nx Cloud — similar; (c) Bazel Remote Cache — S3 or dedicated servers, sophisticated; (d) Google Cloud RBE (Remote Build Execution) — enterprise scale; (e) BuildBuddy — Bazel-focused managed. Security best practices: (1) separate read + write ACLs (all can read, few can write); (2) sign entries with build system identity; (3) verify signatures on read; (4) audit log write access; (5) content-addressable keys (hash of outputs) reduce poisoning surface. Real challenges: (a) 'cache should be hitting but isn't' — usually hidden inputs; (b) tool version differences causing misses; (c) OS differences (Linux CI vs Mac local); (d) file timestamps in cached outputs. Debug: log inputs used for cache key, compare successful vs missed runs.",
+      "realWorld": "Bazel Remote Cache research on poisoning documented. Google internal Blaze uses distributed RBE. Turborepo Cloud growing. Real story: 'team invested weeks debugging why cache was 10% hit rate instead of expected 80% — turned out to be tool version differences'. Deterministic builds much harder than they sound.",
+      "tags": ["distributed cache", "cache poisoning", "deterministic builds"],
+      "tech": ["Turborepo Cloud", "Bazel RBE", "Nx Cloud"],
+      "references": [{ "title": "Bazel Remote Cache" }, { "title": "Reproducible builds" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "vcs-ci",
+      "topic": "Monorepo publishing strategies",
+      "difficulty": "senior",
+      "scenario": "Monorepo with 20 packages. Some interdependent. Cómo publish independently versioned packages?",
+      "question": "¿Cuáles son las strategies para publish packages desde monorepos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Independent versioning: each package own version. Bump when package changes. Changesets tool standard para this pattern. Downside: coordinating breaking changes across dependent packages complex.", "correct": true, "why": "Correcto. Independent versioning common en monorepos (Turborepo, pnpm workspaces). Semantic per package. Changesets popular." },
+        { "letter": "B", "text": "Locked versioning: all packages share same version. Bump entire monorepo together. Simpler but forces version alignment (may bump v3 for change only affecting one package).", "correct": true, "why": "Correcto. Locked versioning simpler. Angular, Nx use this pattern. Trade-off: alignment vs granularity." },
+        { "letter": "C", "text": "Affected-only publishing: only publish packages actually changed (via git diff). CI detects changes, publishes just those. Reduces publish noise + unnecessary version bumps for unchanged packages.", "correct": true, "why": "Correcto. Efficiency + accuracy. Turborepo, Nx have affected detection. Reduce releases to only what actually changed." },
+        { "letter": "D", "text": "Dependency graph awareness: if package A changes and B depends on A, need to consider whether B needs republish (if A's changes affect B's public API). Complex analysis.", "correct": true, "why": "Correcto. Interdependency handling nuanced. Changesets help explicit intent. Automated tools have limits." },
+        { "letter": "E", "text": "Publish all packages on every commit.", "correct": false, "why": "Antipatrón. Noise, unnecessary version bumps, downstream churn." }
+      ],
+      "explanation": "Monorepo publish strategies: (1) Independent versioning + Changesets (React, Chakra UI, many libraries); (2) Locked versioning (Angular, Nx, React Native); (3) Affected-only publishing (Turborepo, Nx affected commands); (4) Manual coordination (larger releases with human decision). Changesets workflow: (a) developer adds changeset file describing intent (patch/minor/major); (b) PR merges into main; (c) release PR generated by bot with all changesets; (d) merging release PR bumps versions + publishes. Turborepo + Changesets very common. Nx uses different approach (Nx affected + custom release scripts). Bazel has yet different (runtimes bundled). Considerations: (a) breaking changes cascade — if base package majors, dependents may need major too; (b) peer dependencies — align versions across packages; (c) testing — ensure package interop tested pre-release; (d) documentation — changelogs per package. Trade-offs summary: independent = flexibility + complexity; locked = simplicity + rigidity; affected = efficiency + tooling needed.",
+      "realWorld": "React uses monorepo, similar to Chakra UI, Material UI. Changesets popular. Angular locked versioning. Nx locked. Airbnb, LinkedIn use monorepos. Google internal Bazel. Real story: teams migrating from independent to locked (or vice versa) based on pain points experienced.",
+      "tags": ["monorepo", "changesets", "independent versioning", "publishing"],
+      "tech": ["Changesets", "Turborepo", "Nx"],
+      "references": [{ "title": "Changesets docs" }, { "title": "Nx release" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "vcs-ci",
+      "topic": "Cost optimization en artifact storage",
+      "difficulty": "staff",
+      "scenario": "AWS ECR bill $5000/month. Registry has 100TB of images. Cómo reduce costs?",
+      "question": "¿Cómo optimizar costs de artifact storage a scale?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Retention policies aggressive: 30 days for feature/PR builds, 90 days for untagged, indefinite only for tagged releases. Automatic cleanup saves significant $$.", "correct": true, "why": "Correcto. Most impactful lever usually. Untagged intermediate builds accumulate rapidly." },
+        { "letter": "B", "text": "Image size optimization: multi-stage builds, distroless base images, minimal dependencies. Smaller images = less storage + less bandwidth. Chainguard, distroless (Google), scratch base.", "correct": true, "why": "Correcto. Image bloat significant. 500MB → 50MB image = 10x storage savings + faster pulls. Multi-stage + distroless common." },
+        { "letter": "C", "text": "Registry deduplication: layers shared between images stored once. Ensures shared base images not duplicated. Docker Registry v2 native. Verify working (some misconfigurations break dedup).", "correct": true, "why": "Correcto. Layer dedup built-in Docker Registry. Multiple 100MB images sharing 90MB base = only ~110MB storage total. Verify not broken." },
+        { "letter": "D", "text": "Storage tiering: hot images (recent, frequently pulled) en fast storage; cold (old, rarely pulled) en cheaper storage (S3 Glacier). AWS ECR has this. Trade-off: colder = slower pull.", "correct": true, "why": "Correcto. Tiered storage. Cheaper for rarely-accessed. AWS S3 Glacier for archival. Pull latency trade-off acceptable for old images." },
+        { "letter": "E", "text": "Keep all images to be safe.", "correct": false, "why": "Antipatrón para budgets. Retention needs discipline." }
+      ],
+      "explanation": "Cost optimization strategy: (1) Retention policies — aggressive cleanup of untagged/old images; (2) Image size — multi-stage, distroless, minimal; (3) Layer sharing — same base images across multiple products; (4) Storage tiering — hot vs cold; (5) Deduplication verification — ensure working; (6) Cross-region considerations — replication multiplies cost; (7) Egress optimization — private endpoints, VPC endpoints avoid public bandwidth. Base image strategy: standardize on few base images (e.g., Alpine, distroless) across org. Shared layers across products = massive dedup savings. Anti-patterns: (a) each team uses different base image (no sharing); (b) full ubuntu images when alpine sufficient; (c) COPY entire dev directory including tests/docs. Chainguard offers distroless images with signed provenance. Wolfi is Chainguard's linux distribution. Alternatives: distroless from Google. Metrics to track: (1) total storage; (2) new images/day; (3) pull rate; (4) unused images; (5) average image size; (6) trend over time. Alerting: cost anomaly detection. Real story: 'audit revealed we had 10x more images than expected, cleanup saved $60k/year'.",
+      "realWorld": "AWS ECR standard optimizations. Chainguard's distroless images gaining traction. Wolfi Linux emerging. Real cost stories: startups paying $10k+/month for registries; cleanup + optimization reduces 5-10x commonly. Enterprise Artifactory bills also substantial ($100k+/year for large deployments).",
+      "tags": ["cost optimization", "retention", "distroless", "image size"],
+      "tech": ["AWS ECR", "Chainguard", "distroless"],
+      "references": [{ "title": "AWS ECR cost optimization" }, { "title": "Chainguard images" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "vcs-ci",
+      "topic": "Air-gapped environments",
+      "difficulty": "staff",
+      "scenario": "Defense contractor. Air-gapped (no internet) production environment. All dependencies must be pre-approved + reviewed. Cómo do CI/CD in this environment?",
+      "question": "¿Cómo gestionar artifacts en air-gapped environments?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Internal-only registries: no external dependencies. All artifacts (own + third-party) hosted internally. External deps imported via manual review process, uploaded to internal registry. Nexus/Artifactory common self-hosted.", "correct": true, "why": "Correcto. Fundamental air-gap requirement. No 'pull from Docker Hub' — must exist internally. Nexus/Artifactory support this fully." },
+        { "letter": "B", "text": "Manual import process: external dependencies reviewed (security, licensing, provenance), approved, imported. 'Data diode' concept — data flows in but never out. Physically air-gapped bridge machines.", "correct": true, "why": "Correcto. Physical + procedural controls. Some environments literally no network connectivity between air-gapped side and outside. Data flows via approved media (encrypted drives)." },
+        { "letter": "C", "text": "Reproducible builds mandatory: any dependency imported must be buildable from source (no black-box binaries). Enables audit + verification. Bazel-style hermetic builds ideal.", "correct": true, "why": "Correcto. Regulated environments (defense, healthcare) often mandate. Reduces supply chain risk. Bazel principles align." },
+        { "letter": "D", "text": "SBOM + provenance required: every artifact tracked with full component list, source, signing. Compliance requirement en regulated air-gapped envs.", "correct": true, "why": "Correcto. SBOM mandatory increasingly. Defense contracts (DFARS) specifically require. Regulated healthcare, energy similar." },
+        { "letter": "E", "text": "Air-gap significa no CI/CD possible.", "correct": false, "why": "Falso. CI/CD works air-gapped, just requires more disciplined artifact management + internal-only workflows." }
+      ],
+      "explanation": "Air-gap patterns: (1) Internal-only registries — full self-hosted stack; (2) Approved import bridge — physical + procedural; (3) Bill of materials — SBOM per artifact; (4) Reproducible builds — verify from source; (5) Provenance chain — trace every dependency origin. Tools: (a) Nexus/Artifactory self-hosted; (b) Harbor self-hosted; (c) Kaniko (Google) for containerless builds; (d) Bazel for hermetic builds; (e) Cosign for signing internally; (f) Rekor (Sigstore) as private transparency log. Compliance frameworks: FedRAMP, DFARS, NIST 800-171. Real environments: DOD, intel agencies, medical devices, industrial control systems. Challenges: (1) keeping current with security patches (import lag); (2) supply chain visibility; (3) developer experience (no internet DX); (4) validation ceremonies. Solutions: (1) automated import bridges with scanning; (2) dedicated dev envs with restricted internet + air-gapped prod; (3) mirroring strategies; (4) offline package snapshots. Anti-patrones: (a) developers using public registries directly (violation); (b) opaque binaries with no provenance; (c) shortcuts around approval process.",
+      "realWorld": "DoD contractors (Lockheed, Boeing) run air-gapped. Intel agencies. Some medical device manufacturers. Industrial control (Siemens, GE). Real challenges documented in FedRAMP/CMMC compliance journeys. Chainguard building tools for regulated environments. Sigstore adoption growing for private transparency logs.",
+      "tags": ["air-gap", "compliance", "defense", "FedRAMP"],
+      "tech": ["Nexus", "Harbor", "Cosign", "SBOM"],
+      "references": [{ "title": "Air-gapped Kubernetes" }, { "title": "FedRAMP" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "vcs-ci",
+      "topic": "End-to-end artifact strategy",
+      "difficulty": "staff",
+      "scenario": "CTO pregunta '¿cuál es nuestra artifact management strategy end-to-end?'. Necesita vision holística: registries, caching, signing, promotion, retention, cost.",
+      "question": "¿Qué componentes tiene una estrategia madura de artifact management?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Central registry con proxy caching: internal registry hosts own artifacts + caches external (Docker Hub, npm, Maven Central). Single tool operativa. Rate limits + external dependencies mitigated.", "correct": true, "why": "Correcto. Foundation. Nexus/Artifactory/Harbor + proxy config. Reduces external dependency + faster CI." },
+        { "letter": "B", "text": "Build once, promote through envs: same artifact tested + moved through dev → staging → prod. No rebuilds. Faster pipelines + reproducibility guaranteed.", "correct": true, "why": "Correcto. Promotion es principle. Rebuilds are anti-pattern to determinism. Immutable + promoted." },
+        { "letter": "C", "text": "Automated caching en CI: dependency cache + build cache aggressive. Docker BuildKit inline/registry cache. Turborepo/Nx for monorepos. 5-10x build time improvements common.", "correct": true, "why": "Correcto. Caching multiplier on productivity. Foundational for fast CI/CD." },
+        { "letter": "D", "text": "Signing + provenance + SBOM: supply chain security. Cosign for signing, SLSA for provenance, Syft for SBOM. Verify at deployment. Post-SolarWinds requirement.", "correct": true, "why": "Correcto. Modern requirement. Regulatory (EO 14028) driving adoption. Emerging standards." },
+        { "letter": "E", "text": "Retention policies + cost optimization: automated cleanup, tiered storage, monitor costs. Prevent unbounded storage growth. Distroless + multi-stage for image size.", "correct": true, "why": "Correcto. Ongoing operational discipline. Without retention, costs balloon over years. Discipline matters." }
+      ],
+      "explanation": "End-to-end strategy holistic view: (1) FOUNDATION — central registry (Nexus/Artifactory) + proxy caching; (2) PIPELINE — automated CI caching (deps + build); (3) IMMUTABILITY — semantic versioning + build-once/promote-many; (4) SECURITY — vulnerability scanning + signing + SBOM + provenance; (5) LIFECYCLE — retention policies + cleanup automation; (6) COST — image size optimization + storage tiering + monitoring; (7) COMPLIANCE — audit trails + policy enforcement + attestations. Maturity progression: (a) Level 1: registry exists, manual processes; (b) Level 2: automated builds + basic caching; (c) Level 3: promotion pipelines + retention; (d) Level 4: signing + SBOM + provenance; (e) Level 5: policy enforcement (admission control), cost optimization, full observability. Investment required: (a) infrastructure (registry, storage, CI runners); (b) tooling (BuildKit, cache backends, scanners); (c) process (policies, review, retention); (d) skills (team knows tools + best practices). Payoff: (a) faster builds (5-10x with caching); (b) reliable deploys (immutable + promoted); (c) security posture (scanning + signing); (d) cost control (retention + optimization); (e) audit ability (SBOM + provenance).",
+      "realWorld": "Netflix, Google, Amazon all have mature artifact strategies. Small teams often lack coordinated approach = fragmented. Growth companies going through maturity journey. Sigstore + SLSA emerging as industry standard. Chainguard, Snyk, Aqua Security as vendor ecosystem. Real payoff: teams reducing build times 10x, catching vulnerabilities pre-deploy, meeting compliance requirements confidently.",
+      "tags": ["strategy", "artifact management", "end-to-end", "maturity"],
+      "tech": ["Nexus", "Artifactory", "Cosign", "SBOM"],
+      "references": [{ "title": "Artifact management best practices" }, { "title": "Continuous Delivery — Jez Humble" }]
+    }
+  ]
+}

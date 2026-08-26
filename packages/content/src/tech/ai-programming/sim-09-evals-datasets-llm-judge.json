@@ -1,0 +1,458 @@
+{
+  "id": "ai-programming-sim-09-evals-datasets-llm-judge",
+  "trackId": "ai-programming",
+  "order": 9,
+  "title": "Simulacro 09 — Evals: datasets, LLM-as-judge, regression tests de prompts",
+  "focus": "Cómo evaluar sistemas con LLMs de forma que te permita iterar sin miedo: golden datasets, LLM-as-judge (con sus trampas), regression tests de prompts, evaluación de RAG, métricas.",
+  "areaCoverage": ["evals-observability"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "evals-observability",
+      "topic": "Por qué necesitas evals antes de iterar",
+      "difficulty": "junior",
+      "scenario": "Tu equipo lanzó un chatbot de soporte hace 3 semanas. Ya vais por la iteración 12 del system prompt. Un ingeniero comenta: 'creo que la v10 respondía mejor las preguntas de facturación pero peor las de envíos'. Nadie tiene forma objetiva de saberlo. El PM pide 'medir bien' antes de seguir tocando.",
+      "question": "¿Cuál es el paso mínimo indispensable para poder iterar prompts con confianza?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Añadir logs de todas las respuestas y revisarlos manualmente cada semana.", "correct": false, "why": "Logs manuales no permiten comparación versión-a-versión. Cuando cambias el prompt, no puedes correr las mismas preguntas contra el prompt viejo sin un dataset fijo. Es una foto puntual, no un benchmark reproducible." },
+        { "letter": "B", "text": "Construir un golden dataset de ~50-200 casos con inputs representativos y outputs esperados (o rúbrica), y correrlo tras cada cambio de prompt.", "correct": true, "why": "Correcto. Un golden set convierte los cambios de prompt en experimentos reproducibles: mismos inputs, misma métrica, resultado comparable. Es el CI/CD del prompt engineering. Sin él, iterar es adivinar." },
+        { "letter": "C", "text": "Confiar en el thumbs up/down de los usuarios en producción.", "correct": false, "why": "El feedback de usuarios es una señal valiosa (online eval), pero es ruidoso, sesgado (solo responden los enfadados o encantados), lento y no te permite comparar dos prompts sin hacer A/B test real, que expone a usuarios a versiones potencialmente peores." },
+        { "letter": "D", "text": "Aumentar la temperatura a 0 y asumir que las respuestas son deterministas.", "correct": false, "why": "Temperature 0 reduce varianza pero NO garantiza determinismo (batching, sampling internos y hardware pueden variar). Y aunque fuera determinista, sigues sin tener un baseline contra el que comparar. Es una micro-optimización, no una estrategia de evaluación." }
+      ],
+      "explanation": "Regla mental: si no puedes medir, no puedes mejorar. El golden dataset es al prompt engineering lo que los tests unitarios al código. Empieza pequeño (30-50 casos curados a mano), cubre categorías (happy path, edge cases, adversariales), define outputs esperados o rúbricas. Cada iteración corre el dataset y ves score global y por categoría. Sin esto, cada 'mejora' puede ser una regresión oculta.",
+      "realWorld": "En OpenAI Evals, Anthropic evals y en la práctica de equipos serios (Notion, Perplexity, GitHub Copilot) el flujo es: dataset primero, prompt después. Simon Willison en su blog repite: 'you cannot fix what you cannot measure' — es la lección más repetida de LLM engineering en 2024-2025.",
+      "tags": ["golden dataset", "iteración", "regression tests"],
+      "tech": ["OpenAI Evals", "promptfoo", "Braintrust"],
+      "references": [
+        { "title": "Simon Willison — Evaluating LLM applications", "url": "https://simonwillison.net/tags/evals/" },
+        { "title": "Hamel Husain — Your AI product needs evals" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "evals-observability",
+      "topic": "Curación de golden dataset",
+      "difficulty": "junior",
+      "scenario": "Estás construyendo el golden set para un asistente que responde preguntas sobre documentación técnica interna. Un compañero propone: 'saquemos 500 preguntas aleatorias de los logs de la última semana como dataset y usemos eso'.",
+      "question": "¿Qué está mal en este enfoque?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nada, es lo correcto: usar tráfico real es la mejor señal.", "correct": false, "why": "Es una parte de la señal, pero un sample aleatorio de logs sobre-representa lo común y omite los edge cases raros pero críticos (queries ambiguas, adversariales, casos que YA rompieron en el pasado). También hereda los sesgos de tus usuarios actuales." },
+        { "letter": "B", "text": "500 es demasiado poco: necesitas mínimo 10.000 para tener significancia estadística.", "correct": false, "why": "Falso. Un golden set curado de 100-300 casos suele dar más señal accionable que 10.000 casos aleatorios ruidosos. La calidad y cobertura de categorías importa más que el tamaño bruto." },
+        { "letter": "C", "text": "Falta curación consciente: mezclar sample real + edge cases inventados + casos adversariales + bugs históricos, todo categorizado por tipo (happy, ambiguo, fuera de scope, adversarial).", "correct": true, "why": "Correcto. Un buen golden set es CURADO: cubre distribución real (sample de logs) + edge cases (queries raras, largas, cortas, mal formadas) + adversarial (jailbreaks, prompt injection) + regresiones (bugs que ya se corrigieron). Cada caso etiquetado por categoría permite ver dónde regresa el modelo tras un cambio." },
+        { "letter": "D", "text": "El problema es que no lo estás generando sintéticamente con GPT-4.", "correct": false, "why": "Datasets sintéticos ayudan a escalar cobertura, pero heredan los sesgos del modelo que los generó y no sustituyen la curación humana de casos reales. Son complemento, no reemplazo." }
+      ],
+      "explanation": "Un golden dataset es una obra de ingeniería, no un dump. Reglas de curación: (1) representa la distribución real de tráfico; (2) sobre-muestrea edge cases raros pero costosos; (3) incluye adversariales; (4) todo bug reportado se añade como caso permanente (así previenes regresiones); (5) etiqueta categorías para ver scores desagregados. Empieza con 50-100, crece a 300-500. Más allá de 1000 los diminishing returns son fuertes salvo que segmentes por dominio.",
+      "realWorld": "En Anthropic y OpenAI, los equipos mantienen 'eval sets' que crecen con cada incidente: cada bug reportado por un cliente se convierte en un caso permanente del dataset. Es el equivalente a 'regression test' en QA tradicional. El post de Hamel Husain 'Your AI product needs evals' es lectura obligada.",
+      "tags": ["dataset curation", "edge cases", "regression"],
+      "tech": ["OpenAI Evals", "Braintrust", "LangSmith"],
+      "references": [
+        { "title": "Hamel Husain — Your AI product needs evals", "url": "https://hamel.dev/blog/posts/evals/" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "evals-observability",
+      "topic": "Rating manual vs LLM-as-judge",
+      "difficulty": "mid",
+      "scenario": "Tu equipo mantiene un golden set de 300 casos para un asistente de escritura. Correr eval manual (una persona lee output y puntúa 1-5) toma 6 horas cada vez que cambias el prompt. El PM propone: 'usemos GPT-4 como juez, así corremos evals en 10 minutos por 3€'.",
+      "question": "¿Cuál es la respuesta más responsable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, GPT-4 como juez es igual de bueno que humano y mucho más barato — pásate directamente.", "correct": false, "why": "GPT-4 como juez tiene biases documentados (position, verbosity, self-preference) y su correlación con humanos varía por tarea. Confiar sin calibrar puede dar señales falsas y hacerte optimizar hacia lo que le gusta al juez, no al usuario." },
+        { "letter": "B", "text": "Nunca uses LLM-as-judge, siempre humano — es la única señal fiable.", "correct": false, "why": "Purismo poco práctico. LLM-as-judge escala y es 'suficientemente bueno' para muchas tareas SI lo calibras. Depender solo de humanos limita frecuencia de evals y frena iteración." },
+        { "letter": "C", "text": "Introduce LLM-as-judge, pero primero MIDE su correlación con juicios humanos en un subset de ~50 casos (Cohen's kappa, agreement rate). Si correla bien (>0.7), úsalo; si no, mejora la rúbrica o mantén humano.", "correct": true, "why": "Correcto. La regla es: LLM-as-judge sin calibración = adivinar. Con calibración = herramienta útil. Además, mantén 10-20% de casos con revisión humana para detectar drift del juez. La correlación se re-verifica tras cambios de modelo (GPT-4o vs Claude, etc.)." },
+        { "letter": "D", "text": "Reemplaza el humano por 3 LLMs distintos votando por mayoría — así se cancelan los biases.", "correct": false, "why": "Ensemble de LLMs reduce varianza pero comparten biases estructurales similares (todos entrenados con RLHF pro-verbosity, por ejemplo). Y no sustituye la calibración contra ground truth humano. Puede ser útil como técnica adicional, no como sustitución de la calibración." }
+      ],
+      "explanation": "LLM-as-judge no es 'gratis'. El flujo profesional: (1) muestra ~30-50 casos donde tienes ground truth humano; (2) mide agreement entre juez LLM y humano (Cohen's kappa o accuracy); (3) itera la rúbrica del juez hasta que correle bien; (4) despliega, y periódicamente re-audita con humano. Regla de oro: el juez es un modelo — trátalo como código que puede tener bugs.",
+      "realWorld": "El paper 'Judging LLM-as-a-Judge with MT-Bench' (Zheng et al. 2023) mostró que GPT-4 correla ~85% con humanos en algunas tareas, pero cae fuerte en tareas de razonamiento matemático. Braintrust y Langfuse ofrecen workflows explícitos para calibrar jueces contra humanos.",
+      "tags": ["LLM-as-judge", "calibración", "Cohen kappa"],
+      "tech": ["GPT-4", "Braintrust", "Langfuse"],
+      "references": [
+        { "title": "Zheng et al. — Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena (2023)", "url": "https://arxiv.org/abs/2306.05685" },
+        { "title": "Justice or Prejudice? Quantifying Biases in LLM-as-a-Judge", "url": "https://arxiv.org/abs/2410.02736" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "evals-observability",
+      "topic": "Position bias en LLM-as-judge",
+      "difficulty": "mid",
+      "scenario": "Implementas un juez pairwise: 'Dado el input X, ¿cuál respuesta es mejor, A o B?'. Cuando corres el eval descubres que la respuesta que va en posición A gana el 62% del tiempo, independientemente de su calidad real. Un compañero dice 'es que el modelo A es mejor'. Sospechas otra cosa.",
+      "question": "¿Cuál es la causa más probable y cómo la mitigas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Position bias del juez: los LLMs tienden a preferir la primera opción. Mitiga corriendo cada comparación DOS veces con orden invertido (A vs B, luego B vs A) y contando solo casos con voto consistente.", "correct": true, "why": "Correcto. Position bias es un fenómeno documentado (paper Zheng et al. y Justice or Prejudice 2024). La técnica 'swap positions and require agreement' es el estándar. Si el juez cambia de opinión al invertir orden, es señal de que juzga la posición, no el contenido — esos casos se marcan como 'tie'." },
+        { "letter": "B", "text": "Es que el prompt del juez está mal escrito, reescríbelo.", "correct": false, "why": "Puede ayudar (prompts más neutros reducen bias) pero no elimina el fenómeno estructural: incluso con prompts perfectos, los LLMs mantienen sesgo posicional medible. El swap es más robusto." },
+        { "letter": "C", "text": "Cambia a un modelo más grande (GPT-4 → GPT-4o) para eliminar el bias.", "correct": false, "why": "Los modelos grandes tienen menos position bias pero no cero. Además, cambiar de modelo por esta razón introduce cambios en muchas otras dimensiones (verbosity bias, self-preference). El swap es una fix mecánica que aplica a cualquier modelo." },
+        { "letter": "D", "text": "Usa pointwise (evalúa A y B por separado) en vez de pairwise, y compara scores.", "correct": false, "why": "Es una alternativa válida pero introduce OTROS problemas: pointwise es menos discriminativo (LLMs tienden a dar scores altos a casi todo), y comparar scores absolutos es menos robusto que comparar preferencias relativas. En muchos casos pairwise-con-swap sigue siendo superior." }
+      ],
+      "explanation": "Biases documentados del LLM-as-judge: (1) POSITION bias — prefiere la primera opción (o a veces la última) en pairwise; (2) VERBOSITY bias — prefiere respuestas más largas; (3) SELF-PREFERENCE — GPT-4 tiende a preferir respuestas de GPT-4. Mitigaciones estándar: swap positions + require agreement, penalizar longitud en la rúbrica, no usar el mismo modelo como generador y juez. Estos son 'bugs conocidos' que debes asumir en tu diseño.",
+      "realWorld": "El artículo 'Justice or Prejudice? Quantifying Biases in LLM-as-a-Judge' (arXiv 2410.02736, oct 2024) cataloga 12 biases del juez. Chatbot Arena de LMSYS aplica randomization de posición precisamente por esto. En Braintrust y LangSmith, los templates pairwise incluyen swap por defecto.",
+      "tags": ["position bias", "pairwise", "LLM-as-judge"],
+      "tech": ["GPT-4", "Chatbot Arena", "Braintrust"],
+      "references": [
+        { "title": "Justice or Prejudice? Quantifying Biases in LLM-as-a-Judge (2024)", "url": "https://arxiv.org/abs/2410.02736" },
+        { "title": "Zheng et al. — MT-Bench (2023)", "url": "https://arxiv.org/abs/2306.05685" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "evals-observability",
+      "topic": "Pairwise vs pointwise judging",
+      "difficulty": "mid",
+      "scenario": "Estás decidiendo cómo estructurar la evaluación de tu chatbot. Opción A: el juez lee cada respuesta y le da score 1-5 en 'utilidad' (pointwise). Opción B: el juez compara pares (respuesta_v1 vs respuesta_v2) y elige la mejor (pairwise). Debes elegir para tu setup de regression tests entre versiones de prompt.",
+      "question": "¿Cuál es la elección más apropiada para comparar dos versiones de prompt y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pointwise, porque da un score absoluto que puedes trackear en un dashboard a lo largo del tiempo.", "correct": false, "why": "Los scores absolutos de LLM-as-judge son notoriamente ruidosos: la mayoría cae en 3-4/5 sin discriminación real, y el mismo output puede recibir score distinto en runs distintos. Como métrica de tendencia longitudinal es débil." },
+        { "letter": "B", "text": "Pairwise (v1 vs v2 en el mismo input), porque el juez es mucho más consistente comparando dos respuestas que asignando un score absoluto.", "correct": true, "why": "Correcto. Los LLMs (como los humanos) son mucho mejores en 'A es mejor que B' que en 'A merece 3.7/5'. Pairwise da señal más limpia para regression tests. La métrica típica: win-rate de v2 sobre v1 en el golden set. Recuerda swap por position bias." },
+        { "letter": "C", "text": "Ambos son equivalentes, elige por gusto.", "correct": false, "why": "No son equivalentes en la práctica. Pointwise sufre score compression (todo cerca del centro), pairwise sufre position bias pero es mitigable. Empíricamente pairwise-con-swap gana en discriminación." },
+        { "letter": "D", "text": "Ninguno — usa métricas exactas (exact match, BLEU) y evita LLM-as-judge.", "correct": false, "why": "Exact match solo funciona con outputs muy estructurados. BLEU/ROUGE son terribles para tareas creativas o largas. Para outputs libres, LLM-as-judge (calibrado) es la mejor opción disponible en 2025." }
+      ],
+      "explanation": "Regla mental: pairwise para COMPARAR versiones (regression tests, A/B de prompts), pointwise para MONITOREAR calidad absoluta a lo largo del tiempo (aunque ruidoso). Muchos equipos combinan: pointwise en dashboards de producción, pairwise en el CI de prompts. Cuando lo que importa es 'este cambio mejora o empeora', pairwise con swap y win-rate es el estándar de facto.",
+      "realWorld": "Chatbot Arena (LMSYS) usa pairwise + Elo rating para rankear modelos precisamente porque pairwise es más robusto. Braintrust y Langfuse ofrecen ambos, pero la doc recomienda pairwise para regression tests.",
+      "tags": ["pairwise", "pointwise", "regression tests"],
+      "tech": ["Chatbot Arena", "Braintrust", "Langfuse"],
+      "references": [
+        { "title": "LMSYS Chatbot Arena methodology", "url": "https://lmsys.org/blog/2023-05-03-arena/" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "evals-observability",
+      "topic": "Evals de retrieval en RAG — métricas",
+      "difficulty": "mid",
+      "scenario": "Tu RAG responde mal a algunas preguntas. Sospechas que el problema está en el retrieval (no trae los chunks correctos), no en la generación. Necesitas medir la calidad del retrieval independientemente de la generación. Tu dataset tiene: query, chunk_id_correcto_esperado.",
+      "question": "¿Qué métrica describe mejor 'el chunk correcto aparece en los top-k resultados'?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Faithfulness — mide si la respuesta es consistente con el contexto.", "correct": false, "why": "Faithfulness mide la generación (¿la respuesta se apoya en el contexto?), no el retrieval. Puede tener faithfulness perfecto sobre contexto incorrecto." },
+        { "letter": "B", "text": "Hit rate @k (o recall @k): fracción de queries donde el chunk esperado está entre los top-k resultados.", "correct": true, "why": "Correcto. Hit rate @k es la métrica más simple y accionable para retrieval: '¿mi chunk correcto está en el top-k?'. Se complementa con MRR (Mean Reciprocal Rank, que penaliza si está en posición 5 vs posición 1) y nDCG cuando hay múltiples chunks relevantes con grado de relevancia." },
+        { "letter": "C", "text": "BLEU score sobre los chunks recuperados.", "correct": false, "why": "BLEU es para generación de texto (comparar n-gramas de output vs referencia). Aplicarlo al retrieval no tiene sentido conceptual." },
+        { "letter": "D", "text": "Answer relevancy — mide si la respuesta es relevante a la pregunta.", "correct": false, "why": "Answer relevancy mide generación, no retrieval. Aún con retrieval perfecto puede haber baja answer relevancy si el generador se distrae." }
+      ],
+      "explanation": "Métricas típicas de retrieval en RAG: (1) HIT RATE @k — binaria por query, ¿está en top-k?; (2) MRR — 1/posición del primer relevante, promedio; (3) nDCG @k — mejor cuando hay múltiples chunks relevantes con grados; (4) PRECISION @k — de los k recuperados, ¿cuántos son relevantes?; (5) RECALL @k — de los relevantes totales, ¿cuántos aparecen en top-k?. Regla: si tu hit rate @5 es <80%, el problema es retrieval, no generación — no toques el prompt, mejora chunking/embeddings/reranker.",
+      "realWorld": "En Perplexity y en los equipos serios de RAG, la primera métrica que miran cuando algo va mal es hit rate @k. LlamaIndex y LangChain evals reportan esto por defecto. RAGAS ofrece context_precision y context_recall como versiones LLM-judged cuando no tienes ground truth de chunks.",
+      "tags": ["RAG", "retrieval metrics", "hit rate", "MRR"],
+      "tech": ["LlamaIndex", "LangChain", "RAGAS"],
+      "references": [
+        { "title": "RAGAS documentation — metrics", "url": "https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "evals-observability",
+      "topic": "Evals de generación en RAG — faithfulness",
+      "difficulty": "mid",
+      "scenario": "Tu RAG responde con datos que suenan plausibles pero a veces no están en los documentos recuperados (halucinación 'blanda'). Necesitas una métrica que detecte específicamente este caso: 'la respuesta contiene afirmaciones no soportadas por el contexto'.",
+      "question": "¿Qué métrica de RAGAS captura exactamente esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Answer relevancy — mide si la respuesta responde a la pregunta.", "correct": false, "why": "Answer relevancy mide otra cosa: '¿la respuesta va al grano de la pregunta?'. Una respuesta puede ser 100% relevante y 100% inventada." },
+        { "letter": "B", "text": "Faithfulness — descompone la respuesta en claims atómicos y verifica cuántos están soportados por el contexto recuperado.", "correct": true, "why": "Correcto. Faithfulness = (claims soportados por contexto) / (claims totales en la respuesta). Se implementa con un LLM que (1) extrae claims de la respuesta y (2) verifica cada uno contra el contexto. Es la métrica anti-alucinación por excelencia en RAG." },
+        { "letter": "C", "text": "Context precision — mide si los chunks recuperados son relevantes.", "correct": false, "why": "Context precision mide el retrieval, no la generación. Puedes tener context precision alto y faithfulness bajo si el generador inventa." },
+        { "letter": "D", "text": "Context recall — mide si toda la información necesaria está en el contexto.", "correct": false, "why": "Context recall también es sobre retrieval (¿tengo toda la info que necesito?), no sobre si el generador la usa correctamente." }
+      ],
+      "explanation": "Las 4 métricas core de RAGAS forman un cuadrante: retrieval (context_precision, context_recall) × generación (faithfulness, answer_relevancy). Regla de diagnóstico: (a) hit rate/context_recall bajo → mejora retrieval; (b) faithfulness bajo con retrieval ok → el generador halucina, sube temperatura a 0, refuerza el prompt con 'solo responde con info del contexto'; (c) answer_relevancy bajo → el generador se distrae, ajusta el prompt.",
+      "realWorld": "Faithfulness es la métrica más citada en post-mortems de RAG en producción. Notion AI, Perplexity y muchos equipos internos la trackean en dashboards. RAGAS es la implementación open-source más popular; DeepEval ofrece equivalentes con distinta filosofía.",
+      "tags": ["RAGAS", "faithfulness", "hallucination"],
+      "tech": ["RAGAS", "DeepEval"],
+      "references": [
+        { "title": "RAGAS — Faithfulness metric", "url": "https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/faithfulness/" },
+        { "title": "Es et al. — RAGAS: Automated Evaluation of RAG (2023)", "url": "https://arxiv.org/abs/2309.15217" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "evals-observability",
+      "topic": "Regression tests de prompts en CI",
+      "difficulty": "mid",
+      "scenario": "Tu equipo mergea cambios de prompts directamente a main sin ningún check automatizado. La semana pasada un cambio 'inocuo' rompió el 30% de las respuestas de facturación y solo lo detectaron 3 días después en producción vía tickets de soporte. Debes proponer un flujo de CI.",
+      "question": "¿Cuál es la mínima infraestructura razonable para prevenir esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En cada PR que toque un prompt, correr promptfoo/Braintrust/LangSmith sobre el golden set y bloquear merge si el score baja más de X% respecto al baseline de main.", "correct": true, "why": "Correcto. Es el equivalente a tests unitarios en CI para prompts. Frameworks como promptfoo (open source), Braintrust y LangSmith se integran a GitHub Actions, corren el eval, comparan con el baseline y comentan el resultado en el PR. Umbrales de regression (ej. no permitir bajada >3%) previenen que cambios ciegos lleguen a prod." },
+        { "letter": "B", "text": "Añadir revisión humana obligatoria en cada PR que toque prompts.", "correct": false, "why": "Necesario pero insuficiente: los humanos no van a leer 300 outputs manualmente en cada PR. Y las regressiones sutiles (baja 5% en una categoría) son invisibles a inspección ocasional." },
+        { "letter": "C", "text": "Rollback rápido en producción cuando aparezcan tickets.", "correct": false, "why": "Es reactivo, no preventivo. Detectas el problema 1-3 días tarde, con usuarios afectados. Además el rollback de prompts es rápido pero no gratis (invalida caches, etc.)." },
+        { "letter": "D", "text": "Congelar todos los prompts y solo tocarlos en releases mensuales.", "correct": false, "why": "Mata la iteración. En LLM engineering iterar rápido es competitivo. La solución no es frenar cambios, es hacer que los cambios sean seguros." }
+      ],
+      "explanation": "El patrón 'evals-as-CI' es el estándar emergente: cada PR que toca prompts corre el golden set, se compara con baseline de main, y se bloquea el merge si hay regresión. promptfoo (open source, YAML config) es la opción low-friction; Braintrust y LangSmith ofrecen versiones SaaS con UI. En proyectos grandes: nightly runs sobre datasets más grandes, PR runs sobre subsets rápidos.",
+      "realWorld": "OpenAI usa evals internamente antes de shippear cambios de modelo (openai-evals). Vercel AI SDK docs recomiendan promptfoo. Los blogs de Braintrust y LangSmith están llenos de post-mortems donde 'un cambio de prompt rompió producción y evals lo hubieran detectado'.",
+      "tags": ["CI/CD", "promptfoo", "regression tests"],
+      "tech": ["promptfoo", "Braintrust", "LangSmith", "GitHub Actions"],
+      "references": [
+        { "title": "promptfoo documentation", "url": "https://www.promptfoo.dev/docs/intro/" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "evals-observability",
+      "topic": "Offline vs online evals",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate: 'los evals offline (dataset fijo) no reflejan lo que pasa en producción real' vs 'los online (tráfico real) son ruidosos y lentos'. Un stakeholder pide 'una sola métrica'.",
+      "question": "¿Cuál es la respuesta más correcta para un sistema serio?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo evals offline sobre golden set: son reproducibles y suficientes.", "correct": false, "why": "Los offline evals son un proxy: cubren lo que decidiste incluir en el dataset. La distribución real de usuarios drift-a con el tiempo (nuevas queries, nuevos dominios) y solo online lo detectas." },
+        { "letter": "B", "text": "Solo evals online: A/B tests en producción son la verdad.", "correct": false, "why": "Online tests exponen usuarios a versiones potencialmente peores, son lentos (semanas para significancia), y no puedes correrlos en cada PR. Como único filtro, iteras muy despacio." },
+        { "letter": "C", "text": "Ambos son complementarios: offline (dataset fijo) para iteración rápida y regression en CI; online (A/B tests, thumbs up/down, sample de logs revisado) para validar en tráfico real y detectar drift.", "correct": true, "why": "Correcto. Es el patrón estándar. Offline te da velocidad (10 min por corrida) y reproducibilidad; online te da verdad estadística sobre distribución real. El feedback online alimenta el dataset offline: bugs reportados por usuarios se añaden al golden set." },
+        { "letter": "D", "text": "Ninguno: en producción confía en el LLM y monitorea con métricas de infra (latency, errors).", "correct": false, "why": "Métricas de infra no dicen NADA sobre la calidad de la respuesta. Un endpoint puede tener p99 de 200ms y responder basura." }
+      ],
+      "explanation": "Analogía útil: offline evals son tests unitarios/integración (rápidos, reproducibles, corren en CI); online evals son observability + product analytics (verdad de producción, más lentos). Ambos son necesarios. Flujo maduro: (1) golden set en CI; (2) shadow traffic o canary en producción; (3) A/B tests para cambios grandes; (4) feedback de usuarios sampleado; (5) bugs/regressions vuelven al golden set — el sistema aprende.",
+      "realWorld": "En GitHub Copilot: offline evals sobre benchmarks (HumanEval, MBPP), online evals sobre acceptance rate y edit distance sobre sugerencias aceptadas. En Notion AI y Slack AI, el thumbs up/down alimenta un dataset de casos negativos que revisan semanalmente.",
+      "tags": ["offline evals", "online evals", "A/B testing"],
+      "tech": ["Statsig", "LaunchDarkly", "Langfuse"],
+      "references": [
+        { "title": "Hamel Husain — Field Guide to Rapidly Improving AI Products" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "evals-observability",
+      "topic": "Guardar TODOS los inputs/outputs",
+      "difficulty": "mid",
+      "scenario": "Tu equipo tiene 3 semanas en producción con un asistente. Un usuario reporta: 'ayer a las 15:30 el bot me dijo algo raro sobre reembolsos'. Vas a debuggear y descubres que solo guardáis inputs (para no llenar la BBDD con outputs largos). No tenéis la respuesta que dio.",
+      "question": "¿Cuál es la regla y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Guarda SIEMPRE input, output, model, params, tokens, latency, cost, request_id y user_id (con consentimiento). En dev y en producción. Sin esto no puedes debuggear, evaluar ni mejorar.", "correct": true, "why": "Correcto. La regla no negociable de LLM ops. Sin outputs no reproduces bugs, no evalúas retroactivamente, no construyes dataset de regresiones. El coste de almacenamiento es trivial comparado con el valor. Herramientas como Langfuse/LangSmith lo hacen out-of-the-box con sampling configurable si te preocupa volumen." },
+        { "letter": "B", "text": "Solo inputs: los outputs se pueden regenerar más tarde.", "correct": false, "why": "Falso: con temperature > 0 los outputs no son reproducibles. Y aunque fueran, el output de HOY con el modelo de hoy no es el que dio ese día — puedes haber cambiado prompt, modelo o vector store desde entonces." },
+        { "letter": "C", "text": "Solo outputs: los inputs los tiene el usuario en su chat.", "correct": false, "why": "En sistemas con múltiples turnos, RAG (contexto inyectado dinámicamente) o agentes con tool calls, el 'input real' que vio el LLM es mucho más que el mensaje del usuario. Sin él no reproduces." },
+        { "letter": "D", "text": "Nada por GDPR: no puedes guardar conversaciones.", "correct": false, "why": "GDPR no prohíbe guardar; exige base legal, minimización y derechos de borrado. Guarda con consentimiento y retención finita (30-90 días), enmascara PII. El 'no guardar nada' es sobre-reacción y te deja ciego." }
+      ],
+      "explanation": "Regla dura: sin trazas completas (input+output+metadata) no hay debugging ni mejora. En dev: guarda TODO. En producción: guarda todo por defecto con sampling si volumen es problema, retención finita, PII masking y RBAC para acceso. Es equivalente a los logs estructurados de un backend clásico — invisible cuando funciona, insustituible cuando algo se rompe.",
+      "realWorld": "Casi todos los post-mortems públicos de bugs de LLM apps (Air Canada chatbot, DPD chatbot, Slack AI) mencionan 'no teníamos trazas suficientes para reproducir'. Langfuse, LangSmith y Braintrust venden precisamente esto como feature principal.",
+      "tags": ["logging", "tracing", "debugging"],
+      "tech": ["Langfuse", "LangSmith", "Braintrust"],
+      "references": [
+        { "title": "Langfuse — What to log for LLM apps", "url": "https://langfuse.com/docs/tracing" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "evals-observability",
+      "topic": "Cuándo actualizar el golden dataset",
+      "difficulty": "mid",
+      "scenario": "Tu golden set tiene 6 meses. Un compañero propone: 'los scores están todos en 95%+, el modelo lo domina, dejemos el dataset como está y trackemos la métrica'. Otro dice: 'hay que reescribirlo de cero cada mes'.",
+      "question": "¿Cuál es el approach correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Deja el dataset intacto: cambiarlo rompe la comparabilidad histórica.", "correct": false, "why": "Un dataset donde todo saca 95%+ ya no discrimina — no te dice si un cambio es mejor. Es señal de que necesitas casos más difíciles. La 'comparabilidad histórica' es útil pero secundaria si el dataset ya no aporta señal." },
+        { "letter": "B", "text": "Reescríbelo de cero cada mes.", "correct": false, "why": "Extremo opuesto: pierdes toda la memoria de regresiones históricas y no puedes comparar versión-a-versión. Es tirar información valiosa." },
+        { "letter": "C", "text": "Crece el dataset incrementalmente: añade (a) todos los bugs reportados como casos permanentes; (b) muestras de nuevas categorías de queries que aparecen en producción; (c) casos adversariales cada vez más difíciles. Nunca borres casos, siempre añade.", "correct": true, "why": "Correcto. Es el patrón 'living dataset'. El score puede bajar cuando añades casos difíciles — es la señal correcta. Mantén subsets separados (core, hard, adversarial) para reportar scores desagregados y no perder señal por promediar." },
+        { "letter": "D", "text": "Cuando el score llega al 95%, cambia de métrica.", "correct": false, "why": "La métrica no es el problema; la dificultad del dataset sí. Cambiar de métrica sin cambiar el dataset solo te da otra ceguera." }
+      ],
+      "explanation": "Un golden dataset saludable es un ORGANISMO VIVO. Reglas: (1) nunca borres casos (son regressions); (2) añade cada bug reportado; (3) sube dificultad progresivamente para mantener señal; (4) segmenta en subsets (core, hard, adversarial, per-category) y reporta desagregado; (5) audita anualmente si algún caso ya no es representativo. Si tu score global no baja nunca, tu dataset está muerto.",
+      "realWorld": "En Anthropic los datasets de eval crecen con cada 'red team finding' y cada cliente-reportado bug. En OpenAI Evals el repo público es una acumulación histórica de casos difíciles. En equipos de producto (Notion, Linear) suelen tener 'eval sets' que crecen sin bajar.",
+      "tags": ["dataset lifecycle", "living dataset", "difficulty"],
+      "tech": ["OpenAI Evals", "Braintrust"],
+      "references": [
+        { "title": "OpenAI Evals repository", "url": "https://github.com/openai/evals" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "evals-observability",
+      "topic": "Rúbrica para LLM-as-judge",
+      "difficulty": "mid",
+      "scenario": "Tu juez LLM da scores incoherentes: la misma respuesta a veces saca 3/5, a veces 5/5, sin cambiar nada. El prompt del juez dice: 'evalúa la calidad de esta respuesta en escala 1-5'.",
+      "question": "¿Cuál es la primera intervención más efectiva?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bajar la temperatura del juez a 0.", "correct": false, "why": "Ayuda a reducir varianza run-to-run pero no arregla la raíz: el prompt es vago. 'Calidad' sin definición operacional es subjetivo. Temp 0 solo hace que la subjetividad sea consistente." },
+        { "letter": "B", "text": "Reescribir la rúbrica con criterios OPERACIONALES concretos: 'score 5 = responde la pregunta + cita fuente + <100 palabras; score 3 = responde pero no cita; score 1 = no responde o inventa'. Además, pedirle al juez que explique su razonamiento antes del score.", "correct": true, "why": "Correcto. Rúbricas concretas convierten juicios subjetivos en decisiones más deterministas. Añadir chain-of-thought antes del score (razonamiento primero, score después) mejora consistencia porque fuerza al modelo a articular criterios antes de puntuar. Es la técnica más ROI de todas." },
+        { "letter": "C", "text": "Usar un modelo más caro (GPT-4 → o1-preview).", "correct": false, "why": "Puede ayudar en el margen pero no arregla la falta de rúbrica. Además duplica coste. La rúbrica bien escrita gana más que subir el modelo." },
+        { "letter": "D", "text": "Cambiar de escala 1-5 a 1-10 para más granularidad.", "correct": false, "why": "Empeora el problema: más granularidad = más ruido cuando la rúbrica es vaga. La regla es: menos niveles + criterios claros > más niveles vagos." }
+      ],
+      "explanation": "Las mejores rúbricas para LLM-as-judge: (1) escala corta (binary, 1-3, 1-5 máximo); (2) cada nivel con criterios operacionales verificables; (3) ejemplos anchor de cada nivel; (4) chain-of-thought antes del score (razonamiento first); (5) formato de output estructurado (JSON con reason + score) para parseo fiable. Recuerda calibrar contra humano tras cada cambio de rúbrica.",
+      "realWorld": "Braintrust y LangSmith incluyen templates de rúbricas por task type. El paper 'G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment' muestra que rúbricas con chain-of-thought correlan mucho mejor con humanos que scoring directo.",
+      "tags": ["rúbrica", "chain-of-thought", "consistency"],
+      "tech": ["GPT-4", "Braintrust"],
+      "references": [
+        { "title": "Liu et al. — G-Eval (2023)", "url": "https://arxiv.org/abs/2303.16634" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "evals-observability",
+      "topic": "Verbosity bias en LLM-as-judge",
+      "difficulty": "mid",
+      "scenario": "Tu juez pairwise favorece consistentemente la respuesta más larga. Analizas y confirmas: en 100 comparaciones donde tú (humano) prefieres la respuesta más corta y precisa, el juez elige la larga en 68 casos.",
+      "question": "¿Cuál es la mitigación más efectiva?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Añadir a la rúbrica una instrucción explícita: 'penaliza respuestas innecesariamente largas; concisión es una virtud cuando la respuesta es correcta'.", "correct": false, "why": "Ayuda parcialmente pero no elimina el bias estructural: los modelos RLHF-tuneados han aprendido a preferir longitud durante su entrenamiento. La instrucción reduce el efecto en ~20-30% en la práctica, no lo mata." },
+        { "letter": "B", "text": "Normalizar por longitud: el juez emite un score, tú lo ajustas dividiendo por función de longitud (ej. sqrt(len)) — un patch post-hoc.", "correct": false, "why": "Es un hack: asume que el bias es puramente proporcional a longitud, cuando en realidad depende de contenido (elaboración legítima vs verbosidad). Puede sobre-corregir en casos donde la respuesta larga sí es mejor." },
+        { "letter": "C", "text": "Combinación: (a) rúbrica que penaliza verbosidad explícitamente; (b) recortar/truncar ambas respuestas a longitud similar cuando sea posible; (c) chequear correlación con humano tras el cambio; (d) considerar usar un juez con menos verbosity bias (algunos modelos tienen menos).", "correct": true, "why": "Correcto. Verbosity bias es multi-causal, requiere multi-intervención. Cada capa reduce el bias un poco; la calibración humana verifica que la mitigación funciona. Es el approach responsable: no confiar en una sola fix." },
+        { "letter": "D", "text": "Aceptarlo como limitación conocida y reportar 'win rate ajustado por longitud' como métrica adicional.", "correct": false, "why": "Es rendirse. Aunque reportar la métrica ayuda a stakeholders, no arregla el problema fundamental: tus decisiones de prompt van a estar sesgadas hacia 'hacer respuestas más largas' aunque empeoren UX." }
+      ],
+      "explanation": "Verbosity bias es uno de los biases más consistentes del LLM-as-judge (documentado en Zheng 2023, Justice or Prejudice 2024). Causas: RLHF entrena a los modelos con preferencias humanas que a menudo preferían respuestas largas y elaboradas; el juez heredó ese sesgo. Mitigaciones acumulativas: rúbrica explícita, normalización, models menos sesgados (algunos Claude tienen menos verbosity bias que GPT-4). Y siempre calibra contra humano.",
+      "realWorld": "Un post viral de Anthropic mostró que Claude en algunas tareas 'gana' contra GPT-4 en pairwise humano precisamente porque es más conciso, aunque como juez también sufre bias. En Chatbot Arena controlan por longitud precisamente para separar 'quality' de 'verbosity effect'.",
+      "tags": ["verbosity bias", "LLM-as-judge", "mitigation"],
+      "tech": ["Claude", "GPT-4"],
+      "references": [
+        { "title": "Justice or Prejudice? Quantifying Biases in LLM-as-a-Judge (2024)", "url": "https://arxiv.org/abs/2410.02736" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "evals-observability",
+      "topic": "Self-preference bias",
+      "difficulty": "senior",
+      "scenario": "Un equipo evalúa: 'GPT-4 vs Claude vs Gemini' usando GPT-4 como juez. GPT-4 gana el 61% del tiempo. El PM concluye 'GPT-4 es objetivamente mejor'. Un compañero senior levanta la ceja.",
+      "question": "¿Qué está mal en la conclusión?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nada, el resultado es válido: GPT-4 es objetivamente mejor.", "correct": false, "why": "Ignora el self-preference bias documentado: los LLMs tienden a preferir outputs de su propia familia (mismo tokenizer, mismos patrones de estilo). Usar GPT-4 como juez de sí mismo introduce un sesgo estructural." },
+        { "letter": "B", "text": "Self-preference bias: los LLMs prefieren sus propios outputs. Usar el mismo modelo como generador y juez sesga el resultado. Solución: usar juez independiente (ej. Claude para juzgar) o mejor, ensemble de jueces + humano en subset + Chatbot Arena style.", "correct": true, "why": "Correcto. El paper 'Self-Preference Bias in LLM-as-a-Judge' (arXiv 2410.21819) cuantifica el efecto: hasta ~10-15% de sesgo. Práctica correcta: (1) usar juez de familia distinta; (2) ensemble de 2-3 jueces distintos y ver agreement; (3) calibrar contra humano en subset; (4) reportar múltiples jueces y no un solo número." },
+        { "letter": "C", "text": "El problema es que 61% es margen estadísticamente insignificante.", "correct": false, "why": "Con muestras grandes 61% puede ser muy significativo estadísticamente. El problema no es la significancia; es el bias sistemático del juez. Sería 'muy significativamente sesgado'." },
+        { "letter": "D", "text": "Habría que usar temperatura 0 en todos los modelos para eliminar el bias.", "correct": false, "why": "Temperatura 0 no afecta al self-preference bias, que es un fenómeno estructural del juez, no de la varianza de generación." }
+      ],
+      "explanation": "Self-preference bias: los LLMs prefieren outputs con patrones estilísticos similares a los suyos. Efecto medido: 5-15% de ventaja artificial. Reglas: (1) NUNCA uses el modelo evaluado como su propio juez; (2) usa juez de familia distinta (GPT-4 juzga Claude, Claude juzga GPT-4, promedia); (3) verifica con humano en subset; (4) considera Chatbot Arena como source of truth para model-vs-model rankings a nivel general.",
+      "realWorld": "Este bias explica muchos leaderboards internos 'sospechosos' donde el modelo del equipo que hizo la eval gana. Chatbot Arena (LMSYS) evita el problema usando humanos como jueces. HELM y otras evals académicas usan métricas exactas cuando es posible y juez neutro cuando no.",
+      "tags": ["self-preference bias", "judge independence"],
+      "tech": ["GPT-4", "Claude", "Gemini"],
+      "references": [
+        { "title": "Self-Preference Bias in LLM-as-a-Judge (2024)", "url": "https://arxiv.org/abs/2410.21819" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "evals-observability",
+      "topic": "Coste de correr evals",
+      "difficulty": "mid",
+      "scenario": "Tu golden set es de 500 casos. Cada caso invoca 1 LLM (generador, GPT-4o, ~2k tokens totales) + 1 LLM-as-judge (también GPT-4o, ~1k tokens). Corres esto en cada PR. Tienes 20-40 PRs/día que tocan prompts. Con precios de ~5$/M input y 15$/M output, el CFO llega con la factura preguntando qué pasa.",
+      "question": "¿Cuál es la optimización más impactante primero?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar un modelo más barato (GPT-4o-mini o Haiku) para el juez, tras verificar que su correlación con GPT-4-as-judge y con humano se mantiene aceptable.", "correct": true, "why": "Correcto. El juez es donde más se puede recortar coste: los modelos pequeños son mucho más baratos (10-30x) y en muchas tareas de judging bien-rubricado correlan aceptablemente. La regla: baja el modelo del juez ANTES que el del generador, y siempre verifica correlación con humano tras el cambio." },
+        { "letter": "B", "text": "Correr evals solo una vez al día en main, no en cada PR.", "correct": false, "why": "Anula el propósito principal (bloquear regresiones antes de merge). El problema no es la frecuencia — es el coste unitario." },
+        { "letter": "C", "text": "Reducir el golden set a 50 casos aleatorios.", "correct": false, "why": "Pierde cobertura y señal desagregada por categoría. Prefieres subsets estratificados en PRs rápidos (100 casos) + full nightly (500) que recortar el dataset base." },
+        { "letter": "D", "text": "Migrar todo a evals sin LLM (BLEU, ROUGE).", "correct": false, "why": "BLEU/ROUGE son malos para outputs libres o largos. Cambiar métrica por coste te da datos malos baratos, que es peor que datos buenos caros." }
+      ],
+      "explanation": "Palancas de coste en evals: (1) modelo del juez → cambiar a mini/haiku y calibrar; (2) tamaño del subset por PR → PRs corren subset rápido (100), nightly corre full (500); (3) cachear outputs del generador cuando el prompt no ha cambiado (Braintrust y Langfuse lo hacen); (4) juez pointwise con prompt más corto; (5) skip evals para PRs que no tocan prompts (path filters en CI). Recuerda: el coste del eval debe ser <10% del coste de producción, si no es señal de que estás sobre-evaluando.",
+      "realWorld": "Braintrust y Langfuse publican calculators de coste para justamente esto. Muchos equipos empezaron con GPT-4 como juez y migraron a Haiku/mini tras confirmar >90% de agreement en su tarea. El paper 'JudgeBench' (2024) cataloga qué jueces baratos son suficientes por task type.",
+      "tags": ["cost optimization", "cheap judge"],
+      "tech": ["GPT-4o-mini", "Claude Haiku"],
+      "references": [
+        { "title": "Braintrust — Reducing eval costs", "url": "https://www.braintrust.dev/docs" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "evals-observability",
+      "topic": "Comparar frameworks: promptfoo vs Braintrust vs LangSmith",
+      "difficulty": "mid",
+      "scenario": "Tu equipo (5 devs, stack Node + Python, no usa LangChain) necesita elegir un framework de evals. Opciones: promptfoo (open source, YAML), Braintrust (SaaS, eval-first), LangSmith (SaaS, LangChain-first). Todos parecen equivalentes en su landing page.",
+      "question": "¿Cuál es el criterio de decisión más pragmático?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Elige LangSmith siempre — es el más popular.", "correct": false, "why": "LangSmith está optimizado para stacks LangChain/LangGraph. Si no usas LangChain, pagas overhead innecesario y su modelo mental de traces no encaja bien. Popularidad no equivale a mejor fit." },
+        { "letter": "B", "text": "Depende del stack y prioridades: promptfoo si quieres open source + config-as-code + CI-first (sin SaaS); Braintrust si priorizas eval experiments + full-text search sobre datasets grandes; LangSmith si tu stack ya es LangChain/LangGraph; Langfuse si necesitas self-hosting (GDPR).", "correct": true, "why": "Correcto. Es la respuesta pragmática de 2025-2026: cada herramienta tiene sweet spot distinto. promptfoo brilla en CI (config declarativa, integración con GitHub Actions), Braintrust en eval experiments iterativos, LangSmith en ecosistema LangChain, Langfuse en self-hosting. Elige por stack + constraints, no por marca." },
+        { "letter": "C", "text": "Construye el tuyo con un script Python simple.", "correct": false, "why": "Reinventar la rueda cuesta más de lo que ahorras. Los frameworks resuelven detalles no obvios (retry, cacheado, UI para revisión humana, dashboards, versioning de prompts). Solo empieza custom si has agotado los frameworks." },
+        { "letter": "D", "text": "Usa varios en paralelo por si acaso.", "correct": false, "why": "Fragmenta el signal, multiplica coste y mantenimiento. Elige uno principal y comprométete." }
+      ],
+      "explanation": "Matriz de elección (2025): promptfoo → CI-first, YAML, open source, low friction; Braintrust → eval experiments profesionales, dataset management, buena UI; LangSmith → default para stacks LangChain/LangGraph; Langfuse → open source + self-host, OTEL nativo (v3), buena para GDPR/data residency; Helicone → observability con evals; Arize Phoenix → open source Arize. Ninguno es 'mejor' en absoluto; el mejor es el que encaja con tu stack y compliance.",
+      "realWorld": "Latitude y MarkTechPost publicaron comparativas 2025-2026 que llegan a la misma conclusión: elige por fit, no por hype. Muchos equipos usan promptfoo en CI + Langfuse en producción como combo pragmático open source.",
+      "tags": ["framework selection", "promptfoo", "Braintrust", "LangSmith"],
+      "tech": ["promptfoo", "Braintrust", "LangSmith", "Langfuse"],
+      "references": [
+        { "title": "MarkTechPost — LLM Observability Platforms 2026", "url": "https://www.marktechpost.com/2026/08/09/top-llm-observability-and-evaluation-platforms-in-2026-langfuse-langsmith-braintrust-arize-and-more-compared/" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "evals-observability",
+      "topic": "Evals adversariales",
+      "difficulty": "senior",
+      "scenario": "Tu chatbot funciona perfecto en el golden set (95% score). En producción, un usuario reporta que consiguió hacer que el bot revelara el system prompt. Nadie había testeado prompt injection en el eval set.",
+      "question": "¿Qué falta en tu estrategia de evaluación?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nada extra: sube el score global del golden set con más casos normales.", "correct": false, "why": "Ignora una clase entera de fallos. El golden set 'normal' no cubre adversariales por definición — mide happy path, no security posture." },
+        { "letter": "B", "text": "Un subset ADVERSARIAL en el eval: (a) prompt injection directo ('ignore previous instructions'); (b) indirecto (payload en documento recuperado); (c) jailbreaks (roleplay, encoding); (d) intentos de exfiltrar system prompt; (e) intentos de que el bot haga algo fuera de scope. Corre este subset en cada PR y mide 'attack success rate' — debe ser 0% o cerca.", "correct": true, "why": "Correcto. Los evals adversariales son un subset separado con métrica invertida (queremos que el bot RESISTA). Frameworks como PyRIT (Microsoft), Garak (Nvidia) y promptfoo tienen suites adversariales. Se corren en CI y bloquean merges que introduzcan regresiones de seguridad. Es tan importante como el eval de calidad." },
+        { "letter": "C", "text": "Añadir un WAF que filtre inputs sospechosos y no cambiar los evals.", "correct": false, "why": "WAFs de prompt injection son defensa en profundidad (útiles), pero no sustituyen tests: sin evals adversariales no sabes si tu WAF y tu prompt en conjunto resisten, ni detectas regresiones al cambiar el prompt." },
+        { "letter": "D", "text": "Contratar red team humano cada 6 meses.", "correct": false, "why": "Red teaming humano es valioso pero baja frecuencia. Los evals adversariales automatizados dan feedback en cada PR (segundos vs meses). Ambos son complementarios; el automatizado es el mínimo para CI." }
+      ],
+      "explanation": "Un eval set completo tiene: (1) core (happy path); (2) hard (edge cases); (3) adversarial (attacks). El adversarial se mide con métrica invertida (attack success rate, debe → 0). Bibliotecas: PyRIT (Microsoft), Garak (Nvidia), promptfoo red-team plugin, DeepEval red teaming. Debes correr en CI, mantener growing (cada nuevo attack pattern se añade), y separar métricas de calidad vs seguridad.",
+      "realWorld": "El incidente de Bing Chat prompt leak (2023) y Slack AI exfil (2024) hubieran sido detectables con evals adversariales. Muchas empresas ya mandan (Microsoft SFI, Anthropic Usage Policies) que se corra red teaming automatizado como parte del CI de LLM apps.",
+      "tags": ["adversarial evals", "red teaming", "security"],
+      "tech": ["PyRIT", "Garak", "promptfoo"],
+      "references": [
+        { "title": "Microsoft PyRIT — Python Risk Identification Toolkit for GenAI", "url": "https://github.com/Azure/PyRIT" },
+        { "title": "OWASP LLM Top 10 (2025)", "url": "https://genai.owasp.org/llm-top-10/" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "evals-observability",
+      "topic": "A/B testing de prompts en producción",
+      "difficulty": "senior",
+      "scenario": "Tras 3 semanas de iteración offline, promptV2 gana a promptV1 en golden set (+8%). Antes de shippear al 100%, el equipo debate cómo validar en producción. Opciones: (a) reemplazar directamente; (b) A/B 50/50; (c) canary 5% → 25% → 100%; (d) shadow traffic.",
+      "question": "¿Cuál es el approach más responsable para un servicio en producción con miles de usuarios?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Canary: 5% de tráfico → monitorea métricas online (thumbs, tickets, latency, cost) 24-48h → 25% → 100%. Con criterio de rollback automático si baja X métrica clave.", "correct": true, "why": "Correcto. Canary limita el blast radius si promptV2 tiene una regresión sutil que el golden set no capturó (que ocurre a menudo). Métricas de rollback deben definirse ANTES (thumbs down rate, ticket rate, cost per request, p99 latency). Se combina bien con feature flags (Statsig, LaunchDarkly, Vercel Edge Config)." },
+        { "letter": "B", "text": "Reemplazar directamente V2 al 100% porque los evals offline ya lo validaron.", "correct": false, "why": "Los evals offline nunca cubren el 100% de la distribución real. Ir directo al 100% expone a todos los usuarios si hay una regresión no detectada. Regla: golden set alto no exime de canary." },
+        { "letter": "C", "text": "Shadow traffic al 100% durante 1 mes antes de switchear.", "correct": false, "why": "Shadow traffic (duplicar requests a V2 sin devolver al usuario) es útil para MEDIR latency/cost pero no capta calidad percibida (usuarios no ven V2, no dan feedback). Es complemento, no sustituto de canary." },
+        { "letter": "D", "text": "A/B 50/50 durante meses hasta significancia estadística estricta.", "correct": false, "why": "50/50 expone a la mitad de usuarios inmediatamente y no protege contra bugs graves de V2. Canary escalonado da la misma señal con menor riesgo." }
+      ],
+      "explanation": "Playbook para shippear cambios de prompt: (1) offline evals passthreshold; (2) canary 5% con métricas y rollback automático; (3) 25% si 24-48h ok; (4) 100% si otras 24-48h ok; (5) monitor 1 semana post-full. Métricas online típicas: thumbs down rate, ticket rate, hallucination rate (sample judged), latency p99, cost per request. Herramientas: LaunchDarkly, Statsig, feature flags custom sobre config server.",
+      "realWorld": "OpenAI, Anthropic y Google hacen esto internamente para cambios de modelo. Notion AI, Linear, GitHub Copilot: cambios de prompt van por canary. Historia habitual: 'V2 ganaba en offline pero en canary vimos que rompía en una categoría rara' → rollback y patch antes de afectar a más usuarios.",
+      "tags": ["canary", "A/B testing", "feature flags"],
+      "tech": ["LaunchDarkly", "Statsig", "Vercel Edge Config"],
+      "references": [
+        { "title": "Google SRE Book — Canary releases", "url": "https://sre.google/workbook/canarying-releases/" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "evals-observability",
+      "topic": "Correlación juez-humano y drift del modelo",
+      "difficulty": "senior",
+      "scenario": "Hace 6 meses calibraste tu LLM-as-judge (Claude 3 Opus) contra humano: agreement 87%. Confías en él y no lo has re-auditado. Ahora Anthropic ha deprecado Opus y te has movido a Sonnet 4.5. El PM pregunta si el score sigue siendo comparable con los históricos.",
+      "question": "¿Cuál es la respuesta técnicamente correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, es comparable: los modelos de Anthropic tienen preferencias similares.", "correct": false, "why": "Suposición no fundamentada. Cada modelo (incluso de la misma familia) tiene biases distintos (verbosity, position, self-preference). Un cambio de modelo del juez es un cambio de instrumento de medida — invalida comparabilidad hasta re-calibrar." },
+        { "letter": "B", "text": "No hasta re-calibrar: cualquier cambio de modelo (o cambio grande de prompt) del juez rompe comparabilidad histórica. Debes (1) re-correr un subset con humano y verificar agreement; (2) re-correr subset con Opus y Sonnet en paralelo para medir el 'delta' entre jueces; (3) reportar scores con calibration metadata (qué juez, qué versión, qué agreement).", "correct": true, "why": "Correcto. Cambiar de juez es como cambiar de instrumento en un experimento: hay que re-calibrar. El delta juez-vs-juez te permite ajustar scores históricos o al menos marcar el 'antes/después'. Metadata de calibration debe acompañar cada eval run." },
+        { "letter": "C", "text": "No, y no hay solución: descarta todos los scores históricos.", "correct": false, "why": "Innecesariamente drástico. Con el paralelo Opus vs Sonnet en subset y agreement con humano, puedes traducir scores viejos aproximadamente o al menos separarlos como pre/post migration." },
+        { "letter": "D", "text": "Ignora el juez y usa métricas exactas (exact match, BLEU).", "correct": false, "why": "Cambia el problema, no lo resuelve, y pierdes toda la señal en tareas de output libre." }
+      ],
+      "explanation": "Regla dura de evals maduros: cada eval run guarda METADATA de calibración (modelo del juez, versión, fecha de última calibración humana, agreement). Cuando cambias juez: (1) re-verifica agreement con humano en subset; (2) mide delta entre jueces en subset compartido; (3) documenta migration y ajusta interpretación. Sin esto acumulas scores no comparables y tomas decisiones sobre datos que ya no significan lo mismo.",
+      "realWorld": "Cuando OpenAI hizo cambios entre GPT-4-0613 y GPT-4-1106, muchos equipos vieron 'mejoras espontáneas' en sus scores que en realidad eran cambio de comportamiento del juez, no del generador. Braintrust y LangSmith recomiendan versionar el juez y trackear calibración explícitamente.",
+      "tags": ["model drift", "judge calibration", "comparability"],
+      "tech": ["Claude Sonnet 4.5", "GPT-4o", "Braintrust"],
+      "references": [
+        { "title": "Anthropic — Model deprecation policy", "url": "https://docs.anthropic.com/en/docs/about-claude/models" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "evals-observability",
+      "topic": "Evals de agentes multi-step",
+      "difficulty": "senior",
+      "scenario": "Tienes un agente que resuelve tickets: recibe un ticket, decide llamar a tool_search → tool_lookup_user → tool_send_email, devuelve respuesta final. Tu eval actual solo mide la respuesta final. Un compañero reporta: 'el agente a veces llama a tool_send_email antes de tener toda la info y manda emails a medio construir'. Tu score global es 91%.",
+      "question": "¿Qué falta en tu evaluación y cómo lo mides?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nada: si el score final es 91%, el sistema funciona.", "correct": false, "why": "El score final oculta fallos intermedios peligrosos. En agentes con tools con side effects (email, DB write), un 'fallo silencioso' de trayectoria puede tener consecuencias reales aunque la respuesta final parezca ok o el usuario no note." },
+        { "letter": "B", "text": "Añadir evals de TRAYECTORIA además de resultado final: (a) tool selection accuracy (¿eligió los tools correctos?); (b) tool argument accuracy (¿args bien formados?); (c) tool call order (¿respetó dependencias?); (d) unnecessary tool calls (¿llamó tools que no debía?); (e) safety checks (¿pidió confirmación en acciones destructivas?). Mide cada dimensión por separado.", "correct": true, "why": "Correcto. Agentes multi-step tienen fallos de TRAYECTORIA invisibles al output final. Frameworks (LangSmith agent evals, Braintrust, DeepEval, AgentBench) miden trajectory step-by-step. Especialmente crítico cuando hay tools con side effects: separar 'correcto en trayectoria' de 'correcto en output'." },
+        { "letter": "C", "text": "Añadir un LLM que revise el output final más crítico.", "correct": false, "why": "Sigue mirando solo el output; no capta el problema (email mandado prematuramente ya generó side effect antes del output final)." },
+        { "letter": "D", "text": "Aumentar temperatura del agente para más diversidad.", "correct": false, "why": "Al revés: temperatura alta EMPEORA reliability en agentes. La solución es evaluar trayectoria, no aumentar aleatoriedad." }
+      ],
+      "explanation": "Evals de agentes tienen múltiples niveles: (1) TASK SUCCESS — ¿resolvió el ticket?; (2) TRAJECTORY QUALITY — ¿llamó tools correctos, en orden, con args correctos?; (3) EFFICIENCY — ¿número de steps, coste, latencia?; (4) SAFETY — ¿respetó confirmations, límites, evitó acciones destructivas prematuras?. Un agente puede tener task success alto y trajectory terrible (side effects indeseados). Frameworks: LangGraph tracing + LangSmith eval, AgentBench, τ-bench, SWE-bench para code agents. Regla: si tu agente hace side effects, evalúa trajectory, no solo output.",
+      "realWorld": "Casos reales: Devin, Cognition SWE-agents, GitHub Copilot workspace — todos publicaron papers/blogs sobre lo insuficiente que es medir 'task success rate'. τ-bench (Anthropic 2024) fue diseñado precisamente para medir agentes con tools multi-step. El caso Replit AI 2025 (borró DB durante 'code freeze') es un fallo de trajectory-safety que un eval de output final no habría detectado.",
+      "tags": ["agents", "trajectory eval", "multi-step"],
+      "tech": ["LangGraph", "LangSmith", "AgentBench"],
+      "references": [
+        { "title": "Yao et al. — τ-bench: A Benchmark for Tool-Agent-User Interaction (2024)", "url": "https://arxiv.org/abs/2406.12045" },
+        { "title": "LangSmith — Agent evaluation guide", "url": "https://docs.smith.langchain.com/evaluation/tutorials/agents" }
+      ]
+    }
+  ]
+}

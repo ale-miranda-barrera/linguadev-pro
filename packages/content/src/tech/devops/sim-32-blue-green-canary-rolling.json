@@ -1,0 +1,425 @@
+{
+  "id": "devops-sim-32-blue-green-canary-rolling",
+  "trackId": "devops",
+  "order": 32,
+  "title": "Simulacro 32 — Blue/Green, Canary y Rolling Updates",
+  "focus": "Estrategias de deployment fundamentales: Blue/green (duplicado completo, cutover instantáneo), Canary (rollout gradual por porcentaje), Rolling updates (in-place progresivo), A/B testing vs canary, automated rollback triggers, cutover strategies y tradeoffs de costo/riesgo de cada uno.",
+  "areaCoverage": ["deployment"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "deployment",
+      "topic": "Definición básica — blue/green",
+      "difficulty": "junior",
+      "scenario": "Tu manager dice: 'vamos a hacer blue/green para el próximo release'. Tienes 10 instances corriendo la versión v1. No sabes qué implica exactamente 'blue/green'.",
+      "question": "¿Qué es blue/green deployment?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dos ambientes de producción idénticos y COMPLETOS (blue = version actual, green = version nueva). Deployeas v2 a green mientras blue sigue sirviendo traffic. Cuando green está sano, cambias el router/load balancer para que TODO el traffic vaya a green. Blue queda idle como rollback instantáneo (solo cambias el router back).", "correct": true, "why": "Correcto. Definición canónica (Martin Fowler, Jez Humble). Clave: son ambientes DUPLICADOS. Cutover es INSTANTÁNEO (todo el traffic switch de una). Rollback = flip del router. Duplicación de infra durante el switch es el costo." },
+        { "letter": "B", "text": "Deployar la nueva versión gradualmente al 10%, luego 25%, 50%, 100%.", "correct": false, "why": "Eso es CANARY, no blue/green. Blue/green es cutover instantáneo (todo o nada); canary es gradual." },
+        { "letter": "C", "text": "Reemplazar pods uno a uno hasta que todos son v2.", "correct": false, "why": "Eso es ROLLING UPDATE, no blue/green. Rolling reemplaza in-place; blue/green mantiene el ambiente viejo intacto." },
+        { "letter": "D", "text": "Correr v1 y v2 simultáneamente permanentemente para experimentation.", "correct": false, "why": "Confuso con A/B testing. Blue/green es transición temporal, no coexistencia permanente." }
+      ],
+      "explanation": "Blue/green características: (1) DOS ambientes de producción idénticos; (2) cutover INSTANTÁNEO via router/DNS/LB; (3) rollback trivial (flip back); (4) DOBLE costo de infra durante el switch (aunque puedes destruir blue después). Requerimientos: (a) infra que puedes duplicar (usualmente cloud); (b) stateful concerns resueltos (DB compartida o migrada); (c) sesiones que sobrevivan al switch; (d) load balancer o DNS que puedas cambiar programáticamente. Comparación: rolling = in-place progresivo, canary = % gradual con métricas, blue/green = duplicado + cutover.",
+      "realWorld": "Netflix popularizó blue/green con Spinnaker (Asgard originalmente). AWS CodeDeploy tiene blue/green como estrategia nativa. Google App Engine 'traffic splitting' materializa blue/green. Amazon Route 53 weighted routing permite hacer blue/green DNS-based. Cloudflare implementó blue/green para su propio infra a scale.",
+      "tags": ["blue/green", "cutover", "duplicado", "rollback"],
+      "tech": ["AWS CodeDeploy", "Spinnaker", "Route 53"],
+      "references": [{ "title": "Martin Fowler — BlueGreenDeployment" }, { "title": "AWS CodeDeploy — Blue/Green" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "deployment",
+      "topic": "Rolling update en Kubernetes",
+      "difficulty": "junior",
+      "scenario": "Tu Deployment de Kubernetes tiene 10 replicas. Cambias la image a v2 con [kubectl apply]. Observas que hay pods de v1 y v2 mezclados temporalmente, hasta que todos son v2.",
+      "question": "¿Qué es un rolling update?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estrategia in-place que reemplaza replicas de la versión vieja por la nueva GRADUALMENTE, respetando maxUnavailable (cuántas pueden estar down) y maxSurge (cuántas extra puede crear). Kubernetes Deployment por default. Ventaja: no requiere ambiente duplicado. Desventaja: rollback lento (hay que hacer rolling update inverso), y durante el proceso conviven v1 y v2 sirviendo traffic.", "correct": true, "why": "Correcto. Rolling update es el default en Kubernetes Deployments. maxUnavailable=25% y maxSurge=25% son defaults típicos. Kubernetes crea pods v2, waits ready, mata pods v1, repite. No duplica infra completa; solo overhead de maxSurge." },
+        { "letter": "B", "text": "Deploy que se hace poco a poco durante días.", "correct": false, "why": "Confuso. Rolling update es cuestión de minutos típicamente (segundos por pod × #pods). No 'lento en días'." },
+        { "letter": "C", "text": "Deploy sin downtime porque duplica ambiente completo.", "correct": false, "why": "Confuso con blue/green. Rolling NO duplica ambiente completo — solo overhead de maxSurge (típicamente 25%)." },
+        { "letter": "D", "text": "Deploy que envía traffic al 10% de usuarios primero.", "correct": false, "why": "Eso es canary con traffic splitting. Rolling reemplaza pods pero cada pod recibe traffic normal (round-robin del LB)." }
+      ],
+      "explanation": "Rolling update mechanics en K8s: (1) crea maxSurge nuevos pods v2; (2) espera ready + healthy (readinessProbe); (3) mata maxUnavailable pods v1; (4) repite hasta que todos son v2. Tuning: maxUnavailable=0 + maxSurge=1 = slower pero cero degradation; maxUnavailable=50% + maxSurge=50% = rapid pero degradation temporal. Rollback: [kubectl rollout undo] hace otro rolling update en sentido inverso (LENTO). Requerimientos: (a) readinessProbe bien configurada; (b) graceful shutdown (SIGTERM handling + preStop hook); (c) backward-compatible API/DB durante el proceso.",
+      "realWorld": "Kubernetes Deployment rolling update es la estrategia default más usada globalmente. Amazon ECS tiene equivalente. HashiCorp Nomad similar. Netflix Spinnaker orquesta rolling updates on top of K8s con more control. Anti-patrón común: no tener readinessProbe → K8s cree que pod está ready antes de que realmente lo esté → traffic a pods no ready → errors.",
+      "tags": ["rolling update", "kubernetes", "maxSurge", "maxUnavailable"],
+      "tech": ["Kubernetes", "Deployment", "readinessProbe"],
+      "references": [{ "title": "Kubernetes Docs — Deployments" }, { "title": "Kubernetes — Rolling Update Strategy" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "deployment",
+      "topic": "Canary deployment — definición y valor",
+      "difficulty": "mid",
+      "scenario": "Tienes 100 pods servidos por un LB. Quieres deployar v2 pero minimizar blast radius si algo va mal. Un colega propone: 'deploy 5 pods v2 al lado de 95 v1, envía 5% del traffic ahí, monitor métricas 30 min, si están OK escala a 25%, luego 100%'.",
+      "question": "¿Qué es canary deployment y por qué es efectivo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Deploy gradual: pequeño % del traffic a la nueva versión primero, monitor métricas (latency, error rate, business metrics), si todo OK aumentar %. Blast radius reducido: si v2 tiene bug, solo N% de users afectados hasta rollback.", "correct": true, "why": "Correcto. Canary = 'canary in a coal mine' — los mineros llevaban canarios; si el pájaro moría, sabían que había gas tóxico. Los usuarios canary detectan problemas antes de exposición completa." },
+        { "letter": "B", "text": "Coexistencia de dos versiones sirviendo traffic real. Permite comparar métricas v1 vs v2 en el mismo ambiente, mismo hardware, mismo momento — comparación justa (apples-to-apples).", "correct": true, "why": "Correcto. Blue/green también coexiste temporalmente, pero canary es diseñado para PROLONGAR la coexistencia y hacer statistical analysis. Ver Kayenta de Netflix para analysis automatizado." },
+        { "letter": "C", "text": "Requiere traffic splitting: por porcentaje (5%, 25%, 100%), por header (para specific users), por region, o por user segment. Load balancer o service mesh (Istio, Linkerd) hace el split.", "correct": true, "why": "Correcto. Sin traffic splitting no hay canary real. K8s Ingress con weight, Istio VirtualService weight, AWS ALB weighted target groups, Envoy weighted clusters — todas soportan esto." },
+        { "letter": "D", "text": "Combinable con automated rollback: si error rate > umbral en el canary, promotion se aborta automáticamente y rollback. Argo Rollouts, Flagger, Spinnaker soportan esto con analysis templates.", "correct": true, "why": "Correcto. Progressive delivery = canary + automated analysis. Sin auto-rollback, canary requires human vigilance (que puede fallar en 3AM)." },
+        { "letter": "E", "text": "Canary siempre significa deployar solo 1 pod extra.", "correct": false, "why": "Falso. El % de canary es variable (1%, 5%, 10%, 25%, 50%). Number of pods depende del scale total. En 1000 pods, un 1% canary = 10 pods, no 1." }
+      ],
+      "explanation": "Canary steps clásicos: (1) deploy N% pods v2 al lado de v1; (2) route N% traffic a v2 (via LB weight); (3) monitor métricas por T minutos; (4) si OK, subir a M% (típicamente 5→25→50→100); (5) si mal, abort + rollback. Requerimientos: (a) traffic splitting infra (Istio, ALB weighted, Envoy); (b) métricas SLI observables (Prometheus, Datadog); (c) analysis logic (manual dashboards o automated con Kayenta/Flagger); (d) rollback automático si falla. Ventajas vs blue/green: menos infra duplicada (25% no 100%), risk graduated. Desventajas: sesiones stickiness challenging, database migrations más complejas.",
+      "realWorld": "Netflix inventó canary analysis científico con Kayenta (2017 OSS). Google usa canary extensively — Borg schedules canary tasks separadamente. Facebook Gatekeeper hace canary por cohort de users. Etsy pionero de gradual rollout con dashboards manuales. Spinnaker orquesta canaries multi-cloud.",
+      "tags": ["canary", "traffic splitting", "gradual rollout", "blast radius"],
+      "tech": ["Istio", "Argo Rollouts", "Flagger", "Kayenta", "Spinnaker"],
+      "references": [{ "title": "Google Cloud — Canary Deployments" }, { "title": "Netflix Tech Blog — Kayenta" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "deployment",
+      "topic": "Cost tradeoffs entre estrategias",
+      "difficulty": "mid",
+      "scenario": "Tu CFO pregunta: '¿cuánto extra vamos a pagar en AWS por hacer blue/green vs rolling vs canary?'. Tienes 100 EC2 t3.large corriendo. Necesitas cuantificar.",
+      "question": "¿Cuál es el cost overhead APROXIMADO de cada estrategia?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Blue/green: +100% temporal (duplicas toda la infra hasta el cutover). Si el switch tarda 1h, pagas 100h de EC2 extra ese día. Con auto-teardown de blue post-switch, solo pagas por la duración del test.", "correct": true, "why": "Correcto. Blue/green duplica infra POR DEFINICIÓN. En cloud con auto-scaling, coste = duración del solapamiento. En on-prem, coste = capex permanente doble." },
+        { "letter": "B", "text": "Rolling update: overhead mínimo (solo maxSurge extra, típicamente 25%). Si tienes 100 pods, durante el rollout hay hasta 125 pods running temporalmente. Cost pequeño y por poco tiempo.", "correct": true, "why": "Correcto. Rolling es más cost-efficient. maxSurge=0% posible pero causa temporary capacity reduction durante rollout." },
+        { "letter": "C", "text": "Canary: overhead medio (25-50% durante el análisis). Depende del % de canary y su duración. Un canary al 25% mantenido 2h = 25 pods extra × 2h.", "correct": true, "why": "Correcto. Trade-off: mayor % de canary = mejor statistical power = mayor cost. Duración del canary también importa." },
+        { "letter": "D", "text": "Blue/green tiene otro costo oculto: DBs, caches, ELBs, todo lo shared debe soportar ambos ambientes escribiendo simultáneamente. Esto es más costoso que solo EC2.", "correct": true, "why": "Correcto. Muchas empresas underestimate esto. Duplicar EC2 es barato; duplicar RDS Multi-AZ, Aurora, caches, es caro. Alternativa: compartir DB pero requiere backward compatibility." },
+        { "letter": "E", "text": "Todas las estrategias tienen el mismo costo.", "correct": false, "why": "Falso. Los costos varían dramáticamente. CFO informado se preocupa por esto." }
+      ],
+      "explanation": "Cost decision matrix: (1) rolling = cheapest infra overhead, mayor risk si falla porque no hay ambiente clean para volver; (2) canary = middle ground, trade infra cost por reduced blast radius; (3) blue/green = highest infra cost, lowest deployment risk (rollback instantáneo). Empresas con SLA estricto (banks, healthcare) prefieren blue/green a pesar del costo. Empresas cost-sensitive (startups) prefieren rolling. Empresas con maturity alta prefieren canary con automated analysis (best value). En Kubernetes: rolling es default gratis; canary requiere Argo Rollouts/Flagger; blue/green requiere Ingress config o Service Mesh.",
+      "realWorld": "Netflix decidió deprecar blue/green interno en favor de canary por costo (blue/green a Netflix scale = miles de dólares/deploy en overhead). AWS CodeDeploy cobra por deploys blue/green (cost model diferente). Facebook usa rolling para most services (cost efficient) + canary para high-risk deployments.",
+      "tags": ["cost", "tradeoffs", "infra overhead", "cloud economics"],
+      "tech": ["AWS", "EC2", "RDS"],
+      "references": [{ "title": "AWS Well-Architected — Cost Optimization" }, { "title": "Netflix Tech Blog — Deployment Cost" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "deployment",
+      "topic": "A/B testing vs canary",
+      "difficulty": "mid",
+      "scenario": "Marketing quiere lanzar dos variantes de checkout: variant A (botón azul), variant B (botón verde) para medir conversion. Un dev sugiere 'usemos canary'. Otro dice 'no, esto es A/B testing'.",
+      "question": "¿Cuál es la diferencia REAL entre canary deployment y A/B testing?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Canary y A/B testing usan TECNOLOGÍA similar (traffic splitting) pero PROPÓSITO distinto. Canary: verificar que v2 no rompe algo (métricas técnicas — error rate, latency, resource usage) antes de full rollout. A/B testing: medir cuál variante da mejor RESULTADO DE NEGOCIO (conversion, revenue, engagement) con statistical significance. Canary es transición temporal; A/B testing puede correr semanas para reunir data.", "correct": true, "why": "Correcto. La distinción es semántica pero crucial. Canary duración: minutos-horas, deciding go/no-go. A/B duración: semanas, deciding cuál variante ganó. Canary métricas: técnicas (SLI). A/B métricas: business (KPI). Ambos usan traffic splitting pero con framing distinto." },
+        { "letter": "B", "text": "Son exactamente lo mismo — solo nombres distintos.", "correct": false, "why": "Confusión común. La tecnología overlap pero decision framework es distinto. Un product manager entiende A/B; un DevOps entiende canary." },
+        { "letter": "C", "text": "A/B testing solo aplica a UI; canary solo a backend.", "correct": false, "why": "Falso. A/B testing puede ser en backend (algorithm variants). Canary puede afectar UI (nueva versión del frontend)." },
+        { "letter": "D", "text": "A/B testing no requiere feature flags.", "correct": false, "why": "Al contrario — A/B testing usualmente se implementa con feature flags para toggling per user. Optimizely, Split, LaunchDarkly ofrecen A/B testing built-in." }
+      ],
+      "explanation": "Herramientas compartidas: traffic splitting infra (Istio VirtualService, ALB weighted, feature flag SDK). Diferencias clave: (1) Duración — canary minutes-hours, A/B days-weeks; (2) Métricas — canary SLI (technical), A/B KPI (business); (3) Assignment — canary por % random, A/B por user cohort (para consistency: mismo user ve misma variant siempre); (4) Endpoint — canary termina con full rollout, A/B termina con winner selection. Herramientas: canary specializes = Argo Rollouts, Flagger; A/B specializes = Optimizely, VWO, Split; overlap = LaunchDarkly, GrowthBook, Statsig hacen ambos. Anti-patrón: canary de 2 semanas ≠ canary; es A/B testing con nombre equivocado.",
+      "realWorld": "Netflix A/B tests personalization algorithms simultaneously con canary deploys de nuevo código. Airbnb famoso por A/B testing riguroso (ver 'ERF' — Experimentation Reporting Framework). Facebook Gatekeeper hace ambos. Google Optimize (deprecated 2023) fue A/B tool popular. Amazon A/B tests homepage constantemente.",
+      "tags": ["A/B testing", "canary", "experimentation", "traffic splitting"],
+      "tech": ["Optimizely", "Split", "LaunchDarkly", "Argo Rollouts"],
+      "references": [{ "title": "Optimizely — A/B Testing Guide" }, { "title": "Netflix Tech Blog — Experimentation Platform" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "deployment",
+      "topic": "Automated rollback triggers",
+      "difficulty": "mid",
+      "scenario": "Deployeas canary v2 al 10%. A los 5 minutos, error rate sube de 0.1% a 5%. Tu ingeniero está en meeting. Sin intervención, blast radius crece. Necesitas rollback automático.",
+      "question": "¿Qué triggers automatizados son apropiados para rollback?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Error rate spike: si error rate del canary supera un múltiplo (ej. 3x) del baseline (rolling window de v1), rollback automático. Statistical: no un umbral hardcoded, sino relative al comportamiento normal.", "correct": true, "why": "Correcto. Comparación relativa vs baseline es más robusta que absolute threshold. Kayenta (Netflix) implementa esto con Mann-Whitney U statistical test." },
+        { "letter": "B", "text": "Latency degradation: si p99 del canary excede p99 de v1 en un factor (ej. 1.5x) durante ventana sostenida (no 1 spike). Ventana sostenida evita false positives de single-request outliers.", "correct": true, "why": "Correcto. Percentiles P95/P99 revelan tail latency. Un canary con mismo mean pero peor P99 = regression latente. Ventana sostenida (5-10 min) filtra noise." },
+        { "letter": "C", "text": "SLO burn rate: si el canary está burning error budget más rápido que sustainable (ej. burn rate > 14x en ventana de 1h = 'fast burn'), rollback. Google SRE Workbook detalla esto.", "correct": true, "why": "Correcto. Burn rate alerting es más sofisticado que raw thresholds. Integra concept de SLO con automated rollback. Es la técnica más avanzada." },
+        { "letter": "D", "text": "Business metrics: conversion rate, revenue, engagement. Si canary reduce conversion vs v1 en X%, rollback. Requires integración con analytics platform.", "correct": true, "why": "Correcto. Métricas técnicas OK pero business dañado = disaster. Amazon rollback si order rate cae. Netflix si video-start success degrades." },
+        { "letter": "E", "text": "Manual approval siempre necesaria para rollback — nunca automatizar.", "correct": false, "why": "Antipatrón. Rollback debe ser AUTO por design (safe). Aprobación manual es útil para PROMOTION (avance del canary), no para rollback." },
+        { "letter": "F", "text": "Rollback si cualquier alert firing (aunque no relacionado al canary).", "correct": false, "why": "Peligroso — false correlation. Solo trigger rollback con métricas del canary vs baseline. Otros alerts pueden ser unrelated." }
+      ],
+      "explanation": "Analysis templates típicos (Argo Rollouts, Flagger): (1) success rate > 99% en canary; (2) p99 latency < 500ms; (3) CPU/memory dentro de bounds; (4) custom Prometheus queries. Kayenta approach (más sophisticated): Mann-Whitney U test compara distribuciones de métricas canary vs baseline, produce score 0-100, threshold decides promote/rollback. SLO burn rate alerts (Google SRE): 'fast burn' (>14.4x) alerts en minutes, 'slow burn' (>1x) alerts en hours. Composición: rollback si CUALQUIER análisis falla; promotion si TODOS pasan. Anti-patrón: single metric threshold sin baseline = false positives constantes → team ignora → real problems missed.",
+      "realWorld": "Netflix Kayenta usa Mann-Whitney U para automated canary analysis. Spinnaker orquesta rollback automático basado en Kayenta scores. Flagger tiene analysis templates built-in con Prometheus queries. Argo Rollouts similar. Amazon rolls back si order success rate degrades (real-time monitoring en deployment).",
+      "tags": ["automated rollback", "canary analysis", "SLO burn rate", "Kayenta"],
+      "tech": ["Kayenta", "Argo Rollouts", "Flagger", "Prometheus"],
+      "references": [{ "title": "Netflix Tech Blog — Kayenta" }, { "title": "Google SRE Workbook Ch. 5 — Alerting on SLOs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "deployment",
+      "topic": "Cutover strategy — DNS vs LB vs Service Mesh",
+      "difficulty": "senior",
+      "scenario": "Blue/green: ambiente green ready. Cutover time. Ingeniero propone: 'cambiar el CNAME del DNS'. Otro: 'cambiar target group del ALB'. Otro: 'cambiar VirtualService de Istio'. ¿Cuál es mejor?",
+      "question": "¿Cuáles son los tradeoffs entre DNS, LB y Service Mesh para cutover?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "DNS: simple, funciona anywhere, pero TTL causa cutover LENTO — clients cachean el DNS y siguen yendo a blue durante minutos. TTL=60s ya es agresivo; muchos DNS resolvers ignoran TTLs bajos. Bad para cutover rápido, bueno para transitions lentas.", "correct": true, "why": "Correcto. Fenómeno bien documentado. Google Public DNS honors TTLs bien; ISP-level DNS often ignora TTLs. Un CNAME switch tarda 5-30 min de propagación real." },
+        { "letter": "B", "text": "Load Balancer (ALB, ELB, NGINX): switch de target group es INSTANTÁNEO (<1s). Existing connections drenan gracefully, new connections van al nuevo target. Best cutover speed. Requires que el LB pueda routear a ambos environments.", "correct": true, "why": "Correcto. AWS ALB weighted target groups permite hacer canary también. NGINX upstream switch es instantáneo. Este es el mecanismo preferido para blue/green rápido." },
+        { "letter": "C", "text": "Service Mesh (Istio, Linkerd): VirtualService weight cambio es instantáneo, pero requiere que TODO el tráfico pase por el mesh (sidecar en cada pod). Máxima flexibilidad (canary por header, region, user), overhead por sidecar.", "correct": true, "why": "Correcto. Service mesh da traffic control más granular. Weight, header-based, region-based routing. Trade-off: latency overhead del sidecar (~1-2ms), operational complexity del mesh." },
+        { "letter": "D", "text": "Feature flags: cutover al nivel APLICACIÓN. Toggle en config → new code path activo. Ventaja: funciona incluso sin infra changes. Desventaja: requiere código instrumentado con flags.", "correct": true, "why": "Correcto. Feature flags como cutover mechanism es común para changes internos al servicio. Combinable con blue/green infra." },
+        { "letter": "E", "text": "DNS es siempre la mejor opción por su simplicidad.", "correct": false, "why": "Falso. DNS tiene el peor tiempo de cutover por caching. Solo apropiado para transitions donde no hay urgency." }
+      ],
+      "explanation": "Cutover speed ranking: (1) LB switch <1s; (2) Service Mesh weight change <1s; (3) Feature flag toggle <1s (a nivel process); (4) DNS TTL puede ser minutos-horas real. Rollback speed importa mismo: (1) LB → instant flip back; (2) Mesh → instant weight adjustment; (3) DNS → wait for cache expiration → real users still see old. Best practice: usar DNS para geographic routing (latency-based), usar LB/mesh para deployment cutover. AWS Route 53 con weighted routing puede hacer canary DNS-based pero con caveats de caching. Combinar: DNS a LB, LB hace weighted routing a targets (best of both).",
+      "realWorld": "Netflix orquesta cutover via Spinnaker + AWS ALB/Route 53. Google Cloud usa Global Load Balancer para instant cutover globally. Cloudflare workers permiten cutover a nivel edge (instant globalmente). Airbnb Istio-based cutover con VirtualService weights. Reddit reportó incident 2019 donde DNS TTL caching prolongó un cutover a 30min (users vieron old version).",
+      "tags": ["cutover", "DNS", "load balancer", "service mesh", "TTL"],
+      "tech": ["AWS ALB", "Route 53", "Istio", "NGINX"],
+      "references": [{ "title": "AWS ALB — Weighted Target Groups" }, { "title": "Istio VirtualService docs" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "deployment",
+      "topic": "Session affinity y state durante cutover",
+      "difficulty": "senior",
+      "scenario": "App tiene sesiones sticky (usuario logged in cachea state en pod). Haces blue/green cutover. Al switch, users pierden sesiones — logged out en producción.",
+      "question": "¿Cómo manejar sesiones/state durante blue/green o canary?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Externalizar state — sesiones NO en pod memory, sino en Redis/DynamoDB compartido entre blue y green. Cualquier pod puede servir cualquier sesión. Stateless apps son trivialmente compatible con cualquier deployment strategy.", "correct": true, "why": "Correcto. Twelve-Factor App principio: 'processes are stateless'. State en backing service (DB, cache) compartido. Es la solución CORRECTA a largo plazo." },
+        { "letter": "B", "text": "Sesión en JWT (token firmado en cookie/header). No hay state en servidor. Cualquier pod puede validar el JWT. Trade-off: no revocación instantánea de sesiones (JWT válido hasta expiración).", "correct": true, "why": "Correcto. JWT es approach stateless popular. Combined con short expiration + refresh tokens = balance seguridad/UX." },
+        { "letter": "C", "text": "Connection draining: durante cutover, el LB deja de enviar new connections a blue pero permite que existing connections completen (30-300 sec grace). Usuarios en session activa no son cortados abruptamente.", "correct": true, "why": "Correcto. AWS ALB 'deregistration delay', K8s pod 'terminationGracePeriodSeconds', NGINX 'lingering close'. Universalmente soportado." },
+        { "letter": "D", "text": "Sticky sessions: LB envía cada user siempre al mismo pod (cookie-based). En cutover, cambia el pod → user pierde estado. Sticky sessions son ANTIPATRÓN para deployments modernos.", "correct": true, "why": "Correcto. Sticky sessions atan usuarios a pods → deployment complexity. Aceptable solo para caches locales performance-critical; sesiones deberían ser stateless." },
+        { "letter": "E", "text": "Cutover instantáneo garantiza que ningún user pierde sesión.", "correct": false, "why": "Falso. Instantáneo no ayuda si el estado está en el pod viejo. Requires state externalization." }
+      ],
+      "explanation": "Deployment strategies + state management: (1) Stateless apps (JWT o session store externo) = compatible con cualquier strategy sin issues; (2) Sticky sessions = complica blue/green (usuarios remain en blue); (3) WebSocket connections = long-lived, requieren connection draining; (4) In-progress transactions = require idempotency + retry logic. Best practices: (a) sesiones en Redis/Memcached; (b) DB writes idempotentes con request IDs; (c) connection draining con grace periods razonables; (d) client-side retry logic para transient errors durante cutover. Anti-patrón: state in pod memory + no draining = users pierden sesiones cada deploy.",
+      "realWorld": "Facebook publicó extensively sobre stateless architectures que facilitan continuous deployment. Netflix eureka + connection draining. Amazon DynamoDB sessions permite scaling horizontal + easy cutover. Apps de banking históricamente stateful (sesión en RAM del servidor) = hard to do continuous deployment; muchos han migrado a stateless.",
+      "tags": ["session", "state", "connection draining", "stateless"],
+      "tech": ["Redis", "JWT", "AWS ALB", "Kubernetes"],
+      "references": [{ "title": "The Twelve-Factor App — 12factor.net" }, { "title": "AWS ALB — Connection Draining" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "deployment",
+      "topic": "Database schema y deployments",
+      "difficulty": "senior",
+      "scenario": "v1 usa columna 'user_name'. v2 la renombra a 'username'. Blue/green: si aplicas migration para renombrar, blue se rompe. Si no aplicas, green no funciona. ¿Cómo se hace?",
+      "question": "¿Cómo compatibilizar DB schema changes con deployment strategies?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Expand-contract pattern: (1) EXPAND — añades nueva columna 'username' sin remover 'user_name', ambas coexisten (v1 usa vieja, v2 usa nueva); (2) BACKFILL — copiar datos a la nueva columna; (3) v2 deploy — usa nueva columna; (4) validar; (5) CONTRACT — remover columna vieja. Múltiples deploys en secuencia.", "correct": true, "why": "Correcto. Es la técnica estándar (Martin Fowler 'ParallelChange'). Cada paso es backward-compatible. Ningún deploy rompe el sistema porque schema soporta ambas versiones simultáneamente." },
+        { "letter": "B", "text": "Backward-compatible migrations: durante un deploy, la DB debe soportar TANTO v1 como v2. No borres columnas, no cambies types incompatibles, no removas defaults. Cambios rompedores (destructive) se hacen en release SEPARADA del que introduce el uso.", "correct": true, "why": "Correcto. Regla oro de zero-downtime deploys. Si cada migration es reversible y backward-compat, deployment strategy no importa (blue/green, canary, rolling funcionan)." },
+        { "letter": "C", "text": "Application-level compatibility: v2 debe soportar leer datos escritos por v1 (formato viejo). Durante rollout, hay entries del formato viejo en la DB — v2 no puede asumir todo es formato nuevo.", "correct": true, "why": "Correcto. 'Read old, write new' pattern. Aplicación debe ser robusta con datos legacy durante transición. Después del rollout completo + backfill, puede simplificar." },
+        { "letter": "D", "text": "Dark reads/writes: v2 lee/escribe a formato nuevo Y viejo simultáneamente durante transición para validar consistency. Detecta bugs en nueva lógica sin romper.", "correct": true, "why": "Correcto. Facebook migration patterns. Escribe a ambos, lee de nuevo, compara con viejo. Cuando confidence alto, corta el viejo." },
+        { "letter": "E", "text": "Simplemente ejecutar migration mid-deploy y esperar que nadie note.", "correct": false, "why": "Anti-patrón. Migrations breaking = downtime o errores en producción. Nunca hacer breaking migrations sin expand-contract." }
+      ],
+      "explanation": "Expand-contract steps: (1) Expand DB (add new column/table); (2) Deploy app que ESCRIBE a ambas (viejo y nuevo); (3) Backfill (copiar datos viejos a nueva estructura); (4) Deploy app que LEE de nuevo, sigue escribiendo a ambos; (5) Validate durante ventana; (6) Deploy app que ignora columna vieja; (7) Contract (drop columna vieja). Cada paso es independientemente rollback-able. Tools: Flyway, Liquibase, gh-ost, pt-online-schema-change. Un cambio típico simple (rename) = 3-5 deploys en semanas. Es más lento pero SEGURO. Anti-patrón común: 'total downtime maintenance window' = mala DevOps.",
+      "realWorld": "Stripe famous por expand-contract discipline — cada schema change es 3+ PRs planeadas semanas antes. Instagram, Facebook publicaron sobre grandes migrations con expand-contract. GitHub gh-ost tool específicamente para online schema changes sin locks. Notion re-sharded Postgres con dark reads/writes durante meses.",
+      "tags": ["expand-contract", "schema migration", "backward-compat", "dark reads"],
+      "tech": ["Flyway", "Liquibase", "gh-ost"],
+      "references": [{ "title": "Martin Fowler — ParallelChange" }, { "title": "GitHub Engineering — gh-ost" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "deployment",
+      "topic": "Progressive delivery — el spectrum",
+      "difficulty": "senior",
+      "scenario": "Debate: '¿qué es progressive delivery vs canary vs feature flags?'. Todos parecen overlapping.",
+      "question": "¿Cómo se relacionan progressive delivery, canary y feature flags?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Progressive delivery es el TÉRMINO PARAGUAS para prácticas que reducen risk de deploy exponiendo cambios GRADUALMENTE. Incluye: (1) canary (infra-level, % de traffic); (2) feature flags (app-level, toggle per user/group); (3) shadow/dark traffic; (4) A/B testing; (5) blue/green gradual. Todos convergen en el mismo principio: NO deployar todo a todos a la vez.", "correct": true, "why": "Correcto. James Governor (RedMonk) acuñó el término en 2018. Progressive delivery = canary + feature flags + observability + automated analysis. Es la evolución natural de CD2 (Continuous Deployment) porque puro CD2 sin gradual exposure es risky at scale." },
+        { "letter": "B", "text": "Son sinónimos.", "correct": false, "why": "No exactamente. Progressive delivery incluye canary y feature flags como subsets, no son idénticos." },
+        { "letter": "C", "text": "Feature flags reemplazan canary — no necesitas ambos.", "correct": false, "why": "Falso. Complementarios. Canary es infra-level (nueva version), feature flags es app-level (nueva feature). Netflix usa ambos." },
+        { "letter": "D", "text": "Progressive delivery aplica solo a mobile apps.", "correct": false, "why": "Aplica a cualquier deployment. Mobile tiene sus propios patterns (staged rollout en App Store/Play), pero progressive delivery aplica a backends/webs/APIs también." }
+      ],
+      "explanation": "Progressive Delivery stack completo: (1) INFRA canary — Argo Rollouts, Flagger, Spinnaker con traffic splitting; (2) APP feature flags — LaunchDarkly, Split, GrowthBook, Unleash; (3) OBSERVABILITY — Prometheus, Datadog para detectar problemas rápido; (4) AUTOMATED ANALYSIS — Kayenta, Argo Analysis Templates; (5) BUSINESS METRICS — analytics platforms para conversion/revenue. Empresas maduras combinan: canary infra Y feature flags simultáneamente. Ejemplo: deploy v2 con feature flag OFF → canary infra al 10% → verify no regression → enable flag al 5% users → gradually 50%, 100%. Dos ejes de gradualidad ortogonales.",
+      "realWorld": "Facebook Gatekeeper combina infra rollout + feature flags. Google Flag Registry hace similar. LaunchDarkly + Argo Rollouts es stack popular en Kubernetes. Weaveworks acuñó 'GitOps' y promueve progressive delivery con Flagger. James Governor y Kelsey Hightower han hablado extensively sobre esto.",
+      "tags": ["progressive delivery", "canary", "feature flags", "James Governor"],
+      "tech": ["Argo Rollouts", "Flagger", "LaunchDarkly"],
+      "references": [{ "title": "RedMonk — Towards Progressive Delivery" }, { "title": "Weaveworks — Progressive Delivery" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "deployment",
+      "topic": "Rolling update — configurar maxSurge/maxUnavailable",
+      "difficulty": "mid",
+      "scenario": "Servicio con 100 replicas. Deploy rolling. Con defaults K8s (25%/25%): durante rollout hay hasta 125 pods y hasta 25 no ready. Necesitas ajustar para dos casos: (a) app cost-sensitive, (b) app cannot degrade at all.",
+      "question": "¿Cómo tunear maxSurge/maxUnavailable para cada caso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cost-sensitive: maxSurge=0, maxUnavailable=25%. No creas pods extra (0 overhead), pero permites hasta 25% down durante rollout. Slower rollout, capacity reduction temporal. OK si el servicio tiene tolerance a temporal capacity reduction.", "correct": true, "why": "Correcto. maxSurge=0 elimina el infra overhead. Trade-off: hasta 25 pods down durante rollout = 75% capacity. Solo apto si sistema puede absorber esa carga con 75%." },
+        { "letter": "B", "text": "Cannot degrade: maxSurge=25%, maxUnavailable=0. Crea 25 pods extra (v2 ready) ANTES de matar cualquier v1. Cero downtime, cero capacity reduction. Mayor infra overhead durante rollout.", "correct": true, "why": "Correcto. maxUnavailable=0 forza que K8s no mate ningún v1 hasta que reemplazo v2 esté ready. Perfect para services con estricto SLO. Overhead = 25% infra temporal." },
+        { "letter": "C", "text": "Small stateful services: maxSurge=1, maxUnavailable=0. Un pod extra a la vez, cero downtime. Rollout LENTO pero seguro. Databases replicas, message queues.", "correct": true, "why": "Correcto. Para StatefulSets K8s usa 'OnDelete' o 'RollingUpdate' con partition. Similar principle: un pod a la vez, seguro." },
+        { "letter": "D", "text": "Rapid rollout: maxSurge=100%, maxUnavailable=100%. Effectively blue/green (todos los pods de una). Cutover instant.", "correct": true, "why": "Correcto pero cuidado. maxSurge=100% duplica capacity temporalmente. maxUnavailable=100% permite que todos vayan down (unsafe si algo falla). Efectivo para desarrollo/staging." },
+        { "letter": "E", "text": "Los defaults 25%/25% siempre son óptimos.", "correct": false, "why": "Falso. Defaults son sanos genéricos pero contextos específicos requieren ajuste. High-SLO services benefit de maxUnavailable=0; cost-sensitive de maxSurge=0." }
+      ],
+      "explanation": "Kubernetes Deployment rolling strategy config: strategy.type=RollingUpdate, strategy.rollingUpdate.maxSurge (%|int), strategy.rollingUpdate.maxUnavailable (%|int). maxSurge=0 requiere maxUnavailable>0. maxUnavailable=0 requiere maxSurge>0. Ambos 0 = invalid config (no puede progresar). Rolling progression: create maxSurge nuevos → wait ready (readinessProbe) → kill maxUnavailable viejos → repeat. Speed depende de: (1) readinessProbe delay + interval; (2) container startup time; (3) maxSurge/maxUnavailable settings; (4) total replica count. Rollout de 100 pods con maxSurge=25% + 30s startup = ~2 min total. Tuning: measure current rollout time, adjust to fit deployment window budget.",
+      "realWorld": "Google Cloud Kubernetes best practices docs cover rolling strategy tuning. Airbnb standardizes maxSurge=25% maxUnavailable=0 para todos los services production (nunca acepta capacity reduction durante deploy). Netflix combines with pre-warming y traffic ramp-up. AWS EKS docs incluyen consejos similares.",
+      "tags": ["rolling update", "maxSurge", "maxUnavailable", "kubernetes"],
+      "tech": ["Kubernetes", "Deployment"],
+      "references": [{ "title": "Kubernetes — Deployment strategy" }, { "title": "Kubernetes best practices" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "deployment",
+      "topic": "Canary con Istio VirtualService",
+      "difficulty": "senior",
+      "scenario": "Kubernetes cluster con Istio. Quieres canary: 10% traffic a v2, 90% a v1. Devs preguntan cómo configurarlo.",
+      "question": "¿Cómo se implementa canary con Istio VirtualService?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dos Deployments (v1 y v2) con labels distintos (version: v1, version: v2). Un DestinationRule define subsets basados en labels. Un VirtualService route con weight: {subset: v1, weight: 90}, {subset: v2, weight: 10}. Istio proxy (Envoy sidecar) split traffic según weights. Cambiar weights = deploy YAML update (o via Argo Rollouts/Flagger).", "correct": true, "why": "Correcto. Es el pattern canónico Istio para canary. Weighted routing es primitive core. Argo Rollouts + Flagger orquestan cambios de weight automáticamente basado en análisis. También soporta canary por header (routing por request headers) para test cohorts específicos." },
+        { "letter": "B", "text": "Escalar el Deployment v2 al 10% de las replicas y esperar que Kubernetes automáticamente route 10% del traffic.", "correct": false, "why": "Falso sin Istio/mesh. K8s Service hace round-robin entre pods; si tienes 90 v1 + 10 v2 = 10% traffic va a v2 SOLO si LB es round-robin puro. Pero muchos LBs no lo son. Explicit weight-based routing es más determinístico." },
+        { "letter": "C", "text": "Cambiar el manifiesto de Service para apuntar a v2 selector.", "correct": false, "why": "Eso NO es canary — es full cutover (todo el traffic a v2). Canary requiere splitting simultáneo, no switch." },
+        { "letter": "D", "text": "Solo pausable con manual approvals — no automatable.", "correct": false, "why": "Falso. Argo Rollouts + Flagger automatan la progression (weight de 10 → 25 → 50 → 100) con analysis en cada step." }
+      ],
+      "explanation": "Istio canary yaml sample: DestinationRule define subsets [v1, v2]. VirtualService http.route con destinations [{host: svc, subset: v1, weight: 90}, {host: svc, subset: v2, weight: 10}]. Envoy sidecar en cada pod aplica las weights. Alternativas: (1) NGINX Ingress con canary annotation (nginx.ingress.kubernetes.io/canary-weight); (2) AWS ALB weighted target groups (target group per version); (3) Linkerd similar a Istio; (4) Kubernetes Gateway API (nuevo standard). Argo Rollouts CRD abstrae los weight changes: define steps [{setWeight: 10}, {pause: 30m}, {setWeight: 25}, ...] con analysisTemplate integrado. Flagger similar pero más opinionated (automated analysis con Prometheus queries).",
+      "realWorld": "Airbnb usa Istio + Argo Rollouts para canary. Lyft creó Envoy (base de Istio) para este propósito. Ticketmaster, IBM Cloud usan Istio for progressive delivery. Weaveworks + Flagger es popular en clusters GitOps. Google Cloud Anthos incluye Istio nativo.",
+      "tags": ["Istio", "VirtualService", "canary", "traffic splitting"],
+      "tech": ["Istio", "Envoy", "Argo Rollouts", "Flagger"],
+      "references": [{ "title": "Istio docs — Traffic Management" }, { "title": "Argo Rollouts — Canary Strategy" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "deployment",
+      "topic": "Shadow/mirror traffic",
+      "difficulty": "senior",
+      "scenario": "Migrar servicio crítico a nuevo stack. Quieres validar que v2 puede manejar carga real ANTES de exponerlo a users. Un compañero sugiere 'shadow traffic'.",
+      "question": "¿Qué es shadow/mirror traffic y cuándo usarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Traffic mirroring: el LB/proxy envía COPIA del traffic real a v2 pero DESCARTA la response (users siguen viendo v1 response). v2 procesa carga real sin afectar users. Útil para: validar performance a scale, detectar bugs que solo aparecen con production data patterns, warm caches antes del cutover.", "correct": true, "why": "Correcto. Istio soporta 'mirror' en VirtualService. Envoy tiene 'request_mirror_policies'. Ventaja crítica: valida v2 con datos REALES sin risk a users. Caveats: v2 no debe tener side effects (no writes a DB, no emails)." },
+        { "letter": "B", "text": "Redirect todo el traffic a v2 y espera a ver qué pasa.", "correct": false, "why": "Falso — eso sería un blind switch, opuesto a shadow." },
+        { "letter": "C", "text": "Duplicar la DB para v2.", "correct": false, "why": "No es shadow traffic. Shadow es sobre traffic, no state. State handling es un tema separado." },
+        { "letter": "D", "text": "Shadow traffic requiere aprobación regulatoria en todos los casos.", "correct": false, "why": "Falso. Aplica en algunos contextos (PII duplication), pero no universal. Con GDPR/HIPAA, considera si shadowed request contiene PII." }
+      ],
+      "explanation": "Shadow traffic mechanics: (1) LB o Envoy proxy configurado con mirror policy; (2) request original enviado a v1 (response served to user); (3) copia asíncrona enviada a v2 (response discarded); (4) v2 metrics observados: latency, error rate, resource usage. Caveats críticos: (1) v2 side effects — DB writes, external API calls, emails duplicados. Solución: v2 en modo 'read-only' o 'sandbox' con mocked externals; (2) load doubling on backends — si v2 llama a mismos DBs que v1, DB carga se duplica; (3) response time skew — v2 puede tardar más pero no impacta users. Herramientas: Istio VirtualService.http.mirror, Envoy request_mirror_policies, NGINX mirror module, custom app-level (fire-and-forget async). Casos de uso: migration a nuevo stack, cambio de framework, refactor grande.",
+      "realWorld": "GitHub migró de PHP a Ruby con shadow traffic (2010s). Facebook migró Chat con dark launch (esencialmente shadow traffic al backend). Netflix mirror para testing nuevo AB testing platform. Amazon usa shadow para validar new pricing algorithms. Twitter mirror to test new timeline algorithms.",
+      "tags": ["shadow traffic", "mirror", "dark launch", "migration"],
+      "tech": ["Istio", "Envoy", "NGINX"],
+      "references": [{ "title": "Istio — Traffic mirroring" }, { "title": "Envoy — Request mirroring" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "deployment",
+      "topic": "Rollback strategies — automated vs manual",
+      "difficulty": "senior",
+      "scenario": "Deploy causó 500 errors. Necesitas rollback rapido. Comparas opciones: (1) [kubectl rollout undo]; (2) redeploy image previa; (3) toggle feature flag; (4) revert git commit + trigger CI. ¿Cuál es más rápido?",
+      "question": "¿Cuál es la jerarquía de rollback strategies por velocidad y safety?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Feature flag toggle: MÁS RÁPIDO (segundos). Toggle en LaunchDarkly/config → new code path deshabilitado inmediatamente. Requires que la feature esté detrás de flag. Ideal para features risky nuevas.", "correct": true, "why": "Correcto. Feature flag es el rollback más rápido. Segundos. Requires foresight (put feature behind flag first). Facebook, Netflix rely on this heavily." },
+        { "letter": "B", "text": "Blue/green router flip: MUY RÁPIDO (segundos). Load balancer switch de green a blue (previous version). Requires que blue todavía esté running. Sin duplicated env, no aplica.", "correct": true, "why": "Correcto. Blue/green diseñado para instant rollback. LB flip <1s. Amazon Route 53 weighted routing similar." },
+        { "letter": "C", "text": "[kubectl rollout undo]: RÁPIDO pero rolling (2-5 min típico). K8s crea pods de version previa, rolling replace. No instant pero automatable. Simpler que git revert.", "correct": true, "why": "Correcto. K8s recuerda las últimas N ReplicaSets (revisionHistoryLimit). Undo es un simple comando. Trade-off: minutos, no segundos, porque es rolling." },
+        { "letter": "D", "text": "Git revert + CI redeploy: MÁS LENTO (10-30 min). Revert PR, wait CI (build + test + deploy). Pero es el más AUDITABLE (rollback documentado en git history). Preferido para post-mortem clarity.", "correct": true, "why": "Correcto. Trade-off tiempo vs auditability. En incident crítico, use faster method (flag toggle, rollout undo); after incident, follow up con git revert para history clean." },
+        { "letter": "E", "text": "Rollback siempre es la mejor opción cuando algo va mal.", "correct": false, "why": "Overgeneralización. En algunos casos 'fix forward' es mejor (bug identificable rápido, DB migration ya aplicada que no se puede reverter). Depende del incident." }
+      ],
+      "explanation": "Rollback method matrix: (1) Feature flag toggle — segundos, no infra change; (2) Blue/green flip — segundos, requires duplicated infra; (3) Canary revert (Argo Rollouts abort) — 1-2 min, requires progressive delivery infra; (4) [kubectl rollout undo] — 2-5 min, requires K8s + revision history; (5) Redeploy previous image — 5-10 min, requires image tag known; (6) Git revert + CI — 10-30 min, requires CI pipeline. DB migrations complican: si aplicaste ALTER TABLE, rollback de app v2 → v1 puede requerir reverse migration (o forward-only: v3 que soporta ambos schemas). Best practices: (a) small blast-radius deploys (menos rollback needed); (b) automated rollback triggers (no manual latency); (c) fix-forward preferred si bug es trivial; (d) practice rollbacks en game days.",
+      "realWorld": "GitLab 2017 incident (postgres delete) fue famoso caso donde backup restore fue la única opción — no había reversible migration. Reddit 2019 incident tuvieron slow DNS-based rollback. Netflix Spinnaker orquesta rollbacks basado en canary metrics automáticamente. Kubernetes rollout undo es workhorse standard.",
+      "tags": ["rollback", "feature flag", "blue/green", "fix forward"],
+      "tech": ["Kubernetes", "LaunchDarkly", "Spinnaker"],
+      "references": [{ "title": "Kubernetes docs — Rolling back a Deployment" }, { "title": "Google SRE Book Ch. 16 — Emergency Response" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "deployment",
+      "topic": "Deployment strategies para servicios stateful",
+      "difficulty": "staff",
+      "scenario": "Deploy nueva version de Kafka broker cluster (5 nodos, cada uno con 100GB de data local). Blue/green: duplicar TB de data cross-network = imposible. Rolling: matar 1 broker a la vez, re-sync después.",
+      "question": "¿Cómo se aplican deployment strategies a stateful services (DBs, message brokers, storage)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Blue/green NO aplica bien a stateful services grandes — duplicar TB de state es prohibitively costoso. Solución: shared state (blue y green apuntan a mismo storage), pero requires backward-compat data format.", "correct": true, "why": "Correcto. Blue/green fue diseñado para stateless services. Cassandra, Kafka, ElasticSearch de multiple TB no se duplican trivialmente. Netflix, Uber use rolling con state persistence local." },
+        { "letter": "B", "text": "Rolling con StatefulSet en K8s: reemplaza pod por pod, cada uno con PVC persistente. Nueva version debe leer state escrito por vieja version. Rolling update ordenado (por índice: 0, 1, 2...), con partition parameter para pausar entre pods.", "correct": true, "why": "Correcto. StatefulSet es K8s primitive para stateful. Reemplaza pods manteniendo identity (nombre, storage). partition permite canary de solo 1 pod (highest index primero)." },
+        { "letter": "C", "text": "Operator pattern (K8s CRDs con controller): operators específicos por tech (Strimzi para Kafka, Prometheus Operator, etcd Operator) gestionan deployment complexity — order de rollout, wait for replication lag, verify quorum antes de proceed.", "correct": true, "why": "Correcto. Operators encapsulan knowledge de rolling update para stateful específicos. Strimzi rolls Kafka respetando under-replicated partitions. Ejemplo por qué genérico no basta: Kafka no puede matar 2 brokers simultáneamente si tienes replication factor 3." },
+        { "letter": "D", "text": "Multi-version compatibility en el protocol wire: v2 debe hablar protocol de v1 durante rollout (heterogeneous cluster). PostgreSQL, Cassandra, Kafka soportan esto (specific version constraints).", "correct": true, "why": "Correcto. Rolling update de Kafka cluster mezcla brokers v1 y v2 durante horas. Deben poder comunicarse. Kafka bump minor versions carefully. Cassandra tiene protocol negotiation similar." },
+        { "letter": "E", "text": "Simplemente destruir el cluster y recrear con nueva version.", "correct": false, "why": "Data loss disaster. Never do this to production stateful services. Solo aceptable para dev/ephemeral clusters." }
+      ],
+      "explanation": "Stateful deployment patterns: (1) StatefulSet rolling — para K8s stateful; (2) Operator-managed rollout — para complex stateful (Kafka, ES); (3) Read replica cutover — para RDBMS; (4) Data migration + cutover — para storage engine changes. Kafka rolling ejemplo: (a) verify all partitions in-sync; (b) update broker 0 config; (c) restart broker 0; (d) wait for ISR to re-form; (e) verify no under-replicated partitions; (f) proceed to broker 1. Timeframe: hours para large clusters. Cassandra: nodetool drain, restart, wait, verify. ElasticSearch: rolling restart con exclude allocation. Operators automatan todo esto (Strimzi, ES Operator).",
+      "realWorld": "Netflix use Cassandra con custom rolling upgrades. Uber runs Kafka clusters de miles de brokers, rolling upgrades tarda días. LinkedIn (creators of Kafka) publicó extensively sobre operational patterns. Strimzi (RedHat) es standard Kafka operator. Google Cloud Spanner rolls updates transparently (custom infra).",
+      "tags": ["stateful", "StatefulSet", "Operator", "Kafka", "rolling"],
+      "tech": ["Kubernetes StatefulSet", "Strimzi", "Kafka"],
+      "references": [{ "title": "Kubernetes docs — StatefulSet" }, { "title": "Strimzi — Rolling updates" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "deployment",
+      "topic": "Multi-region deployments",
+      "difficulty": "staff",
+      "scenario": "Servicio global en 5 regiones (us-east, us-west, eu-west, ap-southeast, sa-east). Deploy nueva version. ¿Cómo minimizar risk y detectar regional issues?",
+      "question": "¿Cuál es la strategy para multi-region deployment?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Deploy por regiones secuencialmente (waves): (1) region low-traffic primero (canary region — ej. sa-east); (2) monitor por T horas; (3) siguiente region más grande; (4) hasta reach primary regions al final. Blast radius contenido; regional issues detectados temprano.", "correct": true, "why": "Correcto. AWS internamente deploya así. Amazon deploys empiezan por regions más pequeñas. Google similar. Regional deploy waves = combinación de canary + blue/green al nivel geográfico." },
+        { "letter": "B", "text": "Canary DENTRO de cada region: llegar a nueva region, canary 10% → monitor → 50% → 100% → proceed a siguiente region. Doble gradualidad.", "correct": true, "why": "Correcto. Nested canaries. Primero regional (small region → big region), luego per-region (small % → big %). Detección temprana de bugs en cada nivel." },
+        { "letter": "C", "text": "Regional isolation en observability: dashboards por region, alerts por region. Bug regional específico no debe ser hidden por métricas globales agregadas.", "correct": true, "why": "Correcto. Regional bugs son comunes (timezone bugs, locale bugs, regional DB issues). Global aggregates hide regional problems. Cada region necesita own SLI dashboards." },
+        { "letter": "D", "text": "Deploy simultáneo global para minimizar drift.", "correct": false, "why": "Anti-patrón. Simultáneo = un bug rompe todo global instantly. Waves são superior por safety. Global drift durante horas de wave es aceptable (feature flags cover diferencias)." },
+        { "letter": "E", "text": "Skip regions si están 'demasiado ocupadas' con tráfico.", "correct": false, "why": "Antipatrón. Skipped regions se quedan behind, causa drift permanente. Every region debe recibir el deploy — solo el ORDEN cambia." }
+      ],
+      "explanation": "Multi-region deploy waves ejemplo (AWS-style): Wave 1 = sa-east-1 + af-south-1 (small); Wave 2 = ap-northeast-3 + me-south-1 (medium); Wave 3 = eu-west-3 + ap-southeast-2 (medium-large); Wave 4 = eu-west-1 + ap-southeast-1; Wave 5 = us-east-2 + us-west-2 (large); Wave 6 = us-east-1 (largest, deploy last). Waves separadas por HORAS o DÍAS. Cada wave: monitor metrics regionalmente vs baseline. Any regression = abort remaining waves. Requerimientos: (1) tooling para regional deploy (Spinnaker regional pipelines, custom); (2) feature flag consistency across regions (users won't teleport between regions); (3) regional observability. Amazon Prime Video, Google Cloud services todos usan wave-based deploys.",
+      "realWorld": "AWS deploya services por regions en waves — small regions primero, us-east-1 last (por eso, us-east-1 has more outages historically; it's the largest, complex region). Google Cloud similar. Cloudflare deploys por PoPs graduales. Facebook rolls out por data centers. Netflix por AWS regions con Spinnaker.",
+      "tags": ["multi-region", "waves", "regional canary", "global deploy"],
+      "tech": ["Spinnaker", "AWS", "regional pipelines"],
+      "references": [{ "title": "Google SRE Book — Global Load Balancing" }, { "title": "AWS re:Invent — Global deployments" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "deployment",
+      "topic": "Deployments a mobile — app stores",
+      "difficulty": "mid",
+      "scenario": "Tu app mobile (iOS + Android) tiene backend nuevo con API v2 incompatible. No puedes forzar update — users mantienen versiones antiguas por meses.",
+      "question": "¿Cómo se hacen 'deployments' de mobile clients seguros?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "App Store staged rollout: iOS 'phased release' y Android Play Console 'staged rollout' permiten rollout gradual (1% día 1, 2% día 2, ..., 100% día 7). Bugs detectados afectan solo un fraction de users.", "correct": true, "why": "Correcto. Ambos stores tienen esto nativo. Standard practice — non-staged releases son señal de deployment maturity baja." },
+        { "letter": "B", "text": "Backend API versioning: mantener v1 y v2 en producción SIMULTÁNEAMENTE, con retirement plan largo (meses/años). Users con app v1 usan API v1; users updated usan API v2. Retirement solo cuando <0.5% de users usa v1.", "correct": true, "why": "Correcto. Twitter APIs v1.1 disponibles años después de v2. Facebook Graph API múltiples versiones. Force upgrade es user-hostile." },
+        { "letter": "C", "text": "Feature flags server-side: control features en la app remotamente sin app update. Enable/disable features per user cohort. Kill switch en producción sin store submission.", "correct": true, "why": "Correcto. Firebase Remote Config, LaunchDarkly Client SDK. Crítico para mobile porque app store approvals tardan días-semanas. Feature flags decouple deploy de release." },
+        { "letter": "D", "text": "Force minimum version: si users no updatean en X semanas, app se rehúsa a arrancar (\"please update to continue\"). Preserved solo para security/data-loss bugs críticos, NO features nuevas.", "correct": true, "why": "Correcto. Force update es user-hostile pero necesario para vulnerabilidades críticas. Grace periods largos. Solo casos legítimos." },
+        { "letter": "E", "text": "Publicar cambios inmediatamente sin staged rollout.", "correct": false, "why": "Antipatrón. Sin staged, un crash en producción afecta 100% de users al instante. Mobile rollbacks son slow (app store review 1-3 días). Staging es MÁS crítico en mobile que en web." }
+      ],
+      "explanation": "Mobile deployment stack: (1) Store staged rollout (iOS phased, Android staged); (2) Backend API versioning (v1 disponible hasta users migran); (3) Feature flags server-side (Firebase Remote Config, LaunchDarkly); (4) Crash reporting (Crashlytics, Sentry) para detectar issues en producción; (5) Kill switch para features rotas. iOS phased release: automated over 7 días, developer can pause. Android staged: manual percent selection. Both allow rollback (release halt). Backend consideraciones: (a) never break API compat unilaterally; (b) deprecation notices meses antes; (c) analytics para user version distribution; (d) sunset schedules communicated. Anti-patterns: force update para features (annoys users), API breaking changes without warning, no analytics on version distribution.",
+      "realWorld": "Facebook mobile ships new version cada semana (staged rollout). Netflix mobile similar. Instagram maintained backend API compat con clients años old durante growth. Uber famously had bug donde force-update broke user login = lost trip revenue. Google Play staged rollout permite halt inmediato si crashes detectados.",
+      "tags": ["mobile", "app store", "staged rollout", "API versioning"],
+      "tech": ["Firebase Remote Config", "LaunchDarkly", "iOS", "Android"],
+      "references": [{ "title": "Apple — Phased Release" }, { "title": "Google Play — Staged rollouts" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "deployment",
+      "topic": "Deployments de infra vs deployments de app",
+      "difficulty": "staff",
+      "scenario": "Tu terraform apply cambia AWS security groups. No es un deployment de código pero afecta producción. Discusión: '¿aplicamos las mismas strategies (canary, blue/green) para IaC?'",
+      "question": "¿Cómo se aplican deployment strategies a Infrastructure as Code?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Similar principles pero mecánicas distintas: (1) staged rollout — apply a staging → dev → prod; (2) canary — apply a subset de recursos primero (una region, un cluster); (3) drift detection — verificar continuously que reality matches code; (4) plan review — [terraform plan] mostrado antes de apply, human approval para changes destructive. Herramientas: Atlantis, Terraform Cloud, Spacelift orquestan esto. Blue/green de infra existe para casos específicos (cambiar cluster K8s entero = crear nuevo cluster, migrar workloads, teardown viejo).", "correct": true, "why": "Correcto. IaC deployments son primer-class citizen en modern DevOps. Terraform plan+apply se hace en CI/CD con approvals. Atlantis automates PR-based flow. Spacelift, Terraform Cloud enterprise. Anti-patrón: apply local desde laptop = no audit trail, no review, drift." },
+        { "letter": "B", "text": "IaC nunca requiere deployment strategies — es solo config.", "correct": false, "why": "Falso. IaC changes affect producción tanto como code. Un mis-apply de security group puede exposar DB entera a internet. Requires mismo rigor." },
+        { "letter": "C", "text": "Terraform state locking es suficiente safety.", "correct": false, "why": "State locking previene concurrent applies pero no valida CORRECTNESS del apply. Necesitas plan review + staged rollout." },
+        { "letter": "D", "text": "IaC changes son siempre reversibles automáticamente.", "correct": false, "why": "Falso. Algunos changes destructive (delete database, delete S3 bucket) no son reversibles. Terraform plan revela esto; human debe approvar." }
+      ],
+      "explanation": "IaC deployment pipeline: (1) PR opened con IaC changes; (2) CI runs [terraform validate], linters (tflint, Checkov), security scans (Snyk, Bridgecrew); (3) [terraform plan] output posted en PR; (4) review por infra team; (5) merge → CI applies to staging; (6) validation en staging; (7) manual approval para prod apply; (8) apply prod con state locking. Herramientas: Atlantis (self-hosted GitOps para Terraform), Terraform Cloud/Enterprise (HashiCorp SaaS), Spacelift, env0. Blue/green de infra ejemplos: nuevo K8s cluster paralelo, migrate workloads, decommission viejo. Rolling deploy de infra: node groups en ASG con blue/green de EC2. Drift detection: cron que compara state real vs desired, alerta si divergen.",
+      "realWorld": "HashiCorp Terraform Enterprise usa este pattern. Airbnb built internal IaC pipelines. Atlantis (Runatlantis) es popular OSS. Gruntwork consultants publish extensively. Anti-patrón real: Reddit 2019 tuvo incident donde apply manual causó Route 53 config wrong = DNS chaos. Amazon usa 'change advisory board' para cambios de infra críticos.",
+      "tags": ["IaC", "Terraform", "GitOps", "Atlantis"],
+      "tech": ["Terraform", "Atlantis", "Terraform Cloud"],
+      "references": [{ "title": "Atlantis docs" }, { "title": "Terraform Cloud" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "deployment",
+      "topic": "Deployment window vs continuous",
+      "difficulty": "senior",
+      "scenario": "Legacy company: deploys solo 'martes 2-4 AM'. Devs quieren continuous deployment. Compliance/managers protestan: 'necesitamos ventana controlada'.",
+      "question": "¿Deployment windows tradicionales son compatibles con DevOps moderno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Deployment windows tradicionales (martes 2-4AM) son ANTI-DevOps: (1) batch grande (una semana de cambios en una ventana) = risky; (2) requiere all hands on deck a horas malas = burnout; (3) reduce deploy frequency = DORA metric baja. Modern replacement: continuous deployment con safety mechanisms (canary, automated rollback, feature flags, observability). La necesidad de 'ventana controlada' viene del miedo — miedo dice 'no confío en el sistema, solo puedo detectar problemas si todos están mirando'. Modern DevOps invierte en TRUST (safety nets) para desasignar ventanas.", "correct": true, "why": "Correcto. Deployment windows son legado de deploys manuales risky. Con canary + auto-rollback + feature flags, cada deploy es low-risk enough para hacerse anytime. Amazon deploya cada 11.7s. Netflix continuous. Facebook 2x/día. Empresas con maturity NO tienen windows." },
+        { "letter": "B", "text": "Sí, windows siempre son necesarios para safety.", "correct": false, "why": "Falso a scale. Empresas serias no usan windows. Windows aumentan risk (batch grande) en vez de reducirlo." },
+        { "letter": "C", "text": "Windows aplican a bancos pero no a tech companies.", "correct": false, "why": "Capital One (bank) deploya continuously. Muchas bancas modernas han eliminado windows. La distinción es maturity, no industry." },
+        { "letter": "D", "text": "Windows son requerimiento de compliance (SOX, PCI).", "correct": false, "why": "Compliance requiere CONTROLES + AUDIT, no windows. Continuous deployment con automated controls satisface compliance. Bancos regulados hacen continuous deployment con audit trails." }
+      ],
+      "explanation": "Deployment windows: viejo model. Modern replacement: continuous deployment con controls. Justificaciones tradicionales para windows: (1) 'low traffic' — pero low traffic = worse signal-to-noise para detectar bugs; (2) 'all hands ready' — costoso, burnout; (3) 'reversible if issue' — pero ventanas cortas dan poco time para investigate. Modern approach: (a) canary con automated rollback (bug detected in <5min); (b) feature flags para new features (instant kill switch); (c) observability (know immediately si algo va mal); (d) on-call sostenible (someone always available). Compliance evolution: SOX/PCI/HIPAA don't require windows — require CONTROLS. Automated approval workflows + audit trails satisfacen mismos requirements. Empresas regulated (Capital One, Goldman Sachs, HMRC UK) deployan continuously con proper controls.",
+      "realWorld": "Amazon.com deploys en horas de peak — porque son safe por design. Netflix mismo. Capital One migró de windows a continuous deployment con Spinnaker. HMRC UK modernization eliminó release boards. Legacy financial firms aún tienen change advisory boards (CAB) — costoso, no proven beneficio. DORA report confirms: high performers deployan anytime.",
+      "tags": ["deployment windows", "continuous deployment", "change advisory board", "compliance"],
+      "tech": ["Spinnaker", "audit trails"],
+      "references": [{ "title": "State of DevOps Report" }, { "title": "Accelerate — Ch. 5 Architecture" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "deployment",
+      "topic": "Escoger estrategia — decision framework",
+      "difficulty": "staff",
+      "scenario": "CTO pregunta: '¿qué deployment strategy debemos adoptar como estándar?'. Tienes services stateless web, servicios stateful (DBs), long-running batch jobs, mobile clients.",
+      "question": "¿Cómo decidir entre blue/green, canary, rolling para cada tipo de servicio?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Stateless web/API: canary es óptimo (progressive delivery + automated analysis). Fallback: rolling update. Blue/green solo si SLO ultra-estricto y budget permite duplicación.", "correct": true, "why": "Correcto. Stateless services son ideal candidates para canary. Argo Rollouts + Flagger diseñados para esto. Blue/green overkill para most services." },
+        { "letter": "B", "text": "Stateful services (DBs, message brokers): rolling update con StatefulSet + Operator (Strimzi, ES Operator, PostgreSQL Operator). Blue/green raramente viable por tamaño de state.", "correct": true, "why": "Correcto. Operators encapsulan knowledge de rolling stateful. StatefulSet primitive de K8s. Blue/green requiere duplicar state = usually impractical." },
+        { "letter": "C", "text": "Batch jobs / cron: reemplazar en el next execution. No traffic serving = no traffic splitting needed. Just update image tag, next scheduled run uses new version.", "correct": true, "why": "Correcto. Batch jobs son simplest. Rolling irrelevante — no requests-in-flight. Just replace and next tick uses new binary. Consideration: rollback in case new version is broken." },
+        { "letter": "D", "text": "Mobile clients: staged rollout via app store + backend API versioning + feature flags server-side. Force update solo para security.", "correct": true, "why": "Correcto. Mobile has unique constraints (users don't auto-update). Combined pattern es standard." },
+        { "letter": "E", "text": "Todos los servicios deberían usar la misma strategy uniformemente.", "correct": false, "why": "Antipatrón. Different services tienen different constraints. Uniformidad = ineficiencia (blue/green para batch jobs = waste; rolling para stateful DBs sin operator = disaster)." }
+      ],
+      "explanation": "Decision framework: (1) Service type (stateless vs stateful vs batch vs mobile); (2) SLO strictness (99.9% vs 99.99%); (3) Cost sensitivity (budget para duplicar infra); (4) Team maturity (canary requires observability + automated analysis); (5) Compliance requirements. Recomendación general: DEFAULT = rolling update (works everywhere, low overhead). UPGRADE to canary para services high-traffic or high-risk. USE blue/green cuando SLO estricto + budget suficiente. STATEFUL = operator-managed rolling. BATCH = simple replacement. MOBILE = staged store rollout + API versioning + flags. Infra estándar: K8s Deployments para rolling default; Argo Rollouts + Flagger para canary; Custom infrastructure (Spinnaker, custom) para blue/green complex. Feature flags OVERLAYED sobre cualquier strategy para instant kill switch.",
+      "realWorld": "Netflix, Amazon, Google use canary por default para stateless production services. Uber uses different strategies per service type (documented publicly). Airbnb standardized on canary + feature flags. Facebook Gatekeeper + gradual rollout. Empresas empiezan con rolling (K8s default) y evolucionan a canary con automated analysis conforme maduran.",
+      "tags": ["decision framework", "strategy selection", "canary", "blue/green", "rolling"],
+      "tech": ["Argo Rollouts", "Flagger", "Spinnaker"],
+      "references": [{ "title": "Google Cloud — Deployment Strategies" }, { "title": "State of DevOps Report" }]
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { TutorRequestSchema } from '@linguadev/shared';
 import { getProvider } from '../services/ai/provider.js';
+import { estimateCostUsd } from '../services/ai/chatService.js';
 import { rateLimitAI } from '../middleware/rate-limit.js';
 import { budgetGuard } from '../middleware/budget.js';
 import { apiError } from '../lib/errors.js';
@@ -31,7 +32,7 @@ tutorRouter.post('/api/ai/tutor', async (c) => {
     const ac = new AbortController();
     stream.onAbort(() => ac.abort());
     try {
-      await provider.streamText({
+      const { usage } = await provider.streamText({
         system,
         user,
         maxTokens: 600,
@@ -40,6 +41,8 @@ tutorRouter.post('/api/ai/tutor', async (c) => {
           await stream.writeSSE({ event: 'token', data: chunk });
         },
       });
+      // Sin este set, budgetGuard no descontaba el gasto del tutor del presupuesto diario.
+      c.set('aiSpendUsd', estimateCostUsd(usage));
       await stream.writeSSE({ event: 'done', data: 'ok' });
     } catch (err) {
       await stream.writeSSE({ event: 'error', data: (err as Error).message });

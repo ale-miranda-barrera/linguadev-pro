@@ -1,0 +1,417 @@
+{
+  "id": "programmer-sim-06-memory-and-gc",
+  "trackId": "programmer",
+  "order": 6,
+  "title": "Simulacro 06 — Memoria, garbage collection y tuning",
+  "focus": "Stack vs heap, generacional GC, pause times, tuning JVM/V8, detección de leaks, escape analysis y off-heap.",
+  "areaCoverage": ["fundamentals"],
+  "timeLimitMin": 28,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "fundamentals",
+      "topic": "Stack vs Heap — modelo mental",
+      "difficulty": "junior",
+      "scenario": "En code review, un dev afirma: 'los objetos en Java siempre se asignan en el heap, y las primitivas siempre en el stack'. ¿Es correcta esa regla?",
+      "question": "¿Cuál es la respuesta más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, esa regla es 100% correcta en Java.", "correct": false, "why": "Incompleta. La JVM moderna hace escape analysis: si un objeto no escapa del método (no se guarda en campo, no se retorna, no se pasa a otro thread), el JIT puede asignarlo en el stack o incluso escalarizarlo en registros. Con esto, 'new Point(x,y)' local puede terminar en el stack." },
+        { "letter": "B", "text": "Depende: por defecto todo objeto va al heap, pero el JIT (C2/Graal) puede stack-allocate objetos que no escapan mediante escape analysis. Las primitivas locales van al stack; las primitivas dentro de un objeto van donde el objeto (normalmente heap).", "correct": true, "why": "Correcto y matizado. Es la respuesta que un senior daría. Escape analysis es un optimización clave introducida en HotSpot desde 2006. Además, distingue correctamente entre variable local (stack) y campo (donde el objeto viva)." },
+        { "letter": "C", "text": "Todo va al heap en lenguajes con GC. El stack solo guarda direcciones de retorno.", "correct": false, "why": "Falso. Todos los lenguajes con GC (Java, C#, Go, JS) siguen usando el stack para variables locales primitivas, referencias, y frames de llamada. El GC no toca el stack." },
+        { "letter": "D", "text": "En Go y C#, los objetos siempre van al stack a menos que se marquen como 'escape'.", "correct": false, "why": "Invertido. Por defecto los objetos podrían ir al heap; el compilador de Go hace escape analysis en tiempo de compilación y decide qué puede quedarse en el stack. La regla no es 'stack por defecto'." }
+      ],
+      "explanation": "El modelo mental correcto: el stack guarda frames de llamada (variables locales primitivas, referencias, parámetros, dirección de retorno). El heap guarda objetos dinámicos. Pero los compiladores modernos usan escape analysis: si un objeto solo vive dentro de un método y no es visible desde fuera, puede promoverse al stack — evitando presión sobre el GC. Es una optimización invisible pero enorme en código hot-path.\n\nEn Go, escape analysis se hace en compile-time (`go build -gcflags='-m'` te lo muestra). En Java HotSpot es runtime en el JIT C2. Kotlin/Scala heredan lo de la JVM. Rust no tiene GC pero también decide stack vs heap explícitamente (Box, Rc).",
+      "realWorld": "Cliff Click (autor del compilador HotSpot C2) documentó escape analysis en sus charlas 'The Art of JIT'. Netflix hizo profiling en 2018 mostrando que apps mal escritas creaban millones de objetos temporales que EA lograba eliminar tras warmup.",
+      "tags": ["stack", "heap", "escape analysis", "JIT"],
+      "tech": ["Java", "Go", "HotSpot", "Graal"],
+      "references": [{ "title": "OpenJDK — Escape Analysis in HotSpot" }, { "title": "Cliff Click — 'The Art of JIT Compilation' talks" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "fundamentals",
+      "topic": "Generacional GC — hipótesis generacional",
+      "difficulty": "mid",
+      "scenario": "Un dev pregunta: '¿por qué los GCs modernos (G1, ZGC, .NET GC, V8) dividen el heap en generaciones young/old? ¿No sería más simple un solo espacio?'",
+      "question": "¿Cuál es la razón fundamental?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Para reducir uso de RAM: la young generation es más pequeña.", "correct": false, "why": "El tamaño no es la razón. La razón es empírica: la mayoría de objetos mueren jóvenes. Aislar los jóvenes permite colectarlos frecuentemente y rápidamente." },
+        { "letter": "B", "text": "Por la 'weak generational hypothesis': observación empírica de que la GRAN MAYORÍA de objetos mueren muy jóvenes. Al aislar los jóvenes en un espacio pequeño, se puede colectar solo esa región (minor GC) rápidamente y sin tocar los objetos viejos, que rara vez cambian.", "correct": true, "why": "Correcto. Es la hipótesis fundamental, verificada empíricamente en múltiples workloads desde los 80s (Ungar, Lieberman-Hewitt). Objects nacen, se usan brevemente, mueren. Colecciones mayores (full GC) son raras y caras; las menores son frecuentes y baratas porque el young space se llena rápido pero se vacía casi entero." },
+        { "letter": "C", "text": "Porque separar objetos por edad permite ejecutar en paralelo minor y major GC.", "correct": false, "why": "Paralelismo es un beneficio, pero no la razón fundamental. Sin la hipótesis generacional, la separación no tendría sentido." },
+        { "letter": "D", "text": "Es un artefacto histórico. Los GCs modernos (ZGC, Shenandoah) ya no usan generaciones.", "correct": false, "why": "Falso. ZGC pasó a ser generacional en Java 21 (2023) precisamente porque midieron que ganaban throughput significativo. La hipótesis sigue vigente." }
+      ],
+      "explanation": "La hipótesis generacional se formalizó en 1984 por Lieberman-Hewitt y Ungar. Su corolario práctico: si colectas frecuentemente el young space, la mayoría estará muerto y no hay que copiar casi nada. En G1 típicamente el young occupa 5-30% del heap; una minor GC toma ms. Los sobrevivientes de N ciclos se promueven al old space.\n\nLa complicación son las 'card tables' o 'remembered sets': cuando un objeto viejo referencia a uno joven (por ejemplo, agregar a una colección long-lived), el GC debe saberlo para no perder el joven. Los write barriers en las asignaciones mantienen esta información.\n\nExcepciones: aplicaciones donde la mayoría de objetos son long-lived (caches enormes) se benefician menos de generacional. Por eso Shenandoah y ZGC originalmente eran no-generacionales, pero ambos migraron a generacional al medir workloads reales.",
+      "realWorld": "Cassandra migró de CMS a G1 y luego a ZGC generacional (Java 21) reportando reducción de pause times del orden de 10x. Netflix publicó en 2023 su migración a ZGC generacional para servicios de streaming.",
+      "tags": ["GC", "generacional", "hipótesis generacional", "G1", "ZGC"],
+      "tech": ["Java", "G1", "ZGC", ".NET GC", "V8"],
+      "references": [{ "title": "Ungar (1984) — 'Generation Scavenging'" }, { "title": "JEP 439 — Generational ZGC" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "fundamentals",
+      "topic": "Detección de memory leak en Java",
+      "difficulty": "senior",
+      "scenario": "Un microservicio Spring Boot con 4GB de heap crashea con OutOfMemoryError después de ~48h en producción. En dev nunca pasa. Métricas: memoria heap sube lentamente pero constante, GC frecuencia aumenta con el tiempo.",
+      "question": "¿Cuál es la estrategia CORRECTA para diagnosticar el leak?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Configurar `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps` para capturar heap dump automáticamente cuando ocurra. Luego analizar con Eclipse MAT (Memory Analyzer Tool) buscando 'Dominator Tree' y 'Leak Suspects'.", "correct": true, "why": "Correcto y estándar. HeapDumpOnOOM es gratis (solo cuesta cuando ocurre). MAT es la herramienta de facto: identifica qué objetos retienen más memoria y qué GC root los mantiene vivo. La 'Leak Suspects' report identifica clases sospechosas automáticamente." },
+        { "letter": "B", "text": "Aumentar el heap a 8GB con `-Xmx8g`. Si el leak es pequeño, ganamos tiempo.", "correct": false, "why": "Anti-patrón clásico. 'Kick the can down the road' — solo retrasa el crash y hace el heap dump aún más pesado. Además esconde el problema real. Aceptable como parche temporal SI ya sabes la causa raíz, no como diagnóstico." },
+        { "letter": "C", "text": "Usar `jmap -histo:live <pid>` periódicamente y comparar histograms para identificar clases cuyas instancias crecen sin límite.", "correct": true, "why": "Correcto. jmap histo:live fuerza un full GC y muestra instancias vivas por clase. Si tomas snapshots cada hora, ves qué clase crece linealmente — casi siempre es un ConcurrentHashMap o cache sin evict, una lista de listeners que no se desregistran, o un ThreadLocal huérfano." },
+        { "letter": "D", "text": "Habilitar Async Profiler o JFR (Java Flight Recorder) con evento 'ObjectAllocationSample' para ver qué stack traces asignan los objetos que persisten.", "correct": true, "why": "Correcto. JFR es low-overhead (<1%) y viene incluido en OpenJDK 11+. Muestra puntos de asignación con stack traces — ideal para encontrar el CÓDIGO responsable, no solo la clase. Combinación con heap dump da la historia completa." },
+        { "letter": "E", "text": "Reiniciar el pod cada 24h con un cronjob de Kubernetes. Problema resuelto.", "correct": false, "why": "'Solución del avestruz'. Puede ser aceptable como MITIGATION temporal en producción (kubelet livenessProbe, restart policy) mientras arreglas el bug, pero no es diagnóstico. En sistemas críticos (pagos, healthcare) es inaceptable." }
+      ],
+      "explanation": "Diagnóstico de leaks tiene 3 fases: (1) CONFIRMAR que es leak vs uso legítimo — mira si el heap 'live' post-GC crece con el tiempo, no solo si el usado sube; (2) IDENTIFICAR qué objetos crecen — jmap histo, JFR, MAT dominator tree; (3) RASTREAR el GC root — MAT te dice quién mantiene vivo al objeto (ThreadLocal, static field, cache).\n\nCausas típicas en Spring: ThreadLocals no limpiados en filters, listeners no desregistrados de EventBus, caches en memoria (Guava, Caffeine) sin `maximumSize`, HttpSessions con datos gigantes, connection pools mal configurados. En Netty, ByteBuf sin release. En Kafka consumers, mensajes en cola sin backpressure.\n\nEn dev no aparece porque: (a) tráfico bajo, (b) reinicios frecuentes durante desarrollo, (c) heap más pequeño esconde crecimiento absoluto pero no relativo.",
+      "realWorld": "Elasticsearch tuvo un famoso leak en 2018 con caches de bucket aggregations. LinkedIn documenta el uso de MAT para diagnosticar leaks en sus servicios JVM. La charla 'GC Tuning at Twitter Scale' (2016) muestra jmap+MAT como flujo principal.",
+      "tags": ["memory leak", "heap dump", "MAT", "JFR", "OOM"],
+      "tech": ["Java", "Eclipse MAT", "Async Profiler", "JFR"],
+      "references": [{ "title": "Eclipse Memory Analyzer Tool docs" }, { "title": "Java Flight Recorder — Oracle docs" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "fundamentals",
+      "topic": "GC pauses — Stop-The-World y latencia P99",
+      "difficulty": "senior",
+      "scenario": "Un servicio de trading en Java tiene P50 = 2ms pero P99 = 800ms. El equipo sospecha del GC. Actualmente usa G1 con heap de 16GB, sin tuning específico.",
+      "question": "¿Qué acciones tienen MAYOR impacto para reducir P99?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cambiar a ZGC (`-XX:+UseZGC`) que garantiza pauses <10ms independiente del tamaño del heap.", "correct": true, "why": "Correcto. ZGC (production-ready desde Java 15, generacional desde Java 21) fue diseñado específicamente para low-latency: pauses en el orden de sub-ms hasta heaps de TB. El trade-off es más CPU y RAM overhead (~15%), pero para trading vale cada byte." },
+        { "letter": "B", "text": "Reducir el heap a 4GB para que los ciclos de GC sean más pequeños.", "correct": false, "why": "Contraproducente. Heap más pequeño = GC más frecuente. Además, si el working set es 16GB, reducir provoca OOM. La ecuación no es 'menos heap = menos pause', sino 'mejor algoritmo = menos pause'." },
+        { "letter": "C", "text": "Pre-touch la memoria con `-XX:+AlwaysPreTouch` para evitar page faults durante allocation crítica.", "correct": true, "why": "Correcto para trading. Sin pre-touch, la JVM commite páginas de memoria lazy y el primer acceso causa page fault (traducción TLB + zero-fill). Con AlwaysPreTouch, la JVM toca cada página al arrancar. Startup más lento, pero latencia P99 más consistente." },
+        { "letter": "D", "text": "Usar `-XX:MaxGCPauseMillis=10` con G1 para forzar pauses cortas.", "correct": false, "why": "Es una PISTA para G1, no una garantía. G1 intentará cumplirla ajustando young gen size, pero si el sistema genera basura rápido, ignorará el target. Además, target agresivos causan más GC frecuentes y menos throughput. No es magia." },
+        { "letter": "E", "text": "Eliminar allocations en el hot path: reutilizar objetos (object pools), usar arrays de primitivas en vez de Collection<Integer>, evitar autoboxing.", "correct": true, "why": "Correcto y a menudo el fix más grande. Zero-allocation en el hot path = zero GC pressure = pauses despreciables. LMAX Disruptor, Netty, y Aeron son ejemplos de librerías que reducen allocation al mínimo. En trading es doctrina obligatoria." }
+      ],
+      "explanation": "P99 alto por GC es un patrón común en JVMs mal tuned. El diagnóstico: habilitar `-Xlog:gc*` y ver si las pauses coinciden con los outliers. Si sí, tienes 2 caminos:\n\n1. Mejor algoritmo: ZGC o Shenandoah. Ambos son 'mostly concurrent': hacen la mayor parte del trabajo mientras la app corre. Trade-off: 10-20% CPU/RAM extra.\n\n2. Reducir presión sobre GC: menos allocation. Object pooling (con cuidado — pueden esconder bugs), reutilizar buffers, evitar streams intermedios en hot path, usar tipos primitivos (IntArrayList en vez de ArrayList<Integer>).\n\nLMAX Disruptor es el ejemplo canónico: procesan millones de trades/segundo con ZERO GC en steady state, todo con ring buffers pre-asignados. La regla: en low-latency, cada allocation es un enemigo potencial.",
+      "realWorld": "LMAX (exchange de trading) documentó su Disruptor pattern en 2011 alcanzando 6M ops/s con zero-GC. Netflix migró servicios críticos a ZGC en 2020 reportando P99 mejora 10x. Aeron messaging (Real Logic) usa off-heap buffers para latencia sub-microsegundo.",
+      "tags": ["ZGC", "P99", "pause times", "trading", "low-latency"],
+      "tech": ["Java", "ZGC", "G1", "LMAX Disruptor"],
+      "references": [{ "title": "JEP 439 — Generational ZGC" }, { "title": "Martin Thompson — Mechanical Sympathy blog" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "fundamentals",
+      "topic": "V8 heap y hidden classes",
+      "difficulty": "mid",
+      "scenario": "En Node.js, dos funciones que hacen 'lo mismo' tienen performance muy distinta:\n\n```js\n// Función A\nfunction makeA() {\n  const o = {};\n  o.x = 1;\n  o.y = 2;\n  return o;\n}\n// Función B\nfunction makeB(cond) {\n  const o = {};\n  if (cond) o.x = 1;\n  o.y = 2;\n  return o;\n}\n```\n\nDespués de millones de llamadas, A es ~3x más rápida.",
+      "question": "¿Por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Porque el `if` de B añade una instrucción de branch que el CPU no puede predecir.", "correct": false, "why": "Branch prediction impacta pero no explica 3x. El branch en modernos CPUs se predice bien con warmup. La razón real está en el motor V8 (hidden classes)." },
+        { "letter": "B", "text": "V8 optimiza objetos con 'hidden classes' (shapes): objetos que se construyen con la MISMA secuencia de propiedades comparten shape y el JIT genera código monomórfico rápido. En B, según `cond`, se crean objetos con distintas shapes ({y} vs {x,y}) → el JIT no puede monomorfizar → property access se vuelve polimórfico (más lento) o megamórfico (fallback slow path).", "correct": true, "why": "Correcto y profundo. V8 (y JSC, SpiderMonkey) usan hidden classes / shapes para representar la estructura de objetos JavaScript, permitiendo inline caches. Cuando el JIT ve que un property access siempre toca la misma shape, genera código óptimo (~1 instrucción). Si ve 2+ shapes, degrada a polimórfico; con 4+ shapes, va a megamórfico y consulta un hash." },
+        { "letter": "C", "text": "B tiene una alocación más grande porque JS reserva espacio para propiedades futuras.", "correct": false, "why": "V8 no pre-reserva espacio para propiedades no declaradas. El tamaño depende de las propiedades presentes, no del código futuro." },
+        { "letter": "D", "text": "B genera un closure adicional por el `if`.", "correct": false, "why": "El if no genera closure. Closures se crean con funciones anidadas que capturan scope." }
+      ],
+      "explanation": "V8 (y otros motores JS modernos) tienen que compilar un lenguaje dinámico a código nativo eficiente. Su truco: 'hidden classes' (Chrome/V8) o 'shapes' (Firefox/SpiderMonkey) o 'structures' (Safari/JSC). Cuando creas un objeto y añades propiedades en cierto orden, el motor construye una class oculta que representa esa estructura. Objetos con la misma secuencia de creación comparten class.\n\nEl JIT genera código que asume 'esta variable es un objeto con hidden class X' — property access se vuelve `obj + offset_fijo`. Si de repente ves objetos con otra class, el sitio de access se marca polimórfico (guarda 2-4 classes), o degrada a megamórfico (hash lookup).\n\nBest practices JS de performance: (1) inicializa TODAS las propiedades en el constructor, en el mismo orden; (2) evita `delete obj.prop` (rompe la shape); (3) evita clases con métodos definidos condicionalmente; (4) prefiere clases o constructores consistentes vs objetos ad-hoc.",
+      "realWorld": "V8 team publicó 'A tour of V8: object representation' explicando hidden classes. Firefox implementó lo mismo bajo el nombre 'shapes'. Bloomberg documentó speedups de 3-5x en su terminal migrando código JS para respetar hidden classes.",
+      "tags": ["V8", "hidden classes", "shapes", "JIT", "JavaScript"],
+      "tech": ["Node.js", "V8", "SpiderMonkey"],
+      "references": [{ "title": "V8 team — 'Fast properties in V8'" }, { "title": "Vyacheslav Egorov — 'What's up with monomorphism?'" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "fundamentals",
+      "topic": "Off-heap memory",
+      "difficulty": "senior",
+      "scenario": "Un cache de 20GB para hot data en un servicio Java se implementó con `ConcurrentHashMap<String, byte[]>` en el heap. GC pauses son inaceptables (>2s). Propuesta: mover a off-heap con Chronicle Map o `DirectByteBuffer`.",
+      "question": "¿Cuáles son los pros y contras REALES de off-heap?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Pro: el GC no escanea la memoria off-heap → pauses drásticamente menores. Es la razón principal para usar off-heap en caches grandes.", "correct": true, "why": "Correcto. Off-heap vive fuera del heap gestionado por el GC. El GC ni ve ni escanea esa memoria — solo la referencia al DirectByteBuffer, que es pequeña. Un cache de 20GB off-heap añade 0 pressure sobre el GC." },
+        { "letter": "B", "text": "Pro: acceso a off-heap es MÁS RÁPIDO que on-heap porque evita el GC.", "correct": false, "why": "Falso. Acceder off-heap requiere una syscall implícita para lecturas y va por Unsafe/JNI — cada acceso es más lento que un field access on-heap. La ganancia NO es velocidad de acceso, es latencia predecible (sin pauses)." },
+        { "letter": "C", "text": "Contra: gestión manual de memoria. Olvidar liberar un DirectByteBuffer causa un leak invisible al GC (fuera del heap dump).", "correct": true, "why": "Correcto y crítico. DirectByteBuffers se liberan cuando su objeto Java se GC-colecta (Cleaner). Si mantienes referencias, la memoria off-heap crece indefinida. Peor: heap dumps no muestran esa memoria, así que diagnóstico es más difícil. Chronicle Map y otras librerías dan APIs seguras." },
+        { "letter": "D", "text": "Contra: los objetos off-heap requieren serialización/deserialización explícita cada vez que se accede. Añade CPU overhead y complejidad.", "correct": true, "why": "Correcto. Off-heap solo entiende bytes. Para guardar un `User` object tienes que serializar (Protobuf, FlatBuffers, Chronicle) y deserializar al leer. FlatBuffers/Cap'n Proto permiten leer sin deserializar pero requieren schemas fijos. Es un cambio arquitectónico, no una simple config." },
+        { "letter": "E", "text": "Contra: off-heap está limitado a 2GB por buffer en Java.", "correct": false, "why": "Falso. `DirectByteBuffer` sí tiene límite de 2GB (Integer.MAX_VALUE), pero puedes usar múltiples buffers o `sun.misc.Unsafe.allocateMemory` para reservar memoria arbitraria. Librerías como Chronicle manejan esto por ti." }
+      ],
+      "explanation": "Off-heap es la solución 'nuclear' para GC pressure en caches gigantes. La idea es sacar los datos del heap gestionado para que el GC no los vea. Casos de uso: caches, colas de mensajes, buffers de red (Netty usa PooledByteBufAllocator off-heap por defecto).\n\nCosto de complejidad: (1) serialización de/a bytes; (2) gestión manual del ciclo de vida; (3) debugging más difícil (no aparece en heap dumps, hay que usar Native Memory Tracking). Antes de ir off-heap, prueba ZGC/Shenandoah — si te dan pause aceptable, evita la complejidad.\n\nAlternativas: (1) Ehcache/Caffeine con tier off-heap; (2) mover el cache a Redis (out-of-process, pero red latency); (3) memory-mapped files (Chronicle) — dan persistencia gratis y OS gestiona paginación.",
+      "realWorld": "Netflix EVCache usa off-heap para caches de dominio a escala. Apache Cassandra usa off-heap para memtables y bloom filters. Kafka broker usa PageCache del OS (memory-mapped) — otra forma de off-heap.",
+      "tags": ["off-heap", "DirectByteBuffer", "cache", "GC pressure"],
+      "tech": ["Java", "Chronicle Map", "Netty", "Ehcache"],
+      "references": [{ "title": "Peter Lawrey — 'Chronicle Map design'" }, { "title": "JDK — Native Memory Tracking (NMT)" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "fundamentals",
+      "topic": "Reference types — Weak, Soft, Phantom",
+      "difficulty": "senior",
+      "scenario": "Un cache de imágenes se implementó con `HashMap<String, BufferedImage>`. Bajo carga, causa OOM porque las imágenes son grandes y nunca se liberan. Un dev sugiere: 'usa WeakHashMap'.",
+      "question": "¿Es correcto WeakHashMap para un cache? Explica los reference types.",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí. WeakHashMap libera entries cuando no hay referencias fuertes al KEY — perfecto para cache.", "correct": false, "why": "Incompleto y a menudo incorrecto para caches. WeakHashMap usa WeakReferences sobre las KEYS, no los values. Si el key es un String literal (interned) nunca es eliminado. Si es un objeto único usado como key, se libera al perderse la referencia — pero en la mayoría de caches, la lógica es 'liberar values cuando falta memoria', no cuando se pierde la key." },
+        { "letter": "B", "text": "No — usa SoftReference envolviendo los VALUES. SoftReferences son GC-eligible solo cuando la JVM está bajo memory pressure, no antes. Es lo que necesita un cache: mantén mientras haya RAM, libera cuando falte.", "correct": true, "why": "Correcto para el caso. Jerarquía: Strong > Soft > Weak > Phantom. Soft: 'mantén si puedes' (GC libera antes de OOM). Weak: 'libera en la próxima GC si no hay referencias fuertes'. Phantom: nunca dereferenciable, para cleanup hooks. Para caches, Soft es el default correcto. Alternativa moderna: usar Caffeine con SoftReference values (`softValues()`)." },
+        { "letter": "C", "text": "No — usa PhantomReference para trackear cuándo se colecta cada entry.", "correct": false, "why": "PhantomReference es para cleanup (reemplazo moderno de finalizers), no para caches. No puedes leer el valor de una PhantomReference, así que es inútil para un cache." },
+        { "letter": "D", "text": "No — cachear en Java es siempre error. Usa Redis.", "correct": false, "why": "Extremo. Cachear in-process es válido y muy común (Caffeine es el estándar de facto). Redis añade latency de red y complejidad. La cuestión es implementarlo bien." }
+      ],
+      "explanation": "Los 4 reference types de Java forman una jerarquía de 'fuerza' para el GC:\n\n1. Strong (normal): objeto es reachable, GC NUNCA lo libera. Es lo default.\n2. Soft (SoftReference): reachable solo por SoftRefs → GC PUEDE liberar si baja memoria. Ideal para caches: mantén mientras haya RAM.\n3. Weak (WeakReference): reachable solo por WeakRefs → GC LIBERA en la próxima colección. Ideal para maps de metadata que no deben prevenir GC (WeakHashMap, ClassLoader canonical maps).\n4. Phantom: no puedes leer el valor. Enqueue cuando el objeto va a ser colectado — para cleanup en vez de finalizers deprecated.\n\nPara caches serios, usa Caffeine (sucesor de Guava Cache). Ofrece: maximumSize (eviction LRU/LFU), expireAfterWrite, softValues, refreshAfterWrite. Es la elección estándar en el ecosistema JVM 2026.",
+      "realWorld": "Caffeine (Ben Manes) es el cache library de facto — usado en Spring, Cassandra, Elasticsearch. La charla 'Caffeine — a high performance caching library' explica el uso de reference types y policy Window-TinyLFU.",
+      "tags": ["reference types", "SoftReference", "WeakReference", "cache"],
+      "tech": ["Java", "Caffeine", "Guava"],
+      "references": [{ "title": "Java Language Specification — Reference Objects" }, { "title": "Caffeine — GitHub docs" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "fundamentals",
+      "topic": "Value types y layout de memoria",
+      "difficulty": "staff",
+      "scenario": "En un juego 3D, una posición se representa como `class Vector3 { double x, y, z; }`. Un array de 1M `Vector3[]` en Java ocupa mucho más que 24MB (3 doubles × 1M). El equipo gráfico se queja de cache misses masivos.",
+      "question": "¿Por qué ocurre y qué solución arquitectónica lo resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cada Vector3 es un objeto en el heap con header (~12-16 bytes) + padding + datos. El array guarda REFERENCIAS (8 bytes), no los datos inline. Total real: ~48-64 bytes/elemento + saltos de puntero al iterar → cache misses. Solución: Struct of Arrays (SoA): `double[] x, y, z` — layout contiguo, cache-friendly. Alternativa futura: value types (Project Valhalla) que permitirán arrays de objetos value inline.", "correct": true, "why": "Correcto y completo. Los objetos Java tienen overhead: 12 bytes header (Mark Word + Klass pointer) en 64-bit con compressed oops, alineado a 8 bytes. Array de objetos guarda pointers. Iterar salta por el heap causando cache misses. SoA es el patrón de 'data-oriented design'. Project Valhalla (JEP 401) trae value classes que se pueden embed inline — game changer cuando esté production ready." },
+        { "letter": "B", "text": "El overhead es del garbage collector; con más heap se soluciona.", "correct": false, "why": "El overhead no es GC — es el layout de objetos. Más heap no cambia el layout. Cache misses siguen porque la CPU no puede prefetch a través de pointers dispersos." },
+        { "letter": "C", "text": "Usar `List<Vector3>` en lugar de array. Las listas son más eficientes.", "correct": false, "why": "ArrayList<Vector3> es aún peor: array de referencias + boxing overhead + wrappers. No resuelve el problema fundamental de layout." },
+        { "letter": "D", "text": "Marcar Vector3 como `final` para que el JIT inline los campos.", "correct": false, "why": "final no cambia el layout en memoria. Aporta hints al JIT (inlining de métodos) pero no elimina el header ni el pointer indirection." }
+      ],
+      "explanation": "Este es EL problema fundamental de Java (y otros lenguajes con boxing) vs C/C++/Rust para código de alta performance: no puedes controlar el layout de memoria. Un `Vector3[]` en Java es un array de pointers a objetos dispersos en el heap. En C++, un `std::vector<Vector3>` es contiguo — 24 bytes por elemento, cache-friendly.\n\nData-Oriented Design (Mike Acton, Insomniac Games) propone: piensa en datos primero, no en objetos. Si iteras solo por X en 1M vectores, es 4x más rápido con `double[] x` que con `Vector3[].x`. El principio: LAYOUT importa más que abstracciones cuando el cache es el bottleneck.\n\nProject Valhalla (esperado 2026+) trae 'value classes': objetos sin identidad que se pueden embed inline en arrays y campos. Cambiará el juego para HFT, gaming, ML en Java. Kotlin tiene `@JvmInline value class` (limitado a 1 campo). Rust y C# tienen structs.",
+      "realWorld": "Mike Acton (Insomniac Games) dio la charla legendaria 'Data-Oriented Design and C++' en CppCon 2014, mostrando 10-50x speedups por respetar el cache. Unity ECS y Unreal Engine 5 son ejemplos comerciales de data-oriented design. Project Valhalla lleva años en desarrollo por su impacto en la JVM.",
+      "tags": ["value types", "cache", "layout", "Project Valhalla", "SoA"],
+      "tech": ["Java", "Project Valhalla", "C++", "Rust"],
+      "references": [{ "title": "JEP 401 — Value Classes and Objects" }, { "title": "Mike Acton — 'Data-Oriented Design' CppCon 2014" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "fundamentals",
+      "topic": "Compressed OOPs",
+      "difficulty": "senior",
+      "scenario": "Un dev ve en las JVM flags de producción: `-XX:+UseCompressedOops`. Otro dev pregunta: '¿qué hace y por qué?'.",
+      "question": "¿Cuál es la respuesta más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Comprime los datos de los objetos con un algoritmo de compresión.", "correct": false, "why": "Falso. No comprime datos de objetos. Comprime references (pointers)." },
+        { "letter": "B", "text": "En JVM 64-bit, permite usar pointers de 32 bits (4 bytes) en vez de 64 bits (8 bytes) para referencias a objetos, siempre que el heap sea ≤32GB. Reduce dramáticamente el uso de memoria y mejora cache utilization. Activo por defecto desde Java 7.", "correct": true, "why": "Correcto. La técnica: como los objetos Java están alineados a 8 bytes, los últimos 3 bits de un pointer siempre son 0 — desperdicio. CompressedOops guarda pointer como uint32 y lo multiplica por 8 al usarlo → cubre hasta 4GB × 8 = 32GB con solo 4 bytes. Beneficios: 50% menos overhead en refs, más objects en L1/L2 cache. Costo: sobre 32GB deja de aplicar y todo pointer pasa a 8 bytes." },
+        { "letter": "C", "text": "Reemplaza las llamadas de métodos con invocaciones directas para saltar el vtable.", "correct": false, "why": "Es devirtualización — otra optimización distinta hecha por el JIT, no por CompressedOops." },
+        { "letter": "D", "text": "Comprime los datos serializados que salen por red.", "correct": false, "why": "Nada que ver con red. Es sobre representación in-memory de pointers." }
+      ],
+      "explanation": "CompressedOops es una de las optimizaciones invisibles más grandes de la JVM moderna. Cuando pasas de 32-bit a 64-bit JVM, ingenuamente los pointers doblan de tamaño — un ArrayList<Foo> con 1M elementos gastaría 4MB extra solo en refs. CompressedOops recupera esto casi por completo.\n\nRegla clave: si tu heap está entre 4GB y 32GB, CompressedOops es una win pura — activo por default. Si el heap excede 32GB, la JVM desactiva CompressedOops y verás un salto abrupto en memory usage. Por eso el consejo común: quédate en 30GB o salta a 48GB+, no te quedes en 33GB.\n\nZGC tiene 'compressed class pointers' distintos y su propio esquema de coloring de pointers (usa bits altos del pointer para metadata). Cada GC moderno usa trucos de pointer para optimizar.",
+      "realWorld": "Cassandra recomienda heaps de ≤31GB explícitamente para mantener CompressedOops. Netflix midió y publicó que subir de 30GB a 40GB de heap causó regresión de memoria por perder CompressedOops.",
+      "tags": ["CompressedOops", "JVM tuning", "pointers", "cache"],
+      "tech": ["Java", "HotSpot"],
+      "references": [{ "title": "Aleksey Shipilev — 'Java Objects Inside Out'" }, { "title": "OpenJDK — CompressedOops wiki" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "fundamentals",
+      "topic": "Finalizers y Cleaners",
+      "difficulty": "mid",
+      "scenario": "Un dev implementa una clase que abre file handles y sobrescribe `finalize()` para cerrarlos. Otro dev en review dice: 'usar finalize es un anti-patrón desde hace años'.",
+      "question": "¿Por qué finalize es un anti-patrón y qué se usa hoy?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "finalize() se ejecuta cuando el GC decide, sin garantías de cuándo (o SI se ejecuta antes de que la JVM termine). Un file handle puede quedarse abierto minutos u horas → recurso agotado.", "correct": true, "why": "Correcto. finalize es 'best-effort'. La spec no garantiza que se ejecute. En un OOM, la JVM puede terminar antes de correr finalizers pendientes. Confiar en finalize para liberar recursos no-heap es garantía de bugs." },
+        { "letter": "B", "text": "finalize() añade overhead: el GC tiene que hacer 2 pases (uno para marcar el objeto como finalizable, otro después de correr el finalizer para liberarlo).", "correct": true, "why": "Correcto. Cada objeto con finalize() se registra en una queue especial. El GC no puede liberarlo en un solo pase — debe llamar finalize primero, luego el siguiente ciclo colecta si sigue sin referencias. Duplica el trabajo del GC para esos objetos. Además, si el finalizer resurrects (guarda `this` en un campo static) se genera comportamiento raro." },
+        { "letter": "C", "text": "El estándar moderno es try-with-resources con AutoCloseable / try-finally, que da control DETERMINÍSTICO: el recurso se libera cuando termina el bloque, no cuando al GC le apetece.", "correct": true, "why": "Correcto. try-with-resources (Java 7+) es el patrón canónico. AutoCloseable garantiza cleanup al salir del scope, con exception safety. Es equivalente al RAII de C++/Rust. Para casos donde try-with-resources no aplica (recursos con lifetime más largo), usar java.lang.ref.Cleaner (Java 9+) que es más seguro y eficiente que finalize." },
+        { "letter": "D", "text": "finalize sigue siendo válido en Java 21+; solo hay que documentarlo bien.", "correct": false, "why": "Falso. finalize está deprecated for removal desde Java 9 (JEP 421 en Java 18 lo deprecó más fuerte). El reemplazo oficial es Cleaner. Usar finalize en 2026 falla code review." }
+      ],
+      "explanation": "El principio: RESOURCE MANAGEMENT debe ser DETERMINÍSTICO. La memoria puede ser gestionada por el GC (indeterminado, ok porque es 'infinita'), pero handles, sockets, connections, file descriptors — son recursos limitados que necesitan cleanup predecible.\n\nJerarquía de opciones en Java 2026:\n1. try-with-resources con AutoCloseable — DEFAULT. Explícito, exception-safe, determinístico.\n2. Cleaner (Java 9+) — cuando el recurso tiene lifetime largo o el usuario podría olvidar close(). Es un backup, no un reemplazo.\n3. PhantomReference con ReferenceQueue — para casos avanzados donde Cleaner no encaja.\n4. finalize() — NUNCA. Deprecated for removal.\n\nAnalogías: C++ RAII (destructores), Rust Drop trait, Python __enter__/__exit__ (with), C# IDisposable (using). Todos son mejores que 'confiar en el GC'.",
+      "realWorld": "Josh Bloch en 'Effective Java' Item 8: 'Avoid finalizers and cleaners'. Bug famoso en 2013: un servicio Java se colgaba después de horas porque un cliente HTTP dependía de finalize para cerrar sockets — bajo carga, GC no corría suficiente → socket exhaustion → 'Too many open files'.",
+      "tags": ["finalize", "Cleaner", "AutoCloseable", "resource management"],
+      "tech": ["Java", "AutoCloseable", "Cleaner"],
+      "references": [{ "title": "Effective Java 3rd Ed. — Item 8" }, { "title": "JEP 421 — Deprecate Finalization for Removal" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "fundamentals",
+      "topic": "Memory model — visibility y happens-before",
+      "difficulty": "staff",
+      "scenario": "Este código clásico se ve en un thread A:\n\n```java\ninitialized = false;\ndata = null;\n\n// Thread A (init):\ndata = loadHeavyData();\ninitialized = true;\n\n// Thread B (worker, en loop):\nif (initialized) {\n    use(data);\n}\n```\n\nEn producción, ocasionalmente Thread B usa `data == null` a pesar de que `initialized` es true.",
+      "question": "¿Por qué y cuál es la solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Race entre el store de `data` y el store de `initialized`. En el modelo de memoria de Java, sin sincronización, el compilador/CPU puede REORDENAR los stores (ejemplo: escribir initialized=true ANTES que data=... porque no hay dependencia local). Thread B ve initialized=true pero aún null en data. Fix: declarar `initialized` como `volatile` (Java) → establece happens-before entre los stores de A y los loads de B.", "correct": true, "why": "Correcto y profundo. Es el ejemplo textbook del Java Memory Model. Sin `volatile`, la JVM/CPU son libres de reordenar operaciones si no violan la semántica del thread solitario. Otro thread ve estos reordenamientos. `volatile` garantiza: (a) atomicidad de load/store; (b) NO reordering de operaciones cruzando el volatile. También aplicable en .NET (`volatile`), C++ (std::atomic), Go (sync/atomic o channels)." },
+        { "letter": "B", "text": "El bug es que `loadHeavyData()` a veces devuelve null.", "correct": false, "why": "Podría, pero el escenario asume que no. El problema es de visibilidad y ordering entre threads, no del código secuencial." },
+        { "letter": "C", "text": "Poner `synchronized` en ambos accesos a `initialized`.", "correct": false, "why": "Funcionaría (synchronized también establece happens-before) pero es overkill: mucho más caro que `volatile`. Volatile es la herramienta correcta cuando el estado es un simple flag." },
+        { "letter": "D", "text": "Añadir `Thread.sleep(100)` en Thread A antes de setear initialized.", "correct": false, "why": "Anti-patrón clásico. Sleeps 'para dar tiempo' son magia negra — funcionan a veces, fallan bajo carga. No arreglan el memory model, solo cambian la probabilidad del bug." }
+      ],
+      "explanation": "El Java Memory Model (JMM) formalizado en JSR-133 (2004) permite reordering agresivo de instrucciones si no viola happens-before. Cada thread se ejecuta 'as-if-serial': el resultado observable EN ESE THREAD debe ser consistente. Pero OTROS threads pueden ver operaciones en orden distinto.\n\nHappens-before es la relación fundamental: si A happens-before B, entonces los efectos de A son visibles a B. Se establece por: (1) programa order dentro de un thread; (2) unlock happens-before lock del mismo monitor; (3) volatile write happens-before volatile read del mismo campo; (4) thread.start() hb primera acción del thread; (5) última acción del thread hb otro thread viendo isAlive=false; (6) transitividad.\n\nDouble-checked locking sin volatile es un bug clásico por lo mismo. El fix: `private static volatile Singleton instance`. En Java 5+ con volatile es correcto. En pre-Java 5 era imposible hacer DCL correcto.",
+      "realWorld": "Doug Lea (autor de java.util.concurrent) y Bill Pugh lideraron JSR-133. El famoso 'Broken DCL' paper (2001) mostró que millones de líneas de código Java pre-JMM tenían bugs latentes. C++11 introdujo modelo de memoria inspirado en JSR-133.",
+      "tags": ["Java Memory Model", "volatile", "happens-before", "reordering"],
+      "tech": ["Java", "JMM", "C++11", ".NET"],
+      "references": [{ "title": "JSR-133 — Java Memory Model" }, { "title": "Doug Lea — 'The JSR-133 Cookbook'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "fundamentals",
+      "topic": "String pool y interning",
+      "difficulty": "mid",
+      "scenario": "Un servicio de ingesta procesa 100M eventos/hora. Cada evento tiene un `sourceId` (string, ~20 chars). Solo hay 500 sources distintos. Un dev propone: usar `String.intern()` sobre `sourceId` para ahorrar memoria.",
+      "question": "¿Es una buena idea? Explica.",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí. intern() garantiza una sola copia por string único — 500 strings en total en el pool, en vez de 100M por hora. Ganancia enorme de memoria.", "correct": false, "why": "Suena bien pero es MATIZADO: el default String pool en HotSpot es de tamaño limitado (StringTable, ~60K buckets por default). Con 500 valores está bien, pero el intern() sobre CADA evento (100M/h) tiene overhead alto: lookup en hash table concurrente con lock. Además, valores en el pool viven en PermGen (pre-Java 8) o Metaspace/heap (Java 8+) sin fácil eviction — leak si el set no es realmente bounded." },
+        { "letter": "B", "text": "No — usar un Map<String, String> custom (canonical map) o Guava/Caffeine Interner. Da control sobre el ciclo de vida, evita contención en el StringTable global, y permite eviction si el vocabulario crece.", "correct": true, "why": "Correcto. Guava tiene `Interners.newWeakInterner()` y `newStrongInterner()`. Da los mismos beneficios de dedupe sin usar el pool global de la JVM. Puedes tener múltiples interners por dominio, cada uno con su política. Recomendado en 'Effective Java' y por Aleksey Shipilev. Además, evitas el overhead de `String.intern()` que es notoriamente lento bajo contención." },
+        { "letter": "C", "text": "No — cachear strings es prematuro optimization. Mide primero.", "correct": false, "why": "Cierto en abstracto, pero el escenario ya especifica 100M/h con solo 500 valores únicos — mensurable a priori. La objeción real es CÓMO deduplicar (Guava interner vs String.intern()), no si hacerlo." },
+        { "letter": "D", "text": "Sí — desde Java 8 el pool se movió al heap y ya no tiene los problemas de PermGen.", "correct": false, "why": "Cierto que se movió al heap, pero el problema no era solo PermGen: es la tabla hash de tamaño fijo, contención global, y falta de eviction. Los issues siguen." }
+      ],
+      "explanation": "String interning es válido pero delicado. El caso ideal: vocabulario pequeño, bounded, conocido. Antipatrón: intern-todo esperando ganar memoria — a menudo pierdes por overhead.\n\nAlternativas en 2026:\n- Guava `Interners.newStrongInterner()` — canonical map local a la app, sin contaminar StringTable.\n- Enum si el conjunto es fijo (Sources.SOURCE_1, .SOURCE_2) — cero overhead.\n- ID numérico (int/long) en vez de String — si controlas la fuente. Nada bate un long.\n- Lookup table (String → int) en la capa de ingesta, procesar por id.\n\nProfiling: verifica con jmap histo cuánto pesan los strings, con MAT ve retained size. Si sourceId son 20% del heap, dedupe vale la pena. Si son 0.5%, ni te molestes.",
+      "realWorld": "LinkedIn, Twitter y otras empresas con event pipelines masivas usan schemas Avro/Protobuf con int enums en vez de strings — elimina el problema completamente. Alex Petrov ('Database Internals') menciona canonical mapping como técnica estándar en column stores.",
+      "tags": ["String pool", "intern", "canonical map", "deduplication"],
+      "tech": ["Java", "Guava", "Caffeine"],
+      "references": [{ "title": "Aleksey Shipilev — 'String Deduplication'" }, { "title": "Guava — Interners docs" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "fundamentals",
+      "topic": "V8 heap y las 4 heaps de Node",
+      "difficulty": "mid",
+      "scenario": "Un proceso Node.js corre con `--max-old-space-size=4096`. El dev pregunta: '¿esto define el heap total? ¿Qué otras memorias hay?'",
+      "question": "¿Cuál es la explicación correcta del layout de memoria en Node?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Node tiene UN solo heap gestionado por V8, y max-old-space-size lo define completo.", "correct": false, "why": "Simplificado en exceso. V8 tiene múltiples espacios (new_space, old_space, code_space, large_object_space, map_space). Además del heap V8, Node usa memoria para Buffers (fuera del heap V8), stack de cada worker, code memory, C++ addons." },
+        { "letter": "B", "text": "V8 divide su heap en new-space (jóvenes) y old-space (viejos, controlado por max-old-space-size). Además, Node usa: Buffers (off-heap por default desde Node 12), stack por thread (~1MB), memoria de módulos nativos (napi), y heap del propio proceso C++. Total real puede ser bastante mayor que max-old-space-size.", "correct": true, "why": "Correcto. Es la explicación completa. El default de max-old-space-size es ~2GB en 64-bit (varía por versión). Buffers grandes van al 'large object space' o fuera del heap V8. process.memoryUsage() te da: rss (total residente en RAM), heapTotal, heapUsed, external (Buffers), arrayBuffers (subset)." },
+        { "letter": "C", "text": "Node comparte el heap con el kernel del sistema operativo.", "correct": false, "why": "Falso. Ningún proceso comparte heap con el kernel. Cada proceso tiene su propio espacio de direcciones virtuales." },
+        { "letter": "D", "text": "max-old-space-size es un soft-limit; V8 lo puede exceder si necesita.", "correct": false, "why": "Falso. Es un hard-limit. Al alcanzarlo, V8 hace full GC agresivo y si sigue sin espacio, crash con 'JavaScript heap out of memory' fatal." }
+      ],
+      "explanation": "Layout de memoria de un proceso Node.js:\n\n1. **V8 heap** (JS objects): new_space (~16MB típico), old_space (default 2GB, config con max-old-space-size), code_space (JIT-compiled code), large_object_space (>512KB objects).\n2. **Off-heap Buffers**: Node.Buffer.allocUnsafe() y similares reservan memoria fuera de V8. Se ven en `external` de memoryUsage(). Ideal para I/O de red y disco.\n3. **Stack**: 1MB por thread. Node main + libuv threadpool (default 4) + worker_threads.\n4. **C++ layer**: libuv, OpenSSL, código de módulos nativos (better-sqlite3, sharp).\n5. **RSS (Resident Set Size)**: total en RAM del proceso, incluye todo lo anterior + código, memory mapping, shared libs.\n\nBug clásico: aplicar max-old-space-size=1024 esperando que el proceso use ≤1GB, pero RSS acaba en 2-3GB por Buffers y overhead nativo. Para límites REALES, usa cgroups (K8s memory limit) — Node no puede hacerlo solo.",
+      "realWorld": "Netflix documentó bugs de memoria en Node en 2019 relacionados con streams y Buffers no liberados. Bloomberg publicó guía de tuning de V8 para servicios de alta carga. El default de 2GB de old_space fue crítico en apps 32-bit; en 64-bit menos, pero sigue siendo el primer knob de tuning.",
+      "tags": ["Node.js", "V8 heap", "Buffer", "RSS"],
+      "tech": ["Node.js", "V8", "libuv"],
+      "references": [{ "title": "Node.js docs — process.memoryUsage()" }, { "title": "V8 blog — 'Trash talk: the Orinoco garbage collector'" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "fundamentals",
+      "topic": "Zero-copy y sendfile",
+      "difficulty": "senior",
+      "scenario": "Un file server en Java sirve archivos de 100MB. Con `FileInputStream` → `OutputStream` (copiar buffer 8KB en un loop) alcanza 400MB/s. Al cambiar a `FileChannel.transferTo(socketChannel)` sube a 2GB/s.",
+      "question": "¿Por qué la diferencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "transferTo usa múltiples threads en paralelo.", "correct": false, "why": "Falso. transferTo es una sola llamada, single-thread. La ganancia no es paralelismo." },
+        { "letter": "B", "text": "El método tradicional hace: kernel → user buffer (JVM) → kernel (socket) → NIC. 4 copias, 4 context switches. transferTo (implementado como sendfile syscall) hace: kernel file cache → kernel socket buffer → NIC. Elimina copias a userspace y context switches. Es 'zero-copy'.", "correct": true, "why": "Correcto. sendfile (Linux) o TransmitFile (Windows) permiten al kernel mover datos entre dos file descriptors SIN pasar por userspace. Con soporte DMA, los datos van directamente del disco a la NIC sin tocar la CPU excepto para orquestar. Kafka, Netty, nginx y otros lo usan intensivamente." },
+        { "letter": "C", "text": "transferTo comprime los datos.", "correct": false, "why": "Falso. No hay compresión implicada." },
+        { "letter": "D", "text": "El buffer default es más grande.", "correct": false, "why": "Aunque un buffer más grande ayuda, no explica 5x. La ganancia es principalmente eliminar copias user↔kernel." }
+      ],
+      "explanation": "'Zero-copy' es un término estándar para técnicas que evitan copiar datos innecesariamente entre kernel y user space. En un file server tradicional, servir un archivo implica 4 copias:\n\n1. Disco → kernel page cache (DMA, ok)\n2. Kernel page cache → user buffer (memcpy en CPU)\n3. User buffer → kernel socket buffer (memcpy en CPU)\n4. Socket buffer → NIC (DMA, ok)\n\nMás 4 context switches (usermode ↔ kernelmode). Con sendfile:\n\n1. Disco → kernel page cache (DMA)\n2. Kernel page cache → NIC (DMA, si NIC soporta scatter-gather) o kernel socket buffer sin ir a userspace.\n\nResultado: 2x-10x throughput dependiendo del hardware. Además, latencia menor y CPU liberada para otras tareas.\n\nOtras técnicas zero-copy: mmap (mapear archivo directo a memoria virtual, evita copia explícita), splice (mover datos entre pipes/sockets), io_uring (Linux moderno, async + zero-copy en muchos casos), DPDK/eBPF para casos extremos.",
+      "realWorld": "Kafka publicó su famoso paper de arquitectura destacando el uso de sendfile para throughput extremo. nginx usa sendfile por default. Netflix Open Connect (CDN de streaming) usa FreeBSD sendfile + kTLS para servir 200+ Gbps por servidor.",
+      "tags": ["zero-copy", "sendfile", "DMA", "syscalls"],
+      "tech": ["Linux", "Java NIO", "Kafka", "nginx"],
+      "references": [{ "title": "Linus Torvalds — 'sendfile design' LKML" }, { "title": "Kafka — 'Efficient data transfer'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "fundamentals",
+      "topic": "Native Memory Tracking",
+      "difficulty": "senior",
+      "scenario": "Un servicio Java con `-Xmx4g` está consumiendo 8GB RSS según kubelet. Heap dump muestra solo 3GB usado. ¿Dónde están los 5GB restantes y cómo diagnosticarlo?",
+      "question": "¿Qué componentes contribuyen a la memoria fuera del heap, y qué herramientas los muestran?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Metaspace (clases cargadas), code cache (JIT-compiled code), thread stacks (~1MB × número de threads), Direct Buffers (Netty, NIO), memoria de librerías nativas (JNI, JNA), GC internal structures.", "correct": true, "why": "Correcto. Todos estos son 'native memory' — fuera del heap Java pero dentro del proceso. En una app con muchos threads (200+) y muchas librerías nativas, pueden fácilmente sumar varios GB. Metaspace por default es ilimitado, code cache por default 240MB, cada thread stack es 1MB." },
+        { "letter": "B", "text": "Habilitar Native Memory Tracking con `-XX:NativeMemoryTracking=summary` y consultar con `jcmd <pid> VM.native_memory summary`. Muestra breakdown por categoría (Class, Thread, Code, GC, Compiler, Internal, etc.).", "correct": true, "why": "Correcto. NMT es el tool oficial para esto. Overhead 5-10%. Categorías: Java Heap, Class (Metaspace), Thread, Code, GC, Compiler, Internal, Symbol, Native Memory Tracking, Arena Chunk. Con baseline y diff puedes ver qué categoría crece." },
+        { "letter": "C", "text": "Es un bug del kernel. Reiniciar el nodo.", "correct": false, "why": "Casi nunca. RSS mayor que heap es normal y esperado. El problema es entender qué componente crece anómalamente." },
+        { "letter": "D", "text": "Usar `pmap -x <pid>` para ver el mapa de memoria completo del proceso, incluyendo shared libraries y anonymous mappings.", "correct": true, "why": "Correcto y complementario a NMT. pmap muestra la vista de kernel: todos los mapeos, tanto los tracked por JVM como los de librerías nativas y allocations vía malloc directo. Útil para identificar si el crecimiento es en anonymous mappings (heap del malloc del proceso, ej: JNI allocaciones)." },
+        { "letter": "E", "text": "Usar jemalloc en lugar de glibc malloc y su heap profiler (MALLOC_CONF=prof:true).", "correct": true, "why": "Correcto para casos avanzados. Cassandra, Elasticsearch, Kafka usan jemalloc por defecto porque es menos fragmentado y con profiler nativo se puede identificar qué librería/JNI está pidiendo memoria. En Java puro no aplica, pero cualquier servicio con nativos serios sí." }
+      ],
+      "explanation": "RSS del proceso Java = Java Heap + Off-heap (DirectByteBuffers) + Metaspace + Code Cache + Thread Stacks + GC structures + Native libs + malloc arenas + libraries loaded.\n\nCausas típicas de RSS creciente sin explicación clara:\n\n1. **Native leak** en JNI/nativos (más común en apps con Netty custom, DB drivers propietarios).\n2. **Metaspace explosion**: clases generadas dinámicamente (frameworks tipo Spring que hacen mucho reflection/proxy, groovy/scala compilando en runtime).\n3. **Thread leak**: cada thread cuesta 1MB stack. 5000 threads = 5GB.\n4. **DirectByteBuffer leak**: Netty sin release(), NIO sin cleanup.\n5. **Glibc fragmentation**: default malloc arena por cada CPU + fragmentación. Fix: `MALLOC_ARENA_MAX=2` o usar jemalloc.\n\nEn Kubernetes: si RSS > memory limit, OOMKiller. La app 'crashea sin error' porque el kernel la mata externo — no aparece en logs de JVM. Siempre setear `-Xmx` a ~70% del limit del pod, dejar margen para off-heap.",
+      "realWorld": "Elasticsearch/Cassandra documentan MALLOC_ARENA_MAX=2 como tuning obligatorio. Discord publicó incidente 2020 donde un leak de JNI en un driver causó OOMKills sistemáticos que tomaron semanas diagnosticar sin NMT.",
+      "tags": ["Native Memory", "NMT", "jemalloc", "RSS", "Kubernetes"],
+      "tech": ["Java", "jemalloc", "jcmd", "Linux"],
+      "references": [{ "title": "Java Native Memory Tracking — Oracle docs" }, { "title": "Aleksey Shipilev — 'The unbearable lightness of monitoring'" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "fundamentals",
+      "topic": "Escape analysis y scalar replacement",
+      "difficulty": "staff",
+      "scenario": "En un microbenchmark, este método corre a 5ns/op después de warmup:\n\n```java\npublic int distance(int ax, int ay, int bx, int by) {\n    Point a = new Point(ax, ay);\n    Point b = new Point(bx, by);\n    return (int) Math.hypot(a.x - b.x, a.y - b.y);\n}\n```\n\nEsperabas ~30ns por las 2 allocations. ¿Por qué es tan rápido?",
+      "question": "¿Cuál es la razón?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El JIT hace ESCAPE ANALYSIS y determina que Point a, b no escapan del método. Aplica SCALAR REPLACEMENT: en vez de asignar los objetos en el heap, mantiene sus campos como variables locales en registros. Efectivamente elimina las allocations. Bonus: sin allocations, no hay presión sobre el GC.", "correct": true, "why": "Correcto. HotSpot C2 y Graal hacen escape analysis + scalar replacement (SR). Después de warmup, si el análisis prueba que el objeto no escapa, sus campos se 'descomponen' en variables individuales. El objeto Point deja de existir en runtime — solo hay 4 ints en registros. Es la razón por la que microbenchmarks muestran 0 GC allocation en código así." },
+        { "letter": "B", "text": "El JIT inlinea el constructor de Point y elimina el `new`.", "correct": false, "why": "Inlining es parte del pipeline, pero el `new` en sí requiere asignar. Es escape analysis + scalar replacement lo que ELIMINA la asignación, no solo el inlining." },
+        { "letter": "C", "text": "El GC actual es tan rápido que 2 allocations no se notan.", "correct": false, "why": "Aunque nursery allocation es rápida (~10ns), 2 allocations + escritura de headers son medibles. La ausencia total de tiempo dedicado sugiere eliminación, no allocation rápida." },
+        { "letter": "D", "text": "Java 21+ tiene value types y Point ahora es value automáticamente.", "correct": false, "why": "Falso hasta que Valhalla llegue a producción. Point sigue siendo objeto normal. La 'magia' viene del JIT." }
+      ],
+      "explanation": "Escape analysis (EA) es el análisis de flujo que determina si un objeto puede ser accedido fuera del método donde se creó. 3 niveles:\n\n1. **No escape**: el objeto solo se usa localmente. → Scalar replacement o stack allocation.\n2. **Argument escape**: el objeto se pasa a otros métodos pero no se guarda. → Puede aún beneficiar si el callee no lo escapa (inter-procedural EA).\n3. **Global escape**: se guarda en un campo, se retorna, se pasa a thread. → No hay optimización posible.\n\nScalar replacement es la optimización clave: descompone un objeto no-escapado en sus campos primitivos, elimina el header, y guarda los campos en registros. En benchmarks: `new Wrapper(x).getValue()` puede compilarse a NOP + return x.\n\nPor esto: (1) programar 'idiomáticamente' con builders, wrappers, streams a menudo tiene 0 cost en runtime; (2) microbenchmarks son delicados — sin JMH el compilador puede eliminar tu código entero como 'muerto'.",
+      "realWorld": "Aleksey Shipilev y Cliff Click han dado múltiples charlas sobre EA. JMH (Java Microbenchmark Harness) fue creado precisamente para prevenir mediciones falsas por optimizaciones del JIT. Stream API se beneficia masivamente de EA — muchos streams tienen 0 allocations tras warmup.",
+      "tags": ["escape analysis", "scalar replacement", "JIT", "C2", "Graal"],
+      "tech": ["Java", "HotSpot", "Graal", "JMH"],
+      "references": [{ "title": "Choi et al. — 'Escape Analysis for Java' (1999)" }, { "title": "Aleksey Shipilev — 'JMM Pragmatics'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "fundamentals",
+      "topic": "ThreadLocal leaks en app servers",
+      "difficulty": "senior",
+      "scenario": "Un servicio Spring Boot deployado en un app server tradicional sufre leak: cada re-deploy suma memoria y eventualmente OOM. Heap dump muestra que las CLASES viejas de la app no se pueden GC-colectar. El culpable resulta ser un `ThreadLocal<UserContext>` en un filter que no llama a `remove()`.",
+      "question": "¿Por qué un ThreadLocal causa este leak específico y cómo se resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El ThreadLocal mantiene una referencia al ClassLoader de la app (a través del value type). Los threads del pool del server sobreviven al redeploy, así que su ThreadLocalMap mantiene vivos los objetos → mantienen vivo el ClassLoader → mantienen todas las clases y estáticos de la versión vieja. Fix: SIEMPRE `remove()` en un finally del filter, o usar TryWith en request scope.", "correct": true, "why": "Correcto. Es el 'classloader leak' clásico en app servers (Tomcat, Jetty, WebSphere). Los threads del pool son globales al server, no al deploy. Un ThreadLocal olvidado los ancla al ClassLoader. Al redeploy, el ClassLoader viejo debería ser GC-colectado, pero los threadlocals lo mantienen vivo. Peor: incluso con WeakReference sobre el KEY, el VALUE se referencia fuertemente y mantiene todo." },
+        { "letter": "B", "text": "El ThreadLocal se corrompe entre requests y Spring reinicia el ClassLoader manualmente.", "correct": false, "why": "Falso. Spring no reinicia ClassLoaders arbitrariamente. El scenario es un leak real, no gestionado." },
+        { "letter": "C", "text": "Es un bug de la JVM, no del código.", "correct": false, "why": "Falso. Es un anti-patrón conocido y documentado. La responsabilidad es del código de la app para hacer `remove()`." },
+        { "letter": "D", "text": "El fix es hacer el ThreadLocal `static final`.", "correct": false, "why": "static final es lo NORMAL para ThreadLocal. No arregla el leak. El fix es `remove()` explícito al terminar el request." }
+      ],
+      "explanation": "ThreadLocal.ThreadLocalMap tiene una estructura peculiar: los KEYS son WeakReference<ThreadLocal>, pero los VALUES son Strong. Idea: si nadie referencia el ThreadLocal, la entry se puede limpiar. Realidad: los threads del pool viven forever y su map crece.\n\nEn contexto de containers/app servers:\n1. App v1 se deploya, define ThreadLocal<UserContext>. Filter guarda user, no llama remove().\n2. Request termina, thread vuelve al pool. ThreadLocalMap[TL] = user. TL sigue referenciado por app.\n3. Redeploy: v1 se descarga, en teoría el ClassLoader v1 debe ser colectable.\n4. Pero los threads siguen vivos, sus ThreadLocalMap tienen references a Users de v1 → v1 ClassLoader vivo.\n5. Nueva v2 carga. Todo v1 sigue en memoria. Repetir.\n\nHerramientas: Tomcat tiene detector de ThreadLocal leaks al undeploy (log warning). En serverless / containers immutables (Docker), este problema se vuelve menos crítico porque el proceso entero muere.\n\nFix definitivo: filter con try-finally, MDC.clear() en Logback, patrones que garanticen cleanup end-of-request.",
+      "realWorld": "Tomcat documenta detección de ThreadLocal leaks. Este bug fue tan común que Spring introduce el 'RequestContextHolder' con hooks de cleanup. Netflix Zuul y Ribbon tuvieron incidentes con ThreadLocal en 2015 según sus post-mortems.",
+      "tags": ["ThreadLocal", "classloader leak", "memory leak", "Tomcat"],
+      "tech": ["Java", "Spring", "Tomcat"],
+      "references": [{ "title": "Apache Tomcat — 'Memory Leak Protection'" }, { "title": "Frank Kieviet — 'A memory leak that made me learn a lot'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "fundamentals",
+      "topic": "Latencia P99 y outliers de GC",
+      "difficulty": "staff",
+      "scenario": "Un servicio con SLO de P99 <100ms tiene GC pauses de 200ms cada 30s. Análisis muestra que un endpoint específico crea explosión de basura (500MB de listas temporales por request). Otras requests son 10x más pequeñas.",
+      "question": "¿Cuáles son las estrategias efectivas para arreglar esto?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Aislar el endpoint 'ruidoso' en su propio servicio/pod. Su GC no afectará al resto del tráfico.", "correct": true, "why": "Correcto y a menudo el fix más pragmático. 'Noisy neighbor' isolation: mover cargas con patrones muy distintos a procesos separados. El resto del sistema mantiene SLO. El endpoint problemático se puede tuner independientemente (más heap, otro GC)." },
+        { "letter": "B", "text": "Refactor el endpoint problemático: streaming en vez de acumular en listas, procesar por lotes, evitar autoboxing, usar Iterator en vez de collect().", "correct": true, "why": "Correcto. Atacar la causa raíz. 500MB de listas temporales es sintomático de: (1) leer datos gigantes en memoria en vez de streamear; (2) map/filter creando colecciones intermedias sin necesidad; (3) autoboxing de int → Integer. Reducir allocation reduce GC directamente." },
+        { "letter": "C", "text": "Aumentar el heap a 3x el tamaño actual. GC menos frecuente resuelve el P99.", "correct": false, "why": "Anti-patrón sutil. Heap grande = ciclos GC MÁS ESPACIADOS pero MÁS LARGOS. Puedes pasar de pauses de 200ms cada 30s a pauses de 800ms cada 2min — el P99 empeora. Excepción: si cambias a ZGC/Shenandoah, heap grande ES OK." },
+        { "letter": "D", "text": "Cambiar a ZGC/Shenandoah que hacen la mayor parte del trabajo concurrente. Pauses <10ms típico.", "correct": true, "why": "Correcto. Estos GCs 'concurrentes' hacen mark y compact mientras la app sigue corriendo. Sacrifican throughput por latencia predecible. Perfect fit para SLO de latencia estricto." },
+        { "letter": "E", "text": "Poner un rate limiter en el endpoint problemático para que solo 1 request lo ejecute a la vez.", "correct": false, "why": "Puede ser mitigación temporal pero introduce contención y afecta throughput. Además, un solo request creando 500MB sigue causando pause. No es la solución primaria." }
+      ],
+      "explanation": "Latencia P99 es dominada por outliers. En sistemas Java, el GC es el sospechoso #1 de outliers regulares. Hay que ver el problema en 3 dimensiones:\n\n1. **Reducir presión sobre GC**: menos allocations = menos trabajo. Refactor para streaming, primitivos, reutilización. La regla 'zero-allocation en hot path' de LMAX/Aeron es el extremo.\n\n2. **Cambiar de algoritmo GC**: Parallel (throughput first, larga pause) → G1 (balance) → ZGC/Shenandoah (latencia first, más CPU/RAM). No hay silver bullet — depende del workload.\n\n3. **Aislar cargas**: microservicios permiten tuning específico. Un servicio de reportes pesados con Parallel GC + heap 32GB; APIs de baja latencia con ZGC + heap 4GB.\n\nMedición: `-Xlog:gc*:file=gc.log:time,level,tags`, luego analizar con GCEasy o Censum. Buscar 'concurrent mode failure', 'Allocation Failure', 'promotion failure' — cada uno indica causa distinta.",
+      "realWorld": "Gil Tene (Azul, autor de C4 GC) popularizó el análisis riguroso de latency con HdrHistogram y su charla 'How NOT to Measure Latency'. Uber publicó su journey de tuning de GC en 2019 mostrando reducción de P99 5x tras migrar a ZGC.",
+      "tags": ["P99", "GC pauses", "latency", "ZGC", "isolation"],
+      "tech": ["Java", "ZGC", "Shenandoah", "G1"],
+      "references": [{ "title": "Gil Tene — 'How NOT to Measure Latency'" }, { "title": "Uber Eng — 'Tuning JVM GC for High Performance'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "fundamentals",
+      "topic": "Go runtime memory y goroutines",
+      "difficulty": "senior",
+      "scenario": "Un servicio Go maneja 100K conexiones WebSocket concurrentes con 1 goroutine por conexión. Un dev pregunta: '¿por qué esto funciona en Go y no en Java con threads tradicionales?'",
+      "question": "¿Cuál es la explicación técnica más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Goroutines son threads del OS, pero Go los usa mejor.", "correct": false, "why": "Falso. Goroutines NO son threads del OS. Son unidades de ejecución del runtime de Go (M:N scheduling)." },
+        { "letter": "B", "text": "Goroutines son 'green threads' multiplexadas por el runtime Go (scheduler M:N). Cada goroutine inicia con stack de 2KB (crece dinámicamente vs threads OS que reservan 1MB fijo). El scheduler mapea N goroutines a M threads del OS (M ~= número de cores). Además, cuando una goroutine bloquea en syscall/IO, el runtime la suspende y usa el thread para otra goroutine — similar al event loop pero transparente al código.", "correct": true, "why": "Correcto y granular. Es el modelo M:N. GOMAXPROCS controla los M threads OS. El scheduler de Go es 'work-stealing', preemptivo desde 1.14 (usa señales para preempt en loops). El stack pequeño y crecible (segmented→ contiguous con growth por copia) es lo que permite miles de goroutines con memoria mínima. Java's Project Loom (Virtual Threads, JDK 21) implementa el mismo concepto." },
+        { "letter": "C", "text": "Go usa async/await interno como Node.", "correct": false, "why": "Falso. Go tiene modelo síncrono / bloqueante en el código; la 'magia' es que el bloqueo lo maneja el runtime, no el kernel directamente. Sintácticamente NO hay async/await." },
+        { "letter": "D", "text": "Java no puede hacer esto por diseño del lenguaje.", "correct": false, "why": "Falso. Java 21+ tiene Virtual Threads (Project Loom), que es el mismo concepto. Antes había frameworks (Netty, Reactor) que lo hacían con callback style." }
+      ],
+      "explanation": "El modelo M:N (M goroutines sobre N threads OS) es la base de la escalabilidad de Go. Cada goroutine:\n- Stack inicial 2KB, crece por copy-and-grow hasta 1GB max\n- Ejecuta en un OS thread pero puede ser 'preempted' y migrada por el scheduler\n- Bloqueos I/O suspenden la goroutine, no el thread\n\nEl runtime Go implementa: (1) network poller (epoll/kqueue) para I/O no-bloqueante bajo el capó; (2) work-stealing entre P (processors); (3) preemption por señal desde 1.14 para prevenir goroutines hostiles.\n\nContrapunto: goroutines no son gratis. 100K goroutines = 200MB+ solo de stacks (crece si la lógica es compleja). Goroutine leaks (`go f()` que nunca termina) es un anti-patrón. Herramientas: `runtime.NumGoroutine()`, `pprof goroutine profile`.\n\nJava Virtual Threads (JDK 21) implementan el mismo concepto — se llaman 'virtual threads', bajo el capó son 'carriers' (threads OS) que los ejecutan. API idéntica a threads normales. Cambio conceptual gigante para Java.",
+      "realWorld": "Discord migró servicios críticos de Go a Rust en 2020 no por escalabilidad de goroutines (que era buena) sino por GC pauses. Cloudflare corre millones de goroutines. Google desarrolló Go para escala interna. Project Loom (Ron Pressler, Oracle) trajo virtual threads a Java en JDK 21 (2023).",
+      "tags": ["goroutines", "M:N scheduling", "green threads", "Loom"],
+      "tech": ["Go", "Java Project Loom", "Rust"],
+      "references": [{ "title": "Dmitry Vyukov — 'Scalable Go Scheduler'" }, { "title": "JEP 444 — Virtual Threads" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "fundamentals",
+      "topic": "Container-aware JVM",
+      "difficulty": "senior",
+      "scenario": "Un dev deploya un servicio Java 8 en Kubernetes con memory limit 2GB. La JVM crashea con OOM al arrancar reservando 4GB. En Java 11+ el mismo YAML funciona.",
+      "question": "¿Cuál es la causa raíz y qué cambió?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Java 8 (pre-8u191) lee la memoria del NODO del host, no del cgroup del container. En un nodo de 64GB con container limit 2GB, la JVM calcula default heap como 25% de 64GB = 16GB → intenta reservar, crash. Fix: `-Xmx` explícito. Java 10+ es container-aware por default: lee cgroup limits y calcula heap correctamente.", "correct": true, "why": "Correcto. Fue el bug clásico de containerización de Java. Fue backporteado a 8u191 (Oct 2018). En Java 11+ (JEP 380, luego mejoras) la JVM detecta cgroups v1 y v2, lee memory/cpu limits reales del container. Es una de las razones para migrar apps Java a versiones LTS modernas urgentemente." },
+        { "letter": "B", "text": "Java 8 tiene un bug de leak que Java 11 arregló.", "correct": false, "why": "Falso. Es un bug de defaults, no un leak. Java 8 con `-Xmx` explícito funcionaba bien." },
+        { "letter": "C", "text": "Java 11 usa menos memoria porque tiene mejor compilador.", "correct": false, "why": "Java 11 tiene mejoras pero no cambia fundamentalmente el uso de memoria. La diferencia relevante es la detección de container limits." },
+        { "letter": "D", "text": "El container runtime cambió entre versiones.", "correct": false, "why": "Falso. Docker/K8s no cambiaron el mecanismo de limits. Fue la JVM la que aprendió a respetarlos." }
+      ],
+      "explanation": "Container-awareness fue una gap crítica de Java durante años. El problema: cgroups (los límites del container) no aparecen en `/proc/meminfo` o `sysconf(_SC_NPROCESSORS_ONLN)` — la JVM veía el host. Consecuencias:\n\n1. **Memory**: heap default = 25% de RAM. Sin awareness → heap gigante → OOM al reservar.\n2. **CPU**: number of GC threads, compiler threads, ForkJoinPool.commonPool = f(cores). Sin awareness → threads gigantes → contención + overhead.\n\nFixes por versión:\n- Java 8u131 (Apr 2017): `-XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap` (experimental).\n- Java 8u191 (Oct 2018): container awareness default, con `-XX:+UseContainerSupport`.\n- Java 10+: container-aware por default.\n- Java 15+: cgroups v2 support.\n\nRegla 2026: si estás en Kubernetes y usas Java 8 sin update, TIENES un bug latente. Actualiza a Java 11 LTS mínimo, idealmente 17 o 21.",
+      "realWorld": "Netflix, Adobe, LinkedIn publicaron post-mortems de OOM en containers por este bug. Fue tan común que Docker publicó guías 'JVM in containers'. La deuda técnica de servicios Java 8 fue un driver enorme de la migración a Java 11/17.",
+      "tags": ["container-aware", "cgroups", "Kubernetes", "OOM"],
+      "tech": ["Java", "Docker", "Kubernetes", "cgroups"],
+      "references": [{ "title": "JDK-8146115 — Support cgroup memory limits" }, { "title": "Red Hat — 'Java 11+ containers'" }]
+    }
+  ]
+}

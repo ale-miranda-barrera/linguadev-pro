@@ -1,0 +1,421 @@
+{
+  "id": "devops-sim-10-helm-and-kustomize",
+  "trackId": "devops",
+  "order": 10,
+  "title": "Simulacro 10 — Helm, Kustomize y GitOps",
+  "focus": "Package managers para K8s: Helm (charts, templates, values, releases, dependencies, hooks, rollbacks) vs Kustomize (bases, overlays, strategic merge patches). Cuándo cada uno. GitOps con ArgoCD/Flux. Comparación con raw manifests.",
+  "areaCoverage": ["iac"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "iac",
+      "topic": "El problema que Helm/Kustomize resuelven",
+      "difficulty": "junior",
+      "scenario": "Tienes 5 servicios K8s, 3 environments (dev/staging/prod), cada uno con diferentes replicas, resources, y ConfigMaps. Sin herramienta, mantienes 15 sets de manifests casi idénticos.",
+      "question": "¿Qué problema resuelven Helm y Kustomize sobre raw manifests?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Raw manifests (YAML puro) son ideales para 1 app, 1 environment. Cuando multiplicas por environments/regions/tenants, tienes DUPLICATION masiva (copy-paste con cambios pequeños). Bugs cuando actualizas dev pero olvidas prod. Helm/Kustomize resuelven: (1) TEMPLATING/PATCHING para reutilizar la mayoría; (2) VERSIONING de tu config como paquete; (3) UPGRADE/ROLLBACK como unidad. Helm usa templating (Go templates + values.yaml); Kustomize usa patches (base + overlays sin templating).", "correct": true, "why": "Correcto. El problema es DRY (Don't Repeat Yourself) aplicado a config. Sin herramienta: 15 copies con diffs sutiles → mantenimiento nightmare. Con herramienta: 1 fuente + config por environment." },
+        { "letter": "B", "text": "Helm y Kustomize hacen exactamente lo mismo.", "correct": false, "why": "Approaches distintos. Helm: templates + values (más powerful, más complexity). Kustomize: patches (más simple, no template language). Filosofía distinta." },
+        { "letter": "C", "text": "Raw manifests son siempre mejores que herramientas.", "correct": false, "why": "Para escala real, no. 1 servicio × 1 environment: raw yaml ok. 20 servicios × 5 environments: sin herramienta, unmaintainable." },
+        { "letter": "D", "text": "Solo Helm resuelve estos problemas.", "correct": false, "why": "Kustomize también, con approach distinto. Ambos válidos, con trade-offs. Muchas empresas usan combinación." }
+      ],
+      "explanation": "Package managers para K8s tienen dos filósofias: (1) TEMPLATING (Helm, Jsonnet): manifests con placeholders, values.yaml provee valores. Powerful (loops, conditionals, functions) pero language propio a aprender. Templating errors comunes: whitespace bugs, missing values. (2) PATCHING (Kustomize, ytt): manifest base + overlays con patches. Simple, YAML-native, no template language. Menos powerful (no loops nativos). GitOps context: ambos resultan en YAML que ArgoCD/Flux apply. Trade-off classic: Helm más rico + más complexity; Kustomize más simple + más limitado. Empresas grandes suelen mixar: Helm para 3rd-party (postgres, nginx charts) + Kustomize para custom apps.",
+      "realWorld": "Helm creado en 2016, sponsored by Deis (Microsoft). CNCF Graduated. Kustomize integrated en kubectl 1.14+ (kubectl apply -k). Charts of popular apps (Postgres, Nginx, Grafana) distribuidos como Helm. Airbnb, Reddit use Kustomize heavily. Amazon EKS docs show both.",
+      "tags": ["helm", "kustomize", "package-manager", "dry"],
+      "tech": ["kubernetes", "helm", "kustomize"],
+      "references": [{ "title": "helm.sh" }, { "title": "kustomize.io" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "iac",
+      "topic": "Estructura de Helm chart",
+      "difficulty": "junior",
+      "scenario": "Recibes tu primer Helm chart. Ves: Chart.yaml, values.yaml, templates/, charts/, .helmignore. ¿Qué es cada uno?",
+      "question": "¿Cuál es la estructura de un Helm chart?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chart.yaml: metadata (name, version, appVersion, dependencies). values.yaml: DEFAULT values (los usuarios overridean con --values custom.yaml o --set key=val). templates/: manifests con placeholders Go template ({{ .Values.replicas }}). charts/: sub-charts (dependencies). .helmignore: patterns para excluir del packaging (como .gitignore). Cuando 'helm install', Helm renderiza templates con values → yaml final → kubectl apply.", "correct": true, "why": "Correcto. Estructura standard. Chart.yaml declara versión — cambio de version significativo (semver). appVersion es la version de la APP que empaqueta (nginx 1.25). values.yaml es la interfaz — lo que usuarios modifican." },
+        { "letter": "B", "text": "Todos los archivos van en un solo YAML.", "correct": false, "why": "Falso — es un package con múltiples files. templates/ es directorio con muchos manifests." },
+        { "letter": "C", "text": "Los templates son JSON.", "correct": false, "why": "YAML con Go template syntax ({{ ... }})." },
+        { "letter": "D", "text": "values.yaml es opcional.", "correct": false, "why": "Prácticamente obligatorio — sin él, tus templates tendrían valores hardcoded y perderían configurabilidad." }
+      ],
+      "explanation": "Chart lifecycle: (1) `helm create mychart` genera skeleton; (2) editas templates y values; (3) `helm template .` para preview yaml render; (4) `helm lint` verifica sintaxis; (5) `helm install release-name .` deploya; (6) `helm upgrade release-name .` updatea; (7) `helm rollback release-name 1` regresa a revision anterior; (8) `helm uninstall release-name` borra. Helm mantiene HISTORIAL de revisions (default 10) en Secrets del namespace, permite rollback. Chart repos: como npm/pypi para K8s: Bitnami, Artifact Hub, chart-testing. `helm repo add`. Packaging: `helm package .` genera .tgz uploadable a repo.",
+      "realWorld": "Bitnami Helm charts (owned by VMware) son standard para postgres, redis, kafka. Artifact Hub (CNCF) es search engine para Helm charts. Cloud providers publican charts oficiales (AWS Load Balancer Controller, cert-manager). Companies internal chart libraries.",
+      "tags": ["helm", "chart", "structure", "templates"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/topics/charts" }, { "title": "artifacthub.io" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "iac",
+      "topic": "Templating con Helm — values y Go templates",
+      "difficulty": "mid",
+      "scenario": "Tu template tiene: `replicas: {{ .Values.replicaCount }}`. Values.yaml tiene `replicaCount: 3`. Con `--set replicaCount=5`, produces `replicas: 5`.",
+      "question": "¿Cómo funciona el templating de Helm y cuáles son las trampas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Templating engine: Go templates + Sprig functions (upper, quote, printf, sha256sum, etc.). Values source: values.yaml default + --values <file> override + --set key=val override highest. `{{ .Values.name }}` accede value; `{{ .Release.Name }}` es release name; `{{ .Chart.Version }}` la version. Trampas: (1) whitespace matters (indentation puede romperse con {{- vs {{); (2) missing values causan render errors o nil; (3) conditionals ({{ if .Values.enabled }}) fácil de mismanage; (4) helper templates (_helpers.tpl) para reuse.", "correct": true, "why": "Correcto. Helm templating es powerful pero requires care. `{{- ... -}}` strip whitespace (dash trim). Sprig functions extend Go templates significantly." },
+        { "letter": "B", "text": "'required' function: {{ required 'msg' .Values.required-field }} — falla el render si el value no está. Best practice para required fields (evita silent nil).", "correct": true, "why": "Correcto. Sin required, un value ausente produce nil rendering (por ejemplo 'replicas: ' — bug). required forces explicit failure." },
+        { "letter": "C", "text": "'default' function: {{ default 'fallback' .Values.opt-field }} — usa fallback si el value es nil o empty. Common pattern para optional configs.", "correct": true, "why": "Correcto. Combined con required + default, chart puede communicate contract con user cleanly." },
+        { "letter": "D", "text": "_helpers.tpl: file convention para definir helper templates reusable. Common pattern: {{ define 'mychart.labels' }}...{{ end }} → luego usar {{ include 'mychart.labels' . }}. Reduce duplication across templates.", "correct": true, "why": "Correcto. Helper templates son must-have para charts complejos. Labels comunes (app.kubernetes.io/name, etc.) definidos una vez, includidos en cada resource." },
+        { "letter": "E", "text": "Helm templates son solo variables simples — no soportan loops.", "correct": false, "why": "Falso. Go templates supports {{ range .Values.list }} loops, {{ if }} conditionals, {{ with }} scope shift. Powerful." }
+      ],
+      "explanation": "Helm template patterns: (1) declare intent en values.yaml (readable interface); (2) templates use values with defaults + required; (3) helpers para common blocks (labels, selectors); (4) conditionals para optional features (enabled: true/false); (5) loops para lists (multiple env vars from Values.env). Anti-patterns: too much logic en templates (readability suffers); values.yaml gigante (users lost); missing schemas (values.schema.json validates values). Best practices: (1) test with `helm template` before deploy; (2) provide values.schema.json para validation + IDE support; (3) sensible defaults en values.yaml; (4) document required values en NOTES.txt (shown post-install).",
+      "realWorld": "Bitnami charts sofisticados con many parameters. cert-manager chart with helpers. Prometheus chart complex. Common issue: chart upgrade breaks because template logic changes.  Consumers pin chart versions.",
+      "tags": ["helm", "templating", "go-templates", "values"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/chart_template_guide" }, { "title": "sprig — masterminds.github.io/sprig" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "iac",
+      "topic": "Helm releases, upgrades, rollbacks",
+      "difficulty": "mid",
+      "scenario": "Instalas chart 'myapp' 3 veces: en dev, staging, prod. Cada uno es un 'release'. En prod, upgrade nuevo tiene bug → rollback.",
+      "question": "¿Qué es un release y cómo funcionan upgrades/rollbacks?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Release = instalación específica de un chart. helm install <release-name> <chart> — cada release es independiente. Estado del release guardado en Secret en el namespace (o Secret en Helm 3, previously ConfigMap). Cada upgrade crea nueva REVISION (revision 2, 3, 4...). rollback <release> <revision> regresa a revision específica. History con `helm history <release>`. Diferencia clave: release name, no chart name, para operar. Puedes tener múltiples releases del mismo chart (prometheus-prod, prometheus-staging).", "correct": true, "why": "Correcto. Release es la unidad de gestión. Helm mantiene state en Secrets del namespace (K8s-native storage). Puedes rollback a cualquier revision previa. Namespace-scoped state." },
+        { "letter": "B", "text": "Helm requires Tiller server-side.", "correct": false, "why": "Helm 2 tenía Tiller (deprecated). Helm 3 (2019+) es client-only — no Tiller. Simpler, más secure." },
+        { "letter": "C", "text": "Rollback solo funciona si tienes backups manuales.", "correct": false, "why": "Helm mantiene revisions automáticamente (default 10, configurable). Rollback es built-in." },
+        { "letter": "D", "text": "Todos los charts producen mismo release.", "correct": false, "why": "Release identidad es <name, namespace>. Puedes install same chart múltiples veces con distintos names." }
+      ],
+      "explanation": "Helm 3 architecture: client-only. Command line tool + K8s API. State in Secrets. Release lifecycle: install → deployed → upgrade → superseded → upgrade → superseded → uninstall. Revisions retained (max-history flag). Rollback restores manifests from that revision + reapplies. Watch: rollback restores state, but underlying data (PVCs) not reverted. If chart change involved data migration, rollback puede leave inconsistent state. Best practice: --atomic flag (rollback automatically if install/upgrade fails), --wait (wait until resources ready before returning success). --dry-run + --debug to preview.",
+      "realWorld": "Bitnami charts widely used. Helm 2 → 3 migration was major event (2019). Helm 3 removed Tiller for security. Managed offering: ChartMuseum for hosting; Bitnami Sealed Secrets; Argo Rollouts for advanced deploy strategies on top of Helm charts.",
+      "tags": ["helm", "release", "upgrade", "rollback"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/intro/using_helm" }, { "title": "helm.sh/docs/topics/architecture" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "iac",
+      "topic": "Kustomize — base y overlays",
+      "difficulty": "mid",
+      "scenario": "Tienes app K8s con 3 environments. Kustomize approach: base común + overlay por env con patches.",
+      "question": "¿Cómo se estructura un proyecto Kustomize?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Directorio structure: base/ (kustomization.yaml + manifests base), overlays/dev/ (kustomization.yaml + patches específicos dev), overlays/prod/ ... Cada kustomization.yaml declara: (1) resources (manifests to include); (2) patches (strategic merge o JSON 6902); (3) namePrefix/nameSuffix; (4) commonLabels; (5) configMapGenerator / secretGenerator. `kubectl apply -k overlays/prod` combines base + patches → aplica al cluster.", "correct": true, "why": "Correcto. Estructura declarativa via kustomization.yaml. Base define lo común; overlay especializa por env. No template language — solo patches YAML." },
+        { "letter": "B", "text": "Kustomize requires Helm CRDs.", "correct": false, "why": "Independientes. Kustomize es standalone (integrated en kubectl 1.14+)." },
+        { "letter": "C", "text": "Kustomize solo maneja Deployments.", "correct": false, "why": "Cualquier K8s resource. patch/generator strategy funciona con Deployment, Service, ConfigMap, etc." },
+        { "letter": "D", "text": "Overlays no pueden usar múltiples bases.", "correct": false, "why": "Falso — un overlay puede incluir múltiples bases. Composition flexible." }
+      ],
+      "explanation": "Kustomize primitives: (1) resources: files or directories to include; (2) patches: (a) strategic merge (patch: overrides fields); (b) JSON 6902 (patchesJson6902: specific operations add/remove/replace); (3) namePrefix/nameSuffix: add prefix to all resource names; (4) commonLabels: apply to all resources; (5) commonAnnotations: same; (6) namespace: force namespace on all; (7) configMapGenerator: create CM from files/literals; (8) secretGenerator: same for Secret; (9) replicas: change replicas; (10) images: change image tags (great for CD pipelines — 'kustomize edit set image app=myapp:v2.0'). Best practices: (a) generic base + specific overlays; (b) use commonLabels; (c) use configMapGenerator with hashing (auto-restart on config change).",
+      "realWorld": "Airbnb uses Kustomize extensively. Reddit publicly discussed. Argo CD supports both Helm y Kustomize. Kubectl `-k` integrated since 1.14. Google internal use. Kubevirt.io Kustomize examples.",
+      "tags": ["kustomize", "base", "overlay", "patch"],
+      "tech": ["kustomize", "kubernetes"],
+      "references": [{ "title": "kustomize.io" }, { "title": "kubernetes.io — Declarative Management with Kustomize" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "iac",
+      "topic": "Strategic Merge Patch vs JSON 6902",
+      "difficulty": "mid",
+      "scenario": "Necesitas: (a) cambiar replicas: 3 → 10; (b) añadir label; (c) borrar un element de un array (containers[1]).",
+      "question": "¿Cuál es la diferencia entre strategic merge patch y JSON 6902?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Strategic Merge Patch (SMP): sintaxis natural YAML — describes el 'desired diff' (mismo shape que el original). K8s knows keys (containers, volumes) — merges intelligently (por name, no por index). Ideal para: overriding scalars, adding items to lists, override values. Ejemplo (a): patch tiene `spec.replicas: 10`. JSON 6902 (RFC): patch como array de operations (op: add/remove/replace, path: '/spec/replicas', value: 10). More precise pero verbose. Ideal para: precise operations (remove specific array element by index), cuando SMP no funciona (arrays sin merge key).", "correct": true, "why": "Correcto. SMP es más natural para casos comunes. JSON 6902 más powerful pero verbose. K8s docs recommend SMP unless required otherwise. Kustomize soporta ambos." },
+        { "letter": "B", "text": "Solo JSON 6902 es soportado por Kustomize.", "correct": false, "why": "Kustomize soporta both patches (strategic) y patchesJson6902 (JSON operations)." },
+        { "letter": "C", "text": "Strategic Merge Patch requires JSON syntax.", "correct": false, "why": "Es YAML (o JSON — ambos válidos). YAML más común por familiaridad con manifests K8s." },
+        { "letter": "D", "text": "Los dos son idénticos con distinto nombre.", "correct": false, "why": "Semántica distinta: SMP is intelligent merge; JSON 6902 is explicit operations. Different tools for different jobs." }
+      ],
+      "explanation": "SMP example: `spec: template: spec: containers: - name: app image: myimage:v2` — K8s finds container by name 'app' and updates its image. JSON 6902 example: `- op: replace, path: /spec/template/spec/containers/0/image, value: myimage:v2`. Merge patch (JSON Merge Patch, RFC 7396) — third option, simpler than JSON 6902 but less capable. When to use each: SMP for object overrides + list additions; JSON 6902 for precise array manipulations (remove by index, add at specific position); JSON Merge Patch mostly not needed. Kustomize evolution: newer versions unified 'patches' field (auto-detects SMP or JSON 6902). Older configs may use 'patchesStrategicMerge' and 'patchesJson6902' separately (deprecated but still work).",
+      "realWorld": "Argo CD documentation extensively covers patches. Kustomize v5 unified patches syntax. Common gotcha: patching containers list requires 'name' as merge key (which is defined by K8s schema). Strategic merge relies on knowing K8s types.",
+      "tags": ["kustomize", "patches", "strategic-merge", "json-6902"],
+      "tech": ["kustomize"],
+      "references": [{ "title": "kubectl.docs.kubernetes.io/references/kustomize/builtins" }, { "title": "kubernetes.io — Strategic Merge Patch" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "iac",
+      "topic": "Helm dependencies y umbrella charts",
+      "difficulty": "mid",
+      "scenario": "Tu app depende de postgres y redis. En vez de deploy separately, quieres 'my-app' Helm chart que instale todo.",
+      "question": "¿Qué son Helm dependencies y umbrella charts?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dependencies: en Chart.yaml declaras dependencies: [{name: postgres, version: 12.x, repository: 'https://charts.bitnami.com'}, ...]. `helm dependency update` descarga sub-charts a charts/. Values pueden overridear sub-chart values (postgres.enabled: true, postgres.auth.password: xxx). Umbrella chart: chart parent que solo empaqueta sub-charts (sin templates propios). Fit para 'deploy the stack' patterns. Trade-off: coupling con versión de sub-chart, upgrades más complex.", "correct": true, "why": "Correcto. Dependencies powerful pero coupling. Prefer over 'manual install postgres + install app' if the coupling is real (app really needs specific postgres config). Umbrella charts are common in enterprise 'here's our stack' patterns." },
+        { "letter": "B", "text": "Dependencies no existen en Helm 3.", "correct": false, "why": "Falso — dependencies son fundamental. Helm 3 dropped Tiller pero mantuvo dependencies." },
+        { "letter": "C", "text": "Un chart puede tener solo 1 dependency.", "correct": false, "why": "Multiple deps normal. Umbrella charts pueden tener 10+ deps." },
+        { "letter": "D", "text": "Dependencies requieren instalarse separately antes.", "correct": false, "why": "helm install instala todo el árbol (parent + subs). Deploy atómico." }
+      ],
+      "explanation": "Helm dependencies mechanics: (1) declare in Chart.yaml; (2) `helm dep update` downloads to charts/ subdirectory; (3) `helm install` deploys them together (single release). Sub-chart values: parent's values file has key `postgres:` that becomes sub-chart's values. Global values: `global.*` shared across all sub-charts. Conditional dependencies: `condition: postgres.enabled` — subchart only deployed if condition true. Alias: same subchart with different names (multiple postgres instances). Umbrella pattern: only sub-charts, no templates. Anti-pattern: giant umbrella with 30 dependencies — complexity explodes, upgrade hell. Better: modular smaller umbrella per team/domain.",
+      "realWorld": "Bitnami umbrella charts (WordPress = Nginx + MariaDB). Prometheus stack chart (Prometheus + Alertmanager + Grafana). ArgoCD-stack. Kubernetes dashboard umbrella. Common enterprise pattern: 'shared platform' umbrella chart with mesh, observability, secrets.",
+      "tags": ["helm", "dependencies", "umbrella", "sub-charts"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/topics/charts_hooks" }, { "title": "helm.sh/docs/helm/helm_dependency" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "iac",
+      "topic": "Helm hooks",
+      "difficulty": "senior",
+      "scenario": "Tu app requiere migración de DB antes de deploy nuevo. También quieres alertar Slack post-deploy. Necesitas hooks.",
+      "question": "¿Qué son Helm hooks y cuándo se usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Hooks: recursos K8s (Jobs típicamente) que Helm ejecuta en momentos específicos del release lifecycle. Anotaciones: helm.sh/hook: pre-install, post-install, pre-upgrade, post-upgrade, pre-delete, post-delete, pre-rollback, post-rollback, test. hook-weight: order dentro del mismo hook. hook-delete-policy: before-hook-creation, hook-succeeded, hook-failed. Uso: DB migrations (pre-upgrade Job runs 'kubectl migrate'), Slack notifications (post-upgrade Job), tests post-deploy.", "correct": true, "why": "Correcto. Hooks son mecanismo de lifecycle. Pre-upgrade Job classic for migrations — Helm waits for Job to succeed before continuing upgrade. Failure aborts. Powerful pero add complexity." },
+        { "letter": "B", "text": "Hooks son operators automáticos.", "correct": false, "why": "Son Jobs (o otros resources) executed at specific phases del Helm lifecycle. No relacionados con operators/CRDs." },
+        { "letter": "C", "text": "Un hook no puede fallar el deployment.", "correct": false, "why": "Un failed hook (Job exits non-zero) FAILS the release. Helm retorna error, upgrade abortado." },
+        { "letter": "D", "text": "Hooks son la única forma de hacer migraciones.", "correct": false, "why": "Otras options: InitContainers (per-Pod), operators, external orchestration (Argo Workflows). Hooks es una option, no la única." }
+      ],
+      "explanation": "Helm hooks phases: (1) pre-install (before creating resources); (2) post-install (after creating resources); (3) pre/post-upgrade; (4) pre/post-delete; (5) pre/post-rollback; (6) test (helm test command). Order within phase: hook-weight (numeric, low first). Cleanup: hook-delete-policy prevents accumulation. Common uses: (a) DB migrations pre-upgrade — critical: idempotent + retry-safe; (b) secret rotation pre-install; (c) tests post-install verify deployment; (d) Slack/PagerDuty post-upgrade notify. Anti-patterns: hooks with side effects that aren't idempotent (retry corrupts state); hooks too long (Helm has default 5min timeout — configurable); hooks that reference resources not yet created.",
+      "realWorld": "Bitnami charts extensively use pre-install hooks for cluster bootstrap. Prometheus Operator initial CRD install as hook. Grafana LDAP setup. Common failure mode: hook Job stuck, release stuck. Use hook-delete-policy: before-hook-creation to avoid.",
+      "tags": ["helm", "hooks", "lifecycle", "jobs"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/topics/charts_hooks" }, { "title": "Bitnami — Helm Hooks Cheat Sheet" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "iac",
+      "topic": "GitOps — el pattern",
+      "difficulty": "senior",
+      "scenario": "Tu equipo hace `kubectl apply` manual. Drift entre Git y cluster acumula. Deploys ad-hoc. Un colega propone GitOps con ArgoCD.",
+      "question": "¿Qué es GitOps y cómo cambia el modelo operativo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "GitOps: Git es la ÚNICA fuente de verdad para el estado deseado del cluster. Un agent (ArgoCD, Flux) watches Git repos, aplica changes al cluster automáticamente. Reversal: en vez de push (kubectl apply from CI), es PULL (agent in cluster pulls from Git). Ventajas: (1) audit trail natural (Git log); (2) revert = git revert; (3) declarative reconciliation (drift auto-corrected); (4) permissions via Git PR reviews.", "correct": true, "why": "Correcto. Modelo poderoso. Git commit → automatic deploy. Manual kubectl becomes exception (para emergencies). Weaveworks coined 'GitOps' 2017." },
+        { "letter": "B", "text": "Detección de drift: agent compares estado real vs desired en Git. Si alguien hace 'kubectl edit' manual → agent DETECTA (out-of-sync) y (a) alerts, (b) auto-reverts (self-heal enabled), (c) reports. Elimina drift silencioso.", "correct": true, "why": "Correcto. Drift detection es feature crítica. Ejemplo: dev edits deployment manually to test → GitOps detects diff con Git → reverts. Config must be in Git for permanence." },
+        { "letter": "C", "text": "Multi-cluster GitOps: un ArgoCD/Flux puede manejar múltiples clusters. Un cluster 'management' opera N clusters 'workload'. Fleet management scale.", "correct": true, "why": "Correcto. ArgoCD ApplicationSets, Flux Fleet. Un management cluster centraliza deploy control. Fit para enterprise multi-cluster." },
+        { "letter": "D", "text": "GitOps elimina la necesidad de tests.", "correct": false, "why": "Falso. GitOps deploys lo que está en Git — si Git tiene bug, deploya bug. CI (build + tests) sigue siendo esencial pre-merge. GitOps es DEPLOY, no VALIDATE." },
+        { "letter": "E", "text": "GitOps solo funciona con Helm.", "correct": false, "why": "Falso. ArgoCD supports Helm, Kustomize, plain manifests, Jsonnet, custom plugins. Flux también." }
+      ],
+      "explanation": "GitOps principles (per OpenGitOps): (1) declarative (state as data); (2) versioned + immutable (Git); (3) pulled automatically (agents); (4) continuously reconciled (drift correction). Tools: ArgoCD (Intuit-created, CNCF Graduated), Flux (Weaveworks-created, CNCF Graduated), Jenkins X (older). Model: developers commit YAML/Helm/Kustomize to Git → agent syncs to cluster. Advanced patterns: (a) app-of-apps (parent ArgoCD Application manages child apps); (b) ApplicationSets (templated app generation); (c) progressive delivery (Argo Rollouts, Flagger); (d) sync policies (auto-sync, manual approval); (e) sealed secrets or external secrets for sensitive data.",
+      "realWorld": "Intuit created ArgoCD (2018). Weaveworks coined GitOps. Netflix, Airbnb, Spotify use GitOps heavily. ArgoCD is most popular (CNCF survey 2023). Flux equally solid technically. Multi-cluster with ApplicationSets. Weaveworks (company) shut down 2024 but Flux (CNCF) continues.",
+      "tags": ["gitops", "argocd", "flux", "declarative"],
+      "tech": ["kubernetes", "argocd", "flux"],
+      "references": [{ "title": "opengitops.dev" }, { "title": "argo-cd.readthedocs.io" }, { "title": "fluxcd.io" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "iac",
+      "topic": "ArgoCD vs Flux",
+      "difficulty": "senior",
+      "scenario": "Necesitas decidir entre ArgoCD y Flux para GitOps.",
+      "question": "¿Qué diferencias hay entre ArgoCD y Flux?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ArgoCD: UI web rica (visualización de estado, sync, rollback), CLI, API. Modelo Application CRD explicit. Popular por developer UX. Widely adopted.", "correct": true, "why": "Correcto. UI es diferenciador principal. Devs pueden verificar estado sin CLI. Sync + rollback visual. ArgoCD easier for teams new to GitOps." },
+        { "letter": "B", "text": "Flux: Cloud Native native design, más modular (multiple controllers: source, kustomize, helm, notification), CLI-first (menos énfasis en UI — hay Weave GitOps + Flamingo third-party UIs). Prioriza automation.", "correct": true, "why": "Correcto. Flux es 'infrastructure focused'. Multiple controllers can be selectively installed. GitOps Toolkit approach. More Unix philosophy." },
+        { "letter": "C", "text": "Ambos support Helm, Kustomize, plain manifests. Ambos support multi-cluster. Ambos have progressive delivery integrations (ArgoCD → Argo Rollouts; Flux → Flagger). Ambos are CNCF Graduated (2022).", "correct": true, "why": "Correcto. Feature parity en essentials. Elección más about team preference + specific features than radical differences." },
+        { "letter": "D", "text": "ArgoCD es solo comercial.", "correct": false, "why": "Falso. Fully open source (Apache 2.0). Optional enterprise support via Akuity (company by ArgoCD creators)." },
+        { "letter": "E", "text": "Flux es más eficiente en cache y GitOps polling.", "correct": true, "why": "Correcto. Flux tiene reputation for efficiency at scale. Selective source updates. But both handle scale well." }
+      ],
+      "explanation": "Decision framework: (1) UI critical → ArgoCD; (2) prefer Unix modularity → Flux; (3) Helm-heavy → both work; (4) multi-cluster → ArgoCD ApplicationSets more mature; (5) team familiar with Weaveworks tools → Flux; (6) simplicity of installation → ArgoCD slight edge. Feature comparison: sync policies, drift detection, notifications, RBAC — parity. ApplicationSets (ArgoCD) generate Applications dynamically (list of clusters, matrix of environments). Flux Fleet does similar. Progressive delivery: Argo Rollouts (canary, blue/green with metric analysis), Flagger (similar). Choose one, don't mix in same cluster.",
+      "realWorld": "ArgoCD ~50% market share (2023 CNCF survey), Flux ~25%. Adopted by: ArgoCD (Intuit, Ticketmaster, BlackRock); Flux (Weaveworks customers, GitOps.tech projects). Both CNCF Graduated 2022. Both actively maintained.",
+      "tags": ["argocd", "flux", "gitops"],
+      "tech": ["argocd", "flux"],
+      "references": [{ "title": "argo-cd.readthedocs.io" }, { "title": "fluxcd.io/flux" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "iac",
+      "topic": "Helm vs Kustomize — cuándo cada uno",
+      "difficulty": "senior",
+      "scenario": "Empresa nueva K8s. Debate: Helm vs Kustomize. Necesitas argumentos concretos.",
+      "question": "¿Cuándo usar Helm vs Kustomize?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Helm para: (1) distribute 3rd-party apps (postgres, ingress-nginx, cert-manager charts oficiales) — ecosystem enorme; (2) sharing across teams/orgs (versioned packages); (3) apps con LOTS of parameters (users overridear defaults extensively); (4) rollback nativo built-in; (5) hooks for lifecycle events.", "correct": true, "why": "Correcto. Helm domina para public/shared distribution. Artifact Hub tiene miles de charts. Rollback nativo es diferencial." },
+        { "letter": "B", "text": "Kustomize para: (1) YOUR apps con environment overlays (dev/staging/prod); (2) simple structure sin template language; (3) YAML puro (fewer bugs); (4) GitOps workflows where reviewer wants exact yaml (Kustomize outputs deterministic YAML); (5) small teams that don't want to maintain charts.", "correct": true, "why": "Correcto. Kustomize domina para internal apps. YAML nativo es simpler to review y debug. No template language to learn." },
+        { "letter": "C", "text": "Combined: Helm para infrastructure (chart de nginx-ingress, prometheus-stack); Kustomize para your apps. Muchas empresas usan ambos.", "correct": true, "why": "Correcto. Pattern popular. Ecosystem apps come as Helm charts (canonical); custom apps use Kustomize (simplicity + review clarity)." },
+        { "letter": "D", "text": "Kustomize dentro de Helm (post-render). O Helm dentro de Kustomize (helmChart source). Ambos integrations existen para casos híbridos.", "correct": true, "why": "Correcto. helm --post-renderer permite Kustomize a Helm output. Kustomize helmChart plugin lo opposite. Complexity though — use only if needed." },
+        { "letter": "E", "text": "Helm siempre gana — deprecar Kustomize.", "correct": false, "why": "Falso. Kustomize tiene lugar legítimo. Simplicity is a virtue. Trade-offs reales — no supremacy universal." }
+      ],
+      "explanation": "Decision matrix: (1) Distributing to unknown users? → Helm (versioning, defaults, discoverability). (2) Configuring your app across environments? → Kustomize (simplicity, YAML review). (3) Need loops/conditionals extensive? → Helm. (4) Need rollback built-in? → Helm. (5) Team allergic to templating? → Kustomize. (6) Deploying popular open source apps? → Helm chart (usually available). Best practice enterprise: (a) use official Helm charts para 3rd-party (avoid rewriting); (b) use Kustomize for your microservices; (c) GitOps with either or both. Tools: helmfile (declarative Helm), Timoni (CUE-based alternative), cdk8s (define K8s in code). Ecosystem evolves rapidly.",
+      "realWorld": "Kubernetes SIG maintains Kustomize. Helm is CNCF Graduated. Airbnb famously Kustomize-heavy. Bitnami/VMware maintains extensive Helm chart library. Reddit engineering blog on Kustomize choice.",
+      "tags": ["helm", "kustomize", "comparison", "trade-offs"],
+      "tech": ["helm", "kustomize"],
+      "references": [{ "title": "helm.sh vs kustomize.io" }, { "title": "Reddit Engineering — Why Kustomize" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "iac",
+      "topic": "Secrets in GitOps — el problema",
+      "difficulty": "senior",
+      "scenario": "GitOps = deploy from Git. Pero secrets NO pueden ir en Git en texto plano. ¿Cómo resolver?",
+      "question": "¿Cuáles son las estrategias para secrets en GitOps?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "External Secrets Operator (ESO): commit ExternalSecret CR en Git (sin sensitive data — solo refs); ESO sync desde AWS Secrets Manager / Azure Key Vault / GCP Secret Manager / HashiCorp Vault → crea Secret K8s. Password vive en Vault, no en Git.", "correct": true, "why": "Correcto. Approach moderno recomendado. Separates 'what secret is needed' (Git, GitOps) from 'the value' (Vault). Rotation manageable en Vault (secrets rotate automatically without touching Git)." },
+        { "letter": "B", "text": "Sealed Secrets (Bitnami): encrypts Secret with cluster-specific public key. Encrypted SealedSecret commitable a Git. Sealed Secrets controller in-cluster decrypts + creates Secret. Fit para simpler setups.", "correct": true, "why": "Correcto. Simpler than Vault + ESO. Cluster-specific (encrypted for THIS cluster only). Rotation more manual than ESO. Popular pattern." },
+        { "letter": "C", "text": "SOPS + age/PGP: encrypt YAML files with Mozilla SOPS. Commit encrypted YAML to Git. Flux SOPS integration decrypts at deploy time. ArgoCD via plugin or Kustomize integrated SOPS.", "correct": true, "why": "Correcto. SOPS es popular para infra as code encrypted secrets. Age (Filippo Valsorda) more modern than PGP. Weave GitOps ha built-in SOPS support." },
+        { "letter": "D", "text": "Vault CSI Provider: mount secrets directly como volume, no crea K8s Secret. Fit cuando quieres secrets nunca vivir en etcd (compliance strict).", "correct": true, "why": "Correcto. CSI-based delivery bypasses K8s Secret entirely. Secrets never persist en etcd. Higher security posture pero more complex operation." },
+        { "letter": "E", "text": "Commit secrets en plain text — Git is safe.", "correct": false, "why": "GRAVE anti-pattern. Git es NOT safe repository (leaks via clones, forks, git history). Secrets in plain Git = permanent compromise." }
+      ],
+      "explanation": "Secrets in GitOps solved patterns: (1) EXTERNAL STORE + SYNC: External Secrets Operator + Vault/AWS SM/Azure KV — best for enterprise (rotation, audit, IAM); (2) ENCRYPTED IN GIT: Sealed Secrets or SOPS — simpler, works well for smaller teams; (3) NEVER IN CLUSTER: Vault CSI direct mount — highest security. Choice criteria: (a) rotation needs (external store best); (b) team size (Sealed Secrets simple); (c) multi-cluster (external store centralize); (d) compliance (some require external HSM). Anti-patterns: (a) plain secrets in Git (obvious); (b) manual Secret creation while claiming GitOps; (c) --set password= in CI (leaks in logs).",
+      "realWorld": "External Secrets Operator (CNCF sandbox → incubating) very popular. Bitnami Sealed Secrets since 2017. Mozilla SOPS from 2016. AWS Secrets Manager + ESO common in EKS. HashiCorp Vault enterprise standard. Multiple approaches coexist.",
+      "tags": ["secrets", "gitops", "external-secrets", "sealed-secrets", "vault"],
+      "tech": ["kubernetes", "vault", "external-secrets", "sops"],
+      "references": [{ "title": "external-secrets.io" }, { "title": "sealed-secrets github" }, { "title": "getsops.io" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "iac",
+      "topic": "Helm testing y linting",
+      "difficulty": "senior",
+      "scenario": "Tu Helm chart va a ser usado por 20 teams. Necesitas asegurar quality y prevent regressions.",
+      "question": "¿Qué testing y validation options hay para Helm charts?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-layer testing: (1) helm lint (syntax + best practices); (2) helm template (renders sin apply — verifica templating); (3) helm-unittest (unit tests para templates, YAML assertions); (4) chart-testing tool (ct install — CI que instala chart, ejecuta tests, uninstall); (5) helm test (helm test <release> — runs test-hook Jobs post-install validate deployment funciona); (6) values.schema.json (JSON Schema para values.yaml — validate at install time). Cada layer catches diferentes bugs.", "correct": true, "why": "Correcto. Chart quality = testing pyramid. Lint catches obvious. Template catches rendering. Unit tests catch logic. Install tests catch integration. Schema catches user errors. Sin ellos, charts breakage recurrente." },
+        { "letter": "B", "text": "helm install es el único test necesario.", "correct": false, "why": "Insufficient. Doesn't catch template errors before install. Doesn't validate user input. Doesn't unit test conditionals." },
+        { "letter": "C", "text": "Solo Sealed Secrets validates charts.", "correct": false, "why": "Unrelated. Sealed Secrets es encryption, no validation." },
+        { "letter": "D", "text": "Charts no necesitan testing — YAML es simple.", "correct": false, "why": "Templates con logic requieren tests. YAML errors bugs común. Charts complejos requieren rigor." }
+      ],
+      "explanation": "Testing layers: (1) LINT — `helm lint` catches Kubernetes best practices, missing required fields, incorrect indentation; (2) TEMPLATE — `helm template . -f values.yaml` renders sin deploy; catches template errors, verify output; (3) UNIT — helm-unittest plugin: assertions sobre rendered output ('replicas should be 3 when values.replicaCount is 3'); (4) INTEGRATION — chart-testing (ct install --chart-dirs charts/): install chart on temp K8s cluster (KinD), run tests, uninstall; (5) TESTS AT INSTALL — helm hook 'test' Jobs run post-install (helm test <release>): verify deployment healthy; (6) SCHEMA — values.schema.json defines what users can set + validates. Combined = high confidence. GitHub Actions matrix testing across K8s versions.",
+      "realWorld": "Bitnami charts have comprehensive test coverage. Chart Testing tool used by CNCF projects. Helm-unittest by lrills. values.schema.json enables IDE autocomplete (VS Code). Prometheus community charts extensive testing. Cert-manager similar rigor.",
+      "tags": ["helm", "testing", "lint", "chart-testing"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/topics/chart_tests" }, { "title": "helm/chart-testing" }, { "title": "helm-unittest" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "iac",
+      "topic": "Progressive delivery — Argo Rollouts y Flagger",
+      "difficulty": "senior",
+      "scenario": "Deployment default es RollingUpdate — todo o nada. Quieres canary (5% tráfico → nueva versión, verificar métricas, incrementar).",
+      "question": "¿Qué son Argo Rollouts y Flagger y cómo se integran con GitOps?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts: CRD Rollout que reemplaza Deployment. Soporta estrategias avanzadas: canary (steps con weight, pause manual, analysis), blue-green (preview + active). Integrates con Istio, NGINX, ALB, SMI para traffic split. Analysis via AnalysisRun (query Prometheus, evaluate metrics — auto-promote if healthy o rollback si fails).", "correct": true, "why": "Correcto. Argo Rollouts es 'Deployment on steroids'. Analysis automates canary decision — no manual watch of dashboards. CNCF Incubating. Integra bien con ArgoCD." },
+        { "letter": "B", "text": "Flagger (Flux ecosystem): equivalent capability. Canary CR + progressive delivery + metric analysis. Integra con Istio, Linkerd, Contour, Gloo, NGINX. Weave-created, ahora Flux ecosystem.", "correct": true, "why": "Correcto. Flagger es alternativa madura. Similar capabilities. Flux users typical choice." },
+        { "letter": "C", "text": "Ambos operan sobre Kubernetes Services + traffic mesh/ingress para split traffic gradually. Métricas via Prometheus/Datadog/New Relic para automated decision. Alerting integration.", "correct": true, "why": "Correcto. Traffic split requires L7 aware (mesh, ingress). Metrics required for automated decisions. Progressive delivery = data-driven deployment." },
+        { "letter": "D", "text": "Feature flags (LaunchDarkly, Unleash) complementan: separan DEPLOY de RELEASE. Deploy código con feature OFF, encender feature progresivamente per user cohort. No traffic-split (todo el tráfico va a same version, flag decides behavior).", "correct": true, "why": "Correcto. Feature flags es complementary approach. Both valuable. Progressive delivery infra-side; feature flags app-side. Combined = maximum flexibility." },
+        { "letter": "E", "text": "Argo Rollouts requires Argo CD.", "correct": false, "why": "Falso. Independent projects. Argo Rollouts works standalone or with any GitOps tool." }
+      ],
+      "explanation": "Progressive delivery beyond RollingUpdate: (1) Canary — split traffic to new version, monitor, promote or rollback; (2) Blue-green — deploy new alongside, switch when ready; (3) A/B testing — route based on user attributes; (4) Feature flags — decouple deploy from user-visible activation. Analysis providers: Prometheus (query metrics), Datadog, New Relic, CloudWatch, Wavefront. Metric templates: success rate > 99%, p99 latency < 500ms — configured queries evaluated at each canary step. Failure = automatic rollback. Traffic split providers: Istio, Linkerd (SMI), NGINX Ingress, AWS ALB, Contour, Gloo. GitOps workflow: commit Rollout CR to Git → ArgoCD sync → Argo Rollouts drives canary → metrics decide.",
+      "realWorld": "Argo Rollouts by Intuit, CNCF Incubating. Flagger by Weaveworks, Flux ecosystem. Adopted: Ticketmaster, IBM, Ancestry, BlackRock. Kayenta (Netflix, integrated with Spinnaker) pioneer of automated canary analysis. LaunchDarkly feature flags common in enterprise.",
+      "tags": ["progressive-delivery", "canary", "argo-rollouts", "flagger"],
+      "tech": ["kubernetes", "argo-rollouts", "flagger"],
+      "references": [{ "title": "argoproj.github.io/rollouts" }, { "title": "flagger.app" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "iac",
+      "topic": "Helm anti-patterns y pitfalls",
+      "difficulty": "senior",
+      "scenario": "Tu chart tiene: templates gigantes con muchos ifs, values.yaml 500 líneas, sin schema, sin tests. Users tienen bugs recurrentes.",
+      "question": "¿Cuáles son los anti-patterns más comunes con Helm?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Anti-patterns: (1) Templates GIGANTES con logic compleja (readability suffers, bugs multiplican); (2) Values.yaml enorme sin schema (users confused, typos silenciosos); (3) Sin required declarations (missing values silently render nil); (4) Sin default values (breaks for new users); (5) Sub-chart overuse (umbrella con 20 charts — upgrade nightmare); (6) In-line manifests hard to override; (7) Chart sin tests; (8) Not pinning appVersion (which app version does this chart deploy?).", "correct": true, "why": "Correcto. Estos issues destruyen chart usability. Chart profesional evita todos. Consumer confidence rests on quality." },
+        { "letter": "B", "text": "Charts perfectos no requieren maintenance.", "correct": false, "why": "Falso. Apps evolve, K8s API changes, best practices evolve. Charts requires ongoing maintenance." },
+        { "letter": "C", "text": "Anti-patterns solo existen para users, no maintainers.", "correct": false, "why": "Ambos sufren. Bad chart = maintenance burden + user frustration." },
+        { "letter": "D", "text": "El único anti-pattern es no usar Helm.", "correct": false, "why": "Kustomize + plain YAML are also legitimate. Helm not universal." }
+      ],
+      "explanation": "Best practices para Helm charts: (1) MODULAR templates (small files, clear purpose); (2) values.yaml con estructura logical + comments; (3) values.schema.json para validation + IDE support; (4) helper templates en _helpers.tpl para reuse (labels, selectors, image names); (5) required declarations para essential values; (6) sensible defaults para optional; (7) SEMVER strict (breaking changes bump major); (8) NOTES.txt con post-install guidance; (9) tests que verify functionality post-install; (10) documentation (README, values docs). Chart deprecation: mark chart deprecated en Chart.yaml if superseded. Users have plenty time to migrate. Multi-version support: maintain N-1 versions of chart for users on old apps.",
+      "realWorld": "Bitnami charts exemplify best practices (schema, tests, docs). Cert-manager chart high quality. Prometheus community chart very complex but modular. Common pain point: chart upgrades break configs — needs migration guides.",
+      "tags": ["helm", "anti-patterns", "best-practices"],
+      "tech": ["helm"],
+      "references": [{ "title": "helm.sh/docs/chart_best_practices" }, { "title": "artifacthub.io — Recommended charts" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "iac",
+      "topic": "Kustomize generators y transformers",
+      "difficulty": "senior",
+      "scenario": "Necesitas: (a) generar ConfigMap desde archivos config.json; (b) rename all resources con prefix 'prod-'; (c) add common labels a todos.",
+      "question": "¿Cómo Kustomize usa generators y transformers?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Generators crean resources: configMapGenerator (desde files/literals), secretGenerator (similar), helmChartInflationGenerator (inflate Helm chart). Transformers modifican existing: namePrefix/nameSuffix, namespace, commonLabels/commonAnnotations, images (change image tags), replicas. Hashing option: `disableNameSuffixHash: false` (default true) → añade hash al name basado en content — cambio en config triggers new name → auto-recreate Pods (rolling update).", "correct": true, "why": "Correcto. Generators reduce duplication (source de truth: file, no YAML manual). Hashing suffix es feature crucial — cambio en config auto-triggers Pod restart (K8s detects new ConfigMap name). Sin hash, manual restart needed." },
+        { "letter": "B", "text": "Generators requieren Helm.", "correct": false, "why": "Falso — nativo de Kustomize (except helmChartInflationGenerator specifically leverages Helm)." },
+        { "letter": "C", "text": "Transformers son plugins externos.", "correct": false, "why": "Built-in transformers ship with Kustomize. Custom transformers vía plugins existen pero no requiredos." },
+        { "letter": "D", "text": "commonLabels no aplica a selectors.", "correct": false, "why": "commonLabels si aplica a selectors — puede romper Services (los selectors cambian, ya no matchean Pods viejos). Mantener labels stable via existing Pods migration path." }
+      ],
+      "explanation": "Kustomize generators + transformers = powerful primitives. Common patterns: (1) configMapGenerator + hashing → auto-restart Pods on config change; (2) images transformer + CI (kustomize edit set image app=myapp:v${SHA}) → pipeline updates image; (3) replicas transformer per environment; (4) namespace transformer for isolation; (5) commonLabels for app.kubernetes.io/* standard labels. Advanced: JSONPatch (patchesJson6902) precise operations; components (reusable snippets includable in multiple overlays); replacements (K8s field-to-field mappings). Kustomize v5 unified 'patches' + simplified syntax. Anti-patterns: excessive nesting (base of base of base — confusion), too many transformations obscuring intent, mixing generators without clarity.",
+      "realWorld": "Argo CD uses Kustomize's kustomize build under the hood. Airbnb kubectl-based deploy pipelines with Kustomize. Reddit engineering blog. Google Cloud Kustomize used internally. Rancher Fleet uses Kustomize for cluster fleet management.",
+      "tags": ["kustomize", "generators", "transformers", "hashing"],
+      "tech": ["kustomize"],
+      "references": [{ "title": "kubectl.docs.kubernetes.io/references/kustomize" }, { "title": "kustomize.io" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "iac",
+      "topic": "ArgoCD Applications, ApplicationSets, App-of-Apps",
+      "difficulty": "senior",
+      "scenario": "Tu empresa tiene 100 microservicios × 3 environments = 300 ArgoCD Applications a crear manual. No escalable.",
+      "question": "¿Cómo ArgoCD ApplicationSets y App-of-Apps automatizan esto?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Application: CRD basic — 1 Git path + 1 destination cluster/namespace = 1 tracked app. Manual creation por app.", "correct": true, "why": "Correcto. Foundation object. Sin más, requires manual creation por microservicio × env → no escala." },
+        { "letter": "B", "text": "App-of-Apps: pattern donde un Application 'parent' template genera Application children via Kustomize/Helm. Deployes el 'parent' que crea todos los children. Simple pero limitado (children definidos en templates).", "correct": true, "why": "Correcto. Popular pattern intermediate. Committing 100 Application manifests to Git works but tedious. App-of-Apps reduces to 1 parent + templates." },
+        { "letter": "C", "text": "ApplicationSet: CRD moderno que GENERA Applications dinámicamente basado en generators: (1) List (explicit list); (2) Cluster (per cluster in ArgoCD); (3) Git (per directory in Git repo — 'discover all microservices under apps/'); (4) Matrix (combine generators — cluster × env → 3×3=9 apps); (5) PullRequest (per open PR — preview environments); (6) SCMProvider (per repo in org).", "correct": true, "why": "Correcto. ApplicationSets es THE solution para scale. Matrix generator especially powerful: N clusters × M envs → auto-generated Applications. PullRequest generator enables preview environments per PR." },
+        { "letter": "D", "text": "ApplicationSets requieren scripting externo.", "correct": false, "why": "Falso — CRD nativo. Declarative. Committing ApplicationSet manifest suffices." },
+        { "letter": "E", "text": "App-of-Apps es deprecated en favor de ApplicationSets.", "correct": false, "why": "Ambos coexisten válidos. App-of-Apps más simple; ApplicationSets más powerful. Use cases distinct." }
+      ],
+      "explanation": "ArgoCD scale patterns: (1) Individual Applications (small scale, explicit control); (2) App-of-Apps (medium, templated children); (3) ApplicationSets (large, dynamic generation). ApplicationSet flow: define generator + template → controller creates/updates Applications matching. Matrix generator common example: `clusters × envs`. Multi-tenancy con AppProjects (RBAC per team). Sync policies: auto-sync (any Git change deploys), self-heal (revert drift), prune (delete resources removed from Git). Preview environments pattern: PullRequest generator creates App per open PR → temporary env for review → auto-cleanup on PR close.",
+      "realWorld": "Ticketmaster, Intuit ArgoCD large scale. Preview environments para PRs are popular pattern. Netflix multi-region apps. Enterprise ArgoCD Akuity (company by ArgoCD creators). Kubermatic uses ApplicationSets for fleet management.",
+      "tags": ["argocd", "applicationset", "app-of-apps", "gitops"],
+      "tech": ["argocd"],
+      "references": [{ "title": "argo-cd.readthedocs.io/en/stable/user-guide/application-set" }, { "title": "ArgoCD — App of Apps pattern" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "iac",
+      "topic": "Helm y IaC — comparación con Terraform",
+      "difficulty": "staff",
+      "scenario": "Necesitas provisionar VPC + EKS cluster + Helm charts (postgres, monitoring). Un colega dice: 'Terraform hace todo'. Otro: 'usa Helm en cluster'.",
+      "question": "¿Cuál es el rol correcto de Terraform vs Helm en el stack?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Terraform: provisiona INFRAESTRUCTURA (VPC, subnets, EKS/GKE cluster, IAM roles, RDS, S3). Rara vez cambia. Helm: deploya APLICACIONES + platform components DENTRO del cluster (postgres, nginx-ingress, cert-manager). Cambia frecuente. Boundary: Terraform stops at 'cluster exists + accessible'; Helm starts. Terraform Helm provider EXISTE (deploya Helm charts vía Terraform) pero no es best practice — mezcla lifecycles distintos (infra semanal vs apps múltiples/día).", "correct": true, "why": "Correcto. Separación de concerns. Different tools por different lifecycles. Terraform for AWS/GCP APIs; Helm for K8s API. Mixing (Terraform helm_release) mixes cadence — problematic at scale." },
+        { "letter": "B", "text": "Terraform reemplaza Helm por completo.", "correct": false, "why": "Terraform mala fit para K8s app deploys (frecuencia alta, ecosistema Helm charts). Terraform Kubernetes provider possible pero clunky." },
+        { "letter": "C", "text": "Helm puede provisionar VPC en AWS.", "correct": false, "why": "Helm es K8s-specific. Cannot provision AWS/GCP infrastructure." },
+        { "letter": "D", "text": "Ambos son intercambiables.", "correct": false, "why": "Different domains. Terraform: cloud APIs. Helm: K8s APIs. Complementarios." }
+      ],
+      "explanation": "Pattern moderno: (1) Terraform provisions cloud infra + K8s cluster (cadence: rare, days-weeks); (2) K8s cluster con GitOps agent (ArgoCD/Flux); (3) GitOps syncs Helm/Kustomize apps from Git (cadence: frequent). Alternatives: (a) Pulumi (Terraform en real programming language) — for infra; (b) Crossplane (K8s CRDs para cloud provisioning) — infra managed via K8s API + GitOps. Convergence trend: Crossplane increasingly popular. Terraform helm_release provider works but mixes lifecycles. Cluster API (K8s SIG project) provisions clusters via K8s API — another convergence. Boundary: Terraform for 'day 0' cluster creation, GitOps for 'day 2+' app management.",
+      "realWorld": "Airbnb, Reddit, Netflix have separate Terraform + GitOps stacks. Crossplane growing (upbound.io). Cluster API used by many enterprise K8s vendors. Argo CD + Terraform combination widespread. Sometimes Terraform Helm module used for critical platform components (nginx-ingress at cluster bootstrap).",
+      "tags": ["terraform", "helm", "iac", "crossplane"],
+      "tech": ["terraform", "helm", "crossplane"],
+      "references": [{ "title": "terraform.io/docs" }, { "title": "crossplane.io" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "iac",
+      "topic": "Chart repositories y OCI registries",
+      "difficulty": "staff",
+      "scenario": "Tu empresa tiene 50 custom Helm charts. Necesitas distribuir a teams. Un colega dice: 'un HTTP server con index.yaml'. Otro: 'Docker registry como OCI'.",
+      "question": "¿Cómo se distribuyen Helm charts y cuál es el approach moderno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Traditional: HTTP repository (index.yaml + .tgz files). Tools: ChartMuseum, GitHub Pages, S3 buckets. `helm repo add my-repo https://charts.example.com`. Widely supported pero requires separate infra.", "correct": true, "why": "Correcto. Standard hasta Helm 3.8. Simple pero requires HTTP hosting + index management (or ChartMuseum which automates)." },
+        { "letter": "B", "text": "OCI Registry (Helm 3.8+ GA): store charts en Docker Registry v2 API. Charts como OCI artifacts. Push: helm push chart.tgz oci://myregistry.com/charts. Pull: helm install my-app oci://myregistry.com/charts/my-app. Beneficios: (1) reuse existing container registries (ECR, GCR, ACR, Docker Hub, GitHub Container Registry, Harbor); (2) IAM/RBAC de registries; (3) signing y provenance; (4) content-addressable storage.", "correct": true, "why": "Correcto. OCI es el moderno approach. Reuses infra. AWS ECR, GCR, ACR all support OCI Helm charts. Bitnami charts distributed via OCI en Docker Hub. Trend hacia OCI." },
+        { "letter": "C", "text": "Artifact Hub: catalog público de charts (helm charts, kustomize, OPA policies, more). Facilita discovery. No hosting — solo indexing.", "correct": true, "why": "Correcto. Artifact Hub (CNCF) es 'npm search para K8s ecosystem'. Discovery central. Charts host distinct." },
+        { "letter": "D", "text": "Chart signing y provenance: chart provenance file (.prov) firmado con GPG. helm install --verify verifica signature. Con OCI, cosign puede signar OCI artifacts (más rich).", "correct": true, "why": "Correcto. Supply chain security. Signing charts especially important en 3rd party. Sigstore/cosign integration modern approach." },
+        { "letter": "E", "text": "OCI registries y HTTP repos son incompatibles — solo uno.", "correct": false, "why": "Coexisten. Helm supporta ambos. Users adopt OCI gradually." }
+      ],
+      "explanation": "Chart distribution ecosystem: (1) HTTP repository (ChartMuseum, GitHub Pages, S3+CloudFront); (2) OCI registry (ECR/GCR/ACR, Harbor); (3) Artifact Hub (discovery). Migration to OCI: reduces infra to manage (same registry as containers), unified security posture (RBAC), signing. Cons: some enterprises still on HTTP repos, migration effort. Signing: Sigstore/cosign for OCI, gpg provenance for HTTP. Chart signing catches supply chain attacks (malicious chart replacing legit). Enterprise pattern: internal OCI registry (Harbor), automated CI publishes signed charts, GitOps consumes.",
+      "realWorld": "Bitnami charts migrated to OCI. AWS ECR supports OCI Helm. GitHub Container Registry hosts charts. Harbor enterprise-favorite (has policies, replication, vulnerability scanning). CNCF projects on Artifact Hub. Cosign signing growing adoption.",
+      "tags": ["helm", "oci", "registry", "artifact-hub", "signing"],
+      "tech": ["helm", "oci"],
+      "references": [{ "title": "helm.sh/docs/topics/registries" }, { "title": "artifacthub.io" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "iac",
+      "topic": "El futuro — Timoni, cdk8s, alternativas",
+      "difficulty": "staff",
+      "scenario": "Helm ha limitations conocidos (templating fragility, values.yaml sprawl). Nuevas alternativas surgen: Timoni (CUE), cdk8s (TypeScript/Python).",
+      "question": "¿Cuáles son las alternativas emergentes a Helm/Kustomize?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Timoni: package manager basado en CUE (typed configuration language). Reemplaza Go templates con CUE — validation nativa, types, powerful expressiveness. Same lifecycle model como Helm (releases, upgrades, rollbacks). Creado por Stefan Prodan (creator de Flagger, Flux maintainer). Cross-references + validations at type level.", "correct": true, "why": "Correcto. CUE es powerful (Google BOR — Configuration Utility, LSP-friendly, typed). Timoni tiene traction en 2024. Alternative interesting para teams tired de Go templates." },
+        { "letter": "B", "text": "cdk8s: define K8s manifests con TypeScript, Python, Java, Go. Como CDK para AWS pero for K8s. Fit para developers que prefer code over YAML. Genera plain YAML at build time — output puede usarse con GitOps.", "correct": true, "why": "Correcto. cdk8s (creado por Elad Ben-Israel, AWS CDK creator) trae programming languages a K8s manifests. Powerful para complex logic, abstractions, testing. AWS incorporated cdk8s en CDK Constructs. Growing adoption." },
+        { "letter": "C", "text": "Jsonnet: language templating pre-existent (Google). K8s manifests como Jsonnet. Grafonnet (Grafana dashboards en Jsonnet) popular. Complex language pero powerful. Databricks, Grafana, uber usan Jsonnet.", "correct": true, "why": "Correcto. Jsonnet has existed longer, has niche. Not new pero relevant alternative. Bazel + Jsonnet + K8s stack en algunas empresas." },
+        { "letter": "D", "text": "KRO (Kube Resource Orchestrator, AWS, 2024): permite definir compositions via CRDs. Abstract deployments en 'resource groups'. Aún early.", "correct": true, "why": "Correcto. KRO announced 2024 AWS re:Invent. Kubernetes-native composition. Early days pero interesting direction." },
+        { "letter": "E", "text": "Helm es el único approach válido — todos los otros son experimentales.", "correct": false, "why": "Falso. Multiple mature alternatives. Kustomize widely used. Jsonnet decade+ ecosystem. cdk8s growing. Timoni promising. Ecosystem healthy diverse." }
+      ],
+      "explanation": "The K8s manifest ecosystem is evolving: (1) Helm — dominant, mature, ecosystem enorme; (2) Kustomize — simple, YAML-native; (3) Jsonnet — powerful, niche; (4) cdk8s — code-first, growing; (5) Timoni — CUE-based, promising; (6) Pulumi K8s — programming lang; (7) KRO — composition CRDs. Emerging themes: (a) TYPED configuration (CUE, TypeScript) — catches errors at build time; (b) COMPOSITION over templating — reusable higher-level abstractions; (c) INTEGRATION con GitOps — output YAML consumed by ArgoCD/Flux. Trend: shift-left validation (catch errors before deploy). Helm dominance safe short-term pero space is innovation-rich. Choice depends on team preference + org context.",
+      "realWorld": "Timoni growing (Flux ecosystem). cdk8s embraced by AWS. Jsonnet at Databricks, Uber, Grafana. Pulumi enterprise K8s. HashiCorp Waypoint (deprecated 2024). KRO from AWS. Ecosystem experiments continue.",
+      "tags": ["helm", "timoni", "cdk8s", "jsonnet", "future"],
+      "tech": ["helm", "timoni", "cdk8s"],
+      "references": [{ "title": "timoni.sh" }, { "title": "cdk8s.io" }, { "title": "jsonnet.org" }]
+    }
+  ]
+}

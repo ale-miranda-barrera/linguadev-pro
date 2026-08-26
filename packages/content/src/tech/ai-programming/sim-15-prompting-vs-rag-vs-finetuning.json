@@ -1,0 +1,471 @@
+{
+  "id": "ai-programming-sim-15-prompting-vs-rag-vs-finetuning",
+  "trackId": "ai-programming",
+  "order": 15,
+  "title": "Simulacro 15 — Cuándo NO entrenar: prompting vs RAG vs fine-tuning (LoRA) vs destilación",
+  "focus": "Decisión arquitectónica: cuándo cada técnica. RAG para conocimiento fresco, fine-tuning para estilo/formato, destilación para reducir coste, prompting para lo demás. LoRA/QLoRA, RLHF vs DPO, evaluación pre/post, open-weights vs closed.",
+  "areaCoverage": ["model-strategy", "cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "model-strategy",
+      "topic": "Matriz de decisión",
+      "difficulty": "junior",
+      "scenario": "Un PM propone 'entrenar un modelo custom con nuestros datos'. Preguntas cuál es el problema real. Responde: 'el modelo no conoce nuestros SKUs nuevos'.",
+      "question": "¿Cuál es la técnica correcta para ese problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RAG. El problema es conocimiento no visto; RAG inyecta contexto fresco en el prompt sin re-entrenar. Fine-tuning para cargar SKUs vivos es antipatrón (cada cambio requiere re-entrenar).", "correct": true, "why": "Correcto. Matriz de decisión: (1) ¿necesitas conocimiento nuevo/fresco/dinámico? → RAG. (2) ¿necesitas cambiar el estilo/formato/persona del output? → fine-tuning. (3) ¿quieres bajar costo del modelo grande sin perder quality? → destilación. (4) Lo demás → prompt engineering. Fine-tunear para SKUs es error clásico: los datos cambian, el modelo queda desactualizado y re-entrenar es caro." },
+        { "letter": "B", "text": "Fine-tuning con los SKUs actuales.", "correct": false, "why": "Antipatrón. Los SKUs cambian; el modelo quedaría desactualizado al día siguiente. RAG es la técnica correcta para datos dinámicos." },
+        { "letter": "C", "text": "Prompting con toda la lista de SKUs siempre en el system prompt.", "correct": false, "why": "Si el catálogo es chico (<100 items) puede funcionar; con miles/millones no cabe. RAG selectivo es escalable." },
+        { "letter": "D", "text": "Destilación de un modelo teacher.", "correct": false, "why": "Destilación reduce costo del inference, no aporta conocimiento nuevo. No aplica al problema." }
+      ],
+      "explanation": "Regla mental core: ¿el problema es 'no sabe X'? → RAG. ¿'lo dice mal / con estilo raro'? → fine-tune. ¿'muy caro'? → destilación o modelo más chico. ¿'sabe pero no sigue instrucciones'? → mejor prompt. Confundir estas categorías genera trabajo mal invertido. Fine-tune para 'que sepa nuestro producto' es el error más común de equipos que empiezan.",
+      "realWorld": "Anthropic y OpenAI docs mencionan explícitamente 'don't fine-tune to add knowledge — use RAG'. Casos: Notion AI usa RAG sobre workspace del usuario; Klarna assistant usa RAG sobre políticas; Perplexity es esencialmente RAG multi-fuente. Fine-tune se reserva para estilo/formato consistente.",
+      "tags": ["decision matrix", "RAG vs fine-tune", "when to use what"],
+      "tech": ["RAG", "fine-tuning", "prompt engineering"],
+      "references": [
+        { "title": "OpenAI — When to fine-tune (guide)" },
+        { "title": "Anthropic — Retrieval-augmented generation" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "model-strategy",
+      "topic": "Fine-tuning para estilo",
+      "difficulty": "mid",
+      "scenario": "Una empresa quiere que todas sus respuestas de soporte tengan un estilo específico (tono formal español, empezar con saludo cortés, cerrar con firma). Los prompts con instrucciones del estilo son largos (2k tokens) y el modelo a veces no los sigue.",
+      "question": "¿Cuándo tiene sentido fine-tunear para estilo/formato?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cuando el estilo/formato es consistente y difícil de mantener con prompt: fine-tunear transfiere el estilo al modelo, permite reducir el system prompt drásticamente y mejora consistencia. Trade-off: costo de training + costo mayor de inference (fine-tuned inference tiene premium). ROI positivo si se ejecuta a alto volumen o el ahorro de prompt supera el premium.", "correct": true, "why": "Correcto. Fine-tune para estilo/formato es el uso canónico. 100-1000 ejemplos de {input, output_estilo_correcto} suele bastar. Beneficios: (a) system prompt puede reducirse de 2k → 200 tokens, (b) consistencia mejor, (c) tokens output más predecibles. Coste: training one-off + inference premium (2-3x en OpenAI). ROI positivo con volumen alto." },
+        { "letter": "B", "text": "Fine-tunear para estilo es siempre peor que prompting.", "correct": false, "why": "Falso. Para estilo/formato consistente es canónico y superior a prompts largos." },
+        { "letter": "C", "text": "Prompting con 20k tokens de ejemplos few-shot en cada request.", "correct": false, "why": "Funciona pero pagas 20k input tokens cada request. Fine-tune amortiza mejor a volumen." },
+        { "letter": "D", "text": "Fine-tuning requiere millones de ejemplos.", "correct": false, "why": "Falso. Para estilo/formato, 100-1000 ejemplos alta-calidad suelen ser suficientes." }
+      ],
+      "explanation": "Guía de datasets fine-tune: (1) calidad > cantidad (100 excelentes > 10k mediocres); (2) diversidad de casos representativos; (3) output canonical exacto (formato, estilo, longitud consistentes); (4) validation set separado (10-20%); (5) medir pre/post con métricas del negocio (no solo perplexity/loss). Herramientas: OpenAI fine-tuning UI; Anthropic Bedrock custom models; Vertex AI supervised tuning; para open-source: Axolotl, Unsloth, Hugging Face TRL.",
+      "realWorld": "Klarna, Notion, Zapier documentaron fine-tunes de estilo para respuestas de asistente. OpenAI cookbook 'How to fine-tune for style' es referencia. Anthropic anunció Bedrock custom models fine-tuning para Claude 3 Haiku en 2024.",
+      "tags": ["fine-tuning", "style", "format", "canonical output"],
+      "tech": ["OpenAI fine-tuning", "Bedrock custom models", "Axolotl"],
+      "references": [
+        { "title": "OpenAI — Fine-tuning guide" },
+        { "title": "Bedrock — Custom models (fine-tuning)" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "model-strategy",
+      "topic": "LoRA vs full fine-tuning",
+      "difficulty": "mid",
+      "scenario": "Un equipo quiere fine-tunear Llama-3 70B para su dominio. Un ingeniero propone 'full fine-tuning'. Otro propone LoRA. El senior pregunta cuál elegir.",
+      "question": "¿Cuál es la diferencia entre LoRA y full fine-tuning y cuándo se usa cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Full fine-tuning entrena TODOS los pesos (70B en este caso) — requiere memoria enorme (múltiples H100), tiempo largo y datasets grandes. LoRA (Low-Rank Adaptation) entrena solo matrices low-rank añadidas a capas específicas (~<1% de parámetros); resultado casi equivalente en la mayoría de tareas, con 10-100x menos memoria/tiempo. QLoRA suma cuantización 4-bit para entrenar 70B en 1 sola GPU consumer. Regla: empieza con LoRA/QLoRA. Full solo si LoRA no alcanza calidad requerida.", "correct": true, "why": "Correcto. LoRA (Hu et al. 2021) descompone la actualización de pesos en matrices low-rank AB (rank r), sumando muy pocos parámetros nuevos. QLoRA (Dettmers 2023) cuantiza el modelo base a 4-bit para entrenar 70B en 48GB VRAM. En la mayoría de tareas de instruction-tuning o adaptación de dominio, LoRA iguala a full fine-tune con fracción del costo. Full FT solo se justifica en pre-training o cambios de comportamiento muy profundos." },
+        { "letter": "B", "text": "Full fine-tuning siempre da mejores resultados que LoRA.", "correct": false, "why": "Falso en la mayoría de tareas prácticas. Papers y benchmarks muestran LoRA/QLoRA cerca de full FT con orden de magnitud menos recursos." },
+        { "letter": "C", "text": "LoRA solo funciona con modelos <7B.", "correct": false, "why": "Falso. LoRA se usa en modelos hasta 405B (Llama-3.1). QLoRA fue diseñado precisamente para modelos grandes." },
+        { "letter": "D", "text": "LoRA cambia la arquitectura del modelo.", "correct": false, "why": "Casi. Añade matrices auxiliares que se pueden fusionar al modelo base al final (merge). En inference no cambia arquitectura si se mergean." }
+      ],
+      "explanation": "Landscape PEFT (Parameter-Efficient Fine-Tuning): LoRA, QLoRA, DoRA, Adapters, IA3, Prompt Tuning. LoRA es el estándar de facto. Librerías: PEFT (Hugging Face), Unsloth (optimizado para consumer GPUs), Axolotl (framework end-to-end). Ventajas: (1) fracción del costo; (2) múltiples adaptadores por tarea, un modelo base compartido; (3) hot-swap de adaptadores en runtime (vLLM/TGI soportan multi-LoRA). Cuándo full FT: pre-training desde cero, cambios profundos de behaviour, safety training.",
+      "realWorld": "QLoRA paper (2023) permitió democratización. Unsloth alcanzó 2-5x speedup sobre HF TRL. Empresas como Predibase, OctoAI, Fireworks ofrecen LoRA fine-tuning managed. Meta Llama Recipes documenta LoRA/QLoRA como default recommendation.",
+      "tags": ["LoRA", "QLoRA", "PEFT", "fine-tuning"],
+      "tech": ["LoRA", "QLoRA", "PEFT", "Unsloth", "Axolotl"],
+      "references": [
+        { "title": "LoRA paper — Hu et al. 2021" },
+        { "title": "QLoRA paper — Dettmers et al. 2023" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "model-strategy",
+      "topic": "Tamaño del dataset de fine-tuning",
+      "difficulty": "junior",
+      "scenario": "Un equipo tiene 50 mil ejemplos de conversaciones históricas de soporte. La mayoría son de baja calidad (respuestas cortas, incorrectas, con typos). Van a usar todo para fine-tunear.",
+      "question": "¿Cuál es la mejor práctica sobre datasets de fine-tuning?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Calidad > cantidad. 500-1000 ejemplos curated (revisados, corregidos, representativos) suelen dar mejores resultados que 50k ejemplos ruidosos. Los ejemplos malos enseñan al modelo a producir output malo. Filtrar/curar/re-anotar el subset excelente antes de entrenar.", "correct": true, "why": "Correcto. La regla 'garbage in, garbage out' aplica fuerte al fine-tune. Papers y experiencia empírica (LIMA paper, 'Less Is More for Alignment') muestran que datasets pequeños de alta calidad superan grandes datasets ruidosos. Empresas maduras invierten en curación: human review, filtering, augmentación selectiva. 100-1000 ejemplos excelentes = mínimo viable para tareas específicas." },
+        { "letter": "B", "text": "Más datos siempre es mejor; usar los 50k tal cual.", "correct": false, "why": "Falso. Datos ruidosos empeoran el modelo. Curación es indispensable." },
+        { "letter": "C", "text": "Solo importa el tamaño (>10k mínimo).", "correct": false, "why": "Falso. LIMA y otros papers demostraron que 1k excelentes superan 50k mediocres." },
+        { "letter": "D", "text": "Dataset debe ser generado 100% sintéticamente.", "correct": false, "why": "Datos sintéticos pueden complementar pero no reemplazar ejemplos reales de calidad. Además necesitan validación." }
+      ],
+      "explanation": "Pipeline de curación: (1) recolectar candidatos; (2) filtrado automático (longitud, idioma, duplicados near-duplicates con MinHash); (3) filtrado por calidad (LLM judge scoring de ejemplos); (4) revisión humana del top; (5) re-escritura de outputs para canonical form; (6) split train/val estratificado. Data augmentation: usar teacher LLM para expandir dataset con variaciones. Herramientas: LlamaFactory, cleanlab, argilla, Label Studio.",
+      "realWorld": "Paper LIMA (Meta, 2023) 'Less Is More for Alignment' — 1000 ejemplos curados igualaron a datasets grandes. OpenAI cookbook 'Data preparation for fine-tuning' enfatiza calidad. Startups como Scale AI, Surge AI, Argilla se especializan en curación de datasets.",
+      "tags": ["dataset quality", "LIMA", "curation", "fine-tuning data"],
+      "tech": ["cleanlab", "argilla", "Label Studio"],
+      "references": [
+        { "title": "LIMA — Less Is More for Alignment (paper)" },
+        { "title": "OpenAI Cookbook — Data preparation for fine-tuning" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "model-strategy",
+      "topic": "Destilación teacher-student",
+      "difficulty": "senior",
+      "scenario": "Tu app usa Claude Opus para clasificar tickets. Cuesta $0.05 por ticket. Volumen creciendo a 100k/día. Consideras destilar a un modelo pequeño.",
+      "question": "¿Cómo funciona la destilación y cuándo tiene sentido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Destilación teacher-student: (1) el modelo grande (teacher) genera respuestas (o distribuciones de probabilidad) sobre un dataset representativo; (2) esos {input, output_teacher} se usan como training data para fine-tunear un modelo pequeño (student); (3) el student aprende a imitar al teacher en la tarea. Ideal para colapsar 'Claude Opus haciendo clasificación' a 'Haiku fine-tuned haciendo clasificación al 95% de accuracy con 1/50 del costo'.", "correct": true, "why": "Correcto. Destilación es la técnica correcta para 'quiero la calidad del modelo grande pero al costo del chico' en tareas específicas. Requiere: (1) buen dataset input; (2) confiar en el teacher (validar sus outputs); (3) fine-tunear el student con esos outputs; (4) evaluar student vs teacher. Ejemplos: Gemma destilado de Gemini, Llama Distill, Anthropic destila internamente Haiku de Opus." },
+        { "letter": "B", "text": "Destilación es fine-tuning con datos humanos.", "correct": false, "why": "Diferencia clave: en destilación, los outputs los genera el teacher LLM, no humanos. Se llama también 'knowledge distillation'." },
+        { "letter": "C", "text": "Destilación solo funciona con modelos open-source.", "correct": false, "why": "Falso. Puedes destilar los outputs de Claude/GPT-4 (respetando TOS) en un modelo abierto. Nota: los TOS de algunos providers restringen uso de outputs para training competitors — verificar." },
+        { "letter": "D", "text": "El student siempre iguala al teacher.", "correct": false, "why": "Falso. Suele quedar 3-10 puntos por debajo. Es un trade-off consciente costo/calidad." }
+      ],
+      "explanation": "Pipeline destilación: (1) preparar dataset amplio de inputs; (2) correr teacher para obtener outputs (batch API para bajar costo); (3) validar sample de outputs (¿son correctos?); (4) fine-tunear student (Haiku, Llama-3-8B, Mistral-7B) con dataset {input, teacher_output}; (5) evaluar student en test set; (6) A/B en producción con % del tráfico. Casos exitosos: Distil-Whisper, Distil-BERT, Gemma 2. Cuidado con TOS de teachers (OpenAI/Anthropic prohíben usar outputs para entrenar competidores directos).",
+      "realWorld": "Distil-BERT (Hugging Face 2019) fue pionero. Gemma 2 (Google) destilada de Gemini. Muchas startups destilan de Claude/GPT-4 para inference barato — polémica sobre TOS. Predibase y OctoAI ofrecen distillation as a service.",
+      "tags": ["distillation", "teacher-student", "knowledge distillation"],
+      "tech": ["Distil-BERT", "Gemma", "Predibase"],
+      "references": [
+        { "title": "Distilling the Knowledge in a Neural Network — Hinton 2015" },
+        { "title": "Distil-BERT paper — Sanh 2019" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "model-strategy",
+      "topic": "RLHF vs DPO vs Constitutional AI",
+      "difficulty": "senior",
+      "scenario": "Un ML engineer quiere 'alinear' su modelo fine-tuneado con preferencias humanas. Menciona RLHF pero le suena complejo. El senior pregunta si existen alternativas.",
+      "question": "¿Cuáles son las diferencias entre RLHF, DPO y Constitutional AI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RLHF (Reinforcement Learning from Human Feedback): entrenar reward model desde preferencias humanas + PPO para optimizar política. Complejo, inestable, requiere infra RL. DPO (Direct Preference Optimization, 2023) simplifica: optimización supervisada directa desde pares {preferred, rejected} sin RL ni reward model — mismos resultados, mucho más simple, adopción masiva. Constitutional AI (Anthropic): usa 'constitución' (principios) para que el modelo se auto-critique/mejore, reduciendo necesidad de labels humanos. DPO es hoy el default para alignment post-SFT.", "correct": true, "why": "Correcto. DPO (Rafailov et al. 2023) demostró que se puede alinear preference sin RL, con setup mucho más simple. Casi todos los papers de alignment desde 2024 usan DPO o variantes (IPO, KTO, ORPO). RLHF sigue siendo canónico en labs grandes (OpenAI, Anthropic). Constitutional AI es enfoque de Anthropic — modelo se auto-critica según principios, reduciendo human labels." },
+        { "letter": "B", "text": "RLHF y DPO son idénticos.", "correct": false, "why": "Falso. RLHF usa RL (PPO); DPO reformula como optimización supervisada equivalente. Mismos objetivos, técnicas distintas." },
+        { "letter": "C", "text": "Constitutional AI requiere GPUs cuánticas.", "correct": false, "why": "Falso. Es una metodología de training, no un requisito de hardware." },
+        { "letter": "D", "text": "DPO solo funciona en modelos <1B parámetros.", "correct": false, "why": "Falso. DPO se aplica a modelos hasta 405B (Llama-3.1). Es más ligero que RLHF pero escala igual." }
+      ],
+      "explanation": "Pipeline típico alignment moderno: (1) Pre-training; (2) SFT (Supervised Fine-Tuning) con instrucciones; (3) DPO/IPO/KTO/ORPO con dataset de preferencias; opcional (4) RLAIF (RL from AI feedback) o CAI (Constitutional AI). Herramientas: TRL (Hugging Face), Axolotl, LLaMA Factory soportan DPO out-of-the-box. Datasets de preferencias: Anthropic HH-RLHF, UltraFeedback, DPO Mix. RLHF sigue en labs porque puede dar +1-2 puntos en benchmarks difíciles pero costo/complejidad es prohibitivo para la mayoría.",
+      "realWorld": "DPO paper NeurIPS 2023 revolucionó alignment. Anthropic Constitutional AI paper (2022) introdujo autoscrítica basada en principios. Meta Llama-3 usa DPO en post-training. Zephyr, Tulu, OpenHermes son ejemplos abiertos con DPO.",
+      "tags": ["RLHF", "DPO", "Constitutional AI", "alignment"],
+      "tech": ["TRL", "Axolotl", "DPO"],
+      "references": [
+        { "title": "DPO — Direct Preference Optimization (paper)" },
+        { "title": "Anthropic — Constitutional AI paper" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "model-strategy",
+      "topic": "Evaluación pre/post fine-tune",
+      "difficulty": "senior",
+      "scenario": "Un equipo fine-tuneó un modelo para clasificar tickets. Accuracy en su tarea subió de 82% → 91%. Deployean a prod. Semanas después: los tickets legales que se detectaban bien antes ahora fallan.",
+      "question": "¿Qué es 'regresión de capacidades' y cómo se previene?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fine-tuning puede degradar capacidades no cubiertas por el dataset ('catastrophic forgetting' o 'capability regression'). Prevención: eval suite amplia PRE y POST fine-tune que cubra (a) tarea target, (b) capacidades adyacentes (razonamiento, dominio legal/técnico, safety), (c) benchmarks generales (MMLU, HellaSwag, TruthfulQA). Si regresión >X%, ajustar (menos epochs, más regularización, mezclar dataset general en training).", "correct": true, "why": "Correcto. Catastrophic forgetting es fenómeno bien conocido: entrenar en un dataset específico puede degradar capacidades no representadas. Mitigaciones: (a) menos epochs (evitar overfitting), (b) menor learning rate, (c) mezcla con general instruction data (ej. 10% del training viene de datasets genéricos), (d) LoRA en vez de full FT (menos parámetros = menos daño), (e) rehearsal/replay de tareas antiguas." },
+        { "letter": "B", "text": "El modelo fine-tuneado siempre mejora en todo.", "correct": false, "why": "Falso. Puede mejorar en la tarea y empeorar en otras (catastrophic forgetting)." },
+        { "letter": "C", "text": "Basta con evaluar solo la tarea target.", "correct": false, "why": "Falso. Sin eval en capacidades adyacentes, regresiones pasan invisibles." },
+        { "letter": "D", "text": "Los benchmarks estándar (MMLU) no aplican a modelos custom.", "correct": false, "why": "Aplican como sanity check general. Además de tu eval propio de la tarea." }
+      ],
+      "explanation": "Eval suite recomendada: (1) tarea target con dataset propio + métricas de negocio; (2) safety benchmarks (BeaverTails, AdvBench, ToxicChat); (3) razonamiento general (MMLU, GSM8K, BBH); (4) instruction following (IFEval, AlpacaEval); (5) domain-specific si aplica (LegalBench, MedQA); (6) eval por LLM judge (Ragas, Braintrust). Correr pre y post fine-tune; comparar. Herramientas: lm-eval-harness (EleutherAI), OpenAI evals, Braintrust, Langfuse evals, Ragas.",
+      "realWorld": "Post-mortems de fine-tunes que degradaron safety (Google's Gemini image gen 2024 tuvo issues por sobre-alignment). OpenAI y Anthropic tienen suites internas amplias. Cursor documenta 'capability regression tests' antes de deploy de custom models.",
+      "tags": ["catastrophic forgetting", "capability regression", "eval suite", "MMLU"],
+      "tech": ["lm-eval-harness", "OpenAI evals", "Braintrust", "Ragas"],
+      "references": [
+        { "title": "EleutherAI — lm-evaluation-harness" },
+        { "title": "Hugging Face — Open LLM Leaderboard" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "model-strategy",
+      "topic": "El problema es alucinación",
+      "difficulty": "mid",
+      "scenario": "Los usuarios reportan que el asistente 'inventa' información sobre productos: da specs incorrectos, precios equivocados. El PM propone 'fine-tunear para que no alucine'.",
+      "question": "¿Es fine-tuning la solución correcta para alucinaciones?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "NO. La causa raíz de alucinación es que el modelo no tiene acceso a la información correcta y 'rellena' con plausibilidad. Soluciones correctas: (1) RAG bien implementado con contenido oficial; (2) grounding con citations obligatorias; (3) prompt de 'si no sabes, di no sé'; (4) tools que consulten fuente autoritativa (API de catálogo). Fine-tuning sin RAG no resuelve porque el modelo sigue sin acceso a datos frescos/correctos.", "correct": true, "why": "Correcto. Fine-tuning con SKUs actuales solo enseña esos SKUs específicos y quedará desactualizado. Además puede aumentar la confianza del modelo sin resolver alucinaciones de casos no vistos. La solución arquitectónica es RAG + grounding + citations + prompt engineering. Fine-tune puede complementar (mejor formato de citations, mejor 'idk' behavior), pero no es la respuesta principal." },
+        { "letter": "B", "text": "Sí, fine-tunear con precios actuales resuelve el problema.", "correct": false, "why": "Falso. Los precios cambian; el fine-tune queda desactualizado. Además el modelo puede seguir alucinando SKUs no vistos." },
+        { "letter": "C", "text": "La alucinación es imposible de resolver.", "correct": false, "why": "Falso. Con RAG + grounding + prompting + evals se reduce dramáticamente. Nunca a cero pero a niveles aceptables." },
+        { "letter": "D", "text": "Basta con bajar temperature a 0.", "correct": false, "why": "Reduce randomness pero no evita alucinación. El modelo seguirá inventando 'consistentemente'." }
+      ],
+      "explanation": "Anatomía de la alucinación: modelo aprende patrones del training, extrapola sin data → inventa plausible. Soluciones en orden de efectividad: (1) RAG con contenido oficial + citations; (2) tools que consultan fuente autoritativa (get_product_price(sku)); (3) prompt engineering (system 'si no encuentras info en el contexto, di no sé'); (4) grounding checks (verificar que output referencia contexto); (5) fine-tune para 'formato de rechazo' y adherencia a citations; (6) eval de hallucination (Ragas faithfulness). Fine-tune NUNCA es la solución primaria para conocimiento factual dinámico.",
+      "realWorld": "Perplexity, Bing Chat, Notion Q&A todos usan RAG + citations obligatorias. Anthropic docs 'Reduce hallucinations' recomiendan RAG + grounding. Papers 'When to fine-tune vs when to RAG' concluyen consistentemente lo mismo.",
+      "tags": ["hallucination", "RAG", "grounding", "citations"],
+      "tech": ["RAG", "Ragas faithfulness", "grounding"],
+      "references": [
+        { "title": "Anthropic — Reduce hallucinations" },
+        { "title": "Ragas — Faithfulness metric" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "model-strategy",
+      "topic": "Prompt engineering avanzado",
+      "difficulty": "mid",
+      "scenario": "Un dev intenta que el modelo siga un formato específico. Ha probado 'por favor sigue el formato'. Sigue fallando 30% de las veces.",
+      "question": "¿Qué técnicas de prompting bien conocidas ordenadas por eficacia debería probar antes de fine-tunear?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Structured outputs / JSON schema estricto (OpenAI Structured Outputs, Anthropic tool use, Gemini responseSchema); (2) few-shot examples (3-5 ejemplos del formato exacto); (3) chain-of-thought si la tarea requiere razonamiento; (4) roles claros (system prompt con rol específico); (5) XML tags para estructura interna (Anthropic recomienda <thinking>, <answer>); (6) auto-verification (el modelo revisa su output).", "correct": true, "why": "Correcto. Prompt engineering tiene un menú ordenado de técnicas. Structured outputs es la más efectiva para formato: garantiza validez del schema. Few-shot resuelve muchos casos sin fine-tune. XML tags son idioma nativo de Claude. Fine-tune solo tiene sentido después de agotar prompting bien hecho." },
+        { "letter": "B", "text": "Solo cambiar temperature a 0.", "correct": false, "why": "Insuficiente por sí solo. Ayuda marginalmente." },
+        { "letter": "C", "text": "Fine-tunear inmediatamente sin probar prompting.", "correct": false, "why": "Antipatrón. Fine-tune es último recurso; prompting bien hecho resuelve la mayoría." },
+        { "letter": "D", "text": "Añadir emojis al prompt.", "correct": false, "why": "Sin evidencia de mejora consistente. Broma." }
+      ],
+      "explanation": "Prompt engineering: (1) System prompt claro (rol, contexto, restricciones); (2) Structured outputs con schema; (3) Few-shot examples representativos; (4) Chain-of-thought o pensar step-by-step para razonamiento; (5) Delimiters (XML, JSON, ###) para estructura; (6) Auto-critica (self-refine); (7) Prompt caching para amortizar system largos. Referencias: Anthropic 'Prompt engineering' guide, OpenAI 'Prompt engineering guide', DAIR.AI Prompt Engineering Guide. Fine-tune después de que prompting bien optimizado se quede corto.",
+      "realWorld": "Anthropic publicó 'Prompt engineering overview' con XML tags recomendados. OpenAI DevDay 2024 destacó Structured Outputs como respuesta al 'formato inconsistente'. Cursor y v0 usan prompts largos muy estructurados con caching.",
+      "tags": ["prompt engineering", "structured outputs", "few-shot", "XML tags"],
+      "tech": ["OpenAI Structured Outputs", "Anthropic XML tags", "few-shot"],
+      "references": [
+        { "title": "Anthropic — Prompt engineering guide" },
+        { "title": "OpenAI — Prompt engineering guide" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "model-strategy",
+      "topic": "Open-weights vs closed",
+      "difficulty": "senior",
+      "scenario": "Un CTO debate entre seguir con Anthropic/OpenAI vs migrar a Llama-3 self-hosted. Argumento a favor del cambio: 'sovereign AI, control de datos, costo menor'.",
+      "question": "¿Cuáles son los trade-offs reales open-weights vs closed?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Open-weights (Llama, Mistral, DeepSeek, Qwen, Gemma): control total del modelo (weights en tu infra), data sovereignty, capacidad de fine-tune profundo, costo potencialmente menor a alto volumen self-hosted, pero requiere: GPUs (H100/A100/L40s), ops de ML (vLLM, TensorRT-LLM, escalado), quality suele estar 6-12 meses detrás del top closed. Closed (Claude, GPT-4, Gemini): mejor quality en frontier tasks, sin ops, prompt caching y features avanzadas, pero: data va al provider (aunque hay opciones enterprise sin retention), costo por token, dependencia. Muchas orgs usan mix: closed para features críticas, open self-hosted para volume-heavy o compliance.", "correct": true, "why": "Correcto. La elección depende de: (a) sensibilidad de datos (regulados → self-hosted o Bedrock/Azure); (b) volumen (>$100k/mes puede favorecer self-hosted); (c) capacidad de ops de ML; (d) quality requirements (frontier tasks aún favorecen closed en muchas evals); (e) latencia (edge/on-device favorece open). No es blanco/negro; muchas orgs mixean." },
+        { "letter": "B", "text": "Open-weights siempre es mejor.", "correct": false, "why": "Falso. Trade-offs reales; para muchas apps con volumen bajo/medio, closed es más eficiente." },
+        { "letter": "C", "text": "Closed siempre es mejor.", "correct": false, "why": "Falso. Compliance/sovereignty/costo a alto volumen a menudo favorecen open." },
+        { "letter": "D", "text": "Los modelos open son idénticos a los closed en calidad.", "correct": false, "why": "Depende del benchmark. En muchas tareas están cerca (Llama-3.1 405B, DeepSeek V3, Qwen 2.5) pero en frontier específico (razonamiento hard, tool use complejo) los closed suelen adelantar." }
+      ],
+      "explanation": "Landscape 2025: (a) Open frontier: Llama-3.1/4, DeepSeek V3/R1, Qwen 2.5, Mistral Large; (b) Closed frontier: Claude Sonnet/Opus, GPT-4o/o1/o3, Gemini 2.0 Pro. Data residency: Bedrock/Azure OpenAI ofrecen 'closed pero en tu región'. Sovereign AI: initiativas europeas (Mistral, ALIA en España) y APAC (Qwen). Ops open-source: vLLM, TensorRT-LLM, TGI, SGLang. Managed hosting open: Together, Fireworks, Groq, Replicate. Regla: audita compliance real (¿tu contrato con OpenAI ya cubre HIPAA/GDPR?) antes de asumir que hay que self-host.",
+      "realWorld": "Meta Llama licencia permite comercial hasta cierto tamaño. DeepSeek publicó V3 con costos 90% menores que GPT-4o. Casos: Perplexity, Groq usan mix. Sovereign AI: Mistral partners con European govs; Falcon (UAE); Ai2 OLMo.",
+      "tags": ["open-weights", "closed", "sovereign AI", "Llama", "DeepSeek"],
+      "tech": ["Llama", "Mistral", "DeepSeek", "Qwen", "vLLM"],
+      "references": [
+        { "title": "Meta — Llama license" },
+        { "title": "Hugging Face — Open LLM leaderboard" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "cost-inference",
+      "topic": "Costo de fine-tuning",
+      "difficulty": "mid",
+      "scenario": "Un equipo pregunta: '¿cuánto cuesta fine-tunear Llama-3 8B con 5000 ejemplos vía LoRA?'.",
+      "question": "¿Cuál es la respuesta más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "LoRA de Llama-3 8B con 5000 ejemplos (~1M tokens) suele tardar 1-4h en 1 GPU A100/H100. Costo: ~$5-30 vía Runpod/Modal/Together fine-tuning, o ~$20-50 en managed services (Predibase, Fireworks, OctoAI). En comparación con inference posterior, el training es una fracción despreciable si el modelo se usa mucho.", "correct": true, "why": "Correcto. QLoRA en 8B es económico: horas de GPU compartida bajo demanda. Managed services abstraen la infra a cambio de premium. Comparado con inference: si el modelo hace 100k requests/mes, el training amortiza en horas. La barrera es data quality/curación, no cost de training." },
+        { "letter": "B", "text": "Fine-tunear un modelo cuesta $100k+.", "correct": false, "why": "Falso para LoRA en modelos <70B. Solo aplica a pre-training desde cero o full FT de modelos gigantes." },
+        { "letter": "C", "text": "El fine-tuning es gratis.", "correct": false, "why": "Falso. Requiere GPU time (aunque sea barato)." },
+        { "letter": "D", "text": "Solo se puede fine-tunear en H100.", "correct": false, "why": "Falso. QLoRA de 8B corre en RTX 4090 consumer, A10 y muchas otras." }
+      ],
+      "explanation": "Costo por modelo (LoRA/QLoRA, 1M-10M tokens): 7-8B → $5-30. 13B → $10-50. 34-40B → $50-200. 70B → $200-800. 405B → thousands. Full fine-tune multiplica x10-100. Managed premium: OpenAI fine-tuning charges per token training + inference premium. Alternativas gratis: Google Colab (limitado), Kaggle GPUs. Herramientas: Axolotl (config-driven), Unsloth (optimized), LlamaFactory (UI), Predibase/OctoAI/Together (managed).",
+      "realWorld": "Predibase blog 'Cost of fine-tuning' con benchmarks. Unsloth publica métricas 2-5x más rápido/barato que HF TRL. Modal y Runpod son opciones on-demand populares. Muchas startups fine-tunean semanalmente con budget de <$500/mes.",
+      "tags": ["fine-tuning cost", "LoRA cost", "GPU time"],
+      "tech": ["LoRA", "QLoRA", "Runpod", "Modal", "Predibase"],
+      "references": [
+        { "title": "Predibase — LoRA fine-tuning cost analysis" },
+        { "title": "Unsloth — benchmarks" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "model-strategy",
+      "topic": "RAG chunking strategy",
+      "difficulty": "mid",
+      "scenario": "Tu RAG está devolviendo resultados irrelevantes. El chunking se hace en trozos fijos de 500 caracteres.",
+      "question": "¿Qué mejora el retrieval en RAG?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chunking estructural (por sección/párrafo/heading), overlap entre chunks (~10-20%), tamaño moderado (300-800 tokens según modelo), preservar metadata (source, título, sección), y considerar chunking jerárquico (chunk + parent) o técnicas como 'small-to-big' o 'sentence window'. Fixed-size character chunking rompe contexto mid-oración y es la causa más común de retrieval malo.", "correct": true, "why": "Correcto. Chunking es el principal factor de quality en RAG. Fixed-char es la peor opción. Mejores: (1) semantic chunking por markdown headings; (2) overlapping windows para no perder contexto en bordes; (3) hierarchical: recupera chunk chico, expande a parent para context; (4) metadata (source, page) crucial para citations y filtering; (5) tools: LlamaIndex NodeParsers, LangChain TextSplitters, Unstructured, Chonkie." },
+        { "letter": "B", "text": "Chunks de 500 caracteres es siempre óptimo.", "correct": false, "why": "Falso. Muy pequeño para preservar contexto; rompe oraciones." },
+        { "letter": "C", "text": "El chunking no importa; el modelo compensa.", "correct": false, "why": "Falso. Retrieval malo → contexto malo → generación mala. Chunking es fundacional." },
+        { "letter": "D", "text": "Un solo chunk por documento entero es lo mejor.", "correct": false, "why": "Falso. Documentos largos superan context window y diluyen el retrieval." }
+      ],
+      "explanation": "RAG quality pipeline: (1) parsing (PDFs, HTML, markdown con estructura preservada — Unstructured, LlamaParse, Marker); (2) chunking (semantic > fixed; overlap; jerárquico); (3) embedding (modelo apropiado por dominio/idioma — Voyage, OpenAI text-embedding-3, Cohere, BGE-M3); (4) storage (pgvector, Pinecone, Weaviate, Qdrant); (5) retrieval (hybrid: dense + sparse BM25, reranking con Cohere/Voyage rerank); (6) generation con contexto. Herramientas: LlamaIndex, LangChain, Haystack, LlamaCloud.",
+      "realWorld": "Anthropic 'Contextual Retrieval' blog (2024) documenta técnicas modernas. LlamaIndex y LangChain publican guías. Casos: Notion, Perplexity, Elicit iteraron mucho en chunking.",
+      "tags": ["RAG", "chunking", "retrieval", "hybrid search"],
+      "tech": ["LlamaIndex", "LangChain", "Unstructured", "Chonkie"],
+      "references": [
+        { "title": "Anthropic — Contextual Retrieval" },
+        { "title": "LlamaIndex — Chunking strategies" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "model-strategy",
+      "topic": "Prompt engineering vs RAG boundaries",
+      "difficulty": "senior",
+      "scenario": "Un asistente médico debe responder según guías clínicas actualizadas trimestralmente. Un dev propone 'meter las guías en el system prompt'.",
+      "question": "¿Cuándo el contenido debe ir en system prompt vs RAG vs fine-tune?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) System prompt: contenido estable y esencial en cada request (<10-20k tokens con caching). (2) RAG: contenido grande (>>50k tokens totales), actualizado frecuentemente, o donde solo un subset por request es relevante. (3) Fine-tune: comportamiento/estilo que debe aplicar siempre y no puede caber prácticamente en prompt. Guías médicas actualizadas trimestralmente: si son pocas y siempre relevantes, system prompt con caching; si son muchas y se filtran por especialidad/paciente, RAG.", "correct": true, "why": "Correcto. Boundaries claros: system prompt para 'siempre relevante y estable'; RAG para 'contenido grande + filtrado por relevancia'; fine-tune para 'estilo/comportamiento internalizado'. Meter 500 páginas de guías en cada system prompt es antipatrón: caro, lento, dilute attention. RAG con re-embedding trimestral es la solución." },
+        { "letter": "B", "text": "Todo debe ir en system prompt siempre.", "correct": false, "why": "Falso. Antipatrón por costo y attention dilution." },
+        { "letter": "C", "text": "Todo debe ir en fine-tune siempre.", "correct": false, "why": "Falso. Fine-tune para conocimiento factual dinámico es antipatrón (quedas desactualizado)." },
+        { "letter": "D", "text": "RAG es siempre inferior a system prompt.", "correct": false, "why": "Falso. RAG escala a corpus enormes; system prompt no." }
+      ],
+      "explanation": "Decision framework: (a) ¿Contenido cambia? Sí → RAG (evitas re-fine-tune). (b) ¿Tamaño total >20-100k tokens? Sí → RAG (no cabe económicamente en prompt). (c) ¿Sólo subset relevante por request? Sí → RAG (retrieval selectivo). (d) ¿Estilo/comportamiento consistente? → fine-tune con RAG. Muchas apps combinan: fine-tune para estilo + RAG para conocimiento + system prompt para instrucciones core. Anthropic prompt caching redujo el 'costo' de system prompts largos hasta ~20-50k tokens estables.",
+      "realWorld": "Notion Q&A, Perplexity, Klarna assistant, y muchos asistentes de compliance/legal/médicos usan RAG + prompt caching + fine-tune limitado. Anthropic docs 'Long context best practices' cubre boundaries.",
+      "tags": ["system prompt", "RAG boundaries", "fine-tune boundaries"],
+      "tech": ["RAG", "prompt caching", "fine-tuning"],
+      "references": [
+        { "title": "Anthropic — Long context tips" },
+        { "title": "OpenAI — When to fine-tune vs RAG" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "model-strategy",
+      "topic": "TOS y uso de outputs",
+      "difficulty": "senior",
+      "scenario": "Un equipo quiere destilar outputs de Claude Opus a un modelo Llama para bajar costos y ofrecer como servicio.",
+      "question": "¿Qué consideración legal/TOS deben verificar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los TOS de la mayoría de providers frontier (OpenAI, Anthropic, Google) prohíben usar outputs para entrenar modelos que compitan con ellos. Consecuencia: destilar Claude → Llama para ofrecer un competidor viola TOS y puede resultar en ban + acción legal. Alternativas legales: (a) destilar de modelos open (Llama-3.1 405B → 8B es OK); (b) usar datasets sintéticos ya publicados con licencia permisiva; (c) verificar TOS específicos por provider (varían); (d) para uso interno no competitivo suele estar permitido — leer cláusulas.", "correct": true, "why": "Correcto. Punto crítico frecuentemente ignorado. OpenAI TOS: 'You may not use output to develop models that compete with OpenAI'. Anthropic TOS similares. Google Vertex TOS también. Casos de infracción: Bytedance's Doubao fue investigada por presuntamente destilar GPT-4. Alternativa: destilación desde open models (Llama 405B → Llama 8B es legal y común)." },
+        { "letter": "B", "text": "No hay restricciones legales; los outputs son públicos.", "correct": false, "why": "Falso. Los TOS explícitamente restringen." },
+        { "letter": "C", "text": "Basta con no mencionar el origen del training data.", "correct": false, "why": "Falso. Ocultar no legaliza; providers auditan y hay watermarking en discusión." },
+        { "letter": "D", "text": "Destilar de open-source viola TOS igualmente.", "correct": false, "why": "Falso. Modelos con licencia permisiva (Llama, Mistral, Qwen) permiten destilación bajo términos de la licencia." }
+      ],
+      "explanation": "Landscape TOS: (1) OpenAI, Anthropic, Google, Cohere → prohíben training de competidores; (2) Meta Llama → licencia permite comercial hasta cierto tamaño de usuarios (700M MAU exception); (3) Mistral Apache 2.0 y otros → permisivos; (4) DeepSeek MIT-like. Distinción clave: 'para tu propio producto no-competitivo' suele ser OK; 'para ofrecer un competidor' NO. Consultar legal antes de estrategia de destilación. Watermarking de outputs es tema activo en 2024-2025.",
+      "realWorld": "OpenAI investigó posible destilación de DeepSeek desde GPT-4 (dic 2024). Bytedance's Doubao issue con OpenAI. Casos legales aún emergiendo. Anthropic Terms of Service actualizadas periódicamente con cláusulas explícitas.",
+      "tags": ["TOS", "distillation legality", "training competitors"],
+      "tech": ["OpenAI TOS", "Anthropic TOS", "Llama license"],
+      "references": [
+        { "title": "OpenAI — Terms of use" },
+        { "title": "Anthropic — Commercial terms" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "model-strategy",
+      "topic": "Cuándo NO usar LLM",
+      "difficulty": "junior",
+      "scenario": "Un PM propone usar LLM para: (1) validar formato de email; (2) calcular impuestos por país; (3) traducir textos técnicos.",
+      "question": "¿Cuál de estas tareas es apropiada para LLM y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Traducir textos técnicos. Los otros dos casos: validar email = regex/librería determinista (100x más rápido y confiable); calcular impuestos = tabla + código (nunca LLM para cálculos deterministas críticos financieros).", "correct": true, "why": "Correcto. Regla: usa LLM cuando la tarea requiere comprensión de lenguaje natural, contexto o generación creativa. NO uses LLM cuando: (a) hay regla determinista clara (regex, cálculo, lookup); (b) accuracy debe ser 100% garantizado por ley/negocio (impuestos, precios); (c) el problema tiene solución O(1) sin ML. Antipattern común: 'LLM para todo' termina en errores caros y facturas hinchadas." },
+        { "letter": "B", "text": "Los 3 son apropiados para LLM.", "correct": false, "why": "Falso. Regex resuelve email deterministamente; impuestos requieren cálculo exacto sin margen de error." },
+        { "letter": "C", "text": "Ninguno, LLM no sirve para nada práctico.", "correct": false, "why": "Falso. Traducción, análisis de texto libre, generación son casos válidos." },
+        { "letter": "D", "text": "LLM para calcular impuestos siempre da resultados exactos.", "correct": false, "why": "Falso. LLMs pueden equivocarse en cálculos numéricos; para impuestos usar tabla + código." }
+      ],
+      "explanation": "Framework 'cuándo LLM': (1) input es texto libre o ambiguo; (2) output requiere generación creativa/adaptativa; (3) reglas explícitas no cubren todos los casos; (4) error tolerable dentro de rango. NO usar LLM cuando: (a) determinismo requerido; (b) alta precisión numérica; (c) lookup en tabla; (d) validación de formato; (e) transformaciones estructurales exactas. Best practice: LLM para 'lo lingüístico', código para 'lo determinista'. Los agentes bien diseñados delegan cálculos a tools (calculator, database, API).",
+      "realWorld": "Muchos post-mortems públicos de startups que usaron LLM para cálculos y tuvieron issues (Air Canada chatbot 2024, comprometido a reembolso inventado). Anthropic docs 'When to use Claude' incluye el pattern de 'delegar a tools para exactitud'.",
+      "tags": ["when not to use LLM", "determinism", "tools"],
+      "tech": ["regex", "LLM boundaries", "tools"],
+      "references": [
+        { "title": "Anthropic — When to use Claude" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "model-strategy",
+      "topic": "Continuous fine-tuning",
+      "difficulty": "senior",
+      "scenario": "Un equipo mantiene fine-tune de Llama-3 8B para clasificación. Cada semana llegan 1000 ejemplos etiquetados nuevos. ¿Re-entrenar desde cero cada semana?",
+      "question": "¿Cómo se maneja continuous fine-tuning?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Opciones: (1) re-entrenar desde base + dataset acumulado (más estable, más caro); (2) continuar entrenamiento desde el último checkpoint (más barato, riesgo catastrophic forgetting); (3) técnicas de continual learning (rehearsal con muestreo del dataset antiguo, EWC, LoRA composable). Recomendado: (a) mantener un dataset canónico versionado; (b) re-entrenar full LoRA con dataset acumulado cada N semanas; (c) eval suite que compare vs versión anterior; (d) A/B en producción antes de promocionar.", "correct": true, "why": "Correcto. Continuous fine-tune requiere disciplina de MLOps: dataset versionado, training pipeline reproducible, eval automatizada, deployment progresivo. LoRA facilita esto (adaptadores hot-swappable). Continuar desde checkpoint es tentador pero degrada con el tiempo si no hay rehearsal. Re-training full desde base con dataset acumulado es más seguro." },
+        { "letter": "B", "text": "Continuous fine-tune no es viable en producción.", "correct": false, "why": "Falso. Empresas como Cohere, Character AI, y muchas mantienen ciclos regulares." },
+        { "letter": "C", "text": "Fine-tunear cada request es la mejor práctica.", "correct": false, "why": "Falso. Antipatrón: caro, inestable, no reproducible." },
+        { "letter": "D", "text": "El modelo aprende automáticamente sin re-entrenar.", "correct": false, "why": "Falso. LLMs no tienen online learning; requieren pipeline explícito." }
+      ],
+      "explanation": "MLOps para LLMs: (1) dataset versionado en DVC/Delta Lake/Snowflake; (2) training pipeline reproducible (Airflow, Metaflow, Prefect); (3) experiment tracking (W&B, MLflow); (4) model registry (MLflow, SageMaker Model Registry); (5) eval automatizada pre-deploy; (6) canary/shadow deployment; (7) monitoring en producción (drift detection). Herramientas específicas LLMOps: Predibase, OctoAI, Fireworks para managed continuous FT; Determined AI, LangSmith, Braintrust para eval.",
+      "realWorld": "Character AI y Cohere documentaron pipelines de continuous fine-tuning. Databricks Mosaic AI enfocado en LLMOps. Predibase ofrece 'production fine-tuning' as a service.",
+      "tags": ["continuous fine-tuning", "LLMOps", "model versioning"],
+      "tech": ["W&B", "MLflow", "Predibase", "SageMaker"],
+      "references": [
+        { "title": "Databricks — LLMOps" },
+        { "title": "Predibase — Production fine-tuning" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "model-strategy",
+      "topic": "Synthetic data",
+      "difficulty": "mid",
+      "scenario": "Tu equipo quiere fine-tunear pero solo tiene 50 ejemplos reales. Un ingeniero propone 'usar GPT-4 para generar 5000 ejemplos sintéticos'.",
+      "question": "¿Qué consideraciones aplican a synthetic data para fine-tuning?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Synthetic data puede ser efectivo si: (a) el teacher LLM produce outputs correctos verificables; (b) hay diversidad (no repetir mismo pattern); (c) hay filtrado (LLM judge o humano revisa muestra); (d) se valida en dataset REAL separado que no fue generado; (e) se combina con los 50 reales como semilla/anchors. Riesgos: colapso a distribución del teacher (pierdes diversidad real), errores sistemáticos si teacher se equivoca, TOS del teacher provider. Papers recientes (Self-Instruct, Evol-Instruct, Magpie) demuestran viabilidad.", "correct": true, "why": "Correcto. Synthetic data es técnica validada (usada por Meta Llama, Microsoft Phi, muchas otras). Requiere: (1) teacher fuerte; (2) prompts variados; (3) filtering (calidad); (4) validación en real data. Riesgos: distribución diverge del real; model collapse en iteraciones repetidas. Combinar 50 reales como semilla mejora diversidad." },
+        { "letter": "B", "text": "Synthetic data siempre degrada el modelo.", "correct": false, "why": "Falso. Correctamente usado, mejora en tareas donde datos reales escasean." },
+        { "letter": "C", "text": "Synthetic data reemplaza completamente al real.", "correct": false, "why": "No siempre. Validación en real data es indispensable." },
+        { "letter": "D", "text": "Sólo Google puede generar synthetic data.", "correct": false, "why": "Falso. Cualquiera puede con LLM teacher." }
+      ],
+      "explanation": "Técnicas de generación sintética: (1) Self-Instruct (usar LLM para expandir seeds); (2) Evol-Instruct (evolucionar instrucciones con dificultad creciente); (3) Magpie (extraer instrucciones del propio modelo); (4) rejection sampling (generar muchos, quedarte con los mejores según eval). Validación siempre en dataset real held-out. Ver casos: Microsoft Phi models entrenados heavily con synthetic; Meta Llama uses synthetic + real mix. Herramientas: distilabel (Argilla), synthetic-data-kit.",
+      "realWorld": "Microsoft Phi paper series usa datos sintéticos ampliamente. Meta documentó synthetic data en Llama-3 y Llama-3.1. Argilla distilabel es framework popular. Anthropic Constitutional AI usa outputs sintéticos con auto-crítica.",
+      "tags": ["synthetic data", "self-instruct", "data augmentation"],
+      "tech": ["distilabel", "Self-Instruct", "Evol-Instruct"],
+      "references": [
+        { "title": "Self-Instruct paper — Wang 2022" },
+        { "title": "Microsoft Phi technical reports" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "cost-inference",
+      "topic": "Multi-LoRA serving",
+      "difficulty": "senior",
+      "scenario": "Ofreces una plataforma B2B donde cada cliente tiene su LoRA fine-tuned. Con 500 clientes, cargar 500 modelos separados es imposible.",
+      "question": "¿Cómo se sirven cientos de LoRAs eficientemente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-LoRA serving: cargar 1 modelo base en GPU y hot-swap adaptadores LoRA por request (S-LoRA, Punica, vLLM multi-LoRA soportan esto). Un solo GPU sirve 100s de clientes con sus adaptadores. Trade-off: sólo el modelo base único, todos comparten arquitectura/quantization. Predibase, Fireworks, Lorax ofrecen multi-LoRA managed.", "correct": true, "why": "Correcto. Multi-LoRA serving es el patrón habilitador de 'fine-tune por cliente'. Papers S-LoRA (2023) y Punica documentan cómo servir 100-1000 LoRAs concurrent en 1 GPU con overhead mínimo. vLLM soportó multi-LoRA en 2024. Servicios como Predibase y Fireworks lo ofrecen managed. Alternativa naïve (1 endpoint por cliente) es prohibitivo económicamente." },
+        { "letter": "B", "text": "Un endpoint separado por cliente.", "correct": false, "why": "Prohibitivo económicamente y de operar." },
+        { "letter": "C", "text": "Mergear todos los LoRAs en un solo modelo.", "correct": false, "why": "Falso. Mergear pierde separación por cliente y no compone bien matemáticamente." },
+        { "letter": "D", "text": "Multi-LoRA es teoría; no existe en producción.", "correct": false, "why": "Falso. Producción real en Predibase, Fireworks, HF Text Generation Inference." }
+      ],
+      "explanation": "Multi-LoRA serving stack: (1) modelo base cargado once en GPU HBM; (2) adaptadores LoRA cargados on-demand desde memoria/disco; (3) request incluye lora_id; (4) engine hot-swap del adapter (~ms overhead); (5) inference. Frameworks: vLLM (--enable-lora), TGI multi-lora, LoRAX (Predibase open source), NVIDIA NIM. Casos: Predibase 'Lorax' soporta 1000+ LoRAs por GPU. Fireworks 'FireAttention' con multi-tenant. Ideal para B2B con customización por cliente sin explotar la infra.",
+      "realWorld": "S-LoRA paper (Sheng 2023). Predibase Lorax open source (2024). vLLM multi-LoRA GA. Fireworks marketea multi-tenant fine-tune serving. HF TGI también añadió support.",
+      "tags": ["multi-LoRA", "S-LoRA", "Lorax", "multi-tenant"],
+      "tech": ["vLLM multi-LoRA", "Lorax", "Predibase", "Fireworks"],
+      "references": [
+        { "title": "S-LoRA paper — Sheng et al. 2023" },
+        { "title": "Predibase — Lorax (open source)" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "model-strategy",
+      "topic": "Model versioning y rollback",
+      "difficulty": "mid",
+      "scenario": "Lanzan un fine-tune nuevo que en offline eval superaba al anterior. En producción, hay quejas de que 'responde peor'.",
+      "question": "¿Qué prácticas de model versioning y rollback son correctas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Model registry con versiones inmutables (SageMaker Model Registry, MLflow, W&B); (2) canary rollout (1% → 10% → 50% → 100% con métricas en cada tier); (3) shadow deployment (nueva versión responde en paralelo, comparas outputs); (4) rollback instantáneo por feature flag; (5) online metrics (thumbs up/down, task success, escalations) además de offline evals; (6) A/B test que dure el suficiente para significancia estadística.", "correct": true, "why": "Correcto. Offline eval ≠ prod performance. Distribución de queries en prod puede diferir del eval set. Canary/shadow permite detectar antes del blast radius total. Feature flag habilita rollback en segundos. Métricas online (behavior real, no proxy) son la verdad de tierra." },
+        { "letter": "B", "text": "Deploy directo al 100% y esperar el mejor.", "correct": false, "why": "Antipatrón. Sin canary, un modelo malo afecta a todos inmediatamente." },
+        { "letter": "C", "text": "Rollback es imposible en LLMs.", "correct": false, "why": "Falso. Con feature flag y registry de versiones es trivial." },
+        { "letter": "D", "text": "Offline eval es suficiente; no hace falta canary.", "correct": false, "why": "Falso. Distribución real difiere de eval; canary es red necesaria." }
+      ],
+      "explanation": "Deployment progresivo LLM: (1) shadow: nueva versión responde en paralelo, compara outputs con eval judge; (2) canary 1-5% con monitoring de métricas negocio (conversion, satisfaction, escalation rate); (3) escalation gradual; (4) rollback automático si métrica cae >X%. Herramientas: LaunchDarkly / Statsig para feature flags; Braintrust, Langfuse para eval comparativa; Arize AI, Fiddler para drift detection. Métricas online sugeridas: task success rate, user rating, escalation rate, latency, cost.",
+      "realWorld": "Notion, Cursor, Anthropic documentan canary deployments para versiones de modelo. LaunchDarkly + Braintrust integraciones AI-specific. Anthropic Claude models pasan por rollout gradual global.",
+      "tags": ["model versioning", "canary", "shadow deployment", "rollback"],
+      "tech": ["LaunchDarkly", "Braintrust", "MLflow", "SageMaker Model Registry"],
+      "references": [
+        { "title": "Google SRE — Canary deployments" },
+        { "title": "Braintrust — Model comparison" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "model-strategy",
+      "topic": "Sovereign AI y jurisdicción",
+      "difficulty": "senior",
+      "scenario": "Un banco europeo (GDPR + regulación bancaria EBA) evalúa usar Claude. El compliance officer requiere que los datos NUNCA salgan de la UE.",
+      "question": "¿Qué opciones cumplen data residency EU y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) AWS Bedrock en eu-central-1/eu-west-* con inference profile 'eu.*' + zero data retention (Anthropic no retiene datos vía Bedrock); (2) Azure OpenAI en westeurope con opción de 'data zone' (2024) y agreement de no retention; (3) Vertex AI en europe-west; (4) Mistral (empresa francesa, servers en EU); (5) Self-hosted en AWS EU / GCP EU / on-prem con modelos open (Llama, Mistral, DeepSeek). NO cumple: usar Anthropic/OpenAI API directa (endpoints US); usar providers sin data residency garantizado; Bedrock cross-region inference con profile 'us.*'.", "correct": true, "why": "Correcto. Para GDPR + soberanía: (a) usar hyperscalers (AWS/Azure/Google) en región EU con addendums correspondientes; (b) verificar 'zero data retention' en contrato; (c) auditar egress. Bedrock/Azure OpenAI/Vertex tienen agreements enterprise. Mistral marketea 'European AI' explícitamente. Self-hosted da máximo control pero requiere ops. Cross-region inference con profile 'us.*' sacaría los datos de EU — NO cumple." },
+        { "letter": "B", "text": "OpenAI API directa cumple GDPR por defecto.", "correct": false, "why": "Falso. Endpoints principales de OpenAI están en US. Solo Azure OpenAI en westeurope cumple data residency EU con agreement." },
+        { "letter": "C", "text": "GDPR permite enviar datos personales a US sin restricciones.", "correct": false, "why": "Falso. Requiere marcos como EU-US Data Privacy Framework (2023) o SCCs. Regulaciones bancarias EBA suelen ser aún más estrictas y prefieren residency EU." },
+        { "letter": "D", "text": "Self-hosted no cumple GDPR.", "correct": false, "why": "Falso. Self-hosted en EU con controles adecuados es la opción más soberana." }
+      ],
+      "explanation": "Landscape sovereign AI EU: (1) hyperscalers en región EU con addendums (AWS Bedrock, Azure OpenAI, Vertex); (2) providers europeos (Mistral, Aleph Alpha, Silo AI); (3) self-hosted en EU (open models sobre AWS EU, GCP EU, on-prem); (4) initiatives govmt (ALIA en España, GAIA-X). Marcos: GDPR, EU AI Act (2024), Digital Services Act, sector-specific (EBA para banca, EMA para farma). Contratos deben cubrir: data residency, zero retention, encryption, subprocessors list. Verificar Data Processing Agreement (DPA).",
+      "realWorld": "Aleph Alpha (Alemania), Mistral (Francia), Silo AI (Finlandia, adquirida por AMD 2024) son players europeos. AWS Bedrock EU expandió coverage 2024. Azure OpenAI 'data zones' anunciado en 2024 para keep processing dentro de región. Bancos como BNP Paribas, Deutsche Bank publicaron guidance para IA soberana.",
+      "tags": ["sovereign AI", "GDPR", "data residency", "EU AI Act"],
+      "tech": ["Bedrock EU", "Azure OpenAI", "Vertex EU", "Mistral", "Aleph Alpha"],
+      "references": [
+        { "title": "EU AI Act — official text" },
+        { "title": "AWS Bedrock — European regions" }
+      ]
+    }
+  ]
+}

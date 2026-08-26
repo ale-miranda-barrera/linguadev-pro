@@ -1,0 +1,453 @@
+{
+  "id": "ai-programming-sim-10-llm-observability-tracing",
+  "trackId": "ai-programming",
+  "order": 10,
+  "title": "Simulacro 10 — Observabilidad LLM: tracing, Langfuse/Braintrust/LangSmith, spans",
+  "focus": "Cómo instrumentar y debuggear aplicaciones con LLMs en producción: tracing distribuido, spans, cost tracking, feedback loop, alerting.",
+  "areaCoverage": ["evals-observability", "cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "evals-observability",
+      "topic": "Trace vs span vs session",
+      "difficulty": "junior",
+      "scenario": "Estás onboardeando a un compañero en Langfuse. Te pregunta: 'veo tres conceptos: session, trace, span. ¿En qué se diferencian y para qué es cada uno?'.",
+      "question": "¿Cuál es la explicación correcta y jerárquica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son sinónimos, elige el que prefieras.", "correct": false, "why": "Son conceptos distintos con jerarquía definida en OpenTelemetry y en la mayoría de tools LLM ops. Confundirlos lleva a UIs mal usadas y a métricas mal agregadas." },
+        { "letter": "B", "text": "SESSION agrupa múltiples traces del mismo usuario/conversación; TRACE representa una request end-to-end (ej. 'usuario mandó un mensaje'); SPAN es una unidad de trabajo dentro del trace (ej. 'llamada a GPT-4', 'lookup en vector store', 'tool call'). Un trace tiene muchos spans; una session tiene muchos traces.", "correct": true, "why": "Correcto. Es la jerarquía estándar (OTEL y todos los observability tools). Session = conversación completa; trace = un turno o request; span = paso interno del trace. Esta jerarquía permite navegar de 'usuario X tuvo problema' → 'en qué turno' → 'en qué paso específico'." },
+        { "letter": "C", "text": "Solo existen spans; los otros son abstracciones marketing.", "correct": false, "why": "OTEL define trace y span como conceptos fundamentales. Session es adición del ecosistema LLM ops (Langfuse, LangSmith) para agrupar conversaciones — es real, no marketing." },
+        { "letter": "D", "text": "Trace es solo latencia, span es solo cost, session es solo user.", "correct": false, "why": "Confusión conceptual. Todos son estructuras jerárquicas que llevan atributos (latencia, cost, tokens, model, etc.), no dimensiones separadas." }
+      ],
+      "explanation": "Modelo mental jerárquico: SESSION > TRACE > SPAN. Session ('conversación de usuario X'), trace ('request/turn Y dentro de la sesión'), span ('operación Z dentro del turno': llamada a LLM, retrieval, tool call). Cada span tiene atributos (duration, tokens_in/out, cost, model, temperature, input, output). Esta estructura viene de OpenTelemetry (Distributed Tracing) y los tools LLM ops la extienden con conceptos específicos (LLM span, tool span, retriever span, chain span).",
+      "realWorld": "En Langfuse un session puede ser una conversación de ChatGPT-style, un trace es cada mensaje del usuario, y los spans son las llamadas internas (embedding, retrieval, generation, tool calls, guard checks). LangSmith y Braintrust usan la misma jerarquía con naming ligeramente distinto.",
+      "tags": ["trace", "span", "session", "OTEL"],
+      "tech": ["Langfuse", "LangSmith", "OpenTelemetry"],
+      "references": [
+        { "title": "OpenTelemetry — Traces documentation", "url": "https://opentelemetry.io/docs/concepts/signals/traces/" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "evals-observability",
+      "topic": "Qué instrumentar en cada span LLM",
+      "difficulty": "junior",
+      "scenario": "Empiezas a instrumentar tu app. Un compañero manda un PR que solo guarda: 'timestamp' y 'model_name'. Te pide que revises.",
+      "question": "¿Qué atributos MÍNIMOS debería tener cada span de una llamada LLM para poder debuggear en producción?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo model_name y timestamp — el resto se puede inferir.", "correct": false, "why": "No: sin input/output no reproduces, sin tokens/cost no controlas gasto, sin latency no debuggeas performance. Es una instrumentación inútil." },
+        { "letter": "B", "text": "Input completo (mensajes + system prompt), output completo, model, temperature, max_tokens, tokens_input, tokens_output, cost, latency, request_id, user_id (con consentimiento), status (success/error), error message si aplica.", "correct": true, "why": "Correcto. Es el mínimo funcional. Sin input/output no reproduces bugs; sin tokens/cost no controlas gasto; sin latency no debuggeas p99; sin request_id no correlacionas con logs de tu backend; sin user_id no puedes atender 'a este usuario le pasó X'. Todo esto está definido en las OTEL GenAI semantic conventions (gen_ai.system, gen_ai.request.model, gen_ai.usage.input_tokens, etc.)." },
+        { "letter": "C", "text": "Solo cost — es lo único que le importa al negocio.", "correct": false, "why": "Coste importa pero es un subset. Sin latency no detectas problemas de UX; sin errors no detectas fallos; sin input/output no debuggeas calidad." },
+        { "letter": "D", "text": "Solo latency y errors — como cualquier backend clásico.", "correct": false, "why": "Falta lo específico de LLM: tokens, cost, model version, params. Sin esto no distingues 'lento porque el prompt creció' de 'lento porque el modelo cambió'." }
+      ],
+      "explanation": "OpenTelemetry GenAI semantic conventions (2025) definen atributos estándar: gen_ai.system (openai, anthropic...), gen_ai.request.model, gen_ai.response.model (a veces distinto), gen_ai.request.temperature, gen_ai.request.max_tokens, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, gen_ai.response.finish_reasons. Añade siempre: input completo, output completo, cost calculado, latency, error info, request_id (correlación con backend), user_id/session_id, tool_calls (si aplica).",
+      "realWorld": "Langfuse, LangSmith, Braintrust y Helicone auto-capturan estos atributos si usas sus SDKs. Para setups custom, la spec OTEL GenAI (semantic-conventions-genai en GitHub) es la referencia. Cuando hay incidente, el que tiene esto grabado debugga en minutos; el que no, en horas.",
+      "tags": ["instrumentation", "OTEL GenAI", "attributes"],
+      "tech": ["OpenTelemetry", "Langfuse", "Helicone"],
+      "references": [
+        { "title": "OpenTelemetry GenAI Semantic Conventions", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "evals-observability",
+      "topic": "Debug loop con y sin tracing",
+      "difficulty": "junior",
+      "scenario": "Usuario reporta a soporte: 'ayer a las 15:32 el asistente me dijo que mi vuelo estaba cancelado, pero no lo estaba'. Tienes 2 opciones: (a) sin tracing, solo logs de tu backend con timestamp y mensaje del usuario; (b) con tracing (Langfuse) que guardó session/trace/spans con inputs, outputs, contexto RAG usado, tool calls y model params.",
+      "question": "¿Qué diferencia de tiempo esperas entre ambos escenarios para diagnosticar la causa raíz?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Igual: en ambos casos hablas con el usuario y reproduces.", "correct": false, "why": "Falso. Con temperature > 0 y contexto dinámico (RAG, tools, tiempo), reproducir manualmente es a menudo imposible o lento. Sin trazas no ves qué chunks se recuperaron, qué versión del prompt, qué respondió cada tool." },
+        { "letter": "B", "text": "Con tracing típicamente 5-15 min (buscas trace por user_id + timestamp, ves inputs/outputs y el paso donde se torció); sin tracing horas o días (adivinas, pides al usuario que reproduzca, revisas logs parciales).", "correct": true, "why": "Correcto. El tracing es literalmente la diferencia entre debugging rápido y no debugging. Buscas por user_id o request_id, ves toda la trayectoria (RAG chunks recuperados, tool calls con args/returns, output del LLM), y localizas el punto exacto. Sin trazas, muchas veces el bug queda sin diagnosticar." },
+        { "letter": "C", "text": "Sin tracing es más rápido porque los logs son más simples.", "correct": false, "why": "Simplicidad no equivale a debugging. Logs sin contexto LLM (chunks recuperados, tool calls, prompt exacto) no te dicen NADA sobre por qué el LLM dijo lo que dijo." },
+        { "letter": "D", "text": "Con tracing es igual porque los LLMs son no deterministas.", "correct": false, "why": "No-determinismo del LLM es EXACTAMENTE por qué necesitas tracing: como no puedes reproducir a mano, necesitas la grabación de qué pasó ese día. El tracing es especialmente valioso en sistemas no-deterministas." }
+      ],
+      "explanation": "Regla dura: en LLM apps, tracing no es 'nice to have', es infraestructura básica. La combinación temperature > 0 + RAG dinámico + tools + prompts que cambian hace que reproducir a mano sea imposible sin la grabación. El ROI del tracing es tan alto que casi cualquier equipo profesional lo tiene día 1. Herramientas: Langfuse (self-host + SaaS), LangSmith, Braintrust, Helicone, Arize Phoenix, Datadog LLM Observability.",
+      "realWorld": "Casos como Air Canada chatbot (2024, la aerolínea perdió un juicio por lo que dijo su bot) o DPD chatbot (2024, insultó a un usuario) — en ambos, tener tracing hubiera acelerado la respuesta y el fix. Sin trazas, muchos equipos tienen que shippear parches ciegos que a menudo introducen otros bugs.",
+      "tags": ["debugging", "tracing", "incident response"],
+      "tech": ["Langfuse", "LangSmith", "Helicone"],
+      "references": [
+        { "title": "Langfuse — Tracing overview", "url": "https://langfuse.com/docs/tracing" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "evals-observability",
+      "topic": "OpenTelemetry GenAI semantic conventions",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate el naming de atributos para tracing LLM. Un compañero propone: 'llamemos a los atributos como queramos, con prefijo custom, ej. myapp.llm.model, myapp.llm.tokens_in'. Otro propone seguir OTEL GenAI semantic conventions.",
+      "question": "¿Cuál es la razón fuerte para seguir la convención OTEL?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Interoperabilidad: OTEL GenAI convention (gen_ai.system, gen_ai.request.model, gen_ai.usage.input_tokens, ...) permite que cualquier backend compatible OTEL (Langfuse v3, Arize Phoenix, Datadog, Honeycomb, Grafana Tempo) entienda tus traces sin custom mapping. Cambiar de vendor no requiere re-instrumentar.", "correct": true, "why": "Correcto. La spec GenAI OTEL (2024-2025) estabilizó atributos para chat y embeddings. Usar naming custom te ata al vendor. OTEL Convention es la lingua franca — Langfuse v3, Arize Phoenix, MLflow, Datadog LLM Observability, todos hablan OTEL GenAI." },
+        { "letter": "B", "text": "OTEL es más rápido runtime.", "correct": false, "why": "La convención de naming no afecta al runtime; es un contrato de datos. La velocidad depende del exporter y sampling, no del naming." },
+        { "letter": "C", "text": "OTEL es obligatorio por ley.", "correct": false, "why": "No hay ninguna regulación que exija OTEL. Es una convención de la comunidad, no un mandato legal." },
+        { "letter": "D", "text": "OTEL captura menos datos y ahorra storage.", "correct": false, "why": "Los datos capturados son los mismos; solo cambia el naming. Storage no depende del schema." }
+      ],
+      "explanation": "OpenTelemetry GenAI Semantic Conventions estandarizan naming: gen_ai.system, gen_ai.provider.name, gen_ai.request.model, gen_ai.response.model, gen_ai.request.temperature, gen_ai.request.max_tokens, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, gen_ai.response.finish_reasons, gen_ai.tool.name, gen_ai.tool.call.id. Beneficios: portabilidad entre backends, dashboards reutilizables, comunidad. Estado (2025): chat/embeddings estables, agent/tool orchestration aún settling.",
+      "realWorld": "Langfuse v3 se re-diseñó sobre OTEL; Arize Phoenix es OTEL-native; MLflow adoptó GenAI conventions. Traceloop (OpenLLMetry) es la implementación open source más popular. Instrumentar con OTEL hoy te ahorra migraciones mañana.",
+      "tags": ["OTEL", "semantic conventions", "portability"],
+      "tech": ["OpenTelemetry", "Traceloop", "Langfuse v3"],
+      "references": [
+        { "title": "OpenTelemetry GenAI Semantic Conventions", "url": "https://opentelemetry.io/docs/specs/semconv/gen-ai/" },
+        { "title": "semantic-conventions-genai (GitHub)", "url": "https://github.com/open-telemetry/semantic-conventions-genai" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "evals-observability",
+      "topic": "Langfuse vs LangSmith vs Braintrust — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Tu equipo (backend Python, no usa LangChain, self-host obligatorio por GDPR, quiere OTEL nativo) evalúa observability tools. Un compañero propone LangSmith porque 'es el más popular'.",
+      "question": "¿Cuál es la elección más adecuada dado el contexto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "LangSmith — es el más popular.", "correct": false, "why": "LangSmith está optimizado para stacks LangChain/LangGraph y no ofrece self-hosting comparable a Langfuse. Popularidad general no equivale a fit para tu contexto (GDPR + no LangChain)." },
+        { "letter": "B", "text": "Langfuse — es open source, self-hostable, OTEL-native en v3, agnóstico de framework. Encaja con self-host obligatorio (GDPR) y no te ata a LangChain.", "correct": true, "why": "Correcto. Langfuse es la elección clara dado los constraints: (1) self-host resuelve GDPR/data residency; (2) OTEL-native en v3; (3) no ata a un framework; (4) SDKs Python y JS. Es el default para 'quiero LLM ops con control de datos'." },
+        { "letter": "C", "text": "Braintrust — el mejor para todo.", "correct": false, "why": "Braintrust es SaaS excelente para eval experiments, pero no ofrece self-host comparable al que necesitas por GDPR. No cumple el constraint principal." },
+        { "letter": "D", "text": "Construir uno interno.", "correct": false, "why": "Reinventar Langfuse cuesta meses de trabajo cuando ya existe y es gratis para self-host. Solo justificable si tienes requisitos muy peculiares que ninguna tool cubre." }
+      ],
+      "explanation": "Elección por contexto (2025-2026): (1) LangChain/LangGraph stack → LangSmith (nativo); (2) eval-experiments profesionales SaaS → Braintrust; (3) self-host, OTEL, GDPR, framework-agnostic → Langfuse; (4) solo cost/observability básica cheap → Helicone; (5) open source Arize → Arize Phoenix. En 2026, muchos equipos combinan Langfuse (obs) + promptfoo (evals CI) para un stack open source completo.",
+      "realWorld": "Bloomberg, JPMorgan y otras enterprise con constraints de compliance van a Langfuse por self-host. Perplexity y varias startups AI-native usan Braintrust por su UI de eval experiments. LangSmith domina cuando el stack ya es LangChain.",
+      "tags": ["framework choice", "self-host", "GDPR"],
+      "tech": ["Langfuse", "LangSmith", "Braintrust", "Helicone"],
+      "references": [
+        { "title": "Latitude — AI Observability Tools Compared 2026", "url": "https://latitude.so/blog/ai-agent-observability-tools-compared-latitude-vs-langfuse-langsmith-braintrust" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "cost-inference",
+      "topic": "Cost tracking por span",
+      "difficulty": "mid",
+      "scenario": "Este mes la factura de OpenAI subió de 2.000€ a 8.000€ sin cambios de tráfico. No sabes qué endpoint o qué feature causó el spike. Tu tracing captura tokens pero no cost — asumías 'lo calculamos al final de mes'.",
+      "question": "¿Cuál es la práctica correcta para poder atribuir coste?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Calcular y guardar cost EN CADA span (tokens_in * price_in + tokens_out * price_out), etiquetado por feature/endpoint/user/model. Con esto puedes hacer dashboards de 'cost by feature', 'cost by user', 'cost by model' y detectar spikes en horas, no en meses.", "correct": true, "why": "Correcto. Cost no es un número al final del mes; es un ATRIBUTO por span que debe atribuirse a business dimensions (endpoint, feature, user segment, model). Con esto detectas 'ah, la nueva feature X está consumiendo 60% del cost' o 'el user Y está haciendo abuse'. Langfuse, LangSmith, Helicone, Datadog LLM Obs lo hacen out-of-the-box." },
+        { "letter": "B", "text": "Consultar la factura de OpenAI mensualmente y hacer un stacked bar por semana.", "correct": false, "why": "La factura de OpenAI no tiene atribución por feature/endpoint. Ves 'gasto total' y como mucho 'por model'. No sabes qué parte de tu app causa qué gasto." },
+        { "letter": "C", "text": "Solo trackear tokens; el cost es fácil de calcular después.", "correct": false, "why": "Los precios cambian con el tiempo. Guardar solo tokens te obliga a re-calcular con precios de una fecha específica. Además, calcular en el momento del span te permite dashboards en tiempo real. Guarda ambos: tokens + cost snapshot." },
+        { "letter": "D", "text": "Setear un budget alert en OpenAI Console y ya.", "correct": false, "why": "El budget alert dispara cuando ya has pasado el límite; no atribuye ni previene el spike. Es defensa en profundidad, no observabilidad." }
+      ],
+      "explanation": "Cost tracking granular es la base del cost control en LLM apps. Cada span calcula cost = tokens_in * price_per_token_in + tokens_out * price_per_token_out y lo etiqueta con dimensions: feature, endpoint, user_id, model, environment. Dashboards típicos: cost per user (detecta abuse), cost per feature (guía decisiones de producto), cost trend (detecta spikes), cost by model (guía model selection). Herramientas: Langfuse (built-in), LangSmith, Helicone, Datadog LLM Observability, custom con OTEL + Grafana.",
+      "realWorld": "Historias típicas: un equipo descubrió que un endpoint con retry loop malformado gastaba 40% del budget mensual; otro descubrió que 5 usuarios abusaban de un chat 'gratis' generando 60% del coste. Sin cost per span/user esto es invisible hasta que llega la factura.",
+      "tags": ["cost tracking", "attribution", "spike detection"],
+      "tech": ["Langfuse", "Helicone", "Datadog"],
+      "references": [
+        { "title": "Helicone — Cost tracking", "url": "https://docs.helicone.ai/" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "evals-observability",
+      "topic": "User feedback loop (thumbs up/down)",
+      "difficulty": "mid",
+      "scenario": "Añadiste botones de thumbs up/down a las respuestas del chatbot. Cada semana tienes ~200 thumbs down. Actualmente los guardas en una tabla aislada y el equipo los mira en ratos libres 'para tener idea'.",
+      "question": "¿Cuál es el uso más efectivo de este feedback?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Adjuntar el feedback como score al TRACE correspondiente en Langfuse/LangSmith, filtrar traces con thumbs down para debugging priorizado, y añadir los casos negativos revisados al golden dataset para prevenir regresiones futuras.", "correct": true, "why": "Correcto. El feedback en aislado es ruido; el feedback ATADO a la trace correspondiente es oro. Permite: (a) drill-down inmediato al trace exacto (ver qué input, qué chunks, qué output); (b) filtrar 'peores casos' para triage semanal; (c) alimentar el dataset con casos reales de failure — cierra el loop entre producción y evaluación." },
+        { "letter": "B", "text": "Enviarlo a un canal de Slack y responder al usuario disculpándose.", "correct": false, "why": "Genera trabajo manual sin escalabilidad ni memoria. No mejora el sistema estructuralmente." },
+        { "letter": "C", "text": "Guardar y no mirar — es solo compliance.", "correct": false, "why": "Es tirar la señal más valiosa que tienes. Los usuarios te están diciendo dónde falla el sistema real." },
+        { "letter": "D", "text": "Usarlo para fine-tune el modelo automáticamente.", "correct": false, "why": "Fine-tuning con feedback ruidoso sin curation lleva a modelos peores (reward hacking, sesgos). El fine-tune con feedback es válido pero requiere DPO/RLHF cuidadoso, no un pipeline automático." }
+      ],
+      "explanation": "Feedback loop maduro: (1) capturar thumbs en frontend con trace_id; (2) POST al observability tool asociándolo al trace; (3) triage semanal (o diario para volumen alto): revisar sample de thumbs down, categorizar (RAG failure, hallucination, tono, out-of-scope...); (4) añadir casos representativos al golden dataset como regressions; (5) medir 'thumbs down rate' como health metric; alert si sube súbitamente. Herramientas: Langfuse/LangSmith/Braintrust todos tienen 'scores' o 'feedback' attachable a traces.",
+      "realWorld": "En Notion AI, ChatGPT, GitHub Copilot: thumbs down alimentan datasets internos que van a fine-tuning y a evals de regresión. En equipos más pequeños, un dashboard semanal de 'thumbs down por categoría' guía la prioridad del backlog.",
+      "tags": ["feedback loop", "thumbs down", "dataset feedback"],
+      "tech": ["Langfuse", "LangSmith", "Braintrust"],
+      "references": [
+        { "title": "Langfuse — Scores & feedback", "url": "https://langfuse.com/docs/scores/overview" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "evals-observability",
+      "topic": "Prompt versioning con traces asociados",
+      "difficulty": "mid",
+      "scenario": "El equipo cambia el system prompt 5-10 veces por semana. A veces alguien reporta un bug pero para cuando lo miras ya se ha cambiado el prompt. No sabes qué versión estaba activa cuando pasó el bug.",
+      "question": "¿Cuál es la práctica que resuelve esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Versionar el prompt (git + prompt registry) y adjuntar el prompt_version_id como atributo del trace en cada llamada. Con esto puedes filtrar 'todos los traces del prompt v37' y correlar con métricas.", "correct": true, "why": "Correcto. Prompt versioning es como versionar código: cada cambio genera una versión inmutable con id. Cada trace lleva prompt_version_id como atributo. Beneficios: (a) reproduces exactly qué prompt corría; (b) comparas métricas entre versiones; (c) haces rollback rápido; (d) debuggeas bugs históricos con precisión. Herramientas: Langfuse Prompts, LangSmith Hub, Braintrust prompts, o git + config server." },
+        { "letter": "B", "text": "Añadir en cada mensaje del usuario un comentario 'usando prompt versión X' y guardarlo en logs.", "correct": false, "why": "Hack ad-hoc que ensucia UX y no cubre cambios ni herramientas de análisis. La solución es estructurada (atributo del trace)." },
+        { "letter": "C", "text": "No cambiar tanto el prompt.", "correct": false, "why": "En LLM engineering iterar rápido es competitivo. La solución no es frenar cambios, es hacerlos trazables." },
+        { "letter": "D", "text": "Solo guardar el prompt actual, los anteriores no importan.", "correct": false, "why": "Cuando debuggeas un bug de la semana pasada necesitas el prompt de la semana pasada. Sin versioning, imposible." }
+      ],
+      "explanation": "Prompt versioning + attachment al trace es el estándar. Cada prompt es un artefacto versionado (semver o hash). Cambios se hacen por PR (con evals en CI, ver sim 09). En runtime, cada llamada al LLM adjunta prompt_version_id al trace. En debugging: filtras traces por versión, comparas métricas versión-a-versión, rollback es simplemente un cambio de config. Herramientas: Langfuse Prompts (con playground y A/B), LangSmith Prompt Hub, Braintrust, o custom con git tags + config server.",
+      "realWorld": "Netflix, Notion y muchos equipos AI-first tratan prompts como código: PRs, review, tests, versioning, feature flags. Braintrust y Langfuse venden 'prompt management' como feature clave precisamente porque el debug sin ella es infernal.",
+      "tags": ["prompt versioning", "prompt registry", "debugging"],
+      "tech": ["Langfuse Prompts", "LangSmith Hub", "Braintrust"],
+      "references": [
+        { "title": "Langfuse — Prompt management", "url": "https://langfuse.com/docs/prompts/get-started" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "cost-inference",
+      "topic": "Alerting: p99 latency y cost spike",
+      "difficulty": "mid",
+      "scenario": "Un endpoint LLM lleva p99 estable en 3.5s durante semanas. Ayer, en las últimas 6 horas, p99 subió a 12s. Nadie se dio cuenta hasta que un cliente enterprise abrió ticket. Tu equipo pregunta si deberíais tener alertas.",
+      "question": "¿Cuál es el approach mínimo razonable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Alerts en Prometheus/Datadog/Grafana sobre métricas derivadas del trace: (1) p99 latency por endpoint (alert si sube X% sobre baseline); (2) cost per hour (alert si sube 2x rolling avg); (3) error rate; (4) thumbs down rate spike. Todo con paginación a on-call.", "correct": true, "why": "Correcto. Alerts sobre las 4 dimensiones clave de LLM ops: performance (latency), coste (cost/hora), fiabilidad (errors), calidad (thumbs). Baselines dinámicos (comparar contra media móvil de 7 días) evitan false positives por variación diaria. Herramientas: Langfuse alerts, Datadog LLM Observability, Grafana + Prometheus, o Sentry cron monitors." },
+        { "letter": "B", "text": "Mirar el dashboard cada día por la mañana.", "correct": false, "why": "Depende de humanos que a menudo están de vacaciones o distraídos. Un spike a las 21h no se detecta hasta las 9h del día siguiente — 12h con clientes afectados." },
+        { "letter": "C", "text": "Solo alertar cuando la app está caída.", "correct": false, "why": "Latency degradada NO es 'caída' pero es igual de mala para UX. Y cost spike no es visible en uptime pero destruye margen." },
+        { "letter": "D", "text": "Confiar en OpenAI: si su API está bien, tu app está bien.", "correct": false, "why": "La latency de tu app depende de más que la API (chunk retrieval, tool calls, tu propio código, longitud de prompt, tokens de output). Un cambio de prompt puede duplicar tokens_out y con ello latency." }
+      ],
+      "explanation": "Alerting maduro para LLM apps: (1) p99/p95 latency por endpoint y por modelo; (2) cost per hour vs 7-day rolling avg (spike detection); (3) error rate (rate limits, timeouts, invalid outputs); (4) thumbs down rate spike (calidad); (5) hallucination rate si tienes eval automático; (6) tokens_out promedio (detecta si el modelo empieza a generar respuestas más largas por bug); (7) tool call error rate. Umbrales por severity (warning/critical) con runbooks asociados.",
+      "realWorld": "OpenAI API tiene ocasionales degradaciones (status.openai.com); tener alerts te avisa antes que a los clientes. Cost spikes reales suelen venir de: retry loops mal configurados, cambio de prompt que dobla tokens, un endpoint público sin rate limiting expuesto a bots.",
+      "tags": ["alerting", "p99", "cost spike"],
+      "tech": ["Prometheus", "Datadog", "Grafana", "Langfuse"],
+      "references": [
+        { "title": "Datadog LLM Observability", "url": "https://docs.datadoghq.com/llm_observability/" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "evals-observability",
+      "topic": "Sampling en producción",
+      "difficulty": "mid",
+      "scenario": "Tu app hace 5M llamadas LLM/día. Enviar el 100% a Langfuse cuesta caro (tanto en $ del vendor como en latency del hot path). Un compañero propone 'no enviar nada, es demasiado'.",
+      "question": "¿Cuál es la estrategia razonable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sampling: enviar 100% de errores y de thumbs down (siempre), 100% de traces de usuarios con debug flag (staff, beta), y sample X% (1-10%) del tráfico normal. Async fire-and-forget para no impactar hot path.", "correct": true, "why": "Correcto. La regla: 'siempre lo interesante, sample lo aburrido'. Errores, feedback negativo, y traces de debug flags van al 100% porque son la señal más valiosa. Traffic normal va sampleado (1-10% típico) para tener representatividad estadística sin volumen abrumador. Envío async no bloquea el hot path." },
+        { "letter": "B", "text": "Enviar el 100% siempre — el data es sagrado.", "correct": false, "why": "A 5M/día, 100% es caro en $ del vendor, en latency del hot path si es síncrono, y en almacenamiento sin necesidad estadística. Marginal utility baja después de cierta muestra." },
+        { "letter": "C", "text": "No enviar nada — es demasiado caro.", "correct": false, "why": "Es tirar la observabilidad. Sin trazas no debuggeas ni mejoras. Sampling inteligente resuelve el trade-off." },
+        { "letter": "D", "text": "Enviar solo el 1% pero incluir todo (errores, feedback, normal).", "correct": false, "why": "Sampling uniforme pierde los eventos raros y valiosos. Si samplea al 1%, pierdes 99% de errores y thumbs down — precisamente lo que más querías analizar." }
+      ],
+      "explanation": "Sampling strategy para producción a escala: (1) HEAD-based sampling (por session/user) preserva sesiones completas (mejor que tail-based que rompe traces); (2) rules-based: 100% errores, 100% feedback negativo, 100% debug flags, X% normal; (3) budget-based: 'gastar X$/día en observabilidad'; (4) async con queue local + batching al vendor para no bloquear hot path. Verifica que tu tool soporta head sampling coherente (Langfuse, OTEL SDK).",
+      "realWorld": "Datadog y otros observability vendors ofrecen guías detalladas de sampling porque el problema es universal. Netflix público: samplea 1-5% de traces en producción de servicios de alto volumen. Airbnb: 100% de errores, 5% de OK.",
+      "tags": ["sampling", "cost", "observability at scale"],
+      "tech": ["Langfuse", "OTEL", "Datadog"],
+      "references": [
+        { "title": "OpenTelemetry — Sampling", "url": "https://opentelemetry.io/docs/concepts/sampling/" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "security",
+      "topic": "PII masking en traces",
+      "difficulty": "mid",
+      "scenario": "Tu app procesa mensajes de usuarios que a menudo contienen datos personales: emails, teléfonos, direcciones, a veces DNI o números de tarjeta. Todo se está guardando raw en Langfuse. Compliance te llama para tener 'una charla'.",
+      "question": "¿Cuál es el approach correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Masking de PII en el pipeline ANTES de enviar al observability tool: regex + NER para detectar emails/teléfonos/DNI/tarjetas y reemplazar por placeholders (<EMAIL>, <PHONE>, <PII>). Opcionalmente hashing determinista con salt si necesitas correlacionar sin exponer. Documentar en DPIA. RBAC en la tool + retención finita.", "correct": true, "why": "Correcto. Defensa en capas: (1) minimización en origen (masking en el SDK antes de export); (2) hashing determinista si necesitas correlar por user sin PII plana; (3) RBAC granular en la tool (solo squad autorizado accede a datos sensibles); (4) retención finita (30-90 días típico); (5) documentar en Data Protection Impact Assessment. Cumples GDPR/CCPA sin perder observabilidad." },
+        { "letter": "B", "text": "Cifrar toda la tabla en la BBDD y ya está.", "correct": false, "why": "El cifrado at-rest no protege del acceso de personas autorizadas al tool — cualquier ingeniero con acceso ve PII. El principio es minimización, no solo confidencialidad." },
+        { "letter": "C", "text": "No guardar nada por GDPR.", "correct": false, "why": "Sobre-reacción: GDPR no prohíbe guardar; exige base legal, minimización, retención acotada y derechos ARCO. Masking + retención finita + consentimiento cumple sin dejarte ciego." },
+        { "letter": "D", "text": "Confiar en que Langfuse cumple GDPR.", "correct": false, "why": "El vendor cumple SU parte (procesamiento seguro); TÚ como controller sigues siendo responsable de minimizar lo que envías. Enviar PII innecesaria es incumplimiento independientemente del vendor." }
+      ],
+      "explanation": "PII y observabilidad LLM: minimiza en origen (masking antes de export), diferencia PII estricta (DNI, tarjeta, salud) de PII común (email, nombre), aplica RBAC granular, retención acotada, self-host si tu compliance lo exige. SDKs: Langfuse tiene hooks 'onBeforeSend' donde puedes masking; Presidio (Microsoft) es librería open source de PII detection; LLM Guard hace lo mismo con LLMs.",
+      "realWorld": "Empresas reguladas (banca, salud, seguros) tienen requisitos duros. Casos como el Slack AI 2024 recordaron que 'data en observability tools' es también data a proteger. El GDPR EDPB publicó guidance específica sobre LLMs en 2024 mencionando minimización de logs.",
+      "tags": ["PII", "GDPR", "masking", "compliance"],
+      "tech": ["Presidio", "LLM Guard", "Langfuse"],
+      "references": [
+        { "title": "Microsoft Presidio — PII detection", "url": "https://microsoft.github.io/presidio/" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "evals-observability",
+      "topic": "Tool call tracing",
+      "difficulty": "mid",
+      "scenario": "Tu agente llama 3-8 tools por turno. Actualmente el tracing guarda la request al LLM y la respuesta final, pero las tool calls intermedias no aparecen como spans separados — están embebidas en la respuesta del LLM. Un bug de tool ('lookup_user devuelve datos del user anterior por cache mal purgada') tardó 2 días en localizarse.",
+      "question": "¿Cuál es la práctica correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cada tool call es un SPAN independiente hijo del span del LLM, con atributos: tool.name, tool.arguments, tool.result, tool.duration, tool.error si aplica. Así ves la trayectoria completa en un waterfall y detectas qué tool falló.", "correct": true, "why": "Correcto. Los tool calls son unidades de trabajo distintas del LLM y deben tener spans propios. Beneficios: (1) waterfall visual claro (ves 'LLM 300ms → tool_A 200ms → tool_B 1200ms ← aquí el problema'); (2) atributos filtrables (buscar tool_B con error); (3) correlación con logs del backend cuando la tool llama a servicios propios; (4) atribución de coste/latency por tool. OTEL GenAI define gen_ai.tool.name, gen_ai.tool.arguments, gen_ai.tool.call.id." },
+        { "letter": "B", "text": "Guardar tool calls solo como texto en el input del LLM.", "correct": false, "why": "Anti-patrón: tools son unidades ejecutables con side effects propios, no strings. Filtrado, alerting y drill-down se pierden." },
+        { "letter": "C", "text": "Un log separado en syslog.", "correct": false, "why": "Rompe la correlación con el trace del LLM. Cuando debuggeas 'esta conversación tuvo X problema' no puedes juntar los dos flows." },
+        { "letter": "D", "text": "No trazar tools — el LLM ya se encarga.", "correct": false, "why": "Es exactamente lo opuesto de lo que necesitas. Los tools son donde ocurren muchos bugs (API cambia, cache, permisos, timeouts). Sin spans propios estás ciego." }
+      ],
+      "explanation": "Tool calls en tracing: cada tool call es un span hijo del span LLM (o del agent), con atributos operacionales (name, args, result, duration, error). Waterfall visual permite ver secuencia y localizar cuellos. Correlar tool spans con logs de backend usando trace_id (OTEL context propagation). Frameworks: LangGraph auto-instrumenta tool nodes; SDKs Anthropic y OpenAI (con Traceloop / instrumentación) emiten spans OTEL automáticamente.",
+      "realWorld": "Casos reales: Devin, Cursor, Cognition, GitHub Copilot workspace — todos publicaron bugs donde 'una tool devolvía cache stale' o 'la tool timeouteaba silenciosamente'. Sin spans por tool, imposible. Con spans, minutos.",
+      "tags": ["tool calls", "spans", "agents"],
+      "tech": ["LangGraph", "Traceloop", "OTEL GenAI"],
+      "references": [
+        { "title": "OpenTelemetry GenAI — tool spans", "url": "https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "cost-inference",
+      "topic": "Detectar prompt bloat en traces",
+      "difficulty": "mid",
+      "scenario": "Un compañero añadió 'unos ejemplos más' al system prompt para mejorar respuestas. Correcto en evals (+2%). Después notas que la factura mensual subió 30% sin más tráfico. Sospechas del prompt.",
+      "question": "¿Qué métrica de traces te confirma el diagnóstico rápido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "gen_ai.usage.input_tokens promedio por endpoint, agrupado por prompt_version. Si input_tokens promedio subió después del cambio de prompt, es el prompt bloat.", "correct": true, "why": "Correcto. Es la métrica más limpia. Filtra traces por endpoint, agrupa por prompt_version, comparas medias de input_tokens. Ves el 'antes/después' del cambio de prompt directamente en tokens. Multiplicado por precio input = impacto en factura. También revisar output_tokens (a veces prompts más largos hacen respuestas más largas)." },
+        { "letter": "B", "text": "Latency total.", "correct": false, "why": "Latency depende de muchos factores (throughput OpenAI, output length, chunks retrieved). Ver la subida no te dice si es prompt bloat o algo más." },
+        { "letter": "C", "text": "Número de errores.", "correct": false, "why": "Prompt bloat no genera errores; genera coste. Errores no capturan el problema." },
+        { "letter": "D", "text": "Thumbs down rate.", "correct": false, "why": "Es señal de calidad, no de cost. El prompt puede ser mejor en calidad y peor en coste — thumbs down no capta eso." }
+      ],
+      "explanation": "Prompt bloat es una causa muy común de cost spikes silenciosos: añades ejemplos, contextos, políticas, cadenas de razonamiento... y multiplicas input tokens por N. Instrumentación clave: input_tokens por prompt_version + cost per request. Regla mental: cada 1000 tokens extra en un prompt que se llama 1M veces al mes = 5-15$/M dependiendo del modelo, o sea 5-15$/mes por cada 1000 tokens del prompt. Es lineal y suma rápido.",
+      "realWorld": "Historia típica: equipo mete few-shot examples largos para mejorar quality, olvidan el impacto en cost, factura sube 40%. Solución: rediseñar con menos ejemplos (o dinámicos por task type), usar prompt caching (Anthropic, OpenAI) para descuento en tokens repetidos, o usar model más barato con prompt más largo.",
+      "tags": ["prompt bloat", "input tokens", "cost analysis"],
+      "tech": ["OTEL GenAI", "Langfuse"],
+      "references": [
+        { "title": "Anthropic — Prompt caching", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "evals-observability",
+      "topic": "Correlar traces LLM con logs de backend",
+      "difficulty": "senior",
+      "scenario": "Bug reportado: 'a veces el asistente devuelve 500'. En Langfuse ves el trace del LLM completado ok. En los logs de tu backend Node ves un stacktrace de error 5 segundos después. No hay forma obvia de correlar los dos.",
+      "question": "¿Cuál es la técnica estándar para correlar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenTelemetry context propagation: usar el mismo trace_id/span_id en Langfuse spans y en los logs del backend (structured logging que incluye trace_id). Con esto en Langfuse ves el trace + un link a los logs correlacionados por trace_id, y viceversa.", "correct": true, "why": "Correcto. Es exactamente para lo que sirve OTEL: un mismo trace_id atraviesa capas heterogéneas (backend HTTP, LLM calls, DB, cache, tool calls). En cada capa, los logs incluyen trace_id como field estructurado. Con Grafana Tempo, Datadog o similar puedes saltar de un log a la trace completa en un click." },
+        { "letter": "B", "text": "Buscar por timestamp con margen de segundos.", "correct": false, "why": "Frágil (timestamps de clock skew), lento y no distingue entre múltiples requests concurrentes. Correlación por ID es siempre superior." },
+        { "letter": "C", "text": "Añadir el user_id al log y buscar por él.", "correct": false, "why": "Ayuda a filtrar pero no correlaciona un request específico si el user tiene tráfico concurrente. Trace_id es único por request; user_id no." },
+        { "letter": "D", "text": "Migrar todo a Datadog LLM Observability.", "correct": false, "why": "Es una solución concreta (buena, pero cara), pero la ANSWER es más general: propagar trace_id vía OTEL. Datadog lo implementa; también Grafana Tempo, Honeycomb, Jaeger, o combinación Langfuse + tu stack de logs estructurados." }
+      ],
+      "explanation": "OTEL Context Propagation es el mecanismo estándar: cada request lleva un traceparent header (W3C Trace Context) que se propaga entre servicios. Cada log estructurado incluye trace_id y span_id como fields. Las observability tools (Grafana Tempo, Datadog APM, Honeycomb, Jaeger, Langfuse v3 OTEL) ofrecen 'exemplars' o 'trace-log correlation' que te permiten saltar entre logs y traces con un click. Es la diferencia entre debuggear en horas vs minutos en sistemas distribuidos.",
+      "realWorld": "Grafana Tempo + Loki + Prometheus (stack LGTM) es una implementación open source popular. Datadog APM lo hace enterprise. En 2025 Langfuse v3 adoptó OTEL native precisamente para permitir esta correlación con stacks de observabilidad existentes.",
+      "tags": ["trace correlation", "context propagation", "OTEL"],
+      "tech": ["OTEL", "Grafana Tempo", "Datadog", "Langfuse v3"],
+      "references": [
+        { "title": "W3C Trace Context specification", "url": "https://www.w3.org/TR/trace-context/" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "cost-inference",
+      "topic": "Cost dashboard: qué mostrar",
+      "difficulty": "mid",
+      "scenario": "El CFO pide 'un dashboard de coste de LLM'. Tienes los datos por span (cost, tokens, model, endpoint, user, prompt_version).",
+      "question": "¿Cuáles son las visualizaciones más útiles?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un dashboard que muestre solo 'total cost per month'.", "correct": false, "why": "El total no es accionable: no dice dónde recortar ni por qué crece. Es el mínimo, no lo útil." },
+        { "letter": "B", "text": "(1) cost total con trend 30d + comparación vs presupuesto; (2) cost por endpoint/feature (identifica top consumers); (3) cost por model (guía model selection); (4) cost per user (detecta abuse); (5) cost per request (detecta prompt bloat); (6) cost vs revenue si mapping disponible (margin); (7) breakdown input vs output tokens (guía optimización).", "correct": true, "why": "Correcto. Dashboards accionables: cada gráfico responde una pregunta de negocio o de ingeniería. 'Cost por feature' guía priorización; 'cost por user' detecta abuse; 'cost per request' detecta bloat; 'cost vs revenue' informa unit economics. Es la diferencia entre 'dashboards decorativos' y 'dashboards que informan decisiones'." },
+        { "letter": "C", "text": "Solo cost por model.", "correct": false, "why": "Un buen subset pero incompleto: no ves feature/endpoint/user attribution." },
+        { "letter": "D", "text": "Cost por día en Excel exportado manualmente.", "correct": false, "why": "Sin real-time y sin drill-down, no puedes reaccionar a incidents ni decidir." }
+      ],
+      "explanation": "Dashboards de cost efectivos responden preguntas: (1) ¿estamos dentro del presupuesto? (total vs budget); (2) ¿dónde recortar? (breakdown por feature/endpoint); (3) ¿el trend es sostenible? (30-90d curve); (4) ¿algún usuario abusa? (top N users); (5) ¿hay prompt bloat? (cost per request trend); (6) ¿qué modelos tenemos donde optimizar? (breakdown por model); (7) unit economics: cost per active user, cost per feature revenue. Herramientas: Langfuse/Braintrust/LangSmith todos ofrecen cost dashboards; para custom, OTEL export → Grafana/Metabase.",
+      "realWorld": "Empresas SaaS con LLM (Perplexity, Notion) mantienen unit economics dashboards con cost per query, cost per active user. En equipos startup, el CFO típicamente pide (1) y (2); el CTO añade (3)-(7).",
+      "tags": ["cost dashboard", "attribution", "unit economics"],
+      "tech": ["Langfuse", "Grafana", "Metabase"],
+      "references": [
+        { "title": "Braintrust — Cost analytics", "url": "https://www.braintrust.dev/docs" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "evals-observability",
+      "topic": "Streaming responses en tracing",
+      "difficulty": "senior",
+      "scenario": "Tu app usa streaming (SSE) para mostrar respuestas token-a-token. Tu tracing solo captura la respuesta FINAL después del stream. Un compañero pregunta: '¿deberíamos capturar más? ¿cuándo marcamos el span como cerrado?'.",
+      "question": "¿Cuál es la mejor práctica para tracing de streaming?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Capturar: time_to_first_token (TTFT), tokens_per_second, total_duration, output completo agregado al cerrar el stream. Span se cierra cuando el stream termina o se cancela. TTFT y tokens/s son las métricas de UX perceptual clave en streaming.", "correct": true, "why": "Correcto. En streaming la métrica de UX no es 'total latency' sino 'time to first token' (cuándo empieza a aparecer texto) y 'tokens per second' (velocidad percibida). Ambas hay que trazar. El span se cierra al final del stream (o al cancel). Guardar el output completo agregado para debug/eval. OTEL GenAI define gen_ai.server.time_to_first_token y gen_ai.server.output_tokens_per_second." },
+        { "letter": "B", "text": "Solo el output final es suficiente.", "correct": false, "why": "Pierdes TTFT (métrica UX crítica en chat) y tokens/s (detección de degradación de throughput del provider). En streaming, la percepción del usuario NO es el total time — es cuándo empieza a ver algo." },
+        { "letter": "C", "text": "Crear un span por cada token recibido.", "correct": false, "why": "Ridículo overhead: 1000 tokens = 1000 spans, saturas el observability tool. Los tokens son atributos del span, no spans en sí mismos." },
+        { "letter": "D", "text": "No trazar streams porque no es medible.", "correct": false, "why": "Falso: TTFT y tokens/s son exactamente medibles. Es la información MÁS importante en streaming." }
+      ],
+      "explanation": "Streaming tracing: (1) TTFT (time to first token) — la métrica UX perceptual clave, mide 'ansiedad del usuario mirando puntitos'; (2) tokens/s throughput; (3) total_duration; (4) output agregado al cerrar; (5) manejo de cancelaciones (span con status 'cancelled'). OTEL GenAI standards evolucionan aquí; Langfuse, LangSmith y Braintrust ya lo soportan. TTFT es lo que optimiza modo 'streaming' vs 'no streaming' — total_duration puede ser similar pero UX radicalmente distinto.",
+      "realWorld": "OpenAI, Anthropic, Perplexity — todos optimizan TTFT como métrica core de UX. Un chatbot con 200ms TTFT y 20 tokens/s se percibe rápido incluso si total_duration es 5s. Datadog LLM Observability y Langfuse capturan estos automáticamente en SDKs recientes.",
+      "tags": ["streaming", "TTFT", "tokens per second"],
+      "tech": ["OTEL GenAI", "Langfuse", "SSE"],
+      "references": [
+        { "title": "OpenTelemetry GenAI attributes — server metrics", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "evals-observability",
+      "topic": "Traces + evals: cerrar el loop",
+      "difficulty": "senior",
+      "scenario": "Tienes trazas en Langfuse y evals en promptfoo. Están desconectados. Un compañero pregunta: '¿podemos correr evals sobre inputs de producción reales, no solo el golden dataset?'.",
+      "question": "¿Cuál es el patrón para conectar producción y evals?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Exportar sample de traces de producción → curar (opcional revisar/etiquetar) → añadir al golden dataset. Además: sobre esos traces reales correr LLM-as-judge automático post-hoc y trackear métricas como 'faithfulness rate en producción' de forma continua. Cierra el loop entre 'lo que pasa' y 'lo que evaluamos'.", "correct": true, "why": "Correcto. Es el flujo maduro: producción alimenta al eval (nuevas categorías, edge cases, bugs) y el eval mejora producción. Langfuse, LangSmith, Braintrust ofrecen 'add to dataset' desde un trace con un click. LLM-as-judge automático post-hoc (async, muestra 5-10%) da métricas de calidad continuas sin bloqueo, complementando el thumbs up/down de usuarios." },
+        { "letter": "B", "text": "Correr todos los evals sobre 100% del tráfico de producción en real-time.", "correct": false, "why": "Coste prohibitivo (doblas cost por LLM extra), latency añadida al hot path, y en muchos casos no puedes evaluar sin ground truth (que no tienes en tiempo real)." },
+        { "letter": "C", "text": "Mantenerlos separados — son cosas distintas.", "correct": false, "why": "Es dejar sin usar la señal más rica: los inputs reales. Sin conectar producción y evals, tu golden set drift-a de la realidad y evalúas cosas que ya no importan." },
+        { "letter": "D", "text": "Copiar manualmente los inputs de producción al eval cada semana.", "correct": false, "why": "Funciona pero es tedioso y no escala. Las tools modernas lo automatizan; usar el manual es innecesario." }
+      ],
+      "explanation": "Loop cerrado producción ↔ evals: (1) sample de traces de producción (por sampling, o por thumbs down, o por errors); (2) revisar/etiquetar (a mano o LLM-as-judge post-hoc); (3) añadir casos representativos al golden dataset (con label/categoría); (4) correr golden set en cada PR (regression tests, sim 09); (5) LLM-as-judge async sobre sample de producción → dashboard 'quality in prod' complementa thumbs. Herramientas: Langfuse 'add to dataset', LangSmith 'annotation queues', Braintrust 'promote to dataset'.",
+      "realWorld": "En Notion AI, Perplexity, y los equipos serios: hay un 'triage weekly' donde revisan sample de traces (con foco en thumbs down + errors + edge cases) y deciden cuáles van al golden set. Es equivalente al 'bug triage' de ingeniería tradicional pero para calidad de LLM.",
+      "tags": ["prod-to-eval loop", "continuous evaluation"],
+      "tech": ["Langfuse", "LangSmith", "Braintrust"],
+      "references": [
+        { "title": "Braintrust — Datasets from production", "url": "https://www.braintrust.dev/docs" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "cost-inference",
+      "topic": "Latency budget breakdown",
+      "difficulty": "senior",
+      "scenario": "Tu app tiene un budget de latency de 3s p95. Actualmente p95 = 4.2s y hay que bajar. Los traces muestran: retrieval 800ms, LLM 2500ms, tool call 500ms, otros 400ms.",
+      "question": "¿Cuál es el approach correcto para atacar el problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Empezar por el LLM (el más grande): (a) modelo más rápido (mini/haiku) para casos simples y grande solo para complejos (routing); (b) prompt caching (Anthropic/OpenAI) para descontar tokens repetidos; (c) recortar output_tokens si el prompt genera respuestas más largas de lo necesario; (d) streaming para bajar TTFT percibido. Paralelizar retrieval y tool call si son independientes.", "correct": true, "why": "Correcto. La regla de tuning: ataca el componente más grande primero (Amdahl). Para LLM: (1) model routing (fácil → cheap+fast, difícil → smart); (2) prompt caching (baja tokens efectivos y latency 50-90% en cache hits); (3) max_tokens tuning; (4) streaming (mejora UX aunque no total latency); (5) paralelizar retrieval y tools si son independientes. Cada intervención tiene ROI medible en trazas." },
+        { "letter": "B", "text": "Optimizar retrieval primero: 800ms es mucho.", "correct": false, "why": "Amdahl: incluso reducir retrieval a 0 solo bajas 800ms de 4200 = ~19%. El LLM (2500ms) es 60% del budget: mayor impacto está ahí." },
+        { "letter": "C", "text": "Añadir más máquinas.", "correct": false, "why": "La latency de LLMs es dominada por el provider (OpenAI/Anthropic), no por tu compute. Escalar horizontal no ayuda a p95." },
+        { "letter": "D", "text": "Aumentar timeout a 10s.", "correct": false, "why": "Es esconder el problema, no arreglarlo. La UX empeora, no mejora." }
+      ],
+      "explanation": "Latency budget breakdown = Amdahl para LLM apps. Trazas dan el breakdown exacto por componente; ataca el más grande primero. Palancas típicas para bajar latency LLM: (1) model routing (fast/smart); (2) prompt caching (Anthropic 90% descuento en cached tokens, OpenAI similar); (3) max_tokens truncation; (4) streaming (baja TTFT percibido, no total); (5) paralelizar operaciones independientes; (6) speculative decoding en providers que lo soportan. Sin trazas granulares no sabes por dónde empezar.",
+      "realWorld": "Google, Anthropic y OpenAI publican benchmarks de TTFT y throughput por modelo. Routing (usar Haiku para 80% de queries y Sonnet para 20% complejas) es técnica común que baja latency y coste 3-5x. Prompt caching es feature 2024-2025 que muchos equipos aún no explotan.",
+      "tags": ["latency budget", "Amdahl", "model routing"],
+      "tech": ["Anthropic prompt caching", "OpenAI prompt caching"],
+      "references": [
+        { "title": "Anthropic — Prompt caching", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "evals-observability",
+      "topic": "Score attach a traces",
+      "difficulty": "senior",
+      "scenario": "Debate: '¿qué scores debemos atachar a un trace en Langfuse?'. Opciones que se lanzan: thumbs up/down de usuario, score de LLM-as-judge post-hoc, score humano de revisión manual, resultado de guardrails (pass/fail), tokens_used como score.",
+      "question": "¿Cuál es el enfoque correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Todos los anteriores (excepto tokens que ya es un atributo, no score): cada score es una dimensión distinta. Un trace puede tener 'user_feedback: -1', 'llm_judge_faithfulness: 0.9', 'human_review: correct', 'guardrail_pii: pass'. Permite filtrar y analizar por múltiples dimensiones y detectar desalineamientos (ej. user_feedback negativo pero llm_judge positivo → tu judge no capta el problema real).", "correct": true, "why": "Correcto. Los scores son multi-dimensionales por diseño. Cada trace puede tener N scores de fuentes distintas (usuario, LLM judge, humano, guardrails, custom). Análisis potente: 'traces donde user negativo pero judge positivo' revela huecos del judge; 'traces donde guardrail falló pero LLM output ok' revela false positives del guardrail. tokens_used es atributo, no score." },
+        { "letter": "B", "text": "Solo el thumbs up/down del usuario — el resto son ruido.", "correct": false, "why": "Sobre-simplifica. Los thumbs son ruidosos y baja frecuencia (5-10% de usuarios responden). Combinarlos con LLM-as-judge y humano da señal más rica." },
+        { "letter": "C", "text": "Solo tokens_used — es la única métrica objetiva.", "correct": false, "why": "Tokens no miden calidad ni experiencia; miden coste. Score debe capturar calidad/utilidad/safety, no solo eficiencia." },
+        { "letter": "D", "text": "Nunca atachar scores automáticos — solo humano.", "correct": false, "why": "Humano no escala. Combinar auto (LLM-as-judge continuo) + humano en sample da lo mejor de ambos." }
+      ],
+      "explanation": "Scores en Langfuse/LangSmith/Braintrust son multi-dimensionales: cada trace puede llevar N scores identificados por nombre (user_feedback, faithfulness, human_review, guardrail_pii, correctness, ...). Beneficios: (1) análisis cruzado (ej. 'donde user negativo pero judge positivo'); (2) trackeo continuo de calidad automático + humano; (3) filtrado para debugging; (4) alerts sobre degradación por dimensión. Regla: cada score tiene fuente (user/auto/human), tipo (numeric/categorical/boolean), y metadata de calibración si aplica.",
+      "realWorld": "Braintrust y Langfuse tienen models de score explicitamente multi-dimensional. En equipos maduros hay 5-15 scores por trace en promedio. Análisis cross-dimension es donde se aprende más ('el judge no capta problemas de tono que los usuarios sí detectan').",
+      "tags": ["scores", "multi-dimensional", "analysis"],
+      "tech": ["Langfuse", "LangSmith", "Braintrust"],
+      "references": [
+        { "title": "Langfuse — Scoring & feedback overview", "url": "https://langfuse.com/docs/scores/overview" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "evals-observability",
+      "topic": "Debug de un bug reportado — playbook completo",
+      "difficulty": "senior",
+      "scenario": "Ticket P1: 'Usuario premium (id=X) recibió respuesta ofensiva del bot el martes 14:30. Hay screenshot'. Tienes tracing completo en Langfuse con OTEL, prompt versioning, tool spans, scores, retention 90d.",
+      "question": "¿Cuál es el playbook técnicamente correcto para el debug y follow-up?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Buscar trace por user_id + timestamp ± 5 min; (2) verificar prompt_version activa en ese momento; (3) inspeccionar spans: retrieval (¿qué chunks?), tool calls (¿algún resultado extraño?), LLM span (input + output completo); (4) reproducir con el mismo prompt y contexto (temperature 0) para verificar si es reproducible; (5) si es reproducible, añadir el caso al golden set como regression + adversarial; (6) mitigación inmediata (rollback prompt o guardrail temporal); (7) fix estructural con eval que cubra la clase de bug; (8) post-mortem breve para el equipo.", "correct": true, "why": "Correcto. Es el playbook estándar de incident response para LLM apps con tracing maduro. Cada paso es accionable, y el paso 5 (añadir al golden set) es lo que evita que vuelva a pasar. Sin tracing este playbook es imposible; con tracing es 1-2 horas de trabajo bien hecho." },
+        { "letter": "B", "text": "Pedir al usuario que repita la conversación y ver qué pasa.", "correct": false, "why": "Dependencia del usuario (posiblemente enfadado, no volverá), no reproduce contexto exacto (RAG dinámico, prompts cambiaron), y no genera aprendizaje sistémico." },
+        { "letter": "C", "text": "Rollback del último cambio de prompt y esperar.", "correct": false, "why": "Salto sin diagnóstico: puede que el bug no sea del último cambio, y sin entender la causa raíz no evitas la reincidencia. El rollback es step 6, no step 1." },
+        { "letter": "D", "text": "Comunicar al usuario que 'los LLMs a veces se equivocan' y cerrar el ticket.", "correct": false, "why": "Ignorar bugs de tono/safety es reputacional y operacionalmente inaceptable, especialmente en clientes premium y con casos ya documentados públicamente (Air Canada, DPD)." }
+      ],
+      "explanation": "Playbook de incident response para LLM apps: (1) localizar trace exacto; (2) contextualizar (prompt_version, model, params, RAG state); (3) inspeccionar spans (retrieval, tools, LLM); (4) reproducir con temp 0; (5) añadir al dataset (regression + adversarial subset); (6) mitigar (rollback / guardrail / patch); (7) fix estructural con eval; (8) post-mortem blameless. Sin observability maduro (tracing + versioning + scores + retention) muchos de estos pasos son imposibles. Con él, los incidents se resuelven en horas y no vuelven a pasar.",
+      "realWorld": "Casos como Air Canada chatbot 2024 (aerolínea perdió juicio por lo que dijo su bot), DPD chatbot 2024 (bot insultando a usuarios), Slack AI exfil 2024, Replit AI 2025 — todos comparten: sin observability maduro, respuesta tardía y superficial. Con ella, resolución y prevención estructural. Es literalmente el diferenciador entre equipos maduros y los que 'todavía están tapando fuegos'.",
+      "tags": ["incident response", "playbook", "post-mortem"],
+      "tech": ["Langfuse", "LangSmith"],
+      "references": [
+        { "title": "Google SRE Book — Incident response", "url": "https://sre.google/sre-book/managing-incidents/" }
+      ]
+    }
+  ]
+}

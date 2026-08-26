@@ -1,0 +1,416 @@
+{
+  "id": "programmer-sim-08-jit-vm-and-performance",
+  "trackId": "programmer",
+  "order": 8,
+  "title": "Simulacro 08 — JIT, VMs y micro-arquitectura de performance",
+  "focus": "JIT vs AOT, warmup, inlining, deoptimización, hot methods, branch prediction, cache lines, false sharing, mecánicas de CPU.",
+  "areaCoverage": ["fundamentals"],
+  "timeLimitMin": 28,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "fundamentals",
+      "topic": "JIT vs AOT — el trade-off",
+      "difficulty": "junior",
+      "scenario": "En un debate: 'Java con JIT es más rápido que C compilado AOT'. Otro dev responde: 'imposible, C es siempre más rápido'.",
+      "question": "¿Cuál es la respuesta correcta y matizada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "C siempre es más rápido porque compila a native code directamente.", "correct": false, "why": "Simplificado. AOT compila una vez sin conocer runtime. JIT observa el programa REAL corriendo y optimiza para él: puede inline llamadas virtuales polimórficas monomorfizadas, unroll loops de tamaño observado, eliminar branches dead. En steady state, JIT puede vencer a AOT en casos específicos." },
+        { "letter": "B", "text": "Depende: (1) Startup — AOT gana claramente (no hay warmup). (2) Peak throughput — puede ir cualquiera; JIT en Java puede ser competitivo o superior con speculación aggressive; AOT ganaría con optimizaciones profile-guided (PGO). (3) Latency P99 — AOT gana porque no hay pausas de compilación/deoptimización. (4) Overhead — JIT consume CPU y memoria en runtime (compiler threads, code cache).", "correct": true, "why": "Correcto y matizado. Es la respuesta senior. AOT: startup instant, latency predictable, cero warmup, ideal para short-lived (CLIs, functions). JIT: adaptativo, benchmarks steady-state ganadores en casos, pero warmup y deoptimización son problemas. Java modern (GraalVM native-image) ofrece AOT — trade-off inverso: peor peak, mejor startup/RSS." },
+        { "letter": "C", "text": "Java con JIT es 10x más lento que C, siempre.", "correct": false, "why": "Falso. En benchmarks estables post-warmup, Java está en ballpark 1.1-2x de C típicamente; para código idiomático puede ser 1.5-3x. No 10x." },
+        { "letter": "D", "text": "GraalVM native-image supera a HotSpot JIT en todos los casos.", "correct": false, "why": "Falso. Native-image (AOT) gana en startup, RSS, y latency predictability. Pero HotSpot JIT en peak throughput sostenido suele ganar por optimizaciones especulativas (inlining polimórfico, EA). Es un trade-off consciente." }
+      ],
+      "explanation": "JIT y AOT resuelven problemas distintos:\n\n**AOT (Ahead-Of-Time)**:\n- Compila todo antes de ejecutar.\n- Sin overhead de compiler en runtime.\n- Startup instantáneo.\n- Sin adaptación al workload real.\n- Ejemplo: C/C++/Rust, GraalVM native-image, .NET AOT.\n\n**JIT (Just-In-Time)**:\n- Compila mientras corre, observando el programa real.\n- Puede optimizar basado en profile runtime (hot methods, tipos observados).\n- Warmup requerido (interpreter → C1 → C2/Graal).\n- Puede deoptimizar si supuestos fallan.\n- Ejemplo: HotSpot, V8, .NET, JVM en general.\n\nCasos por trade-off:\n- **Lambda functions, CLIs, microservicios de baja carga**: AOT gana (startup dominante).\n- **Long-running servers, workloads sostenidos**: JIT compite bien.\n- **Trading systems, real-time**: prefer AOT o warmup forzado + JIT sin deopt.\n\nHíbridos: PGO (Profile-Guided Optimization) da a compiladores AOT información runtime. Clang, GCC, MSVC tienen. GraalVM AOT también soporta PGO.\n\nHotSpot es multi-tier: interpreter → C1 (rápido, moderado) → C2 (lento, agresivo). Se progresa según hotness.",
+      "realWorld": "GraalVM native-image se usa en Quarkus (Red Hat), Micronaut, Spring Native — reduce startup de servicios Java de 5-30s a 50ms, RSS 10x menor. Ideal para Kubernetes y serverless. Pero Peak throughput típicamente 10-30% menor que HotSpot JIT. Netflix estudio 2021 compara.",
+      "tags": ["JIT", "AOT", "GraalVM", "HotSpot", "startup"],
+      "tech": ["Java", "GraalVM", "V8", ".NET"],
+      "references": [{ "title": "Cliff Click — 'The Art of JIT Compilation'" }, { "title": "GraalVM docs — Native Image" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "fundamentals",
+      "topic": "Warmup y tiered compilation",
+      "difficulty": "mid",
+      "scenario": "En un benchmark, este código muestra: primeras 1000 llamadas ~500ns, siguientes 100K ~50ns, siguientes 1M ~15ns. ¿Qué está ocurriendo?",
+      "question": "¿Cuál es la explicación correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El caché de CPU se calienta.", "correct": false, "why": "Cache warmup ocurre pero no explica 30x en 3 fases distintas. Es la tiered compilation del JIT." },
+        { "letter": "B", "text": "Tiered compilation de HotSpot: Tier 0 (interpreter, ~500ns), Tier 3 (C1 con profiling, ~50ns), Tier 4 (C2/Graal, ~15ns). Cada nivel es más lento de generar pero produce código más rápido. El JIT decide promoción basado en invocation counters (~10K llamadas típicamente triggerea C2).", "correct": true, "why": "Correcto y textbook. Los tiers son: 0=interpreter, 1=C1 sin profiling, 2=C1 con contadores, 3=C1 con full profiling, 4=C2 con perfiles del tier 3. El interpreter cuenta invocaciones y branch backwards; al superar threshold, promociona. Es tuneable con -XX:CompileThreshold aunque el default es adecuado. Esto explica por qué microbenchmarks sin warmup son basura — mides el interpreter, no el código real." },
+        { "letter": "C", "text": "El GC libera memoria y todo funciona más rápido.", "correct": false, "why": "GC no acelera código. Puede reducir pauses, pero no cambia la velocidad de instrucciones." },
+        { "letter": "D", "text": "El OS asigna más CPU al proceso.", "correct": false, "why": "El scheduler no hace eso — no reconoce al proceso como 'quiere más CPU'. Es la JVM que optimiza el bytecode." }
+      ],
+      "explanation": "Warmup es fundamental en JVM benchmarking. HotSpot moderno usa tiered compilation:\n\n- **Tier 0**: interpreter bytecode. Lento (~10x native code) pero instantáneo.\n- **Tier 1**: C1 (client compiler) sin profiling. Rápido de generar, código decente.\n- **Tier 2**: C1 con contadores básicos.\n- **Tier 3**: C1 con profiling completo (tipos vistos, branches tomadas).\n- **Tier 4**: C2 (server compiler) usa profiling de tier 3 para speculative optimizations.\n\nProgresión típica: llamada → interpreter (tier 0) → C1 (tier 3) → C2 (tier 4). Contadores manejan las promociones.\n\nCosecuencias:\n- Benchmarks deben WARMUP forzado. JMH lo hace automáticamente.\n- Serverless (Lambda cold starts) sufren: no hay tiempo para C2.\n- CDS (Class Data Sharing) y AppCDS ayudan a startup pero no reemplazan warmup.\n- ReadyNow (Zing) y Project Leyden intentan pre-cachear código para JIT.\n\nDeopt: si C2 asumió algo que se rompe (nuevo tipo aparece en un call site monomórfico), invalida el código y vuelve a interpreter → recompila con nueva info. Es un motivo de outliers de latency.",
+      "realWorld": "JMH (Java Microbenchmark Harness) fue creado por Aleksey Shipilev específicamente por lo endémico de benchmarks Java erróneos. Twitter, Netflix documentan warmup como fase crítica del deploy: canary con tráfico moderado antes de full rollout. Azul Zing tiene ReadyNow para eliminar warmup en producción.",
+      "tags": ["JIT", "tiered compilation", "warmup", "HotSpot"],
+      "tech": ["Java", "HotSpot", "JMH"],
+      "references": [{ "title": "OpenJDK — Tiered Compilation" }, { "title": "Aleksey Shipilev — 'JMH tutorial'" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "fundamentals",
+      "topic": "Inlining — decisiones del JIT",
+      "difficulty": "senior",
+      "scenario": "Un dev pregunta: 'Java no tiene function inline explícito como C++ `inline`. ¿Cómo decide qué inlinear? ¿Puedo forzarlo?'",
+      "question": "¿Cuál es la respuesta correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El JIT (C2) inline basándose en heurísticas: tamaño del método (default `-XX:MaxInlineSize=35` bytes bytecode para no-hot, `-XX:FreqInlineSize=325` para hot), profundidad (`-XX:MaxInlineLevel=15`), hotness (call site frecuentemente ejecutado). En principio no se puede FORZAR desde código Java, pero se puede sugerir vía tuning JVM flags o refactorizar (métodos pequeños, no polimorfismo complicado). @HotSpotIntrinsicCandidate marca native intrinsics.", "correct": true, "why": "Correcto. Es imposible forzar inline programáticamente en Java (no como C++). Depende del JIT. Pero puedes AYUDARLE: métodos cortos, final o effectively-final, evitar mega-morfismo (>4 tipos en el call site → megamorphic → no inline). Con `-XX:+PrintInlining` puedes ver decisiones del JIT. Graal a veces inline más agresivamente que C2." },
+        { "letter": "B", "text": "Java inlina automáticamente todas las funciones cortas.", "correct": false, "why": "Simplificado. Depende de hotness, monomorfismo, tamaño acumulado. Un método corto no-hot puede no inlinearse." },
+        { "letter": "C", "text": "Con la anotación `@Inline`, el compilador lo respeta.", "correct": false, "why": "No existe `@Inline` en Java standard. Kotlin sí tiene `inline` para lambdas. Java: no. Graal permite `@AlwaysInline` en su graph API interno, no accesible desde código user." },
+        { "letter": "D", "text": "El JIT nunca inlina métodos virtual porque son polimórficos.", "correct": false, "why": "Falso. HotSpot hace 'inline caches': si el call site siempre ve el mismo tipo (monomorfismo, muy común en la práctica), lo inlina. Con 2-4 tipos (bimorphic/polymorphic), inlina el switch. >4 tipos (megamorfismo), no inline." }
+      ],
+      "explanation": "Inlining es una de las optimizaciones más impactantes del JIT porque HABILITA muchas otras (constant folding, dead code elimination, escape analysis dentro del método callee).\n\nHeurísticas del inliner de C2:\n- **Method size** (bytecode): pequeño = candidate. Default 35 bytes; 325 si es hot.\n- **Call site hotness**: frecuentemente ejecutado = inline más agresivo.\n- **Nesting depth**: no inlinar >15 niveles para evitar explosión.\n- **Inline caches**: para virtuals, C2 speculates el tipo dominante y guarda.\n- **CallSiteBudget**: presupuesto compilado por método para no crecer sin límite.\n\nMonomorphic > Bimorphic > Polymorphic > Megamorphic. Un call site que ve solo 1 tipo (monomorphic) se inlina con guard 'si el tipo cambia, deopt'. En prod, la mayoría de call sites son monomorphic — clave para speed.\n\nCómo ayudar al JIT:\n- Prefiere `final` en métodos que no vas a overridar.\n- Evita jerarquías profundas con muchos overrides.\n- Split métodos gigantes (>325 bytes bytecode no inline).\n- Evita reflection y invokedynamic en hot paths (aunque invokedynamic con MutableCallSite ha mejorado con lambda metafactory).\n\nDebug con `-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining`.",
+      "realWorld": "Cliff Click ha explicado en múltiples charlas cómo inlining habilita el resto de las optimizaciones. Streams API depende críticamente de inlining para no ser 10x más lento que loops manuales. Kotlin `inline fun` es una feature del lenguaje precisamente para forzar inlining de lambdas sin costo.",
+      "tags": ["inlining", "JIT", "C2", "polimorfismo"],
+      "tech": ["Java", "HotSpot", "Graal"],
+      "references": [{ "title": "HotSpot Wiki — Inlining" }, { "title": "Aleksey Shipilev — 'Nanotrusting the nanotime'" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "fundamentals",
+      "topic": "Deoptimización — outliers de latency",
+      "difficulty": "senior",
+      "scenario": "Un servicio Java en producción tiene P99 spikes ocasionales de 100ms. GC logs no muestran pauses correspondientes. Uno de los devs sugiere que puede ser 'deopt del JIT'.",
+      "question": "¿Qué es deoptimización y cómo diagnosticarla?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Deoptimización: cuando el código C2-compilado hace una suposición especulativa (ej: 'este call site es monomorphic') que se rompe (aparece nuevo tipo). El JIT invalida el código, vuelve a ejecutar en interpreter, y eventualmente re-compila con nueva info. La transición y re-compilación pueden causar spikes de latency.", "correct": true, "why": "Correcto. Es un patrón real. Common triggers: (1) nuevo class loaded dynamically (Spring, groovy, plugins) → invalida assumptions; (2) uncommon trap execution (branch nunca antes tomada); (3) class hierarchy change; (4) reflection intensa que rompe monomorfismo. Los spikes pueden ser de decenas a cientos de ms." },
+        { "letter": "B", "text": "Diagnóstico: habilitar `-XX:+PrintCompilation` (verboso) o mejor, JFR (Java Flight Recorder) que registra 'JIT Compilation' y 'Deoptimization' events con stack traces. jitwatch tool visualiza estos logs.", "correct": true, "why": "Correcto. JFR es la herramienta primary desde Java 11+. `jcmd <pid> JFR.start duration=60s filename=out.jfr` produce un archivo analizable con JMC (Mission Control). Filtro por 'jdk.Deoptimization' events. jitwatch (Adopt project) parsea el compilation log y muestra transiciones inline en source." },
+        { "letter": "C", "text": "Prevención parcial: evitar reflection intensa en hot paths, usar clases finales o sealed cuando sea posible, precargar clases al startup (`-XX:CompileCommand`, AppCDS).", "correct": true, "why": "Correcto. Sealed classes (Java 17) dan al JIT información de cierre de jerarquía que puede evitar deopts. Class Data Sharing (CDS/AppCDS) precarga metadata. Estabilizar la fase de startup reduce las deopts durante primeras horas de vida del proceso." },
+        { "letter": "D", "text": "Basta con más CPU para eliminar deopts.", "correct": false, "why": "Falso. Deopts son transiciones lógicas, no bottleneck de CPU. Más CPU no ayuda. Reducir deopts requiere entender por qué se disparan." },
+        { "letter": "E", "text": "Deopts nunca ocurren en Graal, solo en C2.", "correct": false, "why": "Falso. Graal también hace optimización especulativa y tiene deopts. Similar mecánica." }
+      ],
+      "explanation": "Deoptimización es el precio de la optimización especulativa. HotSpot y Graal son optimistas: asumen lo mejor (tipo monomorphic, branch nunca tomada, class no override) y generan código óptimo. Si la asunción se rompe, hay que volver atrás.\n\nTipos de deopt:\n1. **Uncommon trap**: rama nunca antes tomada se ejecuta.\n2. **Class hierarchy change**: nueva class que override un método asumido monomorphic.\n3. **Assumption invalidation**: field asumido constante cambia.\n4. **Reprofile**: perfil obsoleto, re-medir.\n\nCosto:\n- Invalidar el compiled code: rápido.\n- Ejecutar en interpreter durante warm-back-up: dozens of ms típico.\n- Re-compilar (si el método sigue hot): usa compile thread.\n\nMitigación:\n- **Warm de nuevo antes de tráfico**: en canary deploys, dar tiempo al JIT.\n- **Class hierarchy estable**: no cargar clases nuevas post-warmup si posible.\n- **Sealed/final**: da información al JIT.\n- **JITWatch, JFR analysis**: identifica hotspots de deopt.\n- **AppCDS**: precachea class data, reduce ciertos deopts.\n\nAzul Zing (paid JVM) tiene ReadyNow — persiste profiles entre runs para skip warmup entero.",
+      "realWorld": "Twitter y LinkedIn documentan tuning JVM incluyendo análisis de deopt para servicios low-latency. Aleksey Shipilev ha dado charlas mostrando análisis con JFR. Netflix publicó en 2020 sobre uso de ZGC + análisis JFR para P99 tuning.",
+      "tags": ["deoptimización", "JIT", "JFR", "P99"],
+      "tech": ["Java", "HotSpot", "JFR", "JITWatch"],
+      "references": [{ "title": "OpenJDK — Deoptimization in HotSpot" }, { "title": "JITWatch — GitHub" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "fundamentals",
+      "topic": "Branch prediction en CPU",
+      "difficulty": "senior",
+      "scenario": "Un famoso ejemplo Stack Overflow: iterar y sumar un array de int es 6x más rápido si el array está PRE-SORTED que si es aleatorio.\n\n```java\nfor (int i = 0; i < arr.length; i++) {\n    if (arr[i] >= 128) sum += arr[i];\n}\n```\n\n¿Por qué?",
+      "question": "¿Cuál es la explicación técnica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El sorting mejora la localidad de cache.", "correct": false, "why": "En un array de ints ya secuencial en memoria, ordenarlo no cambia la localidad — sigue siendo secuencial. La razón es branch prediction." },
+        { "letter": "B", "text": "Branch prediction del CPU: modernos predicen si el branch (if arr[i]>=128) se tomará, y speculatively ejecutan el siguiente código. Con array sorted, el patrón es predecible (bloque de <128 → todos NO, bloque de >=128 → todos SÍ) → ~99% acierto → pipeline lleno. Con array random, ~50% acierto → cada mispredict causa pipeline flush (~15-20 ciclos perdidos). Sobre millones de iteraciones, la diferencia es dramática.", "correct": true, "why": "Correcto. Es el ejemplo canónico de branch prediction impact. CPUs Intel/AMD modernos tienen branch predictors sofisticados (perceptron-based, TAGE) que aciertan >95% en patrones estructurados. En bran misprediction, el pipeline debe hacer flush de las instrucciones especulativas — 15-20 ciclos perdidos por mispredict. Con 100M iteraciones @ 50% mispredict, se acumulan 100M × 15 = 1.5B ciclos perdidos ≈ 500ms extra en un CPU a 3GHz." },
+        { "letter": "C", "text": "El branch predictor no puede evaluar `arr[i] >= 128`; hace una llamada a syscall.", "correct": false, "why": "Falso. La comparación es una simple instrucción CMP. No hay syscall." },
+        { "letter": "D", "text": "El JIT reordena las iteraciones cuando ve el array sorted.", "correct": false, "why": "Falso. JIT no reordena data, solo instrucciones. La ganancia viene del CPU, no del JIT." }
+      ],
+      "explanation": "Este ejemplo (Stack Overflow 'Why is processing a sorted array faster than an unsorted array?' con 27K+ upvotes) es fundamental para entender modern CPU performance.\n\nBranch prediction: los CPUs tienen pipeline de 15-20 stages. Al llegar a un condicional, el fetcher necesita saber qué instrucción venir NEXT antes de que el condicional termine. El branch predictor 'apuesta' y ejecuta especulativamente. Si acierta, gratis. Si falla, flush del pipeline — todo lo especulativo se descarta, penalty de dozens of cycles.\n\nPredictors modernos:\n- Static (compile-time): forward branch = not taken; backward = taken (loops).\n- Dynamic 2-bit counters (SPARC, viejos x86).\n- Perceptron, TAGE (Intel Sandy Bridge+).\n\nAyudar al predictor:\n- Datos structured (sort input).\n- Branchless code: `sum += (arr[i] >= 128) * arr[i]` o `sum += cmov(arr[i] >= 128, arr[i], 0)`. Elimina branch entirely.\n- `__builtin_expect` en C/C++ (likely/unlikely macros).\n- Hot path sin branches (Boolean logic, table lookups).\n\nJava: JIT genera cmov cuando puede. Streams internamente branchless en muchos casos. Sin embargo, Java no expone likely/unlikely.\n\nSpectre attack explota branch prediction — CPU speculates cross privilege boundaries, leaking data via cache side channel. Mitigations degradan performance.",
+      "realWorld": "El SO answer más famoso técnico. Intel documenta el branch predictor de sus CPUs (aunque con detail limitado). Google Chrome tenía código branchless en su parser JSON. Bug de Spectre (2018) forzó cambios masivos en mitigations.",
+      "tags": ["branch prediction", "pipeline", "CPU", "misprediction"],
+      "tech": ["Intel", "AMD", "CPU pipeline"],
+      "references": [{ "title": "Stack Overflow — 'Why is processing a sorted array faster'" }, { "title": "Agner Fog — 'Optimization manuals'" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "fundamentals",
+      "topic": "Cache lines y locality",
+      "difficulty": "senior",
+      "scenario": "Iterar un array 2D en Java. Opción A: `for (i=0;i<N;i++) for (j=0;j<N;j++) arr[i][j]++`. Opción B: `for (j=0;j<N;j++) for (i=0;i<N;i++) arr[i][j]++`. Para N=1000, la opción A es 10x más rápida.",
+      "question": "¿Por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Java almacena arrays 2D como 'array of arrays' (row-major); iterar por fila (opción A) accede memoria SECUENCIALMENTE — cada 8-16 elementos ocupan una cache line de 64 bytes. Iterar por columna (opción B) accede posiciones espaciadas → cada acceso es potencial cache miss y hasta TLB miss.", "correct": true, "why": "Correcto. Es el clásico 'row-major vs column-major traversal'. Cache line moderna = 64 bytes = 8 doubles o 16 ints. Iterando por fila, un load trae 8-16 elementos que se usan todos. Por columna, cada load trae 1 elemento útil de 8-16 → 8-16x menos efficient. Con N=1000, además el array es 4MB > L1 cache = solo cabe en L2/L3 → misses caros. C/C++ tienen row-major (unlike Fortran, que es column-major)." },
+        { "letter": "B", "text": "Java penaliza acceso a índices [j][i].", "correct": false, "why": "El compilador no penaliza; el patrón acaba costando por cache hierarchy, no por Java." },
+        { "letter": "C", "text": "La opción B tiene overflow.", "correct": false, "why": "No hay overflow — mismos índices, distinto orden." },
+        { "letter": "D", "text": "Random access memory es más lento que sequential — pero solo en discos, no RAM.", "correct": false, "why": "Falso. RAM tiene también locality de acceso: sequential prefetch + cache hierarchy. Random RAM access es órdenes de magnitud más lento que sequential." }
+      ],
+      "explanation": "Modern CPU memory hierarchy:\n- **L1 cache**: 32-64KB, latency 1-4 cycles.\n- **L2 cache**: 256KB-1MB, latency 10-15 cycles.\n- **L3 cache**: 4-64MB shared, latency 30-70 cycles.\n- **DRAM**: GB, latency 100-300 cycles (~50-100ns).\n\nCache line = 64 bytes en x86_64, ARM. Es la unidad de transferencia. Un load lee 64 bytes contiguos, aunque pidas 1 byte.\n\nSequential access:\n- Prefetcher del CPU detecta el patrón y precarga siguientes cache lines.\n- Uso completo de la line traída.\n- ~5x más rápido que random access en L1.\n- ~50x más rápido en L3/DRAM.\n\nData Layout implications:\n- Struct of Arrays (SoA) > Array of Structs (AoS) cuando iteras un solo field.\n- Padded to cache line evita false sharing (siguiente pregunta).\n- Sorting data por access pattern ayuda.\n- Tree structures (BST) tienen pobre locality — reemplazar con arrays cuando posible.\n\nMatrix multiplication clásica: cache-oblivious algorithms + blocking (tiling). Naive N^3 traversal es cache-hostile; blocked version es 10x más rápida en matrices grandes.\n\nTLB (Translation Lookaside Buffer): cache de traducciones virtual→física. Random access grande causa TLB misses = walk de page tables (~100 cycles). Huge pages (2MB) reducen TLB miss rate.",
+      "realWorld": "Mike Acton (Insomniac Games, CppCon 2014 'Data-Oriented Design') ejemplos brutales. Ulrich Drepper 'What Every Programmer Should Know About Memory' es reference obligado. Fortran mantiene relevancia en HPC por su modelo column-major que se alinea con muchos algoritmos numéricos.",
+      "tags": ["cache", "locality", "row-major", "memory hierarchy"],
+      "tech": ["CPU", "Java", "C++"],
+      "references": [{ "title": "Ulrich Drepper — 'What Every Programmer Should Know About Memory'" }, { "title": "Mike Acton — 'Data-Oriented Design'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "fundamentals",
+      "topic": "False sharing",
+      "difficulty": "staff",
+      "scenario": "Un contador thread-local: 8 threads incrementando 8 posiciones distintas de un array `long[] counters = new long[8]`. Espera-linear scaling; medido tarda casi lo mismo que con 1 thread. Con `long[] counters = new long[8 * 8]` (spacing) escala perfectamente.",
+      "question": "¿Qué está pasando?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "False sharing: los 8 longs (8 bytes cada uno = 64 bytes) caben en 1 cache line. Cuando un thread modifica su long, el cache line entero es INVALIDADO en los caches de los otros cores (protocol MESI). Los otros threads tienen que reloadar. Aunque las WRITES son a addresses distintas, el HARDWARE granularity es la línea completa — competencia constante. Con spacing de 64 bytes entre elements, cada uno en su propia line, no hay conflicto.", "correct": true, "why": "Correcto y textbook. False sharing es un problema de performance no-obvio: la variable no se comparte semánticamente, pero comparte cache line físicamente. MESI (Modified, Exclusive, Shared, Invalid) es el protocolo de coherencia. Un write requiere estado Exclusive en el core; otros cores con la line en Shared/Modified deben pasar a Invalid → miss al próximo read. Padding (@Contended en Java, alignas(64) en C++) resuelve." },
+        { "letter": "B", "text": "El compilador sincroniza los writes con barriers.", "correct": false, "why": "Java (sin volatile) no añade barriers en writes normales. El problema es hardware, no compiler." },
+        { "letter": "C", "text": "El GC bloquea los threads.", "correct": false, "why": "No hay allocation; GC no interviene." },
+        { "letter": "D", "text": "Java hace boxing implícito.", "correct": false, "why": "long[] no boxea; son primitivos. No hay boxing." }
+      ],
+      "explanation": "False sharing es el bug clásico de code concurrente con acceso a datos 'independientes':\n\nMESI protocol: cada cache line tiene estado.\n- **Modified**: dirty, exclusive a este core.\n- **Exclusive**: clean, solo este core lo tiene.\n- **Shared**: clean, múltiples cores lo tienen.\n- **Invalid**: no válido, next access debe re-fetch.\n\nCuando core A escribe una line en estado Shared/Invalid, hace 'RFO' (Read For Ownership): broadcast a otros cores 'la invalido'. Ellos invalidate. Ahora A tiene Modified. Cuando core B lee esa line, cache miss → snoop, A escribe la line a memoria/L3, B recibe. Ciclos y ciclos.\n\nFalse sharing: la LINE es shared pero las WORDS son distintas. Ping-pong constante. En estructuras concurrentes tipo counter arrays, queues, es asesino.\n\nSoluciones:\n- **Padding**: espacia elementos para que ocupen líneas separadas. Padding = 64 bytes (cache line size típica).\n- **@sun.misc.Contended** (Java): anotación que fuerza padding around el field. Java 8+.\n- **alignas(64)** en C++: forzar alineación.\n- **Thread-local**: no compartir en absoluto (mejor si aplicable).\n\nEjemplos comunes: LongAdder en Java internamente hace striping con Contended. Ring buffers de LMAX Disruptor padding cada slot. Linux kernel usa cache line padding en muchas estructuras.\n\nDetección: perf en Linux con `perf c2c` (cache-to-cache) muestra false sharing. Intel VTune tiene analyzer específico.",
+      "realWorld": "LMAX Disruptor (Martin Thompson) es el ejemplo canónico de eliminar false sharing para trading. LongAdder en Java (Doug Lea) usa el patrón. Linux kernel struct alignments son parcialmente por esto. Bugs de false sharing en producción son notorios porque no son visibles en profilers básicos.",
+      "tags": ["false sharing", "cache line", "MESI", "@Contended"],
+      "tech": ["Java", "C++", "CPU"],
+      "references": [{ "title": "Martin Thompson — 'Mechanical Sympathy' blog" }, { "title": "Doug Lea — 'The @Contended annotation'" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "fundamentals",
+      "topic": "SIMD y vectorization",
+      "difficulty": "senior",
+      "scenario": "Un bucle simple suma dos arrays de floats: `for (int i=0; i<N; i++) c[i] = a[i] + b[i]`. Con N=1M, Java JIT logra ~200ns/1000 ops. En C++ con `-O3 -mavx512` logra ~50ns/1000 ops.",
+      "question": "¿Por qué la diferencia y qué hace Java al respecto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "C++ compilado con -O3 -mavx512 usa SIMD (Single Instruction Multiple Data): con AVX-512, procesa 16 floats por instrucción en vez de 1. HotSpot C2 tiene auto-vectorization limitada (SuperWord optimization) que puede hacerlo en bucles simples, pero es menos agresivo que Clang/GCC. Java 21+ tiene Vector API (JEP 448) para vectorization explícita, comparable a intrinsics de C++.", "correct": true, "why": "Correcto. SIMD es la razón principal. AVX (256-bit) procesa 8 floats; AVX-512 procesa 16 floats/int32. Modern CPU tiene múltiples unidades SIMD ejecutando en paralelo. C2 SuperWord hace vectorization en loops idealizados (contiguos, sin dependencias, aligned) pero se rinde con patrones más complejos. Vector API (Panama project) permite escribir código Java que compila a instrucciones vectoriales explícitas — ~10x speedup en casos apt." },
+        { "letter": "B", "text": "Java es interpretado en este bucle.", "correct": false, "why": "Falso. Después de warmup, C2 compila. El bucle está optimizado, solo que no fully vectorized." },
+        { "letter": "C", "text": "El GC pausa el bucle.", "correct": false, "why": "No hay allocation; GC no interfiere." },
+        { "letter": "D", "text": "C++ no hace bounds check; Java sí, y eso duplica el trabajo.", "correct": false, "why": "Bounds check checking en Java tiene costo, pero C2 hace 'range check elimination' cuando puede probar que los índices están en rango. En este bucle simple, C2 elimina los checks. La diferencia es SIMD, no bounds check." }
+      ],
+      "explanation": "SIMD es fundamental para performance moderna en CPU-bound code (media, ML, HPC, graphics).\n\nEvolution de x86 SIMD:\n- MMX (1997): 64-bit registers, int only.\n- SSE (1999): 128-bit, floats.\n- SSE2/3/4: mejoras.\n- AVX (2011): 256-bit, 8 floats o 4 doubles.\n- AVX2 (2013): 256-bit integer.\n- AVX-512 (2016): 512-bit, 16 floats. Hay reserves porque baja la clock rate.\n\nARM SVE es scalable — el mismo binary corre en distintos vector widths.\n\nEn Java:\n- **C2 SuperWord**: auto-vectorization de loops simples. Documentado, limitado.\n- **Vector API (JEP 448)**: incubator hasta Java 21, ahora estabilizándose. Portable, expresivo, compila a intrinsics.\n- **Intrinsics automáticos**: métodos como Math.sqrt, Arrays.equals, String comparisons usan SIMD internamente en HotSpot.\n\nEn Rust: intrinsics packages, std::simd stable en 2024+.\nEn Go: no primary support, requiere assembly.\nEn C++: compiler auto-vect + explicit intrinsics + std::execution::par_unseq.\n\nMLKit, ONNX Runtime, TensorFlow — todos usan SIMD heavily. Netflix Encoding usa AVX-512 para video procesamiento.",
+      "realWorld": "Vector API de Java es proyecto Panama liderado por Paul Sandoz. Netflix experimenta con Vector API para procesamiento de video en JVM. Numeric libraries like ND4J (deeplearning4j) usan JNI + SIMD directly. Intel invirtió mucho en AVX-512 para HPC/AI.",
+      "tags": ["SIMD", "AVX", "vectorization", "Vector API"],
+      "tech": ["Java", "C++", "AVX-512", "Panama"],
+      "references": [{ "title": "JEP 448 — Vector API (Sixth Incubator)" }, { "title": "Agner Fog — 'Optimizing subroutines in assembly language'" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "fundamentals",
+      "topic": "Instruction-level parallelism (ILP)",
+      "difficulty": "staff",
+      "scenario": "Un dev pregunta: 'un CPU moderno de 3GHz debería hacer 3 mil millones ops/s. Pero medí que suma 1B enteros en 200ms, no 333ms. ¿Cómo hace 5B ops/s?'",
+      "question": "¿Cuál es la explicación?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El CPU está overclockeando.", "correct": false, "why": "Turbo boost puede subir el clock pero no doble. La razón es que la CPU ejecuta múltiples instrucciones por ciclo." },
+        { "letter": "B", "text": "Modern CPUs son SUPERSCALAR: tienen múltiples 'execution units' (ALUs, load/store units, etc.) que ejecutan varias instrucciones POR CICLO. Intel Skylake tiene 4 ALUs, permite ~4 IPC (Instructions Per Cycle) sustainable con código bien vectorizable. Combinado con pipelining, out-of-order execution, register renaming, y branch prediction, el CPU procesa muchas ops en paralelo dentro de UN core.", "correct": true, "why": "Correcto y multi-facet. Es ILP (Instruction-Level Parallelism). Un CPU 'x86' no ejecuta instrucciones una a una — descompone en μops, los agenda en múltiples execution units, ejecuta out-of-order, retire in-order. Con ILP >1, un core a 3GHz puede sostener 5-8 Bops/s en workloads apt. Sumado a SIMD (16 ops por instrucción con AVX-512), puedes hit >50 Gops/s teoricos por core." },
+        { "letter": "C", "text": "El compilador loop-unrolls y hace todas las sumas al mismo tiempo.", "correct": false, "why": "Parcial: unrolling ayuda, pero la ejecución simultánea la hace el CPU (execution engine), no el compilador. Ambos cooperan." },
+        { "letter": "D", "text": "El CPU compila el código a GPU.", "correct": false, "why": "Falso. CPU y GPU son distintos. La CPU tiene su propia parallelism interna." }
+      ],
+      "explanation": "Modern CPU internals (simplified):\n\n1. **Fetch**: instrucciones desde I-cache.\n2. **Decode**: x86 → μops (RISC internas). Multi-decode: 4-6 instrucciones por ciclo.\n3. **Rename**: register renaming elimina false dependencies.\n4. **Dispatch/Schedule**: μops enviados a Reservation Station.\n5. **Execute**: multiple execution units en paralelo:\n   - 4+ ALUs (integer arithmetic).\n   - 2+ FPUs (floating point).\n   - Load/Store units (2-3).\n   - Branch unit.\n6. **Retire**: in-order commit para semántica program-order.\n\nOptimizaciones que el CPU hace GRATIS:\n- **Out-of-order execution** (OoO): re-ordena instrucciones que no dependen, mantiene units busy.\n- **Register renaming**: aliases físicos elimina WAR/WAW hazards.\n- **Branch prediction**: adivina y speculatively ejecuta.\n- **Prefetching**: preload cache lines detectando patrones.\n- **Loop stream detector**: cachea decode de loops chicos.\n\nMedidas:\n- **IPC (Instructions Per Cycle)**: ideal 3-4 sostenido, hasta 6 en burst.\n- **Cycles Per Instruction (CPI)**: inverso.\n- **perf stat** en Linux te muestra IPC real.\n\nCódigo con muchos data dependencies (a = b + c; d = a + e; f = d + g) → low ILP, secuencial. Loops con work independiente entre iterations → high ILP.\n\nSMT (Hyperthreading): 2 hardware threads por core comparten execution units — mejora utilization cuando 1 thread tiene stalls, marginal cuando ambos saturan.",
+      "realWorld": "Agner Fog mantiene manuales detallados sobre microarquitectura Intel/AMD. Intel VTune y Linux perf te dan métricas IPC precisas. Fabrice Bellard (QEMU, ffmpeg) y otros hackers de bajo nivel entienden esto profundamente. HPC (LINPACK) alcanza IPC cercano al teórico max.",
+      "tags": ["ILP", "superscalar", "out-of-order", "IPC"],
+      "tech": ["CPU", "Intel", "AMD"],
+      "references": [{ "title": "Agner Fog — 'The microarchitecture of Intel, AMD and VIA CPUs'" }, { "title": "Intel — Optimization Reference Manual" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "fundamentals",
+      "topic": "Loop unrolling y compiler",
+      "difficulty": "mid",
+      "scenario": "Este bucle:\n\n```java\nfor (int i = 0; i < 1000000; i++) sum += arr[i];\n```\n\nEl JIT lo compila internamente como algo similar a procesar 4-8 elementos por iteración con múltiples acumuladores. ¿Por qué?",
+      "question": "¿Cuál es la técnica y por qué mejora performance?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Loop unrolling + accumulator fission. Unrolling reduce overhead del branch de loop (cada iteración cuesta un compare + jump); processing 4-8 elementos por iter reduce ese overhead. Fission con MÚLTIPLES sumadores (sum1, sum2, sum3, sum4) rompe la dependencia serial 'sum = sum + a' que limita el ILP — sin esto, cada suma espera la anterior. Con 4 acumuladores paralelos, el CPU puede ejecutar en paralelo. Al final, sumar los acumuladores.", "correct": true, "why": "Correcto y profundo. Es una combinación de dos optimizaciones críticas. Loop unrolling solo daría marginal gain (reduces overhead ~5-10%). Fission de accumulators con reduction al final es lo que desbloquea ILP y a menudo dobla el throughput. Compiladores modernos (GCC, Clang, C2, Graal) lo hacen. También llamado 'reduction splitting' o 'accumulator vectorization'." },
+        { "letter": "B", "text": "El JIT hace multithreading automático del loop.", "correct": false, "why": "Falso. El JIT no paraleliza a threads OS automáticamente (streams paralelos requieren código explícito con .parallelStream()). La paralelización interna es ILP dentro de un core." },
+        { "letter": "C", "text": "Es escape analysis moviendo el sum a un registro.", "correct": false, "why": "El sum ya está en registro (variable local primitiva). Escape analysis no aplica aquí." },
+        { "letter": "D", "text": "El JIT sustituye el loop por un intrinsic de suma.", "correct": false, "why": "No hay intrinsic para 'suma de array' en HotSpot. El JIT sí tiene intrinsics para operaciones como Math.sqrt, Arrays.equals, pero no para sums arbitrarios." }
+      ],
+      "explanation": "Loop optimization es un área rica del compiler engineering. Técnicas comunes:\n\n1. **Loop unrolling**: replicar el body N veces, reducir overhead de branch. Trade-off: code size vs speed. Compiladores lo hacen; JIT también.\n\n2. **Accumulator fission**: romper dependencia serial. `sum = sum + a[i]` → `sum1 = sum1 + a[i]; sum2 = sum2 + a[i+1]; ...`. El paralelismo escondido queda expuesto.\n\n3. **Loop invariant code motion (LICM)**: mueve código que no cambia fuera del loop.\n\n4. **Loop-invariant expression hoisting**.\n\n5. **Loop peeling**: primera iteración distinta, se saca del loop.\n\n6. **Loop fusion / fission**: combinar o separar loops.\n\n7. **Vectorization (SuperWord)**: transforma scalar loop en SIMD.\n\n8. **Range check elimination**: en Java, C2 remueve bounds check cuando puede probar que el índice está en rango.\n\nGCC/Clang tienen flags como `-funroll-loops`. HotSpot C2 hace la mayoría automáticamente. Graal es más agresivo.\n\nMedir: benchmarks JMH + perf stat + análisis del assembly generado (con `-XX:+UnlockDiagnosticVMOptions -XX:+PrintAssembly` + hsdis).",
+      "realWorld": "Numeric libraries (BLAS, MKL, OpenBLAS) tienen kernels hand-tuned aprovechando estas optimizaciones. Rust y Julia también las aprovechan. TensorFlow/PyTorch kernels de CPU hacen unrolling + fission + SIMD hand-optimized.",
+      "tags": ["loop unrolling", "ILP", "compiler optimization", "reduction"],
+      "tech": ["Java", "C++", "Compilers"],
+      "references": [{ "title": "Muchnick — 'Advanced Compiler Design and Implementation'" }, { "title": "Cliff Click — 'C2 SuperWord'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "fundamentals",
+      "topic": "Class Data Sharing (CDS)",
+      "difficulty": "mid",
+      "scenario": "Un microservicio Spring Boot tarda 8 segundos en arrancar. El equipo evalúa cambiar a Quarkus/GraalVM native (100ms) o mantener JVM. Un dev sugiere: '¿probamos CDS?'",
+      "question": "¿Qué es CDS y qué impacto tiene?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CDS/AppCDS pre-procesa las clases de la app (parsear, verificar, resolver constantes) y las serializa a un archivo compartido. En arranques subsecuentes, el JVM mmaps este archivo — evita repetir el trabajo. Reduce startup 30-50% en apps con muchas clases, y ahorra RAM (varios pods comparten el mismo archivo mmap-ed). Trade-off: hay que regenerar el archivo cuando cambian las clases.", "correct": true, "why": "Correcto. CDS existe desde Java 5 para las clases base; AppCDS (Java 10+, GA en 13) extendió a app classes. Java 19+ tiene CDS automático (`-XX:ArchiveClassesAtExit`). No cambia peak throughput (JIT sigue igual), solo startup. Es una ganancia incremental pero real y gratis. No compite directamente con GraalVM native (que reduce startup 100x pero pierde peak perf); es una opción intermedia." },
+        { "letter": "B", "text": "CDS hace AOT compilation del código Java.", "correct": false, "why": "No. CDS solo pre-procesa metadata de clases. La compilación sigue siendo JIT en runtime." },
+        { "letter": "C", "text": "CDS comprime las clases para que la app pese menos.", "correct": false, "why": "No es un mecanismo de compresión de tamaño. Es de aceleración de load." },
+        { "letter": "D", "text": "CDS solo funciona con Java LTS.", "correct": false, "why": "Funciona en Java 5+. Ha mejorado en cada release." }
+      ],
+      "explanation": "CDS (Class Data Sharing) tiene 3 flavors:\n\n1. **Basic CDS**: preload de JDK classes. Automático desde Java 12.\n\n2. **AppCDS**: preload de las clases de tu app. Requiere generar archive:\n   ```\n   java -XX:DumpLoadedClassList=list.txt -jar app.jar (una vez para capturar)\n   java -Xshare:dump -XX:SharedClassListFile=list.txt -XX:SharedArchiveFile=app.jsa (crear archive)\n   java -Xshare:on -XX:SharedArchiveFile=app.jsa -jar app.jar (usar)\n   ```\n\n3. **Automatic CDS** (Java 19+, JEP 493): `-XX:ArchiveClassesAtExit=app.jsa` crea el archive al terminar, siguiente arranque lo usa.\n\nBeneficios:\n- Startup 30-50% más rápido.\n- Menos RAM: el archive es mmap-ed → shared entre múltiples pods/procesos.\n- Compatible con JIT normal — no cambia peak performance.\n\nLimitaciones:\n- Debe regenerarse cuando cambia el classpath significantly.\n- No es un reemplazo para native-image (Quarkus/GraalVM) — ese reduce startup 100x más pero cambia el modelo.\n\nProject Leyden (long-term) apunta a llevar más al AOT en la JVM manteniendo compatibility. CDS es un building block.",
+      "realWorld": "Twitter, Alibaba usan CDS en producción. Alibaba Dragonwell (JDK fork) tiene mejoras específicas. Netflix documenta uso en 2022. Spring Boot 3.x tiene soporte first-class de CDS y native-image via Spring Native / Buildpacks.",
+      "tags": ["CDS", "AppCDS", "startup", "JVM"],
+      "tech": ["Java", "HotSpot"],
+      "references": [{ "title": "JEP 310 — Application Class-Data Sharing" }, { "title": "Aleksey Shipilev — 'CDS is a hidden gem'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "fundamentals",
+      "topic": "Memory ordering y CPU reordering",
+      "difficulty": "staff",
+      "scenario": "En un test de multi-threading en x86 vs ARM, código que funciona en x86 (Intel/AMD) falla intermitente en ARM (Graviton). El código usa dos flags escritas por un thread y leídas por otro sin volatile.",
+      "question": "¿Por qué la diferencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "x86 tiene memory model TSO (Total Store Ordering): la mayoría de reordering hardware no ocurre — los stores se ven en orden. ARM tiene memory model WEAK: hardware puede reordenar loads y stores más agresivamente. Código sin barriers explícitos puede funcionar 'por accidente' en x86 y romper en ARM. La regla: escribe correctamente con volatile/atomic (según JMM), NO asumas semántica x86.", "correct": true, "why": "Correcto y crítico. Es el gotcha #1 de portabilidad x86 → ARM. Cada CPU tiene su memory model:\n- x86: TSO — solo store→load reordering permitido.\n- ARM/PowerPC/RISC-V: weak — casi todo reordering permitido salvo dependencias.\n- Java Memory Model abstrae esto: si usas volatile/synchronized/atomic correctamente, la JVM genera barriers apropiados por plataforma. Sin ellos, comportamiento indefinido — mueves de x86 a ARM y bugs latentes emergen." },
+        { "letter": "B", "text": "ARM tiene bug del scheduler.", "correct": false, "why": "Falso. Es diseño intencional del memory model. ARM eligió weak para permitir hardware optimizations más agresivos." },
+        { "letter": "C", "text": "El código Java se comporta idéntico en cualquier CPU.", "correct": false, "why": "Solo si respeta JMM correctamente. JMM ofrece un modelo consistente, PERO código con races (accesos sin sync) tiene comportamiento indefinido y puede diferir entre CPUs." },
+        { "letter": "D", "text": "Graviton es incompatible con Java.", "correct": false, "why": "Falso. AWS Graviton (ARM) corre Java correctamente. El problema es código incorrecto." }
+      ],
+      "explanation": "Memory models de CPUs son un tema profundo y sutil:\n\n**x86 (TSO)**:\n- Stores no se reordenan entre sí.\n- Loads no se reordenan entre sí.\n- Solo store→load reordering permitido (store buffer).\n- Muy conservador — 'no te preocupes por ordering' (mostly).\n\n**ARM, POWER, RISC-V (weak/relaxed)**:\n- Cualquier tipo de reordering permitido salvo entre operaciones con data dependency.\n- Necesitas barriers explícitas para orderings específicos.\n- Más eficiente en hardware — más OoO, más instrucciones en flight.\n\n**Consequencias**:\n- Código C/C++ sin `std::atomic` correcto se rompe al portar de x86 a ARM.\n- Java con races no protegidos por `volatile`/`synchronized`: comportamiento indefinido en cualquier CPU, pero más EVIDENTE en ARM.\n\n**Barriers**:\n- Java: `volatile` (LoadStore, StoreLoad según read/write), `synchronized` (StoreStore + LoadLoad al entry/exit), VarHandle acquireRelease/opaque.\n- C++: `std::atomic` con memory_order (relaxed, acquire, release, seq_cst).\n- Kernel: mb(), rmb(), wmb() en Linux.\n\nJMM (Java Memory Model, JSR-133) provee un modelo cross-platform que la JVM traduce a barriers específicos por CPU. Si tu código respeta JMM, funciona en cualquier CPU.\n\nMigración a Graviton en AWS ha expuesto bugs latentes en muchos codebases Java/C++ que 'funcionaban' en Intel por accidente.",
+      "realWorld": "Doug Lea (autor java.util.concurrent) escribió el JSR-133 cookbook detallando cómo cada CPU implementa los barriers. AWS Graviton launches 2018+ ha causado que muchas empresas descubran races latentes. Twitter, Netflix migrations documentadas incluyen fixes de este tipo.",
+      "tags": ["memory model", "TSO", "weak ordering", "ARM", "x86"],
+      "tech": ["Java", "ARM", "x86", "JMM"],
+      "references": [{ "title": "Doug Lea — 'The JSR-133 Cookbook for Compiler Writers'" }, { "title": "Herb Sutter — 'Atomic Weapons'" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "fundamentals",
+      "topic": "V8 Ignition + TurboFan pipeline",
+      "difficulty": "senior",
+      "scenario": "Un dev de JavaScript quiere entender qué pasa cuando ejecuta `arr.map(x => x*2)` millones de veces en Node.js. ¿Cómo es el pipeline en V8?",
+      "question": "¿Cuál es la respuesta más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "V8 parsea el JS, genera bytecode (Ignition — interpreter). Ejecuta con Ignition inicialmente, coleccionando type feedback en cada operación. Cuando un function es 'hot' (llamado muchas veces), pasa a Sparkplug (baseline compiler, rápido y decente) y luego a TurboFan (optimizing compiler) que usa el type feedback para speculative optimizations. Si assumptions fallan (nuevo tipo aparece), deopt a Ignition.", "correct": true, "why": "Correcto y actualizado. Pipeline moderno (2021+): Ignition → Sparkplug → Maglev → TurboFan. Sparkplug (introducido 2021) es un baseline compiler super-rápido que traduce bytecode a machine code sin optimizaciones agresivas — puente entre interpreter y optimizing. Maglev (2023+) intermediate tier. TurboFan aplica escape analysis, inlining polimórfico, type specialization." },
+        { "letter": "B", "text": "V8 ejecuta el JS directamente sin compilar.", "correct": false, "why": "Falso. V8 abandonó pure interpretation hace años. Ignition es un interpreter que ejecuta bytecode, no AST." },
+        { "letter": "C", "text": "V8 compila directamente a machine code al parsear.", "correct": false, "why": "Antiguamente V8 tenía Full-CodeGen que compilaba directamente. Se abandonó a favor de Ignition/TurboFan para mejor startup y memoria." },
+        { "letter": "D", "text": "V8 usa WebAssembly como IR.", "correct": false, "why": "V8 tiene runtime WebAssembly separado (Liftoff, TurboFan for WASM), pero JavaScript no se compila a WASM internamente." }
+      ],
+      "explanation": "V8 pipeline actual:\n\n1. **Parser**: JS source → AST.\n2. **Ignition**: interpreter que genera bytecode (register-based) y lo ejecuta. Colecciona type feedback en 'feedback vectors'.\n3. **Sparkplug** (2021+): baseline compiler ultra-rápido. Traduce bytecode a machine code sin optimizaciones especulativas — mejora vs interpreter, faster to compile than TurboFan.\n4. **Maglev** (2023+): mid-tier optimizing compiler. Balance entre speed y quality.\n5. **TurboFan**: heavy optimizing compiler. Speculative inlining, type specialization, escape analysis. Genera código óptimo pero tarda ms en compilar.\n\nType feedback es el corazón: cada operación (property access, arithmetic, call) recorda qué types ha visto. TurboFan usa esto para speculate ('esta variable siempre es Smi (small integer)') y generar código específico.\n\nDeopt: si el speculation falla (aparece string donde esperaba number), TurboFan invalida el código, vuelve a Ignition, y eventualmente re-compila con new info.\n\nCambios recientes:\n- Sparkplug reduce el gap entre interpreter y optimized.\n- Maglev fill the middle ground.\n- Web Snapshot / Instant Compilation research para reduce startup.\n\nSimilares en otros VMs:\n- SpiderMonkey (Firefox): Baseline Interpreter → Baseline → Warp (successor of Ion).\n- JavaScriptCore (Safari): LLInt → Baseline JIT → DFG → FTL (LLVM).",
+      "realWorld": "V8 blog es una gold mine — documenta cada iteración. Cloudflare Workers, Deno, Node.js todos usan V8 (o su fork). Bloomberg terminal invests heavily en JS performance. La migración de CrankShaft (old optimizer) a TurboFan en 2017 fue enorme.",
+      "tags": ["V8", "Ignition", "TurboFan", "Sparkplug", "JIT"],
+      "tech": ["Node.js", "V8"],
+      "references": [{ "title": "V8 blog — 'Sparkplug — a non-optimizing JavaScript compiler'" }, { "title": "V8 blog — 'Launching Ignition and TurboFan'" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "fundamentals",
+      "topic": "Profiling — CPU vs allocation vs lock",
+      "difficulty": "senior",
+      "scenario": "Un servicio Java está 'lento'. Un dev quiere profilear. ¿Qué tipo de profiling debe usar?",
+      "question": "¿Cuáles son los profilers correctos según el problema?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CPU profiling: si CPU está alto (>70%), usar async-profiler (sampling, low overhead) o JFR. Muestra métodos que consumen más CPU. Async-profiler es el estándar 2026 — usa perf events + AsyncGetCallTrace, evita safepoint bias del profiling tradicional.", "correct": true, "why": "Correcto. Async-profiler (Andrei Pangin) es superior a jstack sampling porque: (a) captura stacks en cualquier momento, no solo safepoints — evita 'safepoint bias' que oculta hot spots; (b) puede muestrear también kernel stacks; (c) integración con perf; (d) genera flame graphs directamente. JFR (Flight Recorder) tiene tradeoffs similares con menor overhead." },
+        { "letter": "B", "text": "Allocation profiling: si GC es frecuente, ver dónde se allocatea. Async-profiler y JFR ambos tienen modo 'alloc' — muestran stack traces de asignaciones. Ayuda a encontrar el código que crea presión sobre el GC.", "correct": true, "why": "Correcto. Sin allocation profiler, es difícil saber qué código crea garbage. Un endpoint con streams intermedios, autoboxing, o strings temporales puede allocatear 100x más que otros. Async-profiler alloc mode usa sampling — bajo overhead. JFR también. Salida: flame graphs por asignación." },
+        { "letter": "C", "text": "Lock profiling: si hay contención (threads WAITING/BLOCKED), usar JFR con 'jdk.JavaMonitorEnter' events o async-profiler modo 'lock'. Muestra locks contentedios y stacks que los adquieren.", "correct": true, "why": "Correcto. Contención es un asesino silencioso — CPU idle pero throughput bajo. jstack manual puede mostrar snapshot pero es puntual; JFR captura continuo. Detecta locks 'hot' que serializan trabajo. Fix: reducir granularidad, striped locks, o algoritmos lock-free." },
+        { "letter": "D", "text": "I/O profiling: si el proceso está bloqueado en I/O, JFR captura 'jdk.FileRead', 'jdk.SocketRead' events con duración. Async-profiler tiene modo 'wall clock' (samples de todos los threads, no solo running) que muestra tiempo en I/O.", "correct": true, "why": "Correcto. Un servicio slow con CPU baja probablemente es I/O bound. Wall clock profiling revela dónde se espera — DB queries, HTTP calls. Diferente de CPU profiling (que solo muestra running threads). Es esencial para diagnosticar microservicios chatty." },
+        { "letter": "E", "text": "Un solo profiler es suficiente para todos los casos.", "correct": false, "why": "Falso. Distintos aspectos requieren distintos modos. Async-profiler y JFR modernos tienen múltiples modos, pero hay que activar el correcto. Un CPU profile no muestra locks; un lock profile no muestra I/O." }
+      ],
+      "explanation": "Performance profiling es un arte con muchas herramientas. Categorías:\n\n1. **CPU profiling** — dónde el CPU pasa el tiempo.\n2. **Allocation profiling** — dónde se crean objetos.\n3. **Lock/contention profiling** — dónde se espera por locks.\n4. **I/O profiling** — dónde se espera por I/O.\n5. **Wall clock profiling** — dónde pasa el tiempo real (incluyendo espera).\n6. **Memory heap analysis** — qué está en memoria (post-mortem).\n\nHerramientas 2026:\n- **async-profiler** (Andrei Pangin): CPU, alloc, lock, wall clock. Sampling-based. Low overhead. Flame graphs.\n- **JDK Flight Recorder (JFR)**: built-in desde OpenJDK 11+. Menor overhead que async-profiler para observación continua. Bien integrado con Mission Control (JMC).\n- **perf** (Linux): sampling-based, kernel-level. Combinable con async-profiler.\n- **YourKit, JProfiler**: comerciales, feature-rich.\n- **VisualVM**: gratis, básico. Educativo pero limitado.\n- **jstack / jcmd**: manual thread dumps, útil ad-hoc.\n\nFlame graphs (Brendan Gregg) es la visualización estándar — cada rectángulo es una frame, ancho = tiempo. Instant insight.\n\nBias del profiling: sampling profilers pueden dar resultados sesgados si samplean solo en safepoints (traditional Java profilers) — async-profiler evita esto con AsyncGetCallTrace.",
+      "realWorld": "Brendan Gregg (ex-Netflix, ahora Intel) popularizó flame graphs y wrote 'Systems Performance'. Andrei Pangin lidera async-profiler. Netflix usa async-profiler + JFR intensivamente. JFR fue open-sourced en Java 11 (antes commercial en Oracle JDK).",
+      "tags": ["profiling", "async-profiler", "JFR", "flame graph"],
+      "tech": ["Java", "async-profiler", "JFR", "perf"],
+      "references": [{ "title": "Brendan Gregg — 'Systems Performance'" }, { "title": "async-profiler — GitHub" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "fundamentals",
+      "topic": "Denormalized numbers y floating point",
+      "difficulty": "senior",
+      "scenario": "Un simulador de física en Java está 20x más lento en ciertos casos. Debugging muestra que el problema aparece cuando los valores se acercan a cero. Un dev senior menciona 'denormals'.",
+      "question": "¿Qué son los denormals y cómo evitar el problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Denormalized (subnormal) numbers son valores IEEE 754 muy pequeños (cerca de zero) que usan una representación especial para preservar precisión gradual. En muchos CPUs (Intel especialmente), operaciones con denormals son 10-100x más lentas — el hardware los procesa en microcódigo en vez de la unidad FP normal. En física/audio DSP es catastrófico. Fix: activar 'flush-to-zero' (FTZ) y 'denormals-are-zero' (DAZ) — el CPU trata denormals como cero, perdiendo precisión pero ganando 20x speed.", "correct": true, "why": "Correcto y textbook. Es un gotcha conocido en HPC, audio, física. Denormals: cuando el exponente sería menor que el mínimo, se pierde el 'implicit 1' del significand y se representan con exponente 0 y significand distinto de cero. IEEE 754 los permite para 'gradual underflow'. Pero hardware handling es lento. FTZ+DAZ (flag MXCSR en x86) es común en audio (VST plugins), física, DSP." },
+        { "letter": "B", "text": "Java no soporta denormals; imposible.", "correct": false, "why": "Java respeta IEEE 754, incluyendo denormals. Sin embargo, no expone FTZ/DAZ directo — hay que usarlo vía JNI o library nativa." },
+        { "letter": "C", "text": "Los denormals causan NaN.", "correct": false, "why": "Confusión. Denormals son valores válidos, no NaN. NaN es 'Not a Number' — distinto." },
+        { "letter": "D", "text": "El GC crea los denormals.", "correct": false, "why": "Nothing to do con GC. Es un tema del CPU y aritmética IEEE 754." }
+      ],
+      "explanation": "IEEE 754 floating point tiene 5 categorías: zero, normal, denormal (subnormal), infinity, NaN.\n\n**Normal**: `(1 + significand) × 2^exponent`. Formato compacto.\n\n**Denormal**: cuando exponent = minimum, se usa `significand × 2^(minimum_exp)` sin implicit 1. Permite representar valores muy pequeños (cerca a zero) sin caer abruptamente a zero.\n\n**Performance**: procesar denormals en hardware moderno es costoso. Intel documenta ~50-100x slowdown en operaciones con denormals en algunas CPUs. Es un microcode path lento.\n\n**Causas comunes**:\n- Filtros digitales (audio): coeficientes que decrecen exponencialmente.\n- Simulaciones (física, dinámica de fluidos): velocidades muy pequeñas.\n- ML: gradients muy pequeños en vanishing gradient.\n\n**Fixes**:\n- **FTZ (Flush-To-Zero)**: input denormals se tratan como zero antes de operación.\n- **DAZ (Denormals-Are-Zero)**: outputs que serían denormal se flush a zero.\n- **Compilar con `-ffast-math`** en C/C++: activa FTZ/DAZ + otras optimizations que rompen strict IEEE 754.\n- **Ruido pequeño**: añadir ruido -60dB en audio previene decay a denormals.\n\nJava no tiene API pública para FTZ/DAZ. Panama Vector API o JNI son opciones. Prácticas defensivas: chequeo y clamp de valores pequeños a zero explícitamente.",
+      "realWorld": "VST audio plugins comúnmente activan FTZ/DAZ desde 2005. Google, Facebook ML frameworks (TensorFlow, PyTorch) tienen modos rápidos que sacrifican strict IEEE. Compilers moderno con `-Ofast` o `-ffast-math` lo hacen. Bug famoso en simulador de física de un juego donde partículas eran 10x más lentas por denormals.",
+      "tags": ["IEEE 754", "denormals", "FTZ", "DAZ", "floating point"],
+      "tech": ["CPU", "Java", "C++"],
+      "references": [{ "title": "IEEE 754 spec" }, { "title": "Intel — 'Software Optimization for Denormalized Numbers'" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "fundamentals",
+      "topic": "System calls y kernel/user transitions",
+      "difficulty": "senior",
+      "scenario": "Un servicio Java que escribe muchos pequeños writes al disk (log de 100 bytes por request) es 10x más lento que uno que buffera y escribe 10KB de una vez.",
+      "question": "¿Cuál es la razón fundamental?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El disco es más rápido leyendo bloques grandes.", "correct": false, "why": "Cierto en general, pero no explica el 10x aquí. La razón principal es el costo de syscalls." },
+        { "letter": "B", "text": "Cada write() es un system call: transición usermode→kernelmode + validation + kernel path + return (typically 100-500ns overhead solo el syscall). Con mitigations Spectre/Meltdown, subió a 500-2000ns. 100 writes chicos = 100 syscalls = mucho overhead. Buffering agrega los datos en usermode y hace 1 syscall grande. Es por qué stdout con `System.out.println` por línea es 100x más lento que buffered writer con `BufferedWriter`.", "correct": true, "why": "Correcto y fundamental. Syscall overhead ha crecido significativamente post-Spectre (2018) por KPTI (Kernel Page-Table Isolation). Cada syscall requiere flush de TLB parcial, causando MISS de traducción en próximos accesos. Buffering es el patrón universal: reduce syscall count. Similar para read(): read entero un archivo con 1 syscall vs muchas pequeñas es 10-100x más rápido." },
+        { "letter": "C", "text": "El GC pausa entre writes.", "correct": false, "why": "No hay razón para pauses correlacionadas con writes. No es GC." },
+        { "letter": "D", "text": "El OS deshabilita el write cache para escrituras pequeñas.", "correct": false, "why": "Falso. Page cache trata iguales. La diferencia es syscall overhead." }
+      ],
+      "explanation": "Syscalls son una de las operaciones más costosas en programación de sistemas moderna:\n\n**Costo de syscall (2026)**:\n- Vanilla syscall: ~100-500ns.\n- Con Spectre/Meltdown mitigations (KPTI): ~500-2000ns.\n- Batch operations (io_uring, epoll): amortized much cheaper.\n\n**Por qué es caro**:\n1. Transición ring 3 → ring 0 (SYSENTER/SYSCALL instruction).\n2. Save de registros user, load de registros kernel.\n3. TLB flush parcial (con KPTI).\n4. Validation de argumentos.\n5. Kernel path (variable según syscall).\n6. Return: reverso.\n\n**Reducing syscalls**:\n- **Buffering**: agregar en user, syscall menos frecuente. Estándar en I/O.\n- **Batch APIs**: sendmsg (multiple messages), writev (scatter-gather), epoll_wait (many events one call).\n- **io_uring** (Linux 5.1+): async I/O con shared ring buffers — puede casi eliminar syscalls en steady state.\n- **eBPF**: correr código user en kernel evitando bounce.\n- **DPDK, kernel bypass**: para networking extremo, sacar el kernel entirely.\n\n**Ejemplos performance**:\n- Kafka broker escribe batches de MB a disk usando sendfile.\n- Nginx buffer chunks en memoria.\n- Redis (in-memory) evita disk I/O en hot path.\n- Databases usan WAL (write-ahead log) sequential + fsync periodic.",
+      "realWorld": "io_uring (Jens Axboe) es la revolución más grande en Linux I/O de la década. ScyllaDB (Avi Kivity), Cassandra alternative, usa io_uring y kernel bypass extensively. Meltdown/Spectre mitigations impactaron muchas apps (mostly DBs) 5-20% throughput por syscall overhead.",
+      "tags": ["syscall", "kernel", "buffering", "io_uring"],
+      "tech": ["Linux", "Java", "io_uring"],
+      "references": [{ "title": "Jens Axboe — 'io_uring design'" }, { "title": "Brendan Gregg — 'KPTI/KAISER Meltdown Initial Performance'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "fundamentals",
+      "topic": "GraalVM y polyglot",
+      "difficulty": "mid",
+      "scenario": "Un dev pregunta: '¿Qué es GraalVM y por qué está de moda?'",
+      "question": "¿Cuál es la respuesta más completa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GraalVM es un runtime universal Java con dos features clave: (1) Graal compiler — JIT alternativo a C2, escrito en Java, más agresivo en optimizaciones y extensible; (2) Native Image — AOT compilation a binary standalone, elimina JVM warmup y reduce startup/RSS a niveles Go/Rust. Además soporta polyglot (JS, Python, Ruby, R vía Truffle) pero eso es menos usado en producción.", "correct": true, "why": "Correcto y granular. GraalVM (Oracle Labs) tiene 3 partes: Graal JIT (usable en HotSpot con -XX:+UseGraalCompiler), Native Image (nativo AOT), y Truffle (framework para languages). Native Image es lo que está transformando el ecosistema Java para serverless/K8s — Spring Native, Quarkus, Micronaut son ejemplos. Trade-off: peak throughput a menudo menor que HotSpot JIT (10-30%), pero startup 100x mejor." },
+        { "letter": "B", "text": "GraalVM es un GC alternativo.", "correct": false, "why": "No. GraalVM no cambia GC (usa los mismos que HotSpot: G1, Parallel, ZGC, etc)." },
+        { "letter": "C", "text": "GraalVM reemplaza el bytecode Java por LLVM.", "correct": false, "why": "Falso. Graal genera código machine directamente, no via LLVM. Sí soporta compilar LLVM bitcode via Sulong (parte de Truffle) — pero eso es feature separada." },
+        { "letter": "D", "text": "GraalVM solo funciona en versiones Oracle Java.", "correct": false, "why": "Falso. GraalVM tiene distribuciones CE (community, open source, gratis) y EE (comercial). Ambas ampliamente usadas." }
+      ],
+      "explanation": "GraalVM es probablemente el proyecto Java más importante de los últimos 10 años.\n\n**Componentes**:\n\n1. **Graal Compiler**: JIT alternativo, escrito en Java. Metadata-driven, más extensible que C2 (que es C++ complejo). Puede ser drop-in replacement de C2 en HotSpot (`-XX:+UseGraalCompiler`). En muchos benchmarks equivalen o supera; en algunos es peor.\n\n2. **Native Image**: AOT compile de Java a binary standalone. Uses SubstrateVM (small runtime). Reduce startup de segundos a millisegundos, RSS 10x menor. Compatible con la mayoría de Java pero con restrictions:\n   - Reflection y dynamic class loading requieren configuración explícita (native-image tracing agent).\n   - No JIT en runtime — perf peak ligeramente menor.\n   - Build time largo (minutos por servicio).\n\n3. **Truffle framework**: para escribir language interpreters que se optimizan via Graal. GraalJS, GraalPython, TruffleRuby son implementaciones. Permite polyglot: llamar JS desde Java, etc. Uso limitado en producción.\n\n**Adoption 2026**:\n- Spring Boot 3 tiene soporte first-class de Native Image.\n- Quarkus (Red Hat) está diseñado desde cero para GraalVM Native.\n- Micronaut lo mismo.\n- AWS Lambda con Java + Native Image reduce cold start de 5s a 200ms.\n\n**Trade-offs Native Image**:\n- Pro: startup, RSS, no warmup, single binary deploy.\n- Contra: peak perf, build time, closed-world assumption (no dynamic classloading).",
+      "realWorld": "Oracle Labs es el creador. Twitter usó Graal JIT reportando 10-20% improvement en Scala workloads. Spring Native, Quarkus, Micronaut son casos de uso. Alibaba's Ahead-Of-Time compiler es similar pero propietario. Kubernetes ecosystem loves Native Image por reducir cold starts.",
+      "tags": ["GraalVM", "Native Image", "JIT", "AOT"],
+      "tech": ["GraalVM", "Java", "Truffle"],
+      "references": [{ "title": "GraalVM — Official docs" }, { "title": "Thomas Wuerthinger — 'One VM to Rule Them All'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "fundamentals",
+      "topic": "JVM tuning — cuando hacerlo",
+      "difficulty": "mid",
+      "scenario": "Un dev junior encuentra un blog de 2015 y aplica 20+ flags a la JVM (`-XX:+UseCMSInitiatingOccupancyOnly`, `-XX:CMSInitiatingOccupancyFraction=70`, etc.). El servicio nuevo (Java 21) empeora.",
+      "question": "¿Cuál es la actitud correcta hacia JVM tuning en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Tuning agresivo siempre mejora. Copiar más flags.", "correct": false, "why": "Anti-patrón masivo. La mayoría de blogs viejos ni son relevantes (CMS deprecated). Copy-paste sin entender es un desastre." },
+        { "letter": "B", "text": "Empezar SIN tuning: los defaults de JVMs modernas (Java 17+) son excelentes para la mayoría de workloads. Perfilar primero, identificar problemas específicos, y aplicar flags QUE ENTIENDAS y ESPECÍFICOS al problema. Regla de Cliff Click: 'if you don't know why you're changing it, don't change it'. Flags obsoletos (CMS, PermGen, PrintGC básico) pueden hacer daño.", "correct": true, "why": "Correcto. Los defaults de OpenJDK 17/21 son producto de años de tuning por los mejores ingenieros JVM. Cambiar sin razón raramente ayuda y a menudo perjudica. Metodología correcta: (1) baseline sin tuning; (2) identify bottleneck con profiling; (3) target-specific fix; (4) medir vs baseline; (5) documentar razón. NO copy-paste blogs." },
+        { "letter": "C", "text": "Tuning es una habilidad avanzada — solo para expertos, evitar siempre.", "correct": false, "why": "Extremo opuesto también incorrecto. Hay casos donde tuning específico es necesario (heap size, GC choice para latency vs throughput). El key es entender qué tocas." },
+        { "letter": "D", "text": "Migrar a Kotlin/Scala evita el problema.", "correct": false, "why": "Kotlin/Scala corren en la misma JVM — tienen los mismos defaults y issues. No es una solución." }
+      ],
+      "explanation": "JVM tuning en 2026 tiene reglas claras:\n\n**Cosas que quizás valgan la pena tocar**:\n- `-Xmx`, `-Xms`: heap size. Depende del workload y RAM disponible. Setear igual (`-Xms = -Xmx`) evita reallocation. Común en containers.\n- GC choice: G1 (default balanced), ZGC (low latency, requiere Java 15+ prod), Parallel (batch, throughput first), Serial (small apps).\n- `-XX:MaxDirectMemorySize`: para apps que usan mucha direct memory (Netty, Cassandra).\n- `-XX:+HeapDumpOnOutOfMemoryError`: siempre, para diagnóstico.\n- `-XX:MaxRAMPercentage`: en containers, mejor que -Xmx explícito.\n- `-XX:+UseContainerSupport`: default desde Java 10, no cambia.\n\n**Cosas obsoletas** (o cambiadas):\n- CMS: removed en Java 14+.\n- PermGen: reemplazado por Metaspace en Java 8.\n- `-server` / `-client`: irrelevante en 64-bit.\n- Flags de CMS: no aplican.\n\n**Metodología correcta**:\n1. Deploy con defaults.\n2. Monitor: GC logs, JFR, metrics.\n3. Si SLO no cumple: identify what's not meeting (throughput? latency? memory?).\n4. Cambio dirigido: target el problema específico.\n5. A/B test, document.\n\nRegla de oro: cada flag debe tener una respuesta clara a '¿por qué este flag específicamente?'. Si copias de blog sin entender, es cargo cult.",
+      "realWorld": "Sebastian Daschner y otros JVM experts publican regularmente advertencias sobre tuning ciego. Netflix, Twitter documentan sus configs pero también advierten que son específicas. AWS EMR/Elasticsearch dan defaults optimizados para su carga pero warn contra tuning arbitrario.",
+      "tags": ["JVM tuning", "flags", "defaults", "GC selection"],
+      "tech": ["Java", "JVM"],
+      "references": [{ "title": "Cliff Click — 'Java Performance Tuning'" }, { "title": "OpenJDK docs — GC selection" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "fundamentals",
+      "topic": "Speculative execution y Spectre",
+      "difficulty": "staff",
+      "scenario": "En 2018, Spectre y Meltdown obligaron a Intel/AMD/ARM a mitigar mediante patches del OS y microcódigo. Un dev pregunta: '¿qué son y qué impacto tuvieron en performance?'",
+      "question": "¿Cuál es la explicación correcta?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Spectre y Meltdown explotan speculative execution: el CPU ejecuta código especulativamente MÁS ALLÁ de un branch o de un check de permisos, luego revierte si no era el camino correcto. Aunque revierte la arquitectura visible, deja HUELLAS en el cache (side channel). Atacante puede inferir datos secretos midiendo tiempos de acceso al cache.", "correct": true, "why": "Correcto. Meltdown: bypass del check de permiso de memoria kernel/user speculatively → leak de kernel memory. Spectre: bypass de bounds check speculatively → leak de memoria de otra data. Ambos rompen boundary de aislación fundamental. El paper de Kocher/Horn et al. (2018) fue el mayor shock de seguridad hardware de la década." },
+        { "letter": "B", "text": "Mitigations impactaron performance: KPTI (Kernel Page-Table Isolation) para Meltdown añadió 5-30% overhead a workloads syscall-heavy. Retpoline/IBRS para Spectre añadió 5-15% a workloads con muchos indirect branches. DBs y filesystems fueron los más afectados.", "correct": true, "why": "Correcto. AWS midió impacto en varios instance types en 2018. Postgres queries pequeñas 15-20% más lentas. Redis 10-15%. Apps con menos syscalls (batch processing, ML) menor impacto. Nuevas CPUs incorporaron mitigations en silicon, reduciendo overhead. Es una regresión mayor de perf que llevó años recuperar." },
+        { "letter": "C", "text": "Los ataques requieren acceso físico a la máquina.", "correct": false, "why": "Falso y peligroso. Spectre se puede ejecutar desde JavaScript en un browser (con timers de alta precisión) — de ahí el pánico. Meltdown desde cualquier proceso userland. Cross-VM en cloud fue una preocupación gigante." },
+        { "letter": "D", "text": "Solo afectan Intel; AMD y ARM son inmunes.", "correct": false, "why": "Falso. AMD tuvo variantes de Spectre. ARM también (Cortex-A75 y otros). Meltdown principalmente Intel (AMD no vulnerable a la original), pero variantes afectaron muchos vendors. Todo silicon con speculative execution es potencial víctima." },
+        { "letter": "E", "text": "Las nuevas CPUs no tienen speculative execution.", "correct": false, "why": "Falso. Speculative execution es fundamental para performance moderna. Se sigue usando; solo se mitigan las side channels específicas. Nadie va a renunciar a 5-10x de ILP." }
+      ],
+      "explanation": "Spectre/Meltdown (2018) reveló que la seguridad hardware fundamental de decades de CPUs era vulnerable. Attack primitives:\n\n**Meltdown (CVE-2017-5754)**:\n1. Load kernel address (would normally fault post-check).\n2. Use loaded value to index into user array.\n3. Fault eventually raised, arch state rolled back.\n4. But cache line for user[secret_byte] is now cached.\n5. Time access to user[i] for all i → find which is fast → i is the secret.\n\n**Spectre (CVE-2017-5753/5715)**:\n- Variant 1 (bounds check bypass): train branch predictor, then trigger out-of-bounds read speculatively.\n- Variant 2 (branch target injection): poison indirect branch predictor to jump to attacker-chosen gadget.\n\n**Mitigations**:\n- **KPTI (Kernel Page-Table Isolation)**: separate page tables user/kernel → prevent Meltdown but expensive syscalls.\n- **Retpoline**: replace indirect calls with 'return-based' construct that CPU can't speculate through.\n- **IBRS/STIBP/IBPB**: CPU features to control speculation across privilege boundaries.\n- **Microcode updates**: hardware fixes for specific patterns.\n- **JS mitigations**: reduced timer precision, isolation of workers (Site Isolation in Chrome).\n\nSince 2018: L1TF, MDS, ZombieLoad, TAA, LVI, more. Cada nuevo trimestre trae variante. Cloud providers (AWS, GCP, Azure) mitigate transparently pero con costo.\n\n**Aprendizaje**: side channels son categoría de vulnerabilities distinct de bugs de código. Requiere thinking arquitectural, no solo code review.",
+      "realWorld": "Jann Horn (Google Project Zero) descubrió Meltdown/Spectre independently. AWS midió impact en detalle: bit.ly/aws-meltdown-perf. Netflix HW-migration a Graviton (ARM) parcialmente por diferente perfil de mitigations. Constant-time crypto libraries (RingCT) siempre fueron paranoicas por side channels.",
+      "tags": ["Spectre", "Meltdown", "speculative execution", "side channel"],
+      "tech": ["CPU", "Linux kernel", "security"],
+      "references": [{ "title": "Kocher et al. — 'Spectre Attacks' paper" }, { "title": "AWS — 'Impact of Spectre/Meltdown mitigations'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "fundamentals",
+      "topic": "AOT vs JIT — cuándo migrar",
+      "difficulty": "staff",
+      "scenario": "Un CTO evalúa migrar servicios Java Spring de HotSpot a GraalVM Native Image. Argumentos: 'ahorramos cost de RAM en K8s, cold starts instantáneos'. El equipo de perf dice: 'perderemos throughput en steady state'. ¿Cuáles servicios migrar?",
+      "question": "¿Qué criterios de decisión son válidos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Migrate: servicios con perfil 'burst' (Lambda functions, batch jobs cortos, CLIs) donde startup domina. Native image: 100ms vs JVM: 5s.", "correct": true, "why": "Correcto. Serverless/short-lived cases son EL sweet spot de Native Image. Sin cold start penalty. AWS Lambda + Java native image es 10x más viable que Java tradicional. Batch jobs que corren por segundos también benefician." },
+        { "letter": "B", "text": "Migrate: servicios de baja carga (10-100 req/s) donde peak throughput no importa. Ganancia de RAM justifica trade-off.", "correct": true, "why": "Correcto. En servicios low-QPS, la diferencia de peak perf JVM vs Native es imperceptible. Pero Native usa 5-10x menos RAM — permite densidad mayor en K8s. Muchos microservicios están en este rango." },
+        { "letter": "C", "text": "NO migrate: servicios high-throughput sostenido (>1000 req/s por instancia) donde JIT warmup y optimizations especulativas son valiosas.", "correct": true, "why": "Correcto. HotSpot con warmup optimizada rinde mejor en peak que Native (10-30% típicamente). Para APIs de alto tráfico, JVM tradicional sigue siendo mejor opción. Además, HotSpot puede seguir optimizando en runtime; Native es lo que compiló." },
+        { "letter": "D", "text": "NO migrate sin pilot: Native requiere config extensiva (reflection, dynamic proxies, resources). Frameworks maduros (Spring Native, Quarkus) ayudan pero cada dependency debe validar compatibility. Build time también aumenta (minutos por service).", "correct": true, "why": "Correcto. Native Image tiene 'closed-world assumption': todo se resuelve en build time. Reflection dinámica, JNI, dynamic classloading requieren hints. Spring Native mejoró mucho, pero migrar app con muchas libs es non-trivial. Pilot small services first." },
+        { "letter": "E", "text": "Migrate todo — GraalVM es 100% compatible con Java.", "correct": false, "why": "Overstated. GraalVM CE JIT es 100% compatible. Native Image tiene restricciones documented — significant migration effort para apps grandes." }
+      ],
+      "explanation": "La decisión JVM vs Native Image es contextual:\n\n**Native Image sweet spots**:\n- **Serverless (Lambda, Cloud Run)**: cold start dominant. Native 100x mejor.\n- **CLIs**: startup instant, sin overhead.\n- **Microservicios baja carga**: densidad K8s, autoscaling rápido.\n- **Batch jobs cortos**: sin tiempo de warmup.\n\n**JVM sweet spots**:\n- **APIs high-throughput**: peak sostenido, JIT gana.\n- **Servicios long-running**: warmup se amortiza en horas/días.\n- **Apps con reflection intensiva**: config difícil en Native.\n- **Apps con dynamic code loading**: incompatible con Native's closed-world.\n\n**Metodología migration**:\n1. Pilot con service simple (endpoint check, small business logic).\n2. Medir startup, RSS, peak throughput vs JVM.\n3. Estimate cost savings (RAM en cloud, autoscale response).\n4. Migrar servicios similares en waves.\n5. Mantener JVM para servicios que no encajan.\n\nSpring Boot 3 + Spring Native + Buildpacks facilita mucho. Quarkus fue diseñado desde cero para GraalVM.\n\n**Ecosistema 2026**:\n- Spring Native: production ready pero requiere tuning.\n- Quarkus: 'Kubernetes native Java' — mejor experience out-of-box.\n- Micronaut: similar a Quarkus, más batteries-included.\n- Helidon: Oracle's option, similar goals.\n\nGraalVM CE gratis; Oracle GraalVM (with commercial support) paid.",
+      "realWorld": "Alibaba, Adyen, Amex publicaron cases de migración a GraalVM Native. AWS Lambda con SnapStart es un competidor: no compila native pero pre-hace CRIU snapshot del JVM warmed-up — startup dramático sin abandonar JVM. Coordinated Restore at Checkpoint (CRaC) es la vía JVM standard para lo mismo.",
+      "tags": ["GraalVM", "Native Image", "migration", "serverless"],
+      "tech": ["GraalVM", "Spring Native", "Quarkus", "Java"],
+      "references": [{ "title": "Spring Native — Docs" }, { "title": "Quarkus — 'Container First'" }]
+    }
+  ]
+}

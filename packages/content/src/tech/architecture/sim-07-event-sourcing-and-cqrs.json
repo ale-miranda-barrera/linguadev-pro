@@ -1,0 +1,414 @@
+{
+  "id": "architecture-sim-07-event-sourcing-and-cqrs",
+  "trackId": "architecture",
+  "order": 7,
+  "title": "Simulacro 07 — Event Sourcing, CQRS y la verdad de exactly-once",
+  "focus": "Event sourcing vs snapshot, CQRS y proyecciones, replay, schema evolution de eventos, idempotencia de consumers, el mito de exactly-once delivery vs exactly-once processing.",
+  "areaCoverage": ["messaging", "microservices", "scalability"],
+  "timeLimitMin": 28,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "messaging",
+      "topic": "Event Sourcing — qué es realmente",
+      "difficulty": "senior",
+      "scenario": "Un colega afirma: 'Event Sourcing es cuando publicas eventos a Kafka cuando cambia el estado'. Otro añade: 'lo hemos hecho toda la vida con CDC'.",
+      "question": "¿Cuál es la definición PRECISA de Event Sourcing y en qué se DIFERENCIA de publicar eventos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Event Sourcing = publicar eventos cuando el estado cambia. Es lo mismo que CDC.", "correct": false, "why": "Confusión frecuente. CDC captura CAMBIOS derivados de tu tabla state actual (row-level). Event Sourcing INVIERTE: los eventos SON la fuente de verdad; el state actual se DERIVA aplicándolos. La diferencia es dónde vive la verdad." },
+        { "letter": "B", "text": "Event Sourcing = los eventos son el source of truth persistente. El estado actual se calcula (fold) sobre la secuencia de eventos. No hay UPDATE — solo APPEND de eventos inmutables. Puedes reconstruir el estado a cualquier punto pasado replaying.", "correct": true, "why": "Correcto. La definición de Fowler/Vernon: 'capture all changes as a sequence of events'. Diferencias clave con state-oriented + eventos: (1) Los eventos NO son notificación, son la representación primaria. (2) Nunca haces UPDATE — solo append (event log inmutable). (3) State es una PROYECCIÓN derivable. (4) Puedes reconstruir cualquier estado histórico ('time travel'). Herramientas: EventStore, Axon, Marten (Postgres), Kafka como event log." },
+        { "letter": "C", "text": "Event Sourcing es sinónimo de CQRS.", "correct": false, "why": "Son patrones distintos y ortogonales. CQRS (Command Query Responsibility Segregation) separa modelos de write y read. Event Sourcing es sobre cómo persistes. Se COMBINAN frecuentemente (writes generan events, projections construyen read models), pero puedes hacer uno sin el otro." },
+        { "letter": "D", "text": "Es un patrón obsoleto reemplazado por microservicios event-driven.", "correct": false, "why": "Falso. Event Sourcing sigue muy vigente en dominios con auditoría estricta (banca, medicina, aviación), en sistemas colaborativos (Yjs, Automerge son event-sourced conceptualmente), y en debugging de sistemas complejos (replay para reproducir bugs)." }
+      ],
+      "explanation": "Event Sourcing (Fowler 2005, popularizado por Greg Young ~2010) invierte el modelo tradicional. Trad: state en tabla, cambios in-place, historial perdido. ES: log inmutable de eventos, state derivado. Ventajas: (1) Auditoría perfecta — cada cambio es un evento con causa. (2) Time travel — reconstruye estado a cualquier T. (3) Debugging — replay para reproducir bugs. (4) Nuevos read models sin migración — proyecta el log. (5) Integración natural con event-driven arch. Desventajas: (1) Complejidad conceptual (developers acostumbrados a CRUD). (2) Schema evolution difícil (eventos viejos siguen vivos). (3) Rebuild de projections toma tiempo con logs grandes. (4) Query directas al log son caras — casi siempre necesitas projections/read models. Frameworks: EventStoreDB, Axon Framework (Java), Marten (Postgres), Eventuous (.NET), Kafka + custom projections.",
+      "realWorld": "GitHub audit log es event-sourced. Banking cores (Temenos T24, Finxact) son event-sourced por regulación. Uber trip lifecycle es event-sourced. Kleppmann promueve fuertemente 'turning the database inside out' (Strange Loop 2015) — argumentando que el log inmutable es más natural que state-oriented. Kafka fue diseñado inicialmente en LinkedIn como el 'commit log for the enterprise' con esta filosofía.",
+      "tags": ["event sourcing", "CQRS", "event log", "immutability"],
+      "tech": ["EventStoreDB", "Kafka", "Axon", "Marten"],
+      "references": [{ "title": "Martin Fowler — 'Event Sourcing' (2005)" }, { "title": "Greg Young — 'CQRS Documents' (2010)" }, { "title": "Kleppmann — 'Turning the database inside out', Strange Loop 2015" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "messaging",
+      "topic": "CQRS — trampas del write model y read model",
+      "difficulty": "senior",
+      "scenario": "Aplicas CQRS: writes van a un modelo (Postgres normalizado, event-sourced). Reads consultan un read model separado (Elasticsearch + Redis + tabla desnormalizada). Un usuario se queja: hace un cambio, refresca, y ve datos viejos por 3 segundos.",
+      "question": "¿Cuál es el problema, y cómo se maneja profesionalmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bug: cambiar a modelo compartido para eliminar el lag.", "correct": false, "why": "Perder CQRS elimina TODOS sus beneficios (escala independiente, queries optimizadas, models especializados). El lag es CONSECUENCIA INTRÍNSECA de CQRS, no un bug." },
+        { "letter": "B", "text": "El lag es intrínseco a CQRS (projections son eventual). Manejo profesional: (1) UI optimista — muestra el resultado inmediatamente del comando ejecutado, no del read model; (2) polling con backoff hasta que la proyección alcance la versión del write; (3) devolver un 'projection version' al cliente para que sepa cuándo el read model está al día; (4) SSE/WebSocket push al cliente cuando la projection procese su command.", "correct": true, "why": "Correcto. CQRS separa por diseño, pagando en 'eventual consistency' entre lados. Las técnicas para 'ocultar' el lag son bien conocidas: optimistic UI (React usa esto masivamente), version tokens, push. Ninguna elimina el lag — lo esconden. Aceptar el trade-off es parte del patrón." },
+        { "letter": "C", "text": "Escribir en ambos modelos síncronamente dentro del comando (dual-write).", "correct": false, "why": "Anti-patrón severo (dual-write problem): sin transacción distribuida, uno puede fallar mientras el otro succeed. Introduce corrupción. La solución correcta es outbox pattern + processor async." },
+        { "letter": "D", "text": "Aumentar la frecuencia del sync entre write y read model a cada 100ms.", "correct": false, "why": "Mitigación de superficie que no resuelve la asincronía inherente. Además puede sobrecargar el read model store. La solución es UX-level (mostrar lo esperado), no batir el disco más rápido." }
+      ],
+      "explanation": "CQRS separates command side (validation, business logic, writes) from query side (denormalized read models optimized for specific views). Beneficios: (1) Cada lado escala independiente. (2) Read model puede tener múltiples formas (Elasticsearch para search, Redis para cache, materialized view para dashboards). (3) Optimización específica sin comprometer el otro. Costos: (1) Complejidad — dos código bases, syncing. (2) Eventual consistency — lag entre lados. (3) Debugging cross-model. Sincronización se hace via: (a) events del write side (event sourcing casa naturalmente); (b) CDC del write store; (c) outbox pattern (evento persistido junto al write en misma tx, publicado por processor). UX: React/Redux optimistic updates son la técnica generalizada — el frontend asume el éxito y revierte si falla. Combinado con version tokens (like ETag), el cliente puede polling hasta ver la proyección actualizada.",
+      "realWorld": "LinkedIn usa CQRS masivamente — write path a Espresso/Kafka, read paths múltiples (Voldemort, Elasticsearch, feeds). Netflix tiene event-sourced write + múltiples projections (Cassandra para user data, ElasticSearch para search, S3 para analytics). Uber trip state es event-sourced con projections a distintos stores según use case. La 'complexity tax' se paga cuando la escala lo justifica.",
+      "tags": ["CQRS", "read model", "projections", "eventual consistency"],
+      "tech": ["Kafka", "Elasticsearch", "PostgreSQL"],
+      "references": [{ "title": "Greg Young — 'CQRS Documents'" }, { "title": "Chris Richardson — 'Microservices Patterns', Ch. 7" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "messaging",
+      "topic": "Exactly-once delivery — el mito",
+      "difficulty": "staff",
+      "scenario": "En una reunión, product manager pide: 'quiero garantía de que cada mensaje se procesa EXACTAMENTE una vez, ni más ni menos'. Un colega dice: 'Kafka lo hace desde 2017'.",
+      "question": "¿Cuál es la afirmación TÉCNICAMENTE CORRECTA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Exactly-once DELIVERY es matemáticamente imposible en sistemas distribuidos con fallos (Two Generals Problem). Lo que existe es (a) at-least-once delivery + idempotencia en el consumer = exactly-once PROCESSING efectivo; (b) Kafka desde 0.11 ofrece 'exactly-once semantics' (EOS) DENTRO de Kafka (producer→broker→consumer→producer) usando transacciones + idempotent producer — pero no se extiende a side effects externos (llamar a Stripe, enviar email).", "correct": true, "why": "Correcto. Distinción crítica: 'exactly-once delivery' de red es imposible (Two Generals). Lo que Kafka ofrece (EOS 2017) es 'exactly-once processing' DENTRO del ecosistema Kafka: read-from-topic → process → write-to-topic atómicamente, con producer idempotente y transactions. Si tu procesamiento produce SIDE EFFECTS externos (email, HTTP call), Kafka no puede garantizar exactly-once de ese side effect. La única solución: idempotencia end-to-end." },
+        { "letter": "B", "text": "Kafka desde 2017 garantiza exactly-once delivery global.", "correct": false, "why": "Simplificación peligrosa. Confluent mismo aclara: 'Kafka Streams offers exactly-once processing GUARANTEE for Kafka-to-Kafka workflows'. Cuando tu consumer llama a un servicio externo, esa parte NO es transaccional con Kafka." },
+        { "letter": "C", "text": "Con acks=all y enable.idempotence=true se logra exactly-once.", "correct": false, "why": "Parcial: eso garantiza idempotent producer (no duplicados en el broker) y durabilidad. Pero exactly-once end-to-end requiere ADEMÁS transactions API (transactional producer/consumer) para atomicidad read-process-write, y sigue sin cubrir side effects externos." },
+        { "letter": "D", "text": "SQS FIFO garantiza exactly-once delivery en AWS.", "correct": false, "why": "SQS FIFO ofrece 'exactly-once processing' con deduplication window de 5 minutos + FIFO ordering. Si un consumer procesa y falla antes de delete → mensaje reaparece tras visibility timeout → duplicado. La deduplication es solo en PRODUCER-side (message deduplication id) dentro de 5 min. No es exactly-once absoluto." }
+      ],
+      "explanation": "El teorema de los Dos Generales (Akkoyunlu et al. 1975) prueba que ningún protocolo puede garantizar consenso en canal no confiable — corolario: exactly-once delivery es imposible. Solo hay 3 opciones prácticas: (1) At-most-once (fire and forget, puede perder). (2) At-least-once (retry hasta ack, puede duplicar). (3) At-least-once + idempotencia = exactly-once EFFECTIVE. Kafka EOS combina: (a) idempotent producer (producer_id + sequence number) previene dup en el broker; (b) transactions API atomiza read-process-write cross-topic; (c) consumer con read_committed isolation ignora aborted tx. Todo esto dentro de Kafka. Side effects externos deben ser idempotentes por diseño (Idempotency-Key en Stripe, upsert por ID en DB, dedup table). Exactly-once verdadero end-to-end requiere idempotencia hasta el último side effect.",
+      "realWorld": "Confluent publicó extensivamente sobre EOS ('Exactly Once Semantics is Possible', Neha Narkhede 2017) siempre con la aclaración 'within Kafka'. Uber trip processing usa Kafka + idempotent consumers con dedup en Cassandra. Stripe procesa webhooks garantizando exactly-once vía idempotency keys. El chiste común entre distributed engineers: 'exactly-once messaging: (1) not possible, (2) not necessary, (3) you probably want it anyway'.",
+      "tags": ["exactly-once", "delivery guarantees", "idempotency", "Kafka EOS"],
+      "tech": ["Kafka", "SQS", "RabbitMQ"],
+      "references": [{ "title": "Confluent — 'Exactly-Once Semantics Are Possible: Here's How Kafka Does It'" }, { "title": "Akkoyunlu et al. — 'Some Constraints and Trade-offs in the Design of Network Communications' (Two Generals), 1975" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "messaging",
+      "topic": "Outbox pattern",
+      "difficulty": "senior",
+      "scenario": "Necesitas que cuando se crea una orden en Postgres, se publique un evento a Kafka. Si simplemente haces INSERT + kafka.produce(), pueden fallar independientes: Postgres commita pero Kafka falla → evento perdido; o Kafka publica pero Postgres rollback → evento fantasma.",
+      "question": "¿Cuál es el patrón correcto y cómo funciona?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Outbox pattern: dentro de la MISMA transacción, INSERT en la tabla de negocio Y en una tabla 'outbox' con el evento a publicar. Un processor separado (o CDC como Debezium) lee la outbox y publica a Kafka, marcando como enviado. Atomicidad garantizada por la tx local.", "correct": true, "why": "Correcto. Outbox pattern (Chris Richardson) resuelve el 'dual write problem'. Como el INSERT en la tabla de dominio y el INSERT en 'outbox' son en la MISMA tx ACID de Postgres, o commitean juntos o roll back juntos. El processor asíncrono garantiza at-least-once delivery a Kafka (con idempotency en el consumer para efectividad exactly-once). Debezium leyendo el WAL de Postgres es la implementación production más común (log-based CDC del outbox)." },
+        { "letter": "B", "text": "Publicar a Kafka DENTRO de la transacción de Postgres (2PC).", "correct": false, "why": "Requeriría XA transactions entre Kafka y Postgres — Kafka no soporta XA. Y 2PC tiene problemas conocidos (bloqueante, coordinator SPOF)." },
+        { "letter": "C", "text": "Retry indefinido del kafka.produce() hasta que succeed.", "correct": false, "why": "No resuelve: si el proceso muere después del commit de Postgres y antes del produce, el evento se pierde para siempre — no hay estado persistente que sepa que 'quedaba pendiente publicar'. Outbox tabla ES ese estado persistente." },
+        { "letter": "D", "text": "Escribir primero a Kafka, luego a Postgres — si Postgres falla, ignorar.", "correct": false, "why": "Anti-patrón: publicas eventos que no corresponden a estado real (si Postgres rollback, otros servicios reaccionan a eventos fantasmas creando datos inconsistentes en cascada)." }
+      ],
+      "explanation": "Dual write problem: dos sistemas independientes (DB + broker) no pueden ser actualizados atómicamente sin coordinación (2PC, casi imposible en práctica). Outbox pattern lo resuelve reduciendo el problema a UNA sola tx local. Variantes: (1) Polling publisher — un job lee outbox WHERE published=false, publica, marca. Simple pero lag y load en la tabla. (2) Transaction log tailing (CDC) — Debezium lee el WAL de Postgres, publica cada cambio a Kafka. Zero polling load, near-real-time. Es el approach preferido en 2026. Consideraciones: (a) Ordering — outbox debe preservar orden dentro de agregado. (b) Cleanup — purgar outbox eventualmente (job separado o particionamiento por fecha). (c) Idempotency — el consumer debe manejar duplicados (unavoidable con at-least-once). Frameworks: Debezium (Kafka Connect), Change Data Capture nativo en muchas DBs, transaction log-based CDC en AWS DMS.",
+      "realWorld": "Uber lo usa masivamente con Schemaless + Kafka. LinkedIn creó Databus (predecesor de Kafka) precisamente para este problema. Shopify publica sobre outbox pattern con Rails + Kafka. Segment usa outbox para reliable event delivery a warehouses. Debezium (Red Hat) es la implementación open-source de referencia con adopción masiva.",
+      "tags": ["outbox pattern", "dual write", "CDC", "reliability"],
+      "tech": ["Debezium", "Kafka", "PostgreSQL", "Kafka Connect"],
+      "references": [{ "title": "Chris Richardson — 'Pattern: Transactional outbox'" }, { "title": "Gunnar Morling — 'Reliable Microservices Data Exchange With the Outbox Pattern' (Debezium blog)" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "messaging",
+      "topic": "Event schema evolution",
+      "difficulty": "staff",
+      "scenario": "Tu sistema tiene 6 meses de eventos 'OrderPlaced' en Kafka con schema v1 (fields: order_id, user_id, total). Necesitas añadir 'discount_code' opcional. Otro equipo sugiere: 'simplemente añade el campo y ya'.",
+      "question": "¿Qué reglas de compatibilidad debes seguir y qué herramienta ayuda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Backward compatibility: consumers nuevos deben poder leer eventos viejos. Añadir campo OPCIONAL con default (Avro/Protobuf) es backward-compatible. Nunca renombrar/remover campos existentes ni cambiar tipos. Schema Registry (Confluent, Apicurio) enforcement en producers.", "correct": true, "why": "Correcto. Reglas de compatibility en Avro/Protobuf: (a) Añadir campo opcional con default = backward-compatible (readers viejos ignoran, nuevos usan default en eventos viejos). (b) Remover campo con default = forward-compatible. (c) Renombrar = BREAKING (usar alias en Avro). (d) Cambiar tipo = BREAKING (excepto widening estrictamente compatible). Schema Registry rechaza publicaciones que rompen compatibility configurable (BACKWARD, FORWARD, FULL, NONE)." },
+        { "letter": "B", "text": "Cambiar el tipo del evento a OrderPlacedV2 y deprecar V1.", "correct": false, "why": "Aceptable pero costoso: consumers deben soportar AMBOS tipos durante largo tiempo. Muchos eventos en Kafka tienen retención larga o infinita (compacted topics, event sourcing). Migrar consumers es coordinación entre equipos. Usar campos opcionales con default evita el cambio de tipo." },
+        { "letter": "C", "text": "Ejecutar migration script que rewrites todos los eventos viejos con el nuevo schema.", "correct": false, "why": "Anti-patrón en event sourcing: los eventos son INMUTABLES. Rewrites destruyen la historia auditable. Además con Kafka append-only, no puedes 'editar' eventos in-place — solo compactar o producer nuevo topic." },
+        { "letter": "D", "text": "Ignorar el schema, usar JSON free-form.", "correct": false, "why": "Frágil: sin schema formal, cualquier producer puede publicar campos con typo o tipos inconsistentes. Consumers fallan en runtime. Serialización binaria (Avro, Protobuf) con Schema Registry ES la práctica industry. JSON puede usarse con JSON Schema pero es menos denso." }
+      ],
+      "explanation": "Schema evolution es una de las áreas más subestimadas de sistemas event-driven. Reglas: (1) BACKWARD (default en Confluent): new schema puede LEER data escrita con old schema. Consumers upgrade primero, luego producers. (2) FORWARD: old schema puede leer data escrita con new schema. Producers upgrade primero. (3) FULL: ambas. (4) NONE: no checks. Herramientas: Confluent Schema Registry, Apicurio (Red Hat), AWS Glue Schema Registry. Serialización: Avro (schema con data compact, muy popular en Hadoop ecosystem), Protobuf (Google, fields por número, ideal para gRPC), JSON Schema (más verbose pero human-readable). Event sourcing añade complicaciones: eventos VIEJOS siguen vivos por años. Upcasters (Axon) traducen eventos viejos a versiones actuales al leer. Nunca reescribir. Documentar cada campo — muerto cambia semántica silenciosa es plaga.",
+      "realWorld": "LinkedIn creó Avro y Schema Registry precisamente por escala de eventos evolucionando (miles de topics, decenas de miles de producers). Confluent (fundada por creadores de Kafka) monetiza el Schema Registry. Uber uses schema evolution extensively con Heatpipe (custom). Airbnb publica cómo Jitney usa Avro con estricto backward compatibility enforcement.",
+      "tags": ["schema evolution", "backward compatibility", "Avro", "Protobuf"],
+      "tech": ["Avro", "Protobuf", "Confluent Schema Registry", "Apicurio"],
+      "references": [{ "title": "Confluent Docs — 'Schema Evolution and Compatibility'" }, { "title": "Martin Kleppmann — DDIA, Cap. 4 Encoding and Evolution" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "messaging",
+      "topic": "Idempotent consumers",
+      "difficulty": "senior",
+      "scenario": "Tu consumer recibe eventos 'ChargeUser' de Kafka. Por la naturaleza at-least-once, ocasionalmente ves duplicados (rebalance, crash, retry). Sin cuidado, cargas dos veces al usuario.",
+      "question": "¿Cuáles son mecanismos VÁLIDOS de dedup? (marca todos)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Dedup table: guardar (event_id → processed_at) en la MISMA tx que el side effect. Chequear existencia antes de procesar.", "correct": true, "why": "Correcto. Es el patrón canónico. La atomicidad del INSERT en dedup table + INSERT del charge en la misma tx garantiza que reprocesamiento del mismo event_id detecta 'ya procesado' → skip. Requiere que event tenga UUID estable del PRODUCER (no del broker). Cleanup periódico (TTL o batch delete) de dedup entries antiguas." },
+        { "letter": "B", "text": "Natural idempotency: modelar la operación como upsert por natural key (ej. UPDATE balance SET amount=X WHERE user_id=Y AND version=Z), donde repetir la operación produce mismo resultado.", "correct": true, "why": "Correcto. El más elegante cuando aplicable. Ejemplos: (a) SET amount=X (versus DELTA), reejecutable N veces mismo resultado. (b) INSERT ON CONFLICT DO NOTHING con unique key. (c) State machine transitions con version — 'transition from state X to Y' es idempotent (segundo attempt ve estado Y ya, no-op). Elimina la necesidad de dedup table." },
+        { "letter": "C", "text": "Idempotency key en side effects externos: al llamar a Stripe/API externa, pasar el event_id como Idempotency-Key. El sistema externo dedupa.", "correct": true, "why": "Correcto. Empuja la responsabilidad al sistema externo que ya sabe deduplicar. Stripe, PayPal, GitHub, casi todos los APIs serios aceptan Idempotency-Key. Combinado con dedup table local, tienes garantía end-to-end." },
+        { "letter": "D", "text": "Confiar en el offset de Kafka: si es menor o igual al último procesado, skip.", "correct": false, "why": "Frágil: offsets NO son stable identifiers de business events. Rebalance, partition reassignment, o replay desde earlier offset pueden mostrar 'offsets viejos' con eventos nuevos. Además distintas particiones tienen offsets independientes. El identifier de negocio (event_id UUID) es lo correcto." },
+        { "letter": "E", "text": "Filtrar duplicados en memoria con un HashSet.", "correct": false, "why": "Frágil: el HashSet se pierde al reiniciar el consumer, y no funciona si múltiples instancias procesan la misma partición (rebalance overlap). Dedup requiere estado persistente compartido (dedup table)." }
+      ],
+      "explanation": "Idempotencia en consumers es el mecanismo canónico para lograr 'effectively exactly-once' sobre at-least-once delivery. Patrones: (1) Dedup table — explícita, siempre funciona, requiere cleanup. (2) Natural idempotency — modelar la operación para que repetición sea no-op. Más elegante pero requiere pensar el schema desde inicio. (3) External Idempotency-Key — cuando el side effect es una API que ya soporta dedup. (4) Ledger append + snapshot — event sourcing modela cada evento como append-only; procesarlo dos veces genera dos eventos duplicados en el log, pero la proyección (con dedup) muestra el resultado correcto. Consideraciones críticas: (a) el identifier de dedup debe ser stable del PRODUCER (UUID generado en producer, no offset del broker). (b) dedup + side effect deben estar en MISMA tx atómica (sino race). (c) TTL del dedup — retención debe cubrir max time entre delivery attempts (típico: 24h-7d). Sin dedup, at-least-once = errores silenciosos escalando.",
+      "realWorld": "Stripe expone Idempotency-Key en toda su API precisamente por este problema. Uber trip commands usan event_id como natural dedup key en Cassandra. Kafka Streams tiene 'processing.guarantee=exactly_once_v2' que combina EOS de Kafka con state store transactions — sigue sin cubrir side effects externos. Segment publica 'Deduplicating Events at Scale' sobre su approach.",
+      "tags": ["idempotent consumer", "deduplication", "at-least-once"],
+      "tech": ["Kafka", "Postgres", "DynamoDB", "Stripe"],
+      "references": [{ "title": "Chris Richardson — 'Pattern: Idempotent Consumer'" }, { "title": "Segment Engineering — 'Deduplicating events at scale'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "messaging",
+      "topic": "Kafka partitioning strategy",
+      "difficulty": "senior",
+      "scenario": "Diseñas un topic 'OrderEvents'. Necesitas: (a) alto throughput, (b) ordering DE EVENTOS DE LA MISMA ORDEN (creado→pagado→enviado→entregado), (c) escalar consumers.",
+      "question": "¿Cómo eliges la partition key y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "partition_key = order_id (hash). Kafka garantiza orden DENTRO de una partición. Todos los eventos de la misma orden van a la misma partición → orden preservado. Distintas orders se distribuyen en particiones → paralelismo.", "correct": true, "why": "Correcto. Kafka NO tiene orden global entre particiones — solo dentro de una partición. La clave debe ser la ENTIDAD sobre la que quieres orden. order_id como partition key garantiza que todos los eventos de esa orden aterricen en la misma partición y consumer, preservando orden. Otras orders reparten load. Es el pattern canónico." },
+        { "letter": "B", "text": "partition_key = timestamp para preservar orden temporal global.", "correct": false, "why": "Doble error: (1) hash de timestamp distribuye eventos del mismo tiempo a distintas particiones aleatoriamente. (2) Aunque preservara orden temporal, todos los eventos recientes irían a la misma partition (hotspot). El orden GLOBAL no es lo que necesitas — es orden POR ORDER." },
+        { "letter": "C", "text": "Sin partition key (round-robin) para distribución perfecta.", "correct": false, "why": "Distribuye load pero PIERDE ordering totalmente. Evento 'paid' podría procesarse antes que 'created' — bugs de negocio. Round-robin OK solo cuando no hay dependencias temporales entre eventos." },
+        { "letter": "D", "text": "partition_key = user_id para agrupar todos los eventos del usuario.", "correct": false, "why": "Válido si tu procesamiento es por USER (todos los eventos del user secuenciales). Pero si necesitas orden por ORDER y un user tiene muchas orders concurrentes, procesar todas secuencialmente es lento. Elige la granularidad más FINA que preserve tus invariantes de orden — típicamente order_id." }
+      ],
+      "explanation": "Kafka ordering: solo garantizado DENTRO de una partición. Global ordering requeriría 1 partición → no paralelismo. La partition key define grupos de ordering. Reglas: (1) Elige la key = entidad sobre la que necesitas orden. (2) Cuidado con hotspots — si una key tiene 90% del tráfico, esa partición es cuello. (3) Number of partitions define paralelismo max de consumers en un consumer group (1 partition = 1 consumer). Sobra particiones vs necesidad, subestima → tienes que reparticionar (dolor). (4) Cambiar partition key después es MIGRACIÓN dolorosa. Alternativas para ordering global: (a) topic con 1 partition (pierde paralelismo), (b) reorder en el consumer usando sequence numbers + buffer (complejo), (c) usar sistema con orden global (Kinesis con shards, o Pulsar con partitioning distinto). Consumer groups: cada partition asignada a UN consumer del group; rebalance ocurre al añadir/quitar consumers. Sticky partition assignment (Kafka 2.4+) minimiza rebalance impact.",
+      "realWorld": "Uber trip events particionados por trip_id — garantiza orden del ciclo de vida del trip. LinkedIn timeline particionado por user_id — feed del user en orden. Netflix events sourcing particiona por movie_id o user_id según el flujo. Slack messages particionados por channel_id — orden dentro del canal. Errar la partition key es refactor multi-semana en producción.",
+      "tags": ["Kafka partitioning", "ordering", "consumer groups"],
+      "tech": ["Kafka", "Kinesis", "Pulsar"],
+      "references": [{ "title": "Confluent — 'Choosing the Number of Partitions for a Kafka Topic'" }, { "title": "Neha Narkhede et al. — 'Kafka: The Definitive Guide'" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "messaging",
+      "topic": "Snapshots en Event Sourcing",
+      "difficulty": "staff",
+      "scenario": "Tu aggregate 'Account' tiene 3 años de eventos: 500.000 events por cuenta. Para reconstruir el estado actual, replay tarda 12 segundos. Cargar la cuenta es una operación caliente.",
+      "question": "¿Cuál es la estrategia correcta para acelerar sin perder los beneficios de event sourcing?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Snapshots: cada N eventos (ej. 1000) o cada X tiempo, persistir el estado calculado en un store separado. Al cargar el aggregate, tomar el último snapshot + replay solo los eventos POSTERIORES al snapshot. Reduce replay de 500k eventos a ~1000.", "correct": true, "why": "Correcto. Snapshots (Greg Young, Vaughn Vernon) son la solución canónica al problema de long replay. El log de eventos sigue siendo source of truth (auditable, time-travel intacto), los snapshots son OPTIMIZACIÓN cacheada. Frecuencia de snapshot balancea storage vs latencia de carga. EventStoreDB tiene snapshot support nativo; Axon usa 'SnapshotTrigger'." },
+        { "letter": "B", "text": "Eliminar eventos viejos y solo conservar el último año.", "correct": false, "why": "Rompe garantías fundamentales: perderías auditoría completa, capacidad de time travel, base para nuevos read models retroactivos. Los eventos son el source of truth INMUTABLE." },
+        { "letter": "C", "text": "Cambiar a state-oriented storage (UPDATE en su lugar).", "correct": false, "why": "Elimina event sourcing entero. Si eliges ES, el long replay es un problema conocido a resolver con snapshots, no abandonando el patrón." },
+        { "letter": "D", "text": "Cachear el aggregate reconstruido en Redis con TTL largo.", "correct": false, "why": "Cache es válido complementario pero no resuelve el problema estructural — cuando el cache falla o expira, sigues teniendo 12s de replay. Snapshot persiste el estado en el propio store, es más fundamental que un cache." }
+      ],
+      "explanation": "Snapshots en event sourcing: (1) Frecuencia — típicamente cada N eventos (100, 1000, 10000 según aggregate) o cada X tiempo. Trade-off storage vs load time. (2) Formato — serializar el aggregate state completo (JSON, Protobuf, ...). Versiona schemas del snapshot igual que eventos. (3) Storage — tabla/documento separado, indexed por aggregate_id + version. (4) Carga — SELECT último snapshot WHERE aggregate_id = X, luego SELECT eventos WHERE version > snapshot.version. (5) Migración de schema del aggregate — snapshots quedan obsoletos si cambias el shape → invalidar y reconstruir. Casos donde snapshots complican: aggregates temporales (proyecciones por período, cerrar y archivar), aggregates cuyo estado nunca es completamente calculado (cursor-based reads). Alternativas: (a) split aggregate — dividir en aggregates más pequeños. (b) event compaction — procesar N eventos en un evento agregado ('year_summary'), útil para long-lived entities.",
+      "realWorld": "EventStoreDB soporta snapshots via 'projections' que persisten state. Axon Framework tiene SnapshotTriggerDefinition (cada X events auto-snapshot). Marten (Postgres event store) usa snapshots opcionales. En banca, cuentas con 20+ años de transactions usan snapshots agresivos (mensuales o diarios) para performance de carga. Sin snapshots, event sourcing colapsa en aggregates long-lived — es fallo de diseño no considerarlo desde inicio.",
+      "tags": ["snapshots", "event sourcing", "aggregate loading"],
+      "tech": ["EventStoreDB", "Axon", "Marten"],
+      "references": [{ "title": "Vaughn Vernon — 'Implementing Domain-Driven Design', Ch. 8" }, { "title": "EventStoreDB Docs — 'Snapshots'" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "messaging",
+      "topic": "Projection rebuilds",
+      "difficulty": "senior",
+      "scenario": "Tu equipo quiere añadir un nuevo read model (dashboard de churn analysis) que requiere procesar los eventos histéricos de los últimos 3 años en Kafka. Log tiene 500M eventos.",
+      "question": "¿Cuál es el approach correcto para rebuild de una projection nueva?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Blue-green rebuild: correr un nuevo consumer group con offset=earliest para construir el read model completo desde inicio; una vez alcance el tail del log, switch el traffic al nuevo store. El viejo puede eliminarse. Kafka permite N consumer groups independientes leyendo el mismo topic.", "correct": true, "why": "Correcto. Beneficio de log-based event system: el log ES la fuente. Cualquier nuevo read model puede reconstruirse desde el inicio del log (retention permitiendo). Blue-green permite construcción sin downtime — el viejo sirve traffic mientras el nuevo se construye. Al alcanzar el tail (sub-segundo lag), atomic switch. Netflix llama a esto 'materialize new views on demand'." },
+        { "letter": "B", "text": "Restaurar backup de la vieja DB y añadir el campo faltante.", "correct": false, "why": "No aplica: el read model NUEVO no existía. Además backups no tienen la información derivada que necesitas. La ventaja de event sourcing/CQRS es exactly evitar este tipo de migración." },
+        { "letter": "C", "text": "Ejecutar el nuevo consumer sobre eventos futuros solamente.", "correct": false, "why": "El dashboard necesita 3 años de historia — solo eventos futuros no da value. Este approach solo aplica a projections donde el pasado no importa (métricas real-time). Para analytics históricos, DEBES replay desde earliest." },
+        { "letter": "D", "text": "Contactar al Kafka team para 'exportar' los eventos históricos.", "correct": false, "why": "Sobrecomplica. Cualquier consumer group puede leer desde offset=earliest sin ceremonia. Consumo del log es una API estándar. Podrías tirar cientos de replays paralelos si quisieras (con acuerdo del team para no saturar brokers)." }
+      ],
+      "explanation": "Log-based systems (Kafka, EventStoreDB) permiten 'view materialization on demand': el log es source of truth, cualquier read model se puede REBUILD from scratch replaying. Consideraciones: (1) Retention — el log debe retener suficiente historia. Kafka compacted topics retienen 'último valor por key' indefinido; time-based retention se puede ampliar per topic o compactar según patrón. (2) Throughput — rebuild de 500M events puede tardar horas/días; provisiona partitions y consumer parallelism adecuados. (3) Storage — el nuevo read model puede ser grande; provisiona espacio. (4) Cutover — blue-green switch cuando el nuevo alcance lag ~0. Load balancer / app config point al nuevo. (5) Cost — dual storage temporal, mayor CPU/IO. Este patrón hace event sourcing extremadamente flexible para evolución de sistemas — 'los datos son inmutables, las vistas son ephemeral'. Kleppmann popularizó esto en 'Turning the Database Inside Out'.",
+      "realWorld": "Netflix Keystone allows any team to materialize new stream views. LinkedIn creates new derived tables from Kafka Streams routinely without downtime. Uber's Athena/Presto queries directly Kafka archives to S3 for historical analytics. Con eventos como source of truth, adding new BI/ML models es cuestión de escribir un nuevo consumer — no requiere data migration.",
+      "tags": ["projection rebuild", "blue-green", "log replay"],
+      "tech": ["Kafka", "EventStoreDB", "Kafka Streams"],
+      "references": [{ "title": "Kleppmann — 'Turning the database inside out', Strange Loop 2015" }, { "title": "Jay Kreps — 'The Log: What every software engineer should know'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "messaging",
+      "topic": "Dead letter queues",
+      "difficulty": "mid",
+      "scenario": "Consumer procesa eventos de Kafka. Un evento malformado (bug del producer) hace que el consumer crashee al parsearlo. El consumer reintenta indefinidamente en la misma partición — todo el pipeline se bloquea.",
+      "question": "¿Cuál es el patrón correcto para manejar 'poison messages'?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dead Letter Queue (DLQ): tras N retries fallidos, mover el evento problemático a una queue separada para inspección manual, y seguir procesando el resto. Alertar al equipo. El evento NO se pierde, solo se aparta.", "correct": true, "why": "Correcto. DLQ es el patrón canónico para poison messages. Sin DLQ, un solo evento malo bloquea la partición entera indefinidamente (head-of-line blocking). Con DLQ, tras N retries (config típica: 3-5 con backoff), el evento va a un topic separado 'orders-events-dlq' para triage. Debe haber alerta (métrica DLQ size, alert on any non-zero). Herramientas: SQS RedrivePolicy nativa; Kafka con Spring/Kafka Streams DLQ processor; RabbitMQ dead-letter exchange." },
+        { "letter": "B", "text": "Skip el evento (commit offset sin procesar) y continuar.", "correct": false, "why": "Pierde datos silenciosamente. El evento problemático puede ser CRÍTICO (una compra malformada = revenue perdido) y necesita ser triage. Skip sin alertar es debt técnico invisible que explota más tarde." },
+        { "letter": "C", "text": "Reintentar indefinidamente hasta que funcione.", "correct": false, "why": "Exactamente el problema que planteas. Si el evento tiene bug estructural, jamás procesará. Bloqueo permanente." },
+        { "letter": "D", "text": "Crash del consumer, deja que se reinicie con offset earlier.", "correct": false, "why": "Peor: crash-restart loop procesando el mismo evento poison. Además pierde progreso de eventos anteriores procesados en la sesión (si commit no era pointual)." }
+      ],
+      "explanation": "Dead Letter Queue pattern: separar mensajes no procesables para triage sin bloquear el flujo principal. Componentes: (1) Retry policy — N attempts con backoff exponencial. (2) DLQ topic/queue — mismo formato que topic original + metadata (error message, attempts, timestamp). (3) Alerting — monitor DLQ size, cualquier valor > 0 alerta. (4) Triage tools — CLI/UI para inspeccionar, reprocesar (después de fix), o descartar (con auditoría). AWS SQS tiene DLQ nativo con RedrivePolicy (maxReceiveCount). Kafka requiere implementación (Spring Kafka DeadLetterPublishingRecoverer, custom con TryCatch, Kafka Streams branch to error topic). RabbitMQ tiene x-dead-letter-exchange nativo. Consideraciones: (1) Cascada — el consumer del DLQ también puede tener poison; regla: DLQ humano-only inicialmente. (2) Retention DLQ — mantener por 30d o hasta triage. (3) Idempotencia — reprocesar desde DLQ tras fix requiere idempotent consumer.",
+      "realWorld": "Uber trip events DLQ está alertado 24/7 — cualquier evento no procesable es debugged inmediatamente. Segment publica 'How we route billions of events per day' con DLQ detallado. Kafka Streams tiene un patrón 'deserialization exception handler' con opciones LOG_AND_CONTINUE / LOG_AND_FAIL / SEND_TO_DLQ. Sin DLQ, cualquier bug de producer puede tumbar el sistema.",
+      "tags": ["DLQ", "poison message", "error handling"],
+      "tech": ["Kafka", "SQS", "RabbitMQ", "Kafka Streams"],
+      "references": [{ "title": "AWS SQS Docs — 'Amazon SQS dead-letter queues'" }, { "title": "Spring Kafka — 'DeadLetterPublishingRecoverer'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "messaging",
+      "topic": "Event vs Command",
+      "difficulty": "mid",
+      "scenario": "Un colega diseña un topic 'SendEmail' donde publica requests para enviar emails. Otro colega dice: 'eso es un command, no un event — usa un patrón diferente'.",
+      "question": "¿Cuál es la DIFERENCIA conceptual entre event y command y cómo aplica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Event = 'algo pasó' (hecho pasado, inmutable, N consumers pueden reaccionar). Command = 'hazme esto' (intención, dirigida a UN handler específico). Usar 'SendEmail' como topic de commands por Kafka funciona técnicamente pero mezcla semánticas: si dos consumers escuchan el topic, envían el email 2 veces.", "correct": true, "why": "Correcto. Event Storming distingue explícitamente Events (past tense, facts) de Commands (imperative, intents). Events: 'OrderPlaced', 'UserRegistered', 'PaymentProcessed'. Commands: 'PlaceOrder', 'SendEmail', 'ProcessPayment'. Consecuencia arquitectural: (1) Events publicados a topic con N consumers (pub/sub, fan-out); (2) Commands enviados a UN handler (queue, RPC). Mezclar la semántica lleva a bugs (duplicación, semantics confusion). Naming importa: 'EmailRequested' es event, 'SendEmail' es command." },
+        { "letter": "B", "text": "Son lo mismo, terminología equivalente.", "correct": false, "why": "Confusión que causa arquitecturas mal diseñadas. La distinción tiene consecuencias reales de diseño (fan-out vs point-to-point, mutability, naming, error handling)." },
+        { "letter": "C", "text": "Events son síncronos, commands asíncronos.", "correct": false, "why": "Invertido en muchos frameworks (commands en CQRS son a menudo síncronos con acknowledgment, events son async publish). La distinción es SEMÁNTICA (fact vs intent), no de mechanism (sync/async)." },
+        { "letter": "D", "text": "Events son públicos, commands privados.", "correct": false, "why": "Simplificación. Ambos pueden ser internos o externos. La distinción es sobre semántica: fact vs intent. Command handlers pueden PRODUCIR events como resultado." }
+      ],
+      "explanation": "Vaughn Vernon (DDD) y Alberto Brandolini (Event Storming) formalizaron la distinción. Command flow: Cliente → Command 'PlaceOrder' → CommandHandler valida y decide → produce Event 'OrderPlaced' → publicado → N consumers reaccionan (send confirmation, decrement inventory, etc). Reglas: (1) Command name = imperative (VerbNoun): PlaceOrder, SendEmail. Event = past tense: OrderPlaced, EmailSent. (2) Command tiene UN handler (validación + decisión). Puede fallar (rechazo). (3) Event es fact acepted, N consumers pueden reaccionar sin bloquear al productor. No 'falla' — ya pasó. (4) Command a menudo requiere ack síncrono (o correlationId para async). Event es fire-and-forget. Frameworks: Axon, Eventuous, MediatR (.NET) implementan CommandHandler y EventHandler distintos. NServiceBus enforcement de la distinción. Sin esta claridad, sistemas event-driven se degradan en 'todo es un mensaje' con bugs de ownership.",
+      "realWorld": "Uber usa Cadence/Temporal con distinción clara: Commands invocan Activities (side effects), Events señalan cambios de state para Workflows. Netflix Conductor similar. En sistemas mal diseñados, muchas empresas terminan con topics 'DoTheThing' que son commands disfrazados de events, causando duplicación (varios listeners) o coupling implícito.",
+      "tags": ["event", "command", "DDD", "event storming"],
+      "tech": ["Axon", "MediatR", "Kafka"],
+      "references": [{ "title": "Vaughn Vernon — 'Implementing Domain-Driven Design'" }, { "title": "Alberto Brandolini — 'Event Storming'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "messaging",
+      "topic": "Consumer offset management",
+      "difficulty": "senior",
+      "scenario": "Consumer procesa evento → hace side effect (charge tarjeta) → commit offset a Kafka. Un día, el commit falla por network. Consumer se reinicia y re-procesa el mismo evento → doble charge.",
+      "question": "¿Cuál es el problema y las estrategias correctas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Problema: offset commit y side effect NO son atómicos. Soluciones: (1) commit offset ANTES del side effect (at-most-once, puede perder); (2) side effect antes de commit + idempotencia del side effect (at-least-once, práctica más común); (3) usar Kafka transactions con exactly-once semantics DENTRO de Kafka; (4) almacenar el offset en la MISMA DB del side effect en la misma tx (custom offset store).", "correct": true, "why": "Correcto. Distinguir garantías es esencial. La combinación práctica dominante: at-least-once delivery + consumer idempotente = 'effectively exactly-once'. Almacenar offset en la misma DB del side effect (custom offset commit + tx) da atomicity real pero complica ops. Kafka EOS solo funciona Kafka→Kafka (no side effects externos)." },
+        { "letter": "B", "text": "Kafka garantiza exactly-once por default; el bug es de configuración.", "correct": false, "why": "Kafka default NO es exactly-once. Consumer default es at-least-once (auto-commit periódico, race conditions posibles). Exactly-once requiere configuración específica (Streams con processing.guarantee=exactly_once_v2) y no cubre side effects externos." },
+        { "letter": "C", "text": "Deshabilitar auto-commit y hacer commit sincrónico tras cada mensaje.", "correct": false, "why": "Reduce (no elimina) la ventana de duplicación. Sigue habiendo momento entre 'side effect done' y 'commit acknowledged' donde crash causa duplicado. Además penaliza throughput (commit sync por mensaje = round-trip a Kafka)." },
+        { "letter": "D", "text": "Reintentar el commit indefinidamente hasta que succeed.", "correct": false, "why": "Puede colgar el consumer si Kafka está caído. Y aunque succeed eventualmente, si otro consumer del group ya asumió la partición durante el failure, ya procesó y committed — race resulta en duplicación." }
+      ],
+      "explanation": "Consumer offset management es uno de los detalles más subestimados de Kafka. Modos: (1) auto.commit (default) — offset committed periódicamente en background, se pueden perder mensajes procesados o duplicar bajo crash. (2) Manual commit sincrono tras procesar — reduce ventana pero no elimina. (3) Store offset in destination DB — atomicity real vía tx local (side effect + offset en misma DB), pero requires custom rebalance listener para leer el offset custom en asignación. (4) Kafka transactions — read-process-write atomic dentro de Kafka. Consideraciones: (a) rebalance — durante partition reassignment, otro consumer puede empezar antes del último commit visible → duplicación. (b) EOF (end-of-stream) semántica no existe en Kafka streaming continuo. (c) Consumer que crash antes de commit vuelve a leer desde last committed → replay. La solución universal: idempotent processing. Sin ella, ninguna configuration de offset garantiza correctness end-to-end.",
+      "realWorld": "Confluent recomienda para exactly-once cross-system: outbox pattern (write to DB + outbox in tx, consumer publishes to Kafka). LinkedIn uses custom offset store en DB para pipelines críticos. Uber similar approach. Netflix Keystone processes 100Ms of events/day con at-least-once + idempotent consumers universalmente.",
+      "tags": ["Kafka offsets", "at-least-once", "commit strategy"],
+      "tech": ["Kafka", "Kafka Streams"],
+      "references": [{ "title": "Confluent Docs — 'Kafka Consumer Configuration'" }, { "title": "Neha Narkhede — 'Kafka: The Definitive Guide', Ch. 4" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "messaging",
+      "topic": "Choreography vs Orchestration",
+      "difficulty": "staff",
+      "scenario": "Sistema de reservas de viajes: 5 servicios (Auth, Flight, Hotel, Car, Payment) deben coordinarse para una reserva. Debate: ¿event choreography (cada uno reacciona a events del otro) o orchestration (un director central maneja el flow)?",
+      "question": "¿Cuáles son los trade-offs y cuándo elegir cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Choreography: bajo acoplamiento (cada servicio conoce solo sus eventos), fácil añadir consumers. Downside: flow implícito (nadie 'sabe' el estado global), debugging difícil (trazas dispersas), compensaciones caóticas. Orchestration: flow explícito, estado central visible, debugging manejable. Downside: SPOF (orchestrator), acoplamiento al orchestrator, latencia adicional (round-trips). Regla: choreography para flows simples con 2-3 pasos; orchestration para flows complejos con compensaciones, saga larga, estado visible.", "correct": true, "why": "Correcto y matizado. Choreography (event-driven pub/sub) parece elegante — cada servicio reacciona autónomamente — pero a escala se convierte en 'distributed monolith' invisible: cambiar el flow requiere entender N servicios y sus subscriptions implícitas. Orchestration (Saga orquestada, Workflow) hace explícito el flow y facilita debugging/observability. Netflix migró de choreography a Conductor. Uber usa Cadence/Temporal. AWS Step Functions es explícitamente orchestration para reducir la caotización." },
+        { "letter": "B", "text": "Choreography siempre — es el patrón microservicios moderno.", "correct": false, "why": "Simplificación. La industria ha aprendido que choreography scale mal en flows >3-4 pasos. Ver post-mortems Netflix, Uber. La 'moda' de choreography llevó a arquitecturas ilegibles; la corrección es orchestration para flows complejos." },
+        { "letter": "C", "text": "Orchestration siempre — reduce complejidad.", "correct": false, "why": "Otro extremo. Para flows simples (1 command → 1 result), overhead de orchestrator es sobrecarga innecesaria. Choreography con pub/sub simple es más apropiado." },
+        { "letter": "D", "text": "Ambos son equivalentes técnicamente; solo cuestión de estilo.", "correct": false, "why": "Falso. Tienen consecuencias operacionales concretas: observability, debugging, compensaciones, cambio evolutivo. La elección tiene impacto multi-año." }
+      ],
+      "explanation": "Choreography: pub/sub events. FlightBooked → HotelService responds, HotelBooked → CarService responds, etc. Cada servicio publica events y suscribe a los que le interesan. Ventajas: max decoupling, fácil añadir consumers. Desventajas: (a) Flow implícito — cambiar orden requiere modificar suscripciones. (b) Cyclic dependencies posibles (A → B → A silencioso). (c) Compensación distribuida es caótica (¿quién revierte qué?). (d) Debugging: trazas dispersas por N servicios. Orchestration: workflow engine (Temporal, Cadence, Step Functions, Camunda) mantiene state global. El orchestrator invoca cada paso, maneja fallos, ejecuta compensations. Ventajas: (a) Flow explícito, versionable, testeable. (b) Estado visible (dashboard mostrando estado del workflow). (c) Compensations declarativas. (d) Timeouts, retries, escalation declarativos. Desventajas: (a) Orchestrator es infra crítica. (b) Latencia extra (roundtrip a orchestrator por paso). (c) Acoplamiento al orchestrator. Sam Newman recomienda 'orchestration para procesos con estado y decisiones, choreography para eventos de notificación'.",
+      "realWorld": "Netflix pivotó de choreography a Conductor (open-source workflow engine) tras encontrarse con caos operacional en flows complejos. Uber usa Cadence (ahora Temporal) para 100+ workflow types críticos. AWS Step Functions permite orchestration serverless. Amazon retail combina — checkout es orchestrated (Saga), notifications son choreographed (fan-out simple). La distinción NO es religiosa; es de use case.",
+      "tags": ["saga", "orchestration", "choreography", "workflow"],
+      "tech": ["Temporal", "Cadence", "AWS Step Functions", "Camunda"],
+      "references": [{ "title": "Chris Richardson — 'Microservices Patterns', Ch. 4" }, { "title": "Netflix Tech Blog — 'Netflix Conductor'" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "messaging",
+      "topic": "Event enrichment vs event lookup",
+      "difficulty": "senior",
+      "scenario": "Evento 'OrderPlaced' publicado solo con {order_id, user_id, item_ids}. Consumer necesita user email y item names para enviar confirmation email. Debate: (a) publisher enriquece evento con toda la info; (b) consumer hace lookup a APIs para completar.",
+      "question": "¿Cuáles son los trade-offs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Enrichment (fat events): consumers auto-sufficientes, no dependencies runtime, replay funciona. Pero eventos grandes, snapshot de datos en el evento (puede ser stale al procesarlo).", "correct": false, "why": "Correcto la descripción pero no es respuesta completa — sin comparación con la alternativa. El trade-off es de elección context-dependent." },
+        { "letter": "B", "text": "Depende: fat events (event carried state transfer) — dependencies zero, replay coherente, más storage. Thin events + lookup — data siempre fresh, evento pequeño, pero introduce dependencies runtime (si User Service cae, consumer bloquea o falla) y replay ambiguo (datos actuales vs históricos). Regla: para audit / historical replay, fat events. Para real-time con datos que cambian rápido, thin + lookup con circuit breaker.", "correct": true, "why": "Correcto y matizado. Es una elección deliberada con consecuencias. Fat events (Event-Carried State Transfer de Fowler) hacen consumers autónomos pero duplican datos y pueden estar stale al procesarlos. Thin events son ligeros pero acoplan consumers a APIs runtime. Cada uno tiene su lugar según use case. Muchos sistemas mezclan: eventos con SNAPSHOT de datos críticos (email, nombre) y IDs para lookup de datos volátiles." },
+        { "letter": "C", "text": "Thin events siempre — evita duplicación de data.", "correct": false, "why": "Ignora costs: cada consumer depende de N APIs runtime, cascadas de fallos, latencia agregada, replay problemático (query hoy datos que corresponden a ayer). Duplicación en eventos es aceptable trade-off por reliability." },
+        { "letter": "D", "text": "Fat events siempre — máximo desacoplamiento.", "correct": false, "why": "Ignora que datos cambian: al procesar el evento 2h después, el email del user puede haber cambiado. Enrichment fija un snapshot que puede estar stale al usarlo. Y aumenta storage de events." }
+      ],
+      "explanation": "Fowler categoriza 4 estilos de events: (1) Event Notification — mínimo (solo IDs, consumers hacen lookup). Máx desacoplamiento data, máx coupling API. (2) Event-Carried State Transfer — evento con toda info necesaria. Consumers autónomos, replay funciona, pero datos snapshot pueden ser stale. (3) Event Sourcing — eventos son source of truth. (4) CQRS — separar reads y writes. Cada estilo tiene su lugar. Consideraciones para enrichment: (a) ¿Los datos cambian frecuentemente? Si sí, snapshot puede quedar stale al procesar. (b) ¿Replay necesita datos históricos exactos? Fat events preservan. (c) ¿Payload size acceptable? >1MB events son problemáticos en Kafka. (d) ¿PII? Datos sensibles en eventos duplican surface de compliance. Compromise común: incluir subset crítico (email, nombre) para uso inmediato + IDs para lookup si necesitas datos frescos. Con schema evolution, añadir campos es backward-compatible → puedes empezar thin y engordar.",
+      "realWorld": "Confluent recomienda fat events para desacoplamiento en 'The Event-Driven Enterprise'. Uber trip events son fat (llevan snapshot de driver, rider, route) — evita cascada de dependencies. LinkedIn events tienden a thin (Kafka + Voldemort/Espresso lookup). Netflix mixed. Decisión debe ser deliberada por topic, no default arbitrario.",
+      "tags": ["event enrichment", "fat events", "thin events"],
+      "tech": ["Kafka", "Avro"],
+      "references": [{ "title": "Martin Fowler — 'What do you mean by Event-Driven?'" }, { "title": "Ben Stopford — 'Designing Event-Driven Systems'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "messaging",
+      "topic": "Compacted topics en Kafka",
+      "difficulty": "staff",
+      "scenario": "Necesitas un topic 'UserProfile' donde consumers puedan reconstruir el estado actual de cada user leyendo desde earliest. El log tiene años de updates.",
+      "question": "¿Qué feature de Kafka permite esto sin storage infinito?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Log compaction: Kafka retiene AL MENOS el último valor por key. Elimina 'valores intermedios' de la misma key durante compaction background. Al leer desde earliest, obtienes 'snapshot' del estado actual (último valor de cada key). Requiere key en cada mensaje. Ideal para 'stream of changes' que consumers usan como estado.", "correct": true, "why": "Correcto. Compacted topics son fundamentales para el patrón 'log as a database'. Configuración: cleanup.policy=compact. Kafka background thread comprime el log manteniendo último valor por key. Tombstone (value=null) marca deletion. Consumer que lee desde earliest obtiene el estado ACTUAL (no historial completo). Uso: Kafka Streams KTable, cambios de configuración, user profiles, feature flags. LinkedIn creó esto explícitamente para 'materialized views' persistentes." },
+        { "letter": "B", "text": "Time-based retention de 7 días.", "correct": false, "why": "Elimina eventos por TIEMPO indiscriminadamente. Pierdes historial de users con updates >7d ago. No apto para 'reconstruir estado actual' si el user no fue actualizado en la ventana." },
+        { "letter": "C", "text": "Size-based retention limitando el log a 100GB.", "correct": false, "why": "Similar problema: elimina mensajes viejos indiscriminadamente por tamaño. Users no actualizados recientemente pierden su valor." },
+        { "letter": "D", "text": "Aumentar retention infinita para no perder nada.", "correct": false, "why": "Storage crece sin límite. Además consumer procesando desde earliest replay TODO el historial de updates, no solo el estado actual — lento y desperdicio." }
+      ],
+      "explanation": "Log compaction: Kafka mantiene garantía de 'último valor por key' independiente del tiempo. Reglas: (1) Requiere key en cada mensaje. (2) Compaction background elimina 'old records' (no el último por key). (3) Consumers desde earliest obtienen snapshot compact del estado. (4) Tombstone (value=null) señala deletion — retenido por delete.retention.ms (default 24h) antes de eliminarse. (5) min.compaction.lag.ms para evitar compactar mensajes muy recientes. (6) segment.ms controla frecuencia de compaction. Aplicaciones: (a) KTable en Kafka Streams — table materializada del log. (b) Configuration store — última config por env. (c) User profiles / settings — último estado por user. (d) Change log stores para stateful processors. Trade-off: (a) Perdés historial detallado (para audit, usar separate topic non-compacted o retention alta). (b) Compaction gasta IO. Confluent recomienda compacted topics para 'state as a stream'.",
+      "realWorld": "LinkedIn usa compacted topics masivamente para materialized views (Espresso subscribers, Samza state). Kafka Connect uses compacted topics para state (offsets, configs, status). Kafka Streams KTable-backed stores. Confluent Schema Registry uses compacted topic para almacenar schemas. Sin compaction, 'log as database' pattern es storage infinito.",
+      "tags": ["log compaction", "compacted topics", "KTable"],
+      "tech": ["Kafka", "Kafka Streams"],
+      "references": [{ "title": "Confluent Docs — 'Log Compaction'" }, { "title": "Jay Kreps — 'The Log: What every software engineer should know'" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "messaging",
+      "topic": "Backpressure",
+      "difficulty": "senior",
+      "scenario": "Producer publica 100k eventos/s a Kafka. Consumer solo puede procesar 10k/s (llama a API externa lenta). Lag crece indefinidamente hasta que la retención descarta eventos o el disco de brokers se llena.",
+      "question": "¿Cuáles son estrategias VÁLIDAS para manejar el mismatch?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Escalar consumers horizontalmente (más particiones + más consumer instances) hasta que match producer rate.", "correct": true, "why": "Correcto. Kafka's design permite scale horizontal linear: N particiones + N consumers en el mismo group. Requiere particionar bien (no hotspot key). Limitación: máx consumers en un group = número de particiones (más consumers quedan idle). Rethink partitioning if bottleneck." },
+        { "letter": "B", "text": "Rate limiting en el producer (dropear o rechazar excess).", "correct": true, "why": "Correcto. Si downstream no aguanta y no puedes escalar (ej. API externa con quota fija), aplicar backpressure hacia arriba es válido: producer rechaza requests o dropea con alerting. Peor UX pero previene collapse total." },
+        { "letter": "C", "text": "Batching en el consumer (procesar 100 eventos en 1 batch call a la API externa).", "correct": true, "why": "Correcto. Amortizar el costo por-request en batches puede subir throughput 10-100x. Requiere que la API externa soporte batch (Stripe /charges/batch, S3 multipart, etc.). Trade-off: latencia por evento aumenta (esperar batch fill o timeout)." },
+        { "letter": "D", "text": "Priority tiering: eventos críticos van a topic 'high-priority', el resto a 'low-priority'. High-priority tiene consumers dedicados con más recursos. Low-priority puede tener lag mayor.", "correct": true, "why": "Correcto. Not all events created equal. Payment events > analytics events. Separar por topic con priorización de compute permite mantener SLA en eventos críticos aunque bajos-priority sufran lag." },
+        { "letter": "E", "text": "Aumentar la retención del topic para 'no perder' aunque el consumer no procese.", "correct": false, "why": "No resuelve el problema estructural — solo pospone la explosión del disco. Además el lag creciente = eventos con age mayor y mayor = datos stale al procesarse. Retention no arregla throughput mismatch." }
+      ],
+      "explanation": "Backpressure es problema fundamental en stream processing: cuando velocidad de producer > velocidad de consumer, sistema colapsa. Kafka NO tiene backpressure NATIVO al producer (a diferencia de RSocket, Reactive Streams con demand signals). Estrategias: (1) Scale consumer parallelism (más particiones y consumers). (2) Batch processing consumer-side. (3) Drop / rate limit producer si es negociable. (4) Priority tiering con SLAs diferenciados. (5) Buffer overflow strategy — Kafka Streams tiene punctuator + timeout drop. (6) Auto-scaling consumer (Kubernetes HPA basado en lag metric via Kafka Exporter + Prometheus). En pull-based systems (Kafka) el consumer controls its pace — el broker acumula. En push-based (RabbitMQ classic), la queue puede overflow y broker debe applied backpressure to producer. La regla: monitorear consumer lag como SLI crítico; alertar en growing lag; capacity planning para pico esperado.",
+      "realWorld": "Uber lag alerts en Kafka son primera línea de detección de incidents. LinkedIn Cruise Control auto-balancea partitions para evitar hotspots. Netflix Keystone gestiona lag con auto-scaling. Kafka Streams tiene métricas lag por task. Sin gestión activa de lag, un pipeline 'trabajando' silenciosamente acumula debt hasta explosión.",
+      "tags": ["backpressure", "consumer lag", "scaling"],
+      "tech": ["Kafka", "Kafka Streams", "Kubernetes"],
+      "references": [{ "title": "Confluent — 'Monitor Kafka Consumer Lag'" }, { "title": "Reactive Manifesto — 'Backpressure'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "messaging",
+      "topic": "Event ordering across aggregates",
+      "difficulty": "staff",
+      "scenario": "Sistema event-sourced: aggregate Order emite OrderShipped; aggregate Notification depende de recibir OrderShipped para enviar 'tu paquete salió'. Pero Notification aggregate está en otro servicio, consumiendo del topic. A veces, Notification procesa OrderShipped ANTES de que Order haya committed en su own store (por replay reorder o parallel processing).",
+      "question": "¿Cómo se garantiza ordering CROSS-AGGREGATE?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Garantía absoluta cross-aggregate NO EXISTE en sistemas distribuidos escalables. Compromisos prácticos: (1) same partition key (order_id) → intra-order order preservado, cross-order no; (2) causal metadata (event carries prev_event_id) permite consumer buffering hasta que dependencies llegan; (3) idempotent + eventual — consumer tolera out-of-order, sistema converge; (4) global sequencer con 1 partition (mata paralelismo).", "correct": true, "why": "Correcto. Kafka ordering es POR PARTICIÓN. Cross-partition (o cross-topic) ordering requiere: (a) mismo partition key (mismo aggregate) — funciona intra-agg pero no cross-agg. (b) causal ordering explícito en el evento (vector clock, prev_event_id) — consumer buffers y reorders. (c) global partition único — mata scale. La realidad: la mayoría de sistemas EVENTUAL + idempotent, tolerando out-of-order breve. Diseño de aggregate boundary es clave: si dos entidades siempre necesitan orden mutual, deberían ser un aggregate." },
+        { "letter": "B", "text": "Configurar Kafka con partitions=1 para garantizar orden global.", "correct": false, "why": "Válido para orden global pero MATA paralelismo — 1 consumer max, throughput limitado a 1 hilo. Solo viable para topics muy bajos de throughput. Para sistemas reales necesitas ordering local + tolerar cross." },
+        { "letter": "C", "text": "Kafka garantiza orden global — el bug está en otro lado.", "correct": false, "why": "Falso. Kafka explícitamente NO garantiza global ordering across partitions. Es un principle fundamental de su arquitectura." },
+        { "letter": "D", "text": "Usar Zookeeper para coordinar el orden entre aggregates.", "correct": false, "why": "Zookeeper es para coordination (leader election, config), no para ordering de messages a escala. Introducirlo en el hot path mata performance." }
+      ],
+      "explanation": "Ordering en sistemas distribuidos es CARO. Kafka trade-off: orden dentro de partición + paralelismo entre particiones. Cross-partition orden requiere coordination global (mata scale). Soluciones pragmáticas: (1) Aggregate boundary bien pensado — si dos entidades siempre necesitan orden, unificarlas. (2) Idempotent consumers que toleren out-of-order — procesan cada evento con contexto de qué ya vieron. (3) Buffering con causal metadata — consumer retiene eventos hasta que sus deps llegan (bounded para evitar OOM). (4) Retry con delay — si dep no llega, reintenta más tarde (consumer parking, delayed queues). (5) Saga con checkpoints — procesos de negocio que consolidan estado periódicamente. Anti-patrón: single-partition topics 'por seguridad' — sacrifican scale sin necesidad si diseño es cuidadoso. Vector clocks o Hybrid Logical Clocks en events permiten al consumer reconstruir happens-before y detectar concurrencia.",
+      "realWorld": "Uber trip lifecycle usa partition por trip_id + tolerancia a ligeras inversiones en cross-service events. Netflix uses idempotent processors universally to survive out-of-order retries. Confluent recomienda 'design aggregates to encapsulate ordering requirements' — cross-agg ordering es code smell. Zoom Chat maneja out-of-order messages con timestamps del sender + reorder client-side.",
+      "tags": ["ordering", "cross-aggregate", "causal"],
+      "tech": ["Kafka", "vector clocks"],
+      "references": [{ "title": "Confluent — 'Streams and Tables in Apache Kafka'" }, { "title": "Kleppmann — DDIA, Cap. 11 Stream Processing" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "messaging",
+      "topic": "Change Data Capture (CDC)",
+      "difficulty": "senior",
+      "scenario": "Team X publica user updates en Postgres. Team Y necesita reaccionar a cambios (invalidar cache, publish to search index, notify downstream). Options: (a) Team X publica events explícitos; (b) CDC del binlog/WAL de Postgres a Kafka.",
+      "question": "¿Cuáles son los trade-offs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Team X publica events (application-level): control semántico (Team X decide qué events, con business meaning), pero riesgo dual-write (necesita outbox pattern). CDC (Debezium): captura AUTO cada change; cero código en Team X (transparente); riesgo de exponer detalles de schema interno (todo cambio de tabla = evento, incluso migrations); events son 'row-level' sin business semantics.", "correct": true, "why": "Correcto y matizado. Application-level events (con outbox) son 'business events' con significado (OrderPlaced, UserPromoted) — meaningful pero requieren discipline y outbox pattern para reliability. CDC (Debezium reading WAL) es 'zero-touch' — Team X sigue haciendo UPDATE normal, CDC captura y publica. Ventajas: transparente, no requiere código nuevo. Desventajas: (a) expone schema interno de Team X (tables, columns) — cambio de column rompe consumers; (b) captura CADA row change incluyendo migrations, ETL updates — noise; (c) sin business semantic (raw INSERT/UPDATE, no 'UserSubscribed'). Uso: CDC excelente para replicación y sincronización data; events explícitos para business events." },
+        { "letter": "B", "text": "CDC es siempre superior porque no requiere código.", "correct": false, "why": "Ignora el coupling implícito: los consumers dependen del schema físico de la DB de Team X. Un cambio de schema (rename column, split table) rompe todos los downstreams silenciosamente. Además pierde business semantic." },
+        { "letter": "C", "text": "Application events siempre — CDC es hacking.", "correct": false, "why": "Falso. CDC (Debezium, Materialize, Fivetran) es una tecnología muy legítima ampliamente usada en producción. Para casos de sincronización data (analytics warehouse, search index update, replica), es la herramienta correcta." },
+        { "letter": "D", "text": "Son incompatibles; hay que elegir uno.", "correct": false, "why": "Falso, se combinan. Muchos sistemas: application events para business changes explícitos + CDC para sync automatic de tables a analytics/search. Cada uno resuelve un problema distinto." }
+      ],
+      "explanation": "CDC (Change Data Capture) captura row-level changes desde el transaction log (Postgres WAL, MySQL binlog, MongoDB oplog, DynamoDB Streams) y los publica a un stream (Kafka, Kinesis). Herramientas: Debezium (open-source, Kafka Connect based), Materialize, Fivetran (managed), AWS DMS. Ventajas: (1) zero-touch en source application; (2) captures ALL changes garantizado (no perdidos por dual-write bugs); (3) near-real-time (lag <1s típicamente); (4) puede backfill full table + streaming changes. Desventajas: (1) coupling to schema — schema change = consumer break; (2) row-level, no business meaning; (3) publica también internal operations (ETL updates, admin fixes) — noise. Application events (con outbox): meaningful, versionable business events, pero requieren discipline. Compromise común: (a) CDC para sync/replication needs (analytics, search index); (b) application events con outbox para business events consumidos por other services. Kleppmann llama a esto 'unbundling the database': el log del DB DEVENIR el stream, permitiendo cualquier consumer.",
+      "realWorld": "LinkedIn Databus (2007) fue pionero en CDC-to-stream. Airbnb Spinaltap similar. Netflix DBLog. Facebook Wormhole. Stripe uses CDC extensively for data warehouse sync. Debezium (Red Hat) es open-source standard; Confluent Cloud, AWS MSK, Aiven ofrecen Debezium managed. Muchas empresas combinan: application events para business, CDC para sync — no elegir uno.",
+      "tags": ["CDC", "Debezium", "change data capture"],
+      "tech": ["Debezium", "Kafka Connect", "Postgres WAL"],
+      "references": [{ "title": "Kleppmann — 'Turning the database inside out'" }, { "title": "Debezium Docs — 'Debezium Architecture'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "messaging",
+      "topic": "Event granularity",
+      "difficulty": "mid",
+      "scenario": "Discusión de diseño: al actualizar el profile del user (name, email, address, phone en UI), ¿publicar UserProfileUpdated con todos los cambios o eventos separados UserNameChanged, UserEmailChanged, etc?",
+      "question": "¿Qué approach es más apropiado y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fine-grained events (UserNameChanged, UserEmailChanged): cada consumer reacciona solo a lo que le importa (verify email consumer solo escucha UserEmailChanged, no procesa cada name change). Más selectivo, menos coupling. Trade-off: más tipos de eventos, más overhead conceptual.", "correct": true, "why": "Correcto en la mayoría de casos DDD. Domain events deben ser BUSINESS-MEANINGFUL, no reflejo del formulario UI. Split por concepto real de negocio: EmailChanged (importante — trigger verification), AddressChanged (trigger shipping recomputation), NameChanged (typo fix, low value). Consumers filtran por tipo — más eficiente y menos coupling. Vaughn Vernon recomienda 'events grande enough to be meaningful, small enough to be single-purpose'." },
+        { "letter": "B", "text": "Coarse-grained (UserProfileUpdated con delta): un solo evento, consumers deciden qué campo les importa.", "correct": false, "why": "Válido en algunos casos (CRUD-style low-domain apps) pero problemático: cada consumer parsea el payload para saber si le importa. Falso positivos (procesan payloads que no les afectan). Difícil monitorear qué realmente cambia. Mejor split por dominio." },
+        { "letter": "C", "text": "Un evento por CADA campo (UserFieldFirstName, UserFieldLastName) — máx granularity.", "correct": false, "why": "Over-engineered. Multiplicación de tipos de eventos sin business value. First name y last name en concept son 'the name' — cambiar juntos. Coalescer conceptos de negocio que naturalmente se agrupan." },
+        { "letter": "D", "text": "Publicar la row completa desde CDC — CDC decide granularity.", "correct": false, "why": "CDC publica UPDATE de row completa (con cambios), no puede split por semántica. Pierde meaning de negocio. CDC es válido para sync/replication, no como diseño de business events." }
+      ],
+      "explanation": "Event granularity es una de las decisiones de diseño más impactantes y subestimadas. Fine-grained (por concepto de negocio) mejora: (1) filtering consumer-side eficiente (Kafka Streams filter, RabbitMQ routing keys); (2) meaning claro en el catalog de eventos; (3) evolution independiente. Coarse-grained (todo-en-uno) reduce: (1) tipo count; (2) simpler para consumers que quieren 'todo'. Reglas: (a) Split por dominio/concepto, NO por UI form. (b) Eventos deben preservar business intent (WHY changed, no solo WHAT changed). (c) Considerar el consumer más selectivo — ¿le sirve el evento fino? (d) Naming: pasado + concepto (UserEmailVerified, OrderCancelled). (e) Evitar 'God events' (UserSomethingChanged con delta genérico). Event Storming (Brandolini) es la técnica canónica para descubrir eventos naturales de negocio. Reviewing con domain experts, no solo programmers.",
+      "realWorld": "Uber trip events son fine-grained: TripRequested, DriverAssigned, DriverArrived, TripStarted, TripCompleted, TripCancelled — cada uno business-meaningful, consumers específicos por interés. Amazon retail order events similares. Anti-ejemplo común: startups CRUD publican 'TableXUpdated' generic — pierden todo el poder del event-driven. Migrar granularity retroactivamente es doloroso — hazlo bien inicialmente.",
+      "tags": ["event granularity", "domain events", "DDD"],
+      "tech": ["Kafka", "EventStoreDB"],
+      "references": [{ "title": "Vaughn Vernon — 'Implementing Domain-Driven Design', Ch. 8" }, { "title": "Alberto Brandolini — 'Event Storming'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "messaging",
+      "topic": "Async vs Sync — cuándo async no aplica",
+      "difficulty": "junior",
+      "scenario": "Un ingeniero jr propone: 'todo debería ser async con eventos, es más escalable y desacoplado'. Pide feedback.",
+      "question": "¿Cuándo async event-driven NO es la elección correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cuando el cliente necesita respuesta inmediata con resultado (query, validation, checkout confirmation), la interacción es naturalmente request-response síncrona.", "correct": true, "why": "Correcto. Async event-driven no es panacea. Casos donde SYNC (REST, gRPC) es correcto: (1) User queries — 'get my orders' devuelve data sync. (2) Validations — check availability, validate coupon. (3) Simple CRUD APIs con acknowledgment. (4) Cadena de operaciones donde necesitas resultado antes de continuar. Async brilla en: (a) fan-out (1→N reactions independientes), (b) long-running processes, (c) decoupling de teams/services con temporal decoupling. Elegir por use case, no por 'moda'." },
+        { "letter": "B", "text": "Siempre async es mejor.", "correct": false, "why": "Simplificación errónea. Async introduce complejidad (eventual consistency, correlation IDs, debugging distribuido, dead letter handling). Aplicarlo a queries síncronas convierte llamadas simples en workflow complexos innecesarios." },
+        { "letter": "C", "text": "Nunca — sync REST es lo correcto siempre.", "correct": false, "why": "Otro extremo erróneo. Async es esencial para: fan-out, decoupling, long-running processes, resilience patterns. Sistemas modernos combinan sync + async según use case." },
+        { "letter": "D", "text": "Depende del framework — GraphQL requiere sync, gRPC async.", "correct": false, "why": "Confusión. Ambos frameworks soportan tanto sync como async. La elección es de PATRÓN, no de tool." }
+      ],
+      "explanation": "Sync vs Async es decisión POR OPERACIÓN, no arquitectural global. Regla: (1) Query GET → sync (REST/GraphQL/gRPC). (2) Command con respuesta inmediata requerida (validate, calculate) → sync. (3) Command con work de background OK (send email, generate report, update indices) → async event. (4) Fan-out (notificar N consumers) → async event. (5) Cross-service saga con múltiples pasos → async event + orchestrator. Costos de async: correlation IDs (rastrear intent através del flujo), eventual consistency (UX debe manejarlo), monitoring distribuido (traces cross-service). Costos de sync: coupling temporal (si downstream cae, tú también), latency = suma de la chain, blocking threads/connections. Sistema saludable usa AMBOS deliberadamente: BFF sync API para queries user-facing + async events para side effects. Anti-patrón: 'async por moda' complica sistemas simples; 'sync everything' bloquea escala; 'todo microservicios' cuando no necesitas.",
+      "realWorld": "Amazon usa mix massivo: cart y product lookup son sync; order fulfillment (email, shipping, inventory) es async event-driven. Stripe API es sync para charges (usuario espera confirmation) pero async para webhooks a merchants. Netflix uses sync gRPC for user-facing calls + async events for internal event mesh. Elegir por use case es la marca de senior; blanket rules son marca de jr.",
+      "tags": ["sync vs async", "event-driven", "patterns"],
+      "tech": ["REST", "gRPC", "Kafka"],
+      "references": [{ "title": "Sam Newman — 'Building Microservices', 2nd Ed." }, { "title": "Martin Fowler — 'What do you mean by Event-Driven?'" }]
+    }
+  ]
+}

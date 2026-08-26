@@ -1,0 +1,472 @@
+{
+  "id": "ai-programming-sim-14-latency-streaming-model-routing",
+  "trackId": "ai-programming",
+  "order": 14,
+  "title": "Simulacro 14 — Latencia y routing: streaming, model routing barato→caro, fallbacks",
+  "focus": "Ingeniería de latencia y disponibilidad para apps LLM: TTFT, streaming SSE (incluyendo Lambda), model routing barato→caro, fallbacks entre providers, timeouts, retries idempotentes, circuit breakers, degradación gradual.",
+  "areaCoverage": ["cost-inference", "ai-infra-aws"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "cost-inference",
+      "topic": "TTFT vs total latency",
+      "difficulty": "junior",
+      "scenario": "El PM se queja: 'la app tarda 8 segundos en responder, es lentísima'. El equipo backend responde: 'el modelo termina en 8s pero el primer token sale en 300ms'.",
+      "question": "¿Qué es TTFT y por qué importa más que la latencia total en UX de chat?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TTFT (Time To First Token) es la latencia hasta que llega el primer token. En chat streaming el usuario percibe respuesta 'instantánea' si TTFT <500ms, aunque la respuesta total tarde varios segundos. Diseñar para TTFT bajo (streaming, prompt caching, modelo tier fast) mejora UX percibida sin cambiar la latencia real.", "correct": true, "why": "Correcto. TTFT es la métrica clave en chat/UI streaming porque activa el 'aha, ya está pensando'. Total latency importa para APIs internas o batch, pero en UX conversacional TTFT y throughput (tokens/segundo) dominan la percepción. Prompt caching baja TTFT significativamente (menos tokens que procesar antes de generar)." },
+        { "letter": "B", "text": "TTFT y total latency son lo mismo.", "correct": false, "why": "Falso. TTFT es solo hasta el primer token; total = TTFT + (tokens_output / tokens_por_segundo)." },
+        { "letter": "C", "text": "TTFT importa solo en batch jobs.", "correct": false, "why": "Al revés. En batch importa throughput y costo, no TTFT." },
+        { "letter": "D", "text": "TTFT se mide en el cliente después de renderizar toda la respuesta.", "correct": false, "why": "Falso. TTFT se mide desde el envío del request hasta que llega el primer chunk/token del stream." }
+      ],
+      "explanation": "Métricas de latencia LLM: (1) TTFT (Time To First Token) — activación del stream; (2) TPOT (Time Per Output Token) o inter-token latency — velocidad de generación; (3) Total latency — TTFT + output_tokens * TPOT; (4) End-to-end (con red y cliente). Providers como Anthropic, OpenAI, Groq publican TTFT y TPOT en sus docs. Artificial Analysis publica benchmarks. Regla UX: <500ms TTFT parece instantáneo, <1s aceptable, >2s malo. Groq/Cerebras tienen TTFT ultra-bajo con hardware especializado.",
+      "realWorld": "Perplexity y ChatGPT diseñaron UX específicamente alrededor de TTFT. Groq marketea TTFT <300ms como diferencial. Vercel AI SDK reporta TTFT en useChat hook.",
+      "tags": ["TTFT", "latency", "streaming", "UX perception"],
+      "tech": ["Vercel AI SDK", "Groq", "streaming"],
+      "references": [
+        { "title": "Artificial Analysis — Latency benchmarks" },
+        { "title": "Anthropic — Latency and performance" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "cost-inference",
+      "topic": "Server-Sent Events (SSE)",
+      "difficulty": "mid",
+      "scenario": "Tu app implementa 'streaming' con polling: cliente pregunta cada 500ms '¿ya está la respuesta?'. UX se siente entrecortado, backend saturado. El equipo debate migrar a SSE o WebSockets.",
+      "question": "¿Por qué SSE es el estándar de la industria LLM y no WebSockets?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SSE (Server-Sent Events) es HTTP unidireccional (server → client) con text/event-stream. Encaja perfectamente con LLM streaming (solo server envía tokens), es HTTP normal (funciona detrás de proxies, load balancers, CDNs), maneja reconexión automática, y es lo que OpenAI/Anthropic/Google exponen nativamente. WebSockets son bidireccionales pero complicados en infra HTTP y no aportan valor cuando el flujo es unidireccional.", "correct": true, "why": "Correcto. OpenAI (data: {...}\\n\\n), Anthropic (event: content_block_delta), Google (streamGenerateContent) usan SSE. Ventajas: reutiliza infra HTTP (ALB, CloudFront con streaming, API Gateway con streaming responses), auto-reconnect por spec del EventSource, gzip/keepalive, más simple que WS. WS solo si necesitas bidireccional real-time (voz, colaboración, no LLM chat típico)." },
+        { "letter": "B", "text": "WebSockets son mejores porque son bidireccionales.", "correct": false, "why": "No aplicable al caso: LLM streaming es unidireccional del server al client después del prompt. Bidireccional añade complejidad sin valor." },
+        { "letter": "C", "text": "Polling cada 500ms es equivalente a SSE.", "correct": false, "why": "Falso. Polling añade latencia (hasta 500ms extra por chunk), sobrecarga backend, no permite streaming real, y desperdicia recursos." },
+        { "letter": "D", "text": "SSE no soporta HTTPS.", "correct": false, "why": "Falso. SSE es HTTP y soporta HTTPS/TLS igual que cualquier request." }
+      ],
+      "explanation": "SSE spec: text/event-stream con 'data: <json>\\n\\n' por evento; connection stays open; cliente usa EventSource o fetch con ReadableStream. Formato OpenAI: 'data: {\"choices\":[{\"delta\":{\"content\":\"hola\"}}]}\\n\\n' + 'data: [DONE]\\n\\n' al final. Formato Anthropic: 'event: content_block_delta\\ndata: {...}\\n\\n'. Frameworks: Vercel AI SDK, LangChain, Modal, FastAPI StreamingResponse. Cuidado: proxies/nginx pueden buffear — hay que desactivar buffering (X-Accel-Buffering: no).",
+      "realWorld": "OpenAI y Anthropic docs muestran ejemplos SSE explícitos. Nginx blog 'How to disable buffering for SSE' es referencia común. Vercel AI SDK trata SSE internamente con streamText.",
+      "tags": ["SSE", "server-sent events", "streaming", "HTTP"],
+      "tech": ["SSE", "EventSource", "Vercel AI SDK", "OpenAI streaming"],
+      "references": [
+        { "title": "MDN — Server-Sent Events" },
+        { "title": "Vercel AI SDK — Streaming docs" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "ai-infra-aws",
+      "topic": "Lambda response streaming",
+      "difficulty": "senior",
+      "scenario": "Tienes Lambda + API Gateway (REST). Un endpoint /chat llama a Anthropic con streaming y quiere devolver los tokens al cliente en tiempo real. El equipo dice 'imposible en Lambda, hay que EC2/Fargate'.",
+      "question": "¿Cuál es la realidad técnica del streaming en Lambda a 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Desde abril 2023, Lambda soporta response streaming vía Function URLs o ALB con la runtime helper awslambda.streamifyResponse. Max response 20MB, TTFT reducido drásticamente. API Gateway REST no soporta streaming; API Gateway HTTP tampoco. Alternativas: Lambda Function URL directa, ALB, o CloudFront + Lambda URL.", "correct": true, "why": "Correcto. AWS anunció Lambda Response Streaming en abril 2023. Requiere: (1) Node.js runtime con streamifyResponse handler; (2) invocación por Function URL o ALB, NO API Gateway; (3) el response es un ReadableStream. Para LLM streaming: perfecto match. Muchos equipos migraron su edge de LLM a Lambda + Function URL en vez de siempre-corriendo Fargate por costo." },
+        { "letter": "B", "text": "Lambda no puede hacer streaming; hay que usar EC2 o Fargate.", "correct": false, "why": "Falso desde abril 2023. Lambda soporta response streaming con streamifyResponse." },
+        { "letter": "C", "text": "API Gateway REST soporta streaming nativo desde 2024.", "correct": false, "why": "Falso al día de hoy. API Gateway REST no expone streaming. Hay que usar Function URL o ALB delante." },
+        { "letter": "D", "text": "streamifyResponse solo funciona en Python runtime.", "correct": false, "why": "Falso. Fue liberado primero para Node.js. Otras runtimes soportan streaming vía Runtime API custom." }
+      ],
+      "explanation": "Setup típico: (1) Lambda Node.js con handler exports.handler = awslambda.streamifyResponse(async (event, responseStream) => { responseStream.write(chunk); responseStream.end(); }); (2) Function URL con InvokeMode 'RESPONSE_STREAM'; (3) headers CORS. Para producción se pone CloudFront delante para caché y dominio custom. Alternativa: AWS Lambda Web Adapter permite correr FastAPI/Express con streaming. Trade-off: max 20MB response, timeout 15min, cold start (mitigable con provisioned concurrency).",
+      "realWorld": "AWS blog 'Introducing AWS Lambda response streaming' (abril 2023). Vercel, Cloudflare Workers y Deno Deploy popularizaron el pattern edge para IA. Referencia: aws.amazon.com/blogs/compute/introducing-aws-lambda-response-streaming.",
+      "tags": ["Lambda streaming", "streamifyResponse", "Function URL"],
+      "tech": ["AWS Lambda", "Function URL", "streamifyResponse", "ALB"],
+      "references": [
+        { "title": "AWS — Lambda response streaming" },
+        { "title": "AWS blog — Introducing Lambda response streaming (2023)" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "cost-inference",
+      "topic": "Streaming tool calls",
+      "difficulty": "mid",
+      "scenario": "Un agente decide llamar 3 tools. El UX quiere mostrar 'llamando tool X...' en tiempo real. El dev pregunta si se puede stream tool calls o si hay que esperar respuesta completa.",
+      "question": "¿Cómo funciona el streaming de tool/function calls en Anthropic/OpenAI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ambos providers streamean también los tool calls: se recibe input_json_delta (Anthropic) o function.arguments_delta (OpenAI) chunk por chunk. Puedes mostrar 'llamando search(...)' con args parciales y cuando llega el stop event ejecutas la tool. Requiere parser incremental (JSON parcial).", "correct": true, "why": "Correcto. En streaming completo puedes recibir: content_block_start (con tool_use), delta de input_json parcial, content_block_stop. Muchos frameworks (Vercel AI SDK con streamText + tools, LangChain, LlamaIndex) exponen callbacks onToolCallStart, onToolCallDelta, onToolCallEnd para reactivar UI incrementalmente." },
+        { "letter": "B", "text": "Tool calls no se streamean, se reciben en un solo bloque al final.", "correct": false, "why": "Falso. Se streamean tanto argumentos como el hecho de que hay una tool call en progreso." },
+        { "letter": "C", "text": "Solo texto puede streamearse, tools requieren llamada no-streaming.", "correct": false, "why": "Falso. Toda la respuesta (texto + tool calls + reasoning tokens) puede streamearse." },
+        { "letter": "D", "text": "Anthropic soporta streaming de tools, OpenAI no.", "correct": false, "why": "Falso. Ambos lo soportan." }
+      ],
+      "explanation": "Patrón UI: (1) mostrar bloques de texto tokens-a-token; (2) al detectar tool_use_start mostrar 'ejecutando <tool>...'; (3) al recibir tool_use_stop, ejecutar tool localmente/server; (4) tool_result se re-envía al modelo para continuar; (5) repetir. Para JSON parcial usar parser tolerante (partial-json, json-parse-async, best-effort). Vercel AI SDK y LangGraph tienen abstracciones para este flow. Cuidado: si el tool tiene latencia alta, mostrar loading state por tool.",
+      "realWorld": "Cursor, v0 by Vercel y Perplexity muestran tool calls en tiempo real. Anthropic docs 'Streaming Messages' cubre content_block_delta con input_json_delta.",
+      "tags": ["streaming tools", "function calling", "tool_use", "incremental"],
+      "tech": ["Anthropic streaming", "OpenAI streaming", "Vercel AI SDK", "LangGraph"],
+      "references": [
+        { "title": "Anthropic — Streaming Messages" },
+        { "title": "OpenAI — Function calling streaming" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "cost-inference",
+      "topic": "Model routing barato → caro",
+      "difficulty": "mid",
+      "scenario": "Tu app tiene requests que van desde 'clasifica este texto' hasta 'refactoriza este componente React'. Actualmente todo va a Claude Sonnet. Piensas router requests al modelo apropiado.",
+      "question": "¿Qué patrón de model routing es CORRECTO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Router basado en heurística/clasificador: (a) reglas simples primero (feature explícita, longitud, tipo), (b) clasificador LLM barato (Haiku/mini/Flash) que decide 'esto es trivial → mini; esto es complejo → Sonnet; esto requiere reasoning → o1'. Fallback a modelo mayor si el chico falla o refuses. Medir accuracy del router para no bajar quality.", "correct": true, "why": "Correcto. Model routing es el patrón para bajar costo sin sacrificar quality. Alternativas: (1) routers manuales (por feature/tipo request); (2) routers LLM-based (mini clasifica dificultad); (3) routers ML entrenados; (4) servicios comerciales (Martian, OpenRouter, NotDiamond). Debes medir 'routing accuracy' — a veces el router se equivoca y manda tarea difícil al modelo chico." },
+        { "letter": "B", "text": "Enviar siempre al modelo más chico y confiar en que resuelva.", "correct": false, "why": "Degrada calidad en tareas complejas. Router debe seleccionar modelo apropiado, no forzar el mínimo." },
+        { "letter": "C", "text": "El modelo grande debe decidir a qué modelo enviar cada request.", "correct": false, "why": "Contraproducente: pagas siempre el grande solo para decidir routing. Debe ser al revés (chico decide)." },
+        { "letter": "D", "text": "Model routing solo tiene sentido si usas open-source.", "correct": false, "why": "Falso. Se puede routear entre tiers del mismo provider (Haiku/Sonnet/Opus) o entre providers." }
+      ],
+      "explanation": "Arquitectura router: (1) capa router que recibe request; (2) heurísticas rápidas (feature, length, keywords); (3) si ambiguo, mini/Haiku clasifica {trivial, standard, hard, reasoning}; (4) forward al modelo target; (5) log del routing decision + resultado; (6) A/B para calibrar. Servicios: NotDiamond, Martian, OpenRouter, Portkey Routing, LangChain LLMRouter. Métricas: routing accuracy (¿la clasificación fue correcta?), cost savings vs baseline, quality delta.",
+      "realWorld": "Cursor documentó su routing entre Sonnet, Haiku y modelos específicos para diferentes tareas de código. NotDiamond publica benchmarks sobre routing accuracy. Portkey ofrece routing configurable declarativo.",
+      "tags": ["model routing", "cheap-first", "router pattern", "NotDiamond", "OpenRouter"],
+      "tech": ["Portkey", "OpenRouter", "NotDiamond", "Martian", "LangChain"],
+      "references": [
+        { "title": "NotDiamond — Model routing intro" },
+        { "title": "Portkey — Routing docs" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "cost-inference",
+      "topic": "Fallback entre providers",
+      "difficulty": "senior",
+      "scenario": "Un domingo por la mañana Anthropic tiene un incidente parcial (elevated errors en us-east-1). Tu app queda medio caída. El CEO pregunta 'por qué no tenemos plan B'.",
+      "question": "¿Cómo se diseña fallback entre providers correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fallback tiered: (1) provider primario (Anthropic); (2) si falla 5xx/timeout tras X retries, mover a secundario (OpenAI GPT-4o) con prompt equivalente; (3) si falla el secundario, degradación gradual (respuesta cacheada, mensaje 'temporalmente limitado', o modelo self-hosted mínimo). Requiere prompts adaptados por provider (system prompts, tool schemas), tests periódicos del path de fallback, y observability para saber cuándo el fallback está activo.", "correct": true, "why": "Correcto. Prompts equivalentes por provider requieren ajuste porque cada modelo interpreta diferente. Tools tienen schemas ligeramente distintos. Los fallbacks nunca deben ser 'nunca probados': si el disaster llega y no funcionan, es peor. Frameworks: Portkey Fallbacks, LangChain with_fallbacks, LiteLLM Router. Cuidado: fallback también puede saturarse si todos migran a la vez (thundering herd)." },
+        { "letter": "B", "text": "Configurar solo un provider y confiar en su SLA.", "correct": false, "why": "Los SLAs de LLM providers no cubren mucho y no compensan downtime real. Incidentes de Anthropic/OpenAI en 2023-2024 son públicos." },
+        { "letter": "C", "text": "Retry infinito al mismo provider hasta que funcione.", "correct": false, "why": "Falso. Amplifica el problema, congestiona más, y no resuelve nada durante un incidente extendido." },
+        { "letter": "D", "text": "Los fallbacks se activan automáticamente sin ningún setup.", "correct": false, "why": "Falso. Requieren gateway/proxy o código propio con router." }
+      ],
+      "explanation": "Blueprint fallback: (1) gateway con lista ordenada de providers; (2) health checks activos (o pasivos por error rate); (3) retry policy: primario 2 intentos, luego switch; (4) prompt adaptation layer (translate tool schema y system prompt entre Anthropic/OpenAI/Google); (5) telemetría por provider (success rate, latency, cost); (6) game days que simulan outage. Considerar también fallback regional (us-east-1 → us-west-2 en Bedrock) que a veces basta sin cambiar de provider.",
+      "realWorld": "Portkey, LiteLLM, Kong AI Gateway ofrecen fallback declarativo. Post-mortem de OpenAI outage nov 2023 y Anthropic incidents log público. Descript, Zapier y muchos AI SaaS publicaron su multi-provider strategy.",
+      "tags": ["fallback", "multi-provider", "resilience", "Portkey"],
+      "tech": ["Portkey", "LiteLLM", "LangChain fallbacks"],
+      "references": [
+        { "title": "Portkey — Fallback docs" },
+        { "title": "LiteLLM — Router with fallbacks" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "cost-inference",
+      "topic": "Timeouts razonables",
+      "difficulty": "mid",
+      "scenario": "El equipo puso timeout de 5 segundos a las llamadas de LLM porque 'los APIs deben ser rápidos'. Muchas respuestas se cortan a la mitad.",
+      "question": "¿Qué timeouts razonables se deben aplicar en calls LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Para streaming: timeout de TTFT ~10-15s (si no llega primer token, algo va mal) y timeout de inactividad ~30s entre chunks. Total sin cap explícito o 60-120s dependiendo de max_tokens. Para no-streaming: 30-60s típico, más si generas mucho output o usas reasoning models. NUNCA aplicar 5s a call de generación.", "correct": true, "why": "Correcto. LLMs generan a 30-100 tokens/segundo. Una respuesta de 1000 tokens tarda 10-30s. Un timeout de 5s corta respuestas normales. Estrategia correcta: separar TTFT timeout (activo, mide si el modelo respondió) de inactivity timeout (mide si el stream sigue vivo) de hard total (evita loops). Reasoning models (o1, o3, Extended Thinking) necesitan timeouts aún más generosos (2-5 min)." },
+        { "letter": "B", "text": "5 segundos de timeout uniforme es el estándar de la industria.", "correct": false, "why": "Falso. En LLM streaming ese timeout corta la mayoría de respuestas normales." },
+        { "letter": "C", "text": "No hay que poner timeout; deja el request abierto indefinidamente.", "correct": false, "why": "Falso. Sin timeout, un bug o hang deja recursos ocupados y facturas subiendo." },
+        { "letter": "D", "text": "El SDK del provider maneja el timeout automáticamente sin config.", "correct": false, "why": "Los SDKs tienen defaults (usualmente 10 min) que suelen ser demasiado largos para producción real." }
+      ],
+      "explanation": "Perfiles de timeout típicos: (1) chat streaming: TTFT 10s, idle 30s, total 90s; (2) batch/análisis largo: TTFT 30s, idle 60s, total 5 min; (3) reasoning models: TTFT 60s, total 5-10 min. Combinar timeout HTTP + AbortController en el cliente + max_tokens en el request. Al abortar en streaming, ojo con tokens ya generados (algunos providers cobran hasta el punto de aborto).",
+      "realWorld": "OpenAI y Anthropic SDKs oficiales permiten configurar timeout en el constructor. Vercel AI SDK expone AbortSignal. Cloudflare Workers tienen timeout de 30s por default (a menudo insuficiente para reasoning models).",
+      "tags": ["timeouts", "TTFT timeout", "inactivity timeout", "AbortController"],
+      "tech": ["AbortController", "OpenAI SDK", "Anthropic SDK"],
+      "references": [
+        { "title": "OpenAI SDK — Timeouts" },
+        { "title": "Anthropic SDK — Timeouts" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "cost-inference",
+      "topic": "Retries idempotentes",
+      "difficulty": "senior",
+      "scenario": "Tu middleware retriea automáticamente en 502/503. Los usuarios reportan que a veces reciben la misma respuesta duplicada o dos cargos por acción.",
+      "question": "¿Cómo hacer retries seguros en llamadas LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar idempotency keys (Anthropic soporta anthropic-idempotency-key header desde 2024, OpenAI soporta Idempotency-Key en algunas rutas), generar UUID por request lógico, reusar la key en cada retry. Diferenciar entre retryable (5xx, timeouts en fase pre-generación) y no-retryable (4xx, timeout durante streaming ya con tokens generados). Circuit breaker para evitar retry storms.", "correct": true, "why": "Correcto. Idempotency keys son la solución estándar para evitar duplicados. Anthropic y OpenAI implementan cache de responses por key TTL. Retries sin key pueden generar duplicados en tools con side-effects (llamada a Stripe, envío de email). Circuit breaker (Hystrix/opossum) evita amplificar outages con retries masivos." },
+        { "letter": "B", "text": "Retry en cualquier error, siempre.", "correct": false, "why": "Falso. Errores 4xx (400, 401, 413) indican bugs del cliente; retry no arregla y solo pierde tiempo/dinero." },
+        { "letter": "C", "text": "Retries automáticos causan duplicados; hay que desactivarlos.", "correct": false, "why": "Extremo. Retries bien hechos (con idempotency key y policy correcta) son buenos. Solo hay que hacerlos bien." },
+        { "letter": "D", "text": "Retries solo son válidos en calls no-streaming.", "correct": false, "why": "Se pueden hacer en streaming, pero es más complejo (¿reintentar solo si falló antes de recibir tokens? ¿resumir?). Frameworks maduros gestionan esto." }
+      ],
+      "explanation": "Retry policy segura: (1) idempotency key por request lógico; (2) whitelist de errores retryable [502, 503, 504, 529, 429 con retry-after]; (3) backoff exponencial con jitter (100ms, 200ms, 400ms + random); (4) max 2-3 retries; (5) circuit breaker global; (6) telemetría de retry_count por request; (7) para streaming, si tokens ya empezaron a llegar y falla, considerar no retry (caro y confuso para UX). Frameworks: Anthropic SDK con automaticRetries, OpenAI SDK con maxRetries, LiteLLM con retry_policy.",
+      "realWorld": "Anthropic idempotency keys announced 2024. OpenAI cookbook 'Retry with exponential backoff' es referencia. Stripe popularizó idempotency keys en API design; muchas AI APIs siguieron el mismo patrón.",
+      "tags": ["retries", "idempotency", "circuit breaker", "backoff"],
+      "tech": ["Anthropic idempotency keys", "OpenAI SDK retries", "opossum"],
+      "references": [
+        { "title": "Anthropic — Idempotency" },
+        { "title": "OpenAI Cookbook — Retry with exponential backoff" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "cost-inference",
+      "topic": "Rate limit headers y retry-after",
+      "difficulty": "mid",
+      "scenario": "En horas pico recibes 429s de OpenAI. Tu retry policy espera 1s fijo y retriea inmediatamente.",
+      "question": "¿Cómo se manejan correctamente los rate limits de providers LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Respetar los headers Retry-After / x-ratelimit-reset-requests / x-ratelimit-reset-tokens que el provider envía. Además: distinguir entre TPM (tokens per minute), RPM (requests per minute) y TPD (tokens per day); pedir aumento de cuota a soporte cuando aplique; distribuir carga en varias API keys/orgs; usar batch API para load asíncrono.", "correct": true, "why": "Correcto. OpenAI expone x-ratelimit-remaining-{requests,tokens} y x-ratelimit-reset-{requests,tokens} en cada response. Anthropic expone anthropic-ratelimit-* headers. Retry-After en 429 dice cuándo reintentar. Ignorarlos empeora: mandas más requests, extends el ban. Aumento de cuota (tier upgrade) es proceso conocido en OpenAI (usage tiers) y Anthropic (spend-based tiers)." },
+        { "letter": "B", "text": "Retry inmediato en 429 hasta que funcione.", "correct": false, "why": "Contraproducente. Amplifica el problema y algunas plataformas extienden el ban." },
+        { "letter": "C", "text": "429 significa que hay que cambiar de modelo.", "correct": false, "why": "No necesariamente. Puede significar solo esperar o pedir cuota. Cambiar de modelo es una opción entre varias." },
+        { "letter": "D", "text": "Los rate limits son sugerencia, no obligatorios.", "correct": false, "why": "Falso. Los providers los aplican y siguen ignorándolos degrada tu servicio." }
+      ],
+      "explanation": "Manejo de rate limits: (1) parsear Retry-After y esperar exacto; (2) queue con token bucket local que respete tu tier; (3) telemetría del uso vs límite (nunca >80% sostenido); (4) load balancing entre orgs si aplica; (5) tier upgrade proactivo antes de saturar. OpenAI Tier system: Tier 1-5 según spend; Anthropic Tier 1-4 con TPM/RPM crecientes. Bedrock tiene cuotas regionales — cross-region inference profiles ayudan.",
+      "realWorld": "OpenAI docs 'Rate limits' explican tiers y headers. Anthropic docs 'Rate limits' equivalen. Portkey y LiteLLM ofrecen load balancing entre múltiples API keys/providers.",
+      "tags": ["rate limits", "429", "retry-after", "TPM", "RPM"],
+      "tech": ["OpenAI rate limits", "Anthropic rate limits", "Portkey"],
+      "references": [
+        { "title": "OpenAI — Rate limits guide" },
+        { "title": "Anthropic — Rate limits" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "ai-infra-aws",
+      "topic": "Bedrock cross-region inference",
+      "difficulty": "senior",
+      "scenario": "Tu aplicación usa Bedrock Claude 3.5 Sonnet en us-east-1. En horas pico recibes throttling. Considerabas moverte de región. Un arquitecto de AWS menciona 'cross-region inference profiles'.",
+      "question": "¿Qué es cross-region inference en Bedrock y cuándo tiene sentido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cross-region inference profiles (feature GA 2024): AWS enruta automáticamente entre múltiples regiones para el mismo modelo, sumando cuotas y absorbiendo throttling regional. Requiere usar el modelId 'us.anthropic.claude-3-5-sonnet-...' (prefijo geográfico) en vez del regional. Datos pueden ir a cualquier región del profile — validar compliance/data residency.", "correct": true, "why": "Correcto. Bedrock cross-region inference (Q3 2024) usa profiles como 'us.*' o 'eu.*' que enrutan entre múltiples regiones del mismo continente. Beneficios: quotas más altas efectivas, menos throttling, disponibilidad. Trade-off: los tokens pueden procesarse en cualquier región dentro del profile. Para workloads con requerimientos estrictos de data residency (GDPR, HIPAA en región específica), verificar si el profile 'eu.*' o el on-demand regional puro es más adecuado." },
+        { "letter": "B", "text": "Es un feature de multi-region active-active que replica todos los datos.", "correct": false, "why": "Falso. No replica datos; solo enruta la inferencia. No hay 'estado' que replicar." },
+        { "letter": "C", "text": "Requiere que tú instales Bedrock en varias regiones.", "correct": false, "why": "Falso. Es managed; solo cambias el modelId prefix y AWS enruta." },
+        { "letter": "D", "text": "Duplica el costo de la inferencia.", "correct": false, "why": "Falso. Mismo pricing que on-demand regional; no hay premium por cross-region." }
+      ],
+      "explanation": "Sintaxis: modelId 'us.anthropic.claude-3-5-sonnet-20241022-v2:0' vs regional 'anthropic.claude-3-5-sonnet-20241022-v2:0'. AWS mantiene profiles 'us.*', 'eu.*', 'apac.*'. Recomendado por AWS para producción. IAM policy debe permitir InvokeModel* en los ARNs de las regiones del profile. Verificar quotas independientes por región dentro del profile. Compatible con streaming y Bedrock Guardrails.",
+      "realWorld": "AWS blog 'Cross-region inference in Amazon Bedrock' (2024). Anthropic recomienda su uso para Claude en Bedrock. Casos: Descript, Perplexity, Notion sobre Bedrock.",
+      "tags": ["Bedrock", "cross-region inference", "throttling", "quotas"],
+      "tech": ["AWS Bedrock", "cross-region profiles", "Claude on Bedrock"],
+      "references": [
+        { "title": "AWS Bedrock — Cross-region inference" },
+        { "title": "AWS blog — Cross-region inference profiles (2024)" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "cost-inference",
+      "topic": "Speculative decoding",
+      "difficulty": "senior",
+      "scenario": "Un equipo research pregunta si vale la pena implementar 'speculative decoding' para bajar latencia de generación.",
+      "question": "¿Qué es speculative decoding y quién lo usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Speculative decoding: un modelo 'draft' pequeño genera múltiples tokens candidatos rápido; el modelo grande verifica en paralelo (una sola forward pass) y acepta/rechaza. Puede acelerar 2-3x la generación sin cambiar el output final. Google Gemini, OpenAI y vLLM implementan variantes. Como usuario de API no lo configuras — el provider lo aplica internamente. Como self-hoster con vLLM/TensorRT-LLM sí puedes activarlo.", "correct": true, "why": "Correcto. Speculative decoding es técnica de inference optimization aceptada. Papers originales de Google (Leviathan et al. 2023, Chen et al. 2023). En APIs comerciales es transparente. En self-hosting (vLLM, TensorRT-LLM, Medusa) se activa explícitamente y requiere entrenar/elegir draft model compatible. Trade-off: draft model malo baja aceptación → sin ganancia; draft bueno da 2-3x speedup." },
+        { "letter": "B", "text": "Es una feature que el usuario debe activar en el request de OpenAI.", "correct": false, "why": "Falso. No es un parámetro de la API pública. Es interno al inference engine." },
+        { "letter": "C", "text": "Speculative decoding cambia el output resultante del modelo.", "correct": false, "why": "Falso. Está diseñado para preservar la distribución del modelo grande; el output es idéntico (garantía matemática con rejection sampling)." },
+        { "letter": "D", "text": "Solo funciona con GPT-4.", "correct": false, "why": "Falso. Técnica general aplicable a cualquier transformer." }
+      ],
+      "explanation": "Cómo funciona: (1) draft model D (pequeño, rápido) propone k tokens; (2) target model T (grande) evalúa la secuencia de k+1 tokens en una sola forward pass (paralelizable); (3) rejection sampling acepta prefijo consistente con T; (4) al primer rechazo, se toma el token de T y se descarta el resto. Ganancia: ~1.5-3x más tokens por segundo. Trade-off: si D es malo, muchas rechazos → sin ganancia. Implementaciones: vLLM speculative decoding, TensorRT-LLM, Medusa, Lookahead decoding.",
+      "realWorld": "Paper Google 'Fast Inference from Transformers via Speculative Decoding' (2023). vLLM docs 'Speculative decoding'. Groq y Together documentan uso para acelerar Llama-70B. OpenAI o1 aparentemente lo usa internamente.",
+      "tags": ["speculative decoding", "inference optimization", "draft model", "vLLM"],
+      "tech": ["vLLM", "TensorRT-LLM", "Medusa"],
+      "references": [
+        { "title": "Google — Fast Inference from Transformers via Speculative Decoding (paper)" },
+        { "title": "vLLM — Speculative decoding docs" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "cost-inference",
+      "topic": "Circuit breaker",
+      "difficulty": "mid",
+      "scenario": "Anthropic tuvo un incidente de 30 min. Tu app siguió lanzando 100 req/s con retries hasta que su circuit interno lo devolvió a la vida. Facturaste $500 en requests que fueron 5xx.",
+      "question": "¿Cómo previene un circuit breaker este escenario?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Circuit breaker: al detectar tasa de errores > threshold (ej. 50% en 1 min), 'abre' el circuito y rechaza requests inmediatamente sin llamar al provider por un cooldown. Periódicamente prueba con 1 request ('half-open') y si funciona 'cierra' de nuevo. Ahorra: costo de requests fallidos, latencia (fail fast), y protege al provider de retry storms.", "correct": true, "why": "Correcto. Circuit breaker es patrón clásico de resilience (Hystrix, Polly, opossum). En LLM aplica igual: durante outage, mejor devolver 503 rápido a nuestros usuarios (o fallback a otro provider) que amplificar el problema. Reduces costo, latencia y protege el servicio downstream." },
+        { "letter": "B", "text": "Circuit breaker aumenta el costo porque añade overhead.", "correct": false, "why": "Falso. El overhead es negligible y ahorra mucho durante fallos." },
+        { "letter": "C", "text": "Con retries no se necesita circuit breaker.", "correct": false, "why": "Falso. Retries y circuit breaker son complementarios. Retry para errores transitorios de un request; circuit breaker para errores sistémicos que afectan muchos requests." },
+        { "letter": "D", "text": "Circuit breakers solo aplican a bases de datos, no APIs.", "correct": false, "why": "Falso. Aplican a cualquier dependencia externa: DB, HTTP, LLM APIs, etc." }
+      ],
+      "explanation": "Circuit breaker states: (1) CLOSED — requests pasan, cuenta errores; (2) OPEN — errores > threshold, rechaza inmediatamente por X segundos; (3) HALF-OPEN — permite 1 request para probar, si OK vuelve a CLOSED. Configurar por provider (uno para Anthropic, otro para OpenAI). Combinar con fallback (open → route a secundario). Librerías: opossum (Node), resilience4j (Java), Polly (.NET), pybreaker (Python). Portkey, Kong AI Gateway, LiteLLM integran breakers.",
+      "realWorld": "Netflix Hystrix popularizó el patrón. Post-mortems de startups AI describen 'sin circuit breaker, el outage de X se convirtió en un pico de facturación'. Kong AI Gateway y Portkey ofrecen circuit breaker declarativo.",
+      "tags": ["circuit breaker", "resilience", "Hystrix", "fail-fast"],
+      "tech": ["opossum", "Polly", "resilience4j", "Portkey"],
+      "references": [
+        { "title": "Martin Fowler — Circuit Breaker pattern" },
+        { "title": "Kong — AI Gateway circuit breaker" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "cost-inference",
+      "topic": "Degradación gradual",
+      "difficulty": "senior",
+      "scenario": "Anthropic + OpenAI están caídos simultáneamente por un cascading incident. Tu app depende de LLM. ¿Devolver 500 a todos los usuarios?",
+      "question": "¿Qué patrones de degradación gradual existen para apps LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Múltiples niveles: (1) respuesta cacheada (semantic cache con TTL alto) si aplica; (2) respuesta pre-canned/plantilla para queries comunes; (3) modelo self-hosted mínimo (Llama-3 8B en Bedrock Provisioned) como last resort; (4) mensaje UX honesto 'AI temporalmente limitado, tu request está encolado' + SQS que reprocesa cuando vuelva; (5) desactivar features opcionales AI (autocomplete off, recomendaciones off) manteniendo core del producto.", "correct": true, "why": "Correcto. 'Graceful degradation' es distinguir features AI 'nice-to-have' de 'core' del producto. Un chatbot puede caer a FAQ estática; un autocomplete a nada. Un agente que hace acciones críticas debe encolar y reprocessarlas post-recovery. Ver los patterns 'bulkhead' y 'graceful degradation' de resilience engineering." },
+        { "letter": "B", "text": "Devolver 500 y esperar que el usuario reintente manualmente.", "correct": false, "why": "Peor UX. Usuarios se frustran, churn. Hay opciones mejores." },
+        { "letter": "C", "text": "Mostrar spinner infinito hasta que vuelva.", "correct": false, "why": "Terrible. Sin feedback claro el usuario no sabe si esperar o irse." },
+        { "letter": "D", "text": "Auto-refund a todos los usuarios pro por el outage.", "correct": false, "why": "Puede ser una decisión de negocio pero no es 'degradación gradual' técnica." }
+      ],
+      "explanation": "Estrategia de degradación en tiers: (1) 100% funcional (todo OK); (2) 80% funcional (cache/pre-canned para hits); (3) 50% funcional (modelo self-hosted o cheaper backup); (4) core-only (features AI apagadas, resto del producto sigue); (5) queue-and-retry (jobs no urgentes esperan recovery). Definir por feature: chat vs autocomplete vs agent tienen diferentes tolerancias. Comunicar honestamente en UI (banner 'AI features limited') mantiene trust.",
+      "realWorld": "Notion mostró banners durante outage de OpenAI en 2023. Descript documentó su fallback tiered. AWS Well-Architected framework tiene sección de graceful degradation aplicable a IA.",
+      "tags": ["graceful degradation", "resilience", "fallback tiers", "UX"],
+      "tech": ["SQS", "semantic cache", "self-hosted Llama"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability pillar" },
+        { "title": "Google SRE Book — Graceful degradation" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "ai-infra-aws",
+      "topic": "Provisioned vs on-demand en Bedrock",
+      "difficulty": "senior",
+      "scenario": "Analizas los picos de tráfico de tu app: baseline 100 req/min, picos a 2000 req/min. Bedrock on-demand te limita a 500 req/min por cuota. Consideras Provisioned Throughput.",
+      "question": "¿Cuándo tiene sentido Bedrock Provisioned Throughput vs on-demand?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Provisioned reserva capacidad dedicada (Model Units) con SLA de throughput a cambio de commitment 1 o 6 meses. Tiene sentido si: (a) tráfico predecible y sostenido; (b) necesitas SLA de latencia; (c) tu on-demand quota se satura constantemente. NO tiene sentido si: tráfico es esporádico o volátil (pagas capacidad idle). Mix común: baseline en Provisioned + burst en on-demand con cross-region inference.", "correct": true, "why": "Correcto. Provisioned Throughput compra 'Model Units' (unidad de capacidad). Commitment 1 mes o 6 meses (6 más barato). Aplica a modelos custom (fine-tuned) o base seleccionados. Pricing por hora del MU. Análisis break-even: on-demand $/MTok x tokens_esperados vs Provisioned $/hora x horas. Regla mental: >70% utilization sostenido = Provisioned probablemente gana." },
+        { "letter": "B", "text": "Provisioned es siempre más barato.", "correct": false, "why": "Falso. Si utilization <50%, pagas por capacidad no usada y sale más caro." },
+        { "letter": "C", "text": "On-demand no tiene ningún límite de throughput.", "correct": false, "why": "Falso. On-demand tiene cuotas regionales por modelo. Cross-region inference profiles ayudan pero no eliminan el límite." },
+        { "letter": "D", "text": "Provisioned solo aplica a fine-tuned models.", "correct": false, "why": "Falso. Aplica también a modelos base (Claude, Llama, Titan, Cohere) seleccionados." }
+      ],
+      "explanation": "Comparativa Bedrock: (1) On-demand: sin commitment, pay-per-token, sujeto a quotas regionales, throttling posible en picos, ideal para tráfico esporádico o desarrollo; (2) Provisioned: commitment 1/6 meses, throughput dedicado, SLA, sin throttling, ideal para tráfico sostenido; (3) Hybrid: baseline en Provisioned + spillover a on-demand. Cross-region inference profiles (opción C del entorno) también aumentan quotas efectivas sin commitment. Calcular con Bedrock pricing calculator.",
+      "realWorld": "Cases documentados de compañías moviendo a Provisioned al alcanzar $50k+/mes en Bedrock. AWS re:Invent 2024 sesiones sobre Bedrock at scale. Anthropic y AWS publican calculators para estimar break-even.",
+      "tags": ["Bedrock Provisioned Throughput", "on-demand", "Model Units", "commitment"],
+      "tech": ["AWS Bedrock", "Provisioned Throughput", "Model Units"],
+      "references": [
+        { "title": "AWS Bedrock — Provisioned Throughput" },
+        { "title": "AWS pricing calculator — Bedrock" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "cost-inference",
+      "topic": "Edge deployment y latencia geográfica",
+      "difficulty": "mid",
+      "scenario": "Tus usuarios están en Europa y LATAM. Tu app llama a OpenAI (endpoint global, rutas típicamente a US) desde Cloudflare Workers. Latencia percibida es 800ms TTFT en LATAM vs 400ms en US.",
+      "question": "¿Qué opciones existen para reducir latencia geográfica en apps LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Opciones: (1) usar providers/regiones cercanas al usuario (Bedrock en eu-west-1/sa-east-1, Google Vertex en europe-west, Azure OpenAI en westeurope); (2) Cloudflare Workers AI (inferencia en el edge de Cloudflare, hay Llama y modelos open-source); (3) modelos on-device (WebLLM, Ollama local para desktop); (4) cachear respuestas cerca del usuario (Cloudflare Cache API, semantic cache regional); (5) precomputar respuestas frecuentes.", "correct": true, "why": "Correcto. La latencia geográfica es real: US → LATAM añade ~150-300ms RTT. Reducirla requiere combinaciones: (a) elegir region del provider, (b) mover parte del pipeline al edge (routing/cache), (c) on-device cuando aplique. Cloudflare Workers AI ofrece Llama 3, Mistral, embeddings en edge. Groq y Fireworks tienen múltiples regiones. Anthropic aún es principalmente US-based." },
+        { "letter": "B", "text": "La latencia geográfica no se puede reducir.", "correct": false, "why": "Falso. Cambiar región del provider o usar edge deployment reduce significativamente." },
+        { "letter": "C", "text": "Un CDN elimina la latencia del LLM completamente.", "correct": false, "why": "Falso. Un CDN cachea contenido estático o responses ya generadas. No acelera generación en sí." },
+        { "letter": "D", "text": "OpenAI tiene edge inference en 100 regiones.", "correct": false, "why": "Falso al día de hoy. Los endpoints de OpenAI están principalmente en US; Azure OpenAI ofrece más regiones." }
+      ],
+      "explanation": "Estrategia por región: (1) mide latencia real por región de usuario; (2) usa provider con presencia geográfica cerca (Azure OpenAI, Bedrock, Vertex); (3) considera Groq (US + otros), Fireworks (US), Together (US) — su ventaja es TTFT por hardware, no geografía; (4) edge inference con Cloudflare Workers AI, Vercel AI o modelos ligeros on-device; (5) semantic cache regional (Redis multi-region). Trade-off: multi-region complica ops y consistency; edge inference limita modelos disponibles.",
+      "realWorld": "Cloudflare Workers AI GA en 2024 con modelos Llama, Mistral, embeddings. Vercel AI Gateway ofrece routing regional. Groq marketea TTFT por hardware. Casos: Perplexity uses múltiples providers regionales.",
+      "tags": ["edge deployment", "geographic latency", "Cloudflare Workers AI", "Azure OpenAI"],
+      "tech": ["Cloudflare Workers AI", "Azure OpenAI", "Vertex AI", "Groq"],
+      "references": [
+        { "title": "Cloudflare Workers AI — docs" },
+        { "title": "Azure OpenAI — Regions" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "cost-inference",
+      "topic": "Concurrent requests y throughput",
+      "difficulty": "junior",
+      "scenario": "Un dev ejecuta un script que hace 1000 llamadas secuenciales al LLM para procesar un dataset. Tarda 3 horas. El equipo pide bajar a <30 min.",
+      "question": "¿Qué cambio inmediato acelera el throughput sin cambiar modelo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ejecutar las llamadas en paralelo con un límite de concurrencia (ej. 20-50 requests concurrentes). Usar Promise.all con p-limit / asyncio.gather / semaphore. Respetar rate limits del provider. Speedup lineal hasta saturar TPM/RPM del tier.", "correct": true, "why": "Correcto. Secuencial deja al provider idle la mayor parte del tiempo. Paralelizar con límite (para no violar rate limits ni tumbar el proceso) acelera lineal hasta el límite del tier. Con 30 concurrent y 500 tokens promedio de output, típicamente cabe en TPM del tier 3-4 de OpenAI/Anthropic." },
+        { "letter": "B", "text": "Cambiar a WebSockets acelera el throughput.", "correct": false, "why": "Falso. El protocolo no cambia la latencia inferida por el LLM." },
+        { "letter": "C", "text": "Aumentar temperature a 1 acelera la generación.", "correct": false, "why": "Falso. Temperature no afecta velocidad." },
+        { "letter": "D", "text": "Ejecutar en secuencial es siempre necesario para orden.", "correct": false, "why": "Falso. En procesamiento batch de items independientes, paralelizar y luego ordenar por índice es trivial." }
+      ],
+      "explanation": "Patrón: (1) semáforo con límite (p-limit(30) en Node, asyncio.Semaphore(30) en Python); (2) Promise.all / gather; (3) manejo de errores por item sin abortar el batch; (4) medición de rate limit real (headers x-ratelimit-remaining); (5) para volumen masivo, mover a Batch API (50% descuento, hasta 24h). Cuidado con memoria: no crear 10k promises simultáneas — usar pool.",
+      "realWorld": "OpenAI cookbook 'Parallel processing' con ejemplos. Anthropic docs mencionan concurrency patterns. Librerías: p-limit, p-queue, tenacity con concurrency.",
+      "tags": ["concurrency", "throughput", "Promise.all", "p-limit"],
+      "tech": ["p-limit", "asyncio", "Promise.all"],
+      "references": [
+        { "title": "OpenAI Cookbook — How to handle rate limits" },
+        { "title": "p-limit — GitHub" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "cost-inference",
+      "topic": "Streaming detrás de proxies",
+      "difficulty": "senior",
+      "scenario": "Tu app streamea perfectamente en local. En producción detrás de nginx y CloudFront, los chunks llegan todos juntos al final (no en tiempo real).",
+      "question": "¿Cuál es la causa típica y cómo se arregla?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Buffering de proxies intermedios. Fixes: (1) header 'X-Accel-Buffering: no' en la response para nginx; (2) 'Cache-Control: no-cache, no-transform'; (3) 'Content-Type: text/event-stream'; (4) desactivar gzip en el response del stream; (5) para CloudFront habilitar 'Response streaming' behavior. Verificar que ALB tiene idle_timeout > TTFT esperado.", "correct": true, "why": "Correcto. nginx bufea responses por default (proxy_buffering on). CloudFront históricamente no soportaba streaming; hoy sí con 'Response Stream' behavior. gzip debe estar off para SSE porque agrupa. ALB idle_timeout default 60s puede cortar streams largos si no hay actividad. Todo el stack (Lambda → ALB → CloudFront → cliente) debe pasar bytes sin bufferar." },
+        { "letter": "B", "text": "El streaming en producción es imposible.", "correct": false, "why": "Falso. Muy común y solo requiere configurar el stack correctamente." },
+        { "letter": "C", "text": "Es problema del navegador; cambiar a WebSockets.", "correct": false, "why": "Falso. SSE funciona en todos los navegadores modernos. El problema es infra intermedia." },
+        { "letter": "D", "text": "gzip debe estar activado para acelerar SSE.", "correct": false, "why": "Falso. gzip bufea el stream. Debe estar off." }
+      ],
+      "explanation": "Checklist SSE producción: (1) nginx: proxy_buffering off; proxy_cache off; add_header X-Accel-Buffering no; chunked_transfer_encoding on. (2) CloudFront: usar Function URL con Lambda Response Streaming O 'Real-time media streaming' behavior con response streaming enabled. (3) ALB: idle_timeout suficiente (60-300s). (4) Headers response: Content-Type text/event-stream; Cache-Control no-cache; Connection keep-alive. (5) Cliente: EventSource o fetch con ReadableStream, no fetch().text(). (6) Test con curl -N que muestra chunks en tiempo real.",
+      "realWorld": "Post 'Why my SSE is not streaming' recurrente en HackerNews. AWS blog sobre CloudFront + Lambda response streaming detalla configuración. Vercel documenta patrones para Next.js edge streaming.",
+      "tags": ["proxy buffering", "nginx", "CloudFront", "SSE production"],
+      "tech": ["nginx", "CloudFront", "ALB", "Lambda"],
+      "references": [
+        { "title": "nginx — proxy_buffering docs" },
+        { "title": "AWS — CloudFront response streaming" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "cost-inference",
+      "topic": "Cold vs warm inference",
+      "difficulty": "mid",
+      "scenario": "Consideras auto-hostear Llama-3 70B en SageMaker para bajar costos. Un ingeniero advierte que 'cold starts van a ser un problema'.",
+      "question": "¿Qué significa cold start en inference y cómo se mitiga?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cold start = tiempo de cargar el modelo en GPU + calentar caches KV antes del primer request. Un Llama-70B puede tardar 30-90s en cold start. Mitigaciones: (1) endpoints always-on (no serverless para modelos grandes); (2) provisioned concurrency; (3) modelos más chicos que caben en memoria y arrancan más rápido; (4) SageMaker Serverless Inference solo apropiado para modelos <10GB; (5) para spikes, warm pool de instancias.", "correct": true, "why": "Correcto. Cold start es problema real para modelos grandes self-hosted. Bedrock lo evita porque los modelos están always-on en la infra de AWS. En SageMaker, opciones: (a) Real-time endpoints always-on (caro pero warm); (b) Serverless inference (ondemand pero cold starts); (c) Asynchronous inference (para batch, tolerable). vLLM y TGI cargan el modelo una vez al startup del container." },
+        { "letter": "B", "text": "Cold start solo aplica a Lambda; en SageMaker no existe.", "correct": false, "why": "Falso. SageMaker Serverless Inference tiene cold starts. Real-time endpoints minimizan pero al escalar horizontalmente igual hay warm-up." },
+        { "letter": "C", "text": "Cold start no importa porque el modelo se cachea en disco.", "correct": false, "why": "Falso. El modelo debe estar cargado en GPU HBM, no en disco. Cargar 70B en HBM tarda decenas de segundos." },
+        { "letter": "D", "text": "Bedrock tiene cold starts porque es serverless.", "correct": false, "why": "Falso. Bedrock mantiene los modelos base always-warm en su infra managed. Provisioned Throughput garantiza aún más." }
+      ],
+      "explanation": "Latencia total = model load (cold start) + prefill (procesar prompt) + decode (generar tokens). Cold start solo aplica una vez por container. Prefill escala con longitud del prompt (paralelo, más rápido con FlashAttention). Decode es secuencial y limita por memory bandwidth. Mitigaciones cold start: (1) provisioned concurrency para SageMaker Serverless; (2) auto-scaling con min > 0; (3) EFS/FSx con modelo pre-cargado (reduce load time desde S3); (4) container pre-warmup en cluster.",
+      "realWorld": "SageMaker Serverless Inference GA con cold start caveats documentados por AWS. Modal, Replicate, Runpod publicaron benchmarks de cold start para diferentes modelos. vLLM startup time es referencia común.",
+      "tags": ["cold start", "SageMaker", "warm pool", "provisioned concurrency"],
+      "tech": ["SageMaker", "vLLM", "TGI", "Bedrock"],
+      "references": [
+        { "title": "SageMaker — Serverless Inference cold start" },
+        { "title": "vLLM — Deployment guide" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "cost-inference",
+      "topic": "Métricas p50/p95/p99",
+      "difficulty": "mid",
+      "scenario": "El PM pregunta 'cuánto tarda nuestra IA'. El dev responde 'promedio 2s'. Al día siguiente un cliente reporta que ciertos requests tardan 30s.",
+      "question": "¿Qué métricas son las correctas para reportar performance de LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Distribuciones (p50, p90, p95, p99) por métrica {TTFT, TPOT, total latency, tokens output} y por segmento {modelo, feature, tenant}. El promedio esconde outliers; en LLMs los outliers son sistemáticos (prompts largos, reasoning models, retries).", "correct": true, "why": "Correcto. LLM tienen distribuciones largas: p99 puede ser 10x el p50. Reportar solo promedio engaña. Segmentar por modelo/feature/tenant revela hotspots. Métricas mínimas: TTFT (p50/p95), TPOT, total latency, tokens output. Observability: Datadog LLM Observability, Langfuse, Grafana con Prometheus." },
+        { "letter": "B", "text": "Promedio de latencia es suficiente.", "correct": false, "why": "Falso. Esconde outliers que afectan UX real." },
+        { "letter": "C", "text": "Solo el máximo importa.", "correct": false, "why": "Falso. Máximo es ruidoso; p99 es más robusto." },
+        { "letter": "D", "text": "Reportar solo TTFT ignora que la generación completa importa.", "correct": false, "why": "Depende del use case: en chat sí importa más TTFT que total; en API síncrona importa total. Ambos son necesarios." }
+      ],
+      "explanation": "SLIs sugeridos: (1) TTFT p95 <1s en chat; (2) total latency p95 <10s en generación estándar; (3) error rate <1%; (4) throughput (tokens/segundo) por modelo. SLOs derivan de SLIs con targets. Observability stack: OTel GenAI conventions → Datadog/Grafana/Langfuse. Alertas en burn rate del SLO (Google SRE). Segmentar por modelo/feature para no diluir con features de perfil distinto.",
+      "realWorld": "Google SRE Book capítulo 4 (SLIs/SLOs) es referencia. Datadog LLM Observability y Langfuse dashboards nativos por percentil. Vercel AI SDK reporta TTFT y TPOT.",
+      "tags": ["p50 p95 p99", "SLIs", "observability", "distribution"],
+      "tech": ["Datadog LLM Obs", "Langfuse", "Grafana"],
+      "references": [
+        { "title": "Google SRE Book — SLIs, SLOs, SLAs" },
+        { "title": "Datadog — LLM Observability" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "cost-inference",
+      "topic": "Groq/Cerebras y hardware especializado",
+      "difficulty": "senior",
+      "scenario": "Un dev demo Groq con Llama-70B corriendo a 500 tokens/segundo (10x más rápido que hosting típico). Propone migrar features latency-sensitive a Groq.",
+      "question": "¿Qué considerar antes de migrar a Groq/Cerebras/SambaNova?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ventajas: TTFT y throughput ultra-alto por hardware especializado (LPU Groq, WSE Cerebras, RDU SambaNova). Consideraciones: (1) modelos limitados (usualmente open-weights Llama/Mixtral/Qwen, no Claude/GPT); (2) contexto máximo puede ser menor; (3) features (tools, structured outputs, prompt caching) varían; (4) capacidad regional; (5) pricing competitivo pero verifica volumen; (6) dependencia de un provider más nuevo (madurez). Ideal para: voz en tiempo real, autocomplete, features donde velocidad domina.", "correct": true, "why": "Correcto. Groq (LPU), Cerebras (WSE-3) y SambaNova ofrecen inferencia muy rápida en modelos open-source. Trade-offs claros: no puedes correr Claude ahí (modelo propietario), y features específicas de OpenAI/Anthropic (structured outputs estricto, extended thinking) no aplican. Para features donde 'super rápido' es UX diferencial (voz, autocomplete inline), son opción excelente. Diversificar con secundarios (Together, Fireworks) para no depender de uno solo." },
+        { "letter": "B", "text": "Migrar todo a Groq inmediatamente.", "correct": false, "why": "Precipitado. Modelos y features distintos; requiere evaluación cuidadosa." },
+        { "letter": "C", "text": "Groq soporta todos los modelos incluyendo Claude y GPT.", "correct": false, "why": "Falso. Solo modelos open-weight hospedables sin licencia comercial restrictiva." },
+        { "letter": "D", "text": "Hardware especializado no aporta ventaja real.", "correct": false, "why": "Falso. Benchmarks públicos muestran 5-10x mejora en TTFT/throughput vs GPU convencional en modelos soportados." }
+      ],
+      "explanation": "Landscape hardware AI inference: (1) NVIDIA H100/H200/B100 — mainstream, cualquier modelo; (2) Groq LPU — SRAM masiva, ultra-baja latencia, batch pequeños; (3) Cerebras WSE-3 — chip wafer-scale, alta velocidad para llama-70B/405B; (4) SambaNova RDU; (5) AWS Trainium/Inferentia — costo/perf en AWS; (6) Google TPU — para Gemini y self-hosted. Elección: use case, modelo, pricing, madurez. Multi-provider gateway (Portkey, OpenRouter) permite A/B sin lock-in.",
+      "realWorld": "Groq demo público con Llama-3 a >500 tok/s. Cerebras marketea 'fastest inference' para Llama. Perplexity, Poolside y varias voice AI startups usan Groq. Reviews en Artificial Analysis comparan providers.",
+      "tags": ["Groq", "Cerebras", "hardware", "LPU", "throughput"],
+      "tech": ["Groq LPU", "Cerebras WSE-3", "SambaNova", "AWS Inferentia"],
+      "references": [
+        { "title": "Groq — LPU architecture" },
+        { "title": "Artificial Analysis — Provider benchmarks" }
+      ]
+    }
+  ]
+}

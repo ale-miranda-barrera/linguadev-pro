@@ -1,0 +1,420 @@
+{
+  "id": "devops-sim-07-kubernetes-fundamentals",
+  "trackId": "devops",
+  "order": 7,
+  "title": "Simulacro 07 — Kubernetes Fundamentals",
+  "focus": "Qué ES Kubernetes realmente. Arquitectura (control plane vs data plane), objetos core (Pods, Deployments, ReplicaSets), Services (ClusterIP/NodePort/LoadBalancer), Ingress, ConfigMaps, Secrets, Namespaces. kubectl basics. Por qué existe cada pieza y cuándo NO usarla.",
+  "areaCoverage": ["kubernetes"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "kubernetes",
+      "topic": "¿Qué ES Kubernetes?",
+      "difficulty": "junior",
+      "scenario": "Un compañero te dice: 'Kubernetes es como Docker pero más grande'. Otro dice: 'Kubernetes es un cloud provider'. Un tercero: 'K8s solo sirve para microservicios'.",
+      "question": "¿Cuál es la definición correcta de Kubernetes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kubernetes es un ORQUESTADOR de contenedores: un sistema declarativo que gestiona el ciclo de vida (deploy, scale, restart, networking, storage) de contenedores en un cluster de máquinas. Nació en Google (2014) como open-source basado en Borg. Tú declaras el estado deseado (YAML); K8s reconcilia continuamente el estado real al deseado.", "correct": true, "why": "Correcto. La palabra clave es DECLARATIVO + RECONCILIATION LOOP. No le dices a K8s 'arranca este contenedor'; le dices 'quiero 3 réplicas de este contenedor' y él se encarga de mantenerlo así (si uno muere, arranca otro; si un nodo falla, reprograma). Google donó Kubernetes a la CNCF en 2015." },
+        { "letter": "B", "text": "Kubernetes es Docker con más features.", "correct": false, "why": "Confusión típica. Docker es un runtime de contenedores (crea/ejecuta un contenedor). Kubernetes ORQUESTA muchos contenedores en muchas máquinas. K8s desde 1.24 ya ni siquiera usa Docker por default (usa containerd)." },
+        { "letter": "C", "text": "Kubernetes es un cloud provider como AWS.", "correct": false, "why": "K8s es software open-source que corre EN clouds (EKS, GKE, AKS) o on-prem. No es un cloud — es una capa de abstracción sobre infraestructura." },
+        { "letter": "D", "text": "Kubernetes solo funciona con microservicios.", "correct": false, "why": "K8s corre cualquier workload containerizado: monolitos, batch jobs, ML training, bases de datos (con StatefulSets). Microservicios lo popularizaron pero no lo requieren." }
+      ],
+      "explanation": "Kubernetes surge del proyecto Borg de Google (interno desde 2003). Google corría billions of containers a la semana antes de que Docker existiera. En 2014 open-source una versión rediseñada. Los principios: (1) DECLARATIVE — describes el estado deseado en YAML; (2) RECONCILIATION — el control plane compara estado deseado vs real y actúa; (3) PORTABILITY — tu YAML corre en cualquier cluster (EKS, GKE, minikube local); (4) EXTENSIBILITY — CRDs permiten añadir tus propios tipos de objetos. Trade-off: complejidad ENORME. Para apps simples (1 servicio, poco tráfico) Kubernetes es overkill — usa Fly.io, Render, ECS Fargate.",
+      "realWorld": "Google Borg (2003) orquestaba millones de containers antes de Docker. Kubernetes 1.0 (Julio 2015). CNCF fundada 2015 para hospedar K8s. Hoy corre en Airbnb (migró desde bare metal), Spotify (creador de Backstage), Uber (M3 metrics stack), Netflix, Pinterest, TicketMaster.",
+      "tags": ["kubernetes", "definition", "orchestrator", "declarative"],
+      "tech": ["kubernetes", "docker", "containerd"],
+      "references": [{ "title": "kubernetes.io — What is Kubernetes" }, { "title": "Borg, Omega, and Kubernetes — ACM Queue 2016" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "kubernetes",
+      "topic": "Pod — la unidad atómica",
+      "difficulty": "junior",
+      "scenario": "Un compañero te pregunta: '¿por qué K8s no maneja contenedores directamente? ¿Qué es un Pod y cuándo tiene varios contenedores?'",
+      "question": "¿Qué es un Pod y por qué existe esa abstracción?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pod = la unidad de deployment más pequeña en K8s. Contiene UNO o MÁS contenedores que comparten: (1) mismo network namespace (localhost + puertos únicos); (2) mismos volúmenes; (3) mismo lifecycle (arrancan/mueren juntos); (4) siempre se schedulean en el mismo nodo. La mayoría de Pods tienen 1 contenedor; multi-container es para SIDECARS (log shipper, proxy, service mesh como Istio Envoy).", "correct": true, "why": "Correcto. Pod es la abstracción porque hay contenedores que DEBEN correr juntos (main app + su sidecar). Ejemplo clásico: app + Fluentd sidecar que envía sus logs; app + Istio Envoy que hace mTLS. Un Pod es efímero — si muere, no se resucita el mismo; se crea uno NUEVO con otro nombre/IP." },
+        { "letter": "B", "text": "Un Pod es un contenedor con otro nombre.", "correct": false, "why": "Reducción falsa. Un Pod puede tener múltiples contenedores. Es una envoltura con network+storage+lifecycle compartidos." },
+        { "letter": "C", "text": "Un Pod es una máquina virtual dentro del nodo.", "correct": false, "why": "No. El Pod usa Linux namespaces + cgroups (no virtualización). Kata Containers y gVisor añaden aislamiento tipo VM opcionalmente, pero el Pod estándar es containers." },
+        { "letter": "D", "text": "Un Pod es persistente — sobrevive reinicios del nodo.", "correct": false, "why": "Anti-mito común. Los Pods son EFÍMEROS. Si el nodo muere, el Pod muere. Deployments/StatefulSets crean uno NUEVO. Por eso los datos deben vivir en Volumes, no en el Pod." }
+      ],
+      "explanation": "El Pod resuelve un problema práctico: hay procesos que colaboran íntimamente (comparten localhost, comparten filesystem via emptyDir) y necesitan estar co-locados. En vez de forzarlos a ser un solo contenedor gigante (rompiendo el principio 'un proceso por container'), Kubernetes ofrece el Pod. Anti-patrón común: meter app + database en el mismo Pod (mueren juntos, escalan juntos — malo). Sidecar patterns válidos: log forwarder (Fluent Bit), metrics exporter, service mesh proxy (Envoy/Linkerd), auth proxy (OAuth2 proxy), TLS terminator. Si dos containers no necesitan compartir localhost/volumes, probablemente deben ser Pods separados.",
+      "realWorld": "Istio inyecta Envoy sidecar en cada Pod (mTLS + observability). Datadog agent como sidecar en algunos deployments. Airbnb usó pattern sidecar de Envoy antes de adoptar Istio. Google Borg tenía 'alloc' — antecedente conceptual del Pod.",
+      "tags": ["pod", "sidecar", "container", "atomic unit"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Pods" }, { "title": "Google — Design Patterns for Container-based Distributed Systems (Burns/Oppenheimer)" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "kubernetes",
+      "topic": "Control plane vs data plane",
+      "difficulty": "mid",
+      "scenario": "Estás diseñando la arquitectura de tu cluster. Necesitas entender qué componentes viven en el 'control plane' vs 'data plane' (worker nodes) y qué hace cada uno.",
+      "question": "¿Qué componentes forman el CONTROL PLANE de Kubernetes y qué hacen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "kube-apiserver: el frontend REST del cluster. TODO pasa por él (kubectl, controllers, kubelet). Autentica, autoriza, valida, persiste en etcd. Es stateless — se puede escalar horizontalmente detrás de un load balancer.", "correct": true, "why": "Correcto. El API server es el único componente que habla con etcd. Todos los demás componentes son clientes del API server. Sin él, el cluster está 'ciego' (los pods siguen corriendo, pero no puedes cambiar nada)." },
+        { "letter": "B", "text": "etcd: base de datos distribuida clave-valor (Raft consensus). Guarda TODO el estado del cluster (nodes, pods, secrets, configmaps). Es el 'source of truth'. Perder etcd = perder el cluster (backups son OBLIGATORIOS).", "correct": true, "why": "Correcto. etcd es escrita por CoreOS (ahora Red Hat). Usa Raft para replicación. Recomendación: cluster impar (3, 5, 7 miembros) para tolerar fallos. En producción, snapshots regulares + probar restore." },
+        { "letter": "C", "text": "kube-scheduler: decide EN QUÉ NODO correr cada Pod nuevo. Considera: resource requests (CPU/mem), node selectors, taints/tolerations, affinity/anti-affinity, topology spread. Solo asigna Pod → Node; no lo arranca (eso es kubelet).", "correct": true, "why": "Correcto. El scheduler es un algoritmo de filtering + scoring. Filtering: qué nodos SÍ pueden correr el Pod. Scoring: cuál es el MEJOR entre los válidos. Puedes tener múltiples schedulers custom." },
+        { "letter": "D", "text": "kube-controller-manager: corre los controllers (loops de reconciliación). Ejemplos: Deployment controller (mantiene N réplicas), Node controller (detecta nodos muertos), Job controller, endpoints controller. Cada controller es un loop 'observar estado deseado vs real, actuar'.", "correct": true, "why": "Correcto. Los controllers son el corazón del modelo declarativo. Reconciliation loop clásico: watch → diff → act → repeat. K8s tiene decenas de controllers empacados aquí." },
+        { "letter": "E", "text": "kubelet: el agente que corre en el control plane y despliega los pods.", "correct": false, "why": "Incorrecto — kubelet corre en los WORKER nodes (data plane), no en control plane. Es el agente de cada nodo que arranca/monitorea containers vía el CRI (Container Runtime Interface)." }
+      ],
+      "explanation": "Control plane = el 'cerebro' del cluster (API server, etcd, scheduler, controller-manager, cloud-controller-manager). Data plane = los worker nodes que corren tus Pods (kubelet, kube-proxy, container runtime). El control plane típicamente corre en nodos dedicados (managed en EKS/GKE/AKS). Regla operativa: el control plane debe ser altamente disponible (3+ réplicas de API server, etcd cluster impar). Si el control plane se cae, los workloads existentes SIGUEN corriendo (kubelet los mantiene), pero no puedes hacer cambios. Managed K8s (EKS, GKE, AKS) te abstrae esto — solo pagas por workers y a veces por el control plane. Self-managed (kubeadm, kubespray) te obliga a manejarlo tú.",
+      "realWorld": "GKE fue el primer managed K8s (2015). EKS lanzó 2018, AKS 2018. etcd tiene incidentes documentados (Cloudflare 2020: latencia de etcd degradó el cluster). Google Borg tenía arquitectura similar (BorgMaster = API server análogo, Borglet = kubelet análogo).",
+      "tags": ["control plane", "data plane", "api server", "etcd", "scheduler", "architecture"],
+      "tech": ["kubernetes", "etcd"],
+      "references": [{ "title": "kubernetes.io — Kubernetes Components" }, { "title": "etcd.io — etcd" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "kubernetes",
+      "topic": "Deployment vs ReplicaSet vs Pod",
+      "difficulty": "mid",
+      "scenario": "Como junior te enseñaron a crear Pods directamente. Un colega dice: 'nunca crees Pods a mano, usa Deployment'. ¿Qué diferencia hay entre Pod, ReplicaSet y Deployment?",
+      "question": "¿Cómo se relacionan Deployment, ReplicaSet y Pod?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Jerarquía: Deployment → ReplicaSet → Pods. El Deployment declara 'quiero N réplicas de esta imagen'. Crea un ReplicaSet que MANTIENE ese número (si un Pod muere, crea otro). El Deployment añade ROLLING UPDATES y ROLLBACK (crea un ReplicaSet nuevo con la imagen nueva, escala el nuevo mientras drena el viejo). Casi nunca creas ReplicaSets directamente; casi nunca creas Pods 'naked'.", "correct": true, "why": "Correcto. Cada capa añade valor: Pod = unidad de ejecución; ReplicaSet = mantener N réplicas; Deployment = updates declarativos con estrategia (RollingUpdate/Recreate) e historial de revisiones para rollback. Pods 'naked' (sin owner) mueren cuando su nodo muere y NADIE los recrea." },
+        { "letter": "B", "text": "Son sinónimos: los tres son lo mismo con nombre distinto.", "correct": false, "why": "Falso. Cada uno tiene rol específico. El Pod no se auto-recrea; el ReplicaSet sí lo hace; el Deployment maneja updates." },
+        { "letter": "C", "text": "Deployment es solo para servicios web; para batch usas Pods directos.", "correct": false, "why": "Para batch usas Job/CronJob (no Pods sueltos). Deployment sirve para workloads long-running (web, API, workers)." },
+        { "letter": "D", "text": "ReplicaSet es la versión legacy de Deployment.", "correct": false, "why": "El legacy fue 'ReplicationController' (v1 antigua). ReplicaSet es la versión actual que Deployment MANEJA por debajo — ambos coexisten y trabajan juntos." }
+      ],
+      "explanation": "El Deployment implementa rolling updates: cuando cambias la imagen (ej. `kubectl set image`), crea un ReplicaSet NUEVO con la imagen nueva, arranca N pods nuevos progresivamente (maxSurge), termina los viejos gradualmente (maxUnavailable). Si algo falla, `kubectl rollout undo` regresa al ReplicaSet anterior (mantiene N historia, default 10). Estrategias: RollingUpdate (default, zero-downtime), Recreate (mata todos primero, luego arranca — para apps que no toleran versiones concurrentes). Un Pod naked no tiene owner — si muere no se recrea. Único caso legítimo de Pods naked: debugging temporal (`kubectl run --rm -it`) o CI ephemeral. En producción SIEMPRE usa un controller (Deployment, StatefulSet, DaemonSet, Job).",
+      "realWorld": "Netflix, Spotify, Airbnb usan Deployments para servicios stateless. Rolling updates son la práctica estándar. Zero-downtime deploys requieren readiness probes (para que el LB no envíe tráfico a Pods no listos). Un famoso incidente: Reddit 2016 tuvo downtime porque hicieron Recreate en lugar de RollingUpdate por error.",
+      "tags": ["deployment", "replicaset", "pod", "rolling update", "rollback"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Deployments" }, { "title": "kubernetes.io — ReplicaSet" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "kubernetes",
+      "topic": "Services — ClusterIP, NodePort, LoadBalancer",
+      "difficulty": "mid",
+      "scenario": "Tienes un Deployment con 5 Pods. Cada Pod tiene una IP distinta y efímera (cuando reinicia cambia). Necesitas exponerlo (internamente y externamente). ¿Qué tipos de Service usas?",
+      "question": "¿Cuáles son las diferencias entre ClusterIP, NodePort y LoadBalancer?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ClusterIP: IP virtual estable INTERNA al cluster. Solo alcanzable desde dentro del cluster. Default y el más usado. kube-proxy lo implementa (iptables/IPVS). Se resuelve por DNS (my-svc.my-ns.svc.cluster.local).", "correct": true, "why": "Correcto. Es el 'pegamento' entre servicios internos. Los Pods son efímeros; el ClusterIP es el DNS estable. IPVS es más eficiente que iptables para clusters grandes (miles de servicios)." },
+        { "letter": "B", "text": "NodePort: abre el mismo puerto en TODOS los nodos del cluster (rango 30000-32767 por default). Alcanzable desde fuera como <cualquier-nodo-ip>:<nodeport>. Poco elegante — usualmente solo para dev o para poner un LB externo delante.", "correct": true, "why": "Correcto. NodePort tiene problemas: puerto raro, expones cada nodo, no hay LB nativo. Se usa como building block detrás de un cloud LB o como fallback para clusters bare-metal (con MetalLB por ejemplo)." },
+        { "letter": "C", "text": "LoadBalancer: solo funciona en clouds que tienen un integrador (AWS ELB, GCP NLB, Azure LB). K8s pide al cloud provider crear un LB externo que apunta al Service. Cada Service = un LB (caro si tienes muchos servicios).", "correct": true, "why": "Correcto. Por eso Ingress es más común: 1 LB para múltiples servicios. LoadBalancer es apropiado para servicios que necesitan TCP/UDP raw o que necesitan su propio endpoint público (gRPC público, WebSocket con LB específico)." },
+        { "letter": "D", "text": "ExternalName: no crea proxy — solo devuelve un CNAME DNS. Útil para apuntar a servicios EXTERNOS (base de datos gestionada, API SaaS) desde dentro del cluster con un nombre estable.", "correct": true, "why": "Correcto. Ejemplo: quieres que tus Pods hablen con RDS via 'db.mycompany.svc.cluster.local' → creas Service tipo ExternalName que resuelve a rds-instance.abc.us-east-1.rds.amazonaws.com. Migración: cambias el ExternalName sin tocar apps." },
+        { "letter": "E", "text": "Headless Service: hace load balancing más rápido que ClusterIP.", "correct": false, "why": "Incorrecto. Headless Service (clusterIP: None) NO hace load balancing — devuelve DIRECTAMENTE las IPs de los Pods vía DNS. Se usa con StatefulSets (cada Pod tiene identidad) o cuando la app quiere hacer client-side LB." }
+      ],
+      "explanation": "Service es una abstracción crítica: desacopla el CONSUMIDOR (que quiere hablar con 'el servicio backend') del PROVEEDOR (los Pods efímeros con IPs cambiantes). El Service tiene una IP virtual estable y selecciona Pods por labels. kube-proxy en cada nodo instala reglas iptables/IPVS que redireccionan tráfico del Service IP a un Pod backend (round-robin). Regla: ClusterIP para comunicación interna (99% del tráfico); LoadBalancer para exposición pública L4; Ingress para HTTP público con routing por host/path (más eficiente en costo). Headless Service para descubrimiento directo (StatefulSets, Kafka, Cassandra).",
+      "realWorld": "En AWS, cada Service tipo LoadBalancer crea un NLB o Classic ELB (~$16/mes cada uno). Empresas con 100+ microservicios usan Ingress (1 LB para todos) — ahorro grande. Cilium/Calico pueden reemplazar kube-proxy para mejor performance. GKE integra directo con GCLB.",
+      "tags": ["service", "clusterip", "nodeport", "loadbalancer", "networking"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Services" }, { "title": "learnk8s — Kubernetes Services Explained" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "kubernetes",
+      "topic": "Ingress — HTTP routing",
+      "difficulty": "mid",
+      "scenario": "Tienes 20 microservicios que necesitas exponer públicamente. No quieres 20 LoadBalancers ($$$). Quieres routing por hostname (api.foo.com → svc-api) y path (/checkout → svc-checkout, /catalog → svc-catalog).",
+      "question": "¿Qué es un Ingress y cómo funciona con un Ingress Controller?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ingress = objeto DECLARATIVO (YAML) que describe reglas HTTP/HTTPS: 'host X, path Y → Service Z'. Por sí solo NO hace nada — necesitas un Ingress Controller (nginx-ingress, Traefik, HAProxy, AWS ALB Controller, GKE Ingress) que LEE los objetos Ingress y configura un proxy L7 real. El Controller típicamente expone 1 LoadBalancer y detrás enruta por reglas a múltiples Services.", "correct": true, "why": "Correcto. La separación objeto/controller es clave. Tú declaras intent en Ingress; el Controller (que tú instalas) lo implementa. Distintos controllers dan distintas features (nginx: canary/rate limit; ALB: WAF nativo AWS; Traefik: Let's Encrypt automático). K8s no ships con un controller por default." },
+        { "letter": "B", "text": "Ingress es un tipo especial de Service.", "correct": false, "why": "Falso. Ingress es un objeto separado con su propio API. Un Ingress apunta A Services (backend), pero no es un Service." },
+        { "letter": "C", "text": "Ingress corre como sidecar en cada Pod.", "correct": false, "why": "Confusión con service mesh. El Ingress Controller corre como Pods separados (Deployment o DaemonSet), no como sidecar." },
+        { "letter": "D", "text": "Ingress solo maneja tráfico interno del cluster.", "correct": false, "why": "Exactamente al revés: Ingress es el punto de entrada EXTERNO HTTP/HTTPS al cluster. Tráfico interno usa Services (ClusterIP)." }
+      ],
+      "explanation": "Ingress resuelve el problema económico y operacional de exponer muchos servicios HTTP. Sin Ingress: 20 servicios = 20 LoadBalancers = 20 IPs públicas + 20 configuraciones TLS + 20 DNS. Con Ingress: 1 LB → Ingress Controller → routing por host/path a los Services correctos. Beneficios adicionales: TLS termination central (1 lugar para certificates con cert-manager + Let's Encrypt), rate limiting global, WAF, canary deployments, sticky sessions. Nota: Ingress solo maneja HTTP/HTTPS (L7). Para TCP/UDP o gRPC bidireccional usa Service tipo LoadBalancer o Gateway API (el sucesor moderno de Ingress, más expresivo). Gateway API está becoming standard desde 2023.",
+      "realWorld": "nginx-ingress es el más popular (~60% del mercado según CNCF survey 2023). Traefik gana adopción. GKE tiene su GCE Ingress nativo. AWS ALB Controller integra ALB con Ingress. Cloudflare tunneled ingress también existe. El sucesor Gateway API está reemplazando gradualmente Ingress con más features (namespaces cross-references, split traffic).",
+      "tags": ["ingress", "ingress controller", "http routing", "gateway api"],
+      "tech": ["kubernetes", "nginx", "traefik"],
+      "references": [{ "title": "kubernetes.io — Ingress" }, { "title": "gateway-api.sigs.k8s.io — Gateway API" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "kubernetes",
+      "topic": "ConfigMaps vs Secrets",
+      "difficulty": "mid",
+      "scenario": "Tu app necesita: (a) una URL de API externa configurable por environment; (b) el connection string a la base de datos con password; (c) un archivo de configuración JSON de 5KB.",
+      "question": "¿Cómo distribuyes cada uno usando ConfigMaps y Secrets?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ConfigMap para (a) y (c) — datos NO sensibles, plain text. Secret para (b) — datos sensibles. Ambos se pueden consumir en Pods como: (1) variables de entorno; (2) archivos montados como volumen. Diferencia real: Secrets están base64-encoded (NO encriptados por default), tienen encryption-at-rest opcional en etcd, tratamiento especial en RBAC/audit logs, y hay controllers que refresh Secrets (External Secrets Operator).", "correct": true, "why": "Correcto. Punto crítico: 'Secret' es engañoso — sin encryption at rest configurada en etcd, un Secret es igual de accesible que un ConfigMap para quien tenga acceso a etcd. Producción: (1) encryption at rest en etcd; (2) RBAC estricto sobre Secrets; (3) idealmente External Secrets sync desde Vault/AWS Secrets Manager; (4) audit logging." },
+        { "letter": "B", "text": "Usa solo ConfigMaps para todo — Secrets son opcionales.", "correct": false, "why": "Peligro. Passwords en ConfigMap = visibles a quien tenga `get configmaps`. Los Secrets al menos tienen RBAC separado y no aparecen en `kubectl describe` por default." },
+        { "letter": "C", "text": "Secrets están encriptados automáticamente en el disco.", "correct": false, "why": "Mito peligroso. Secrets están BASE64-encoded (trivial de decodificar). Encryption at rest en etcd requiere config explícita (EncryptionConfiguration). Cloud managed K8s a veces lo hace por default (GKE/EKS), otras no." },
+        { "letter": "D", "text": "Los archivos grandes van en Secrets siempre.", "correct": false, "why": "ConfigMap y Secret tienen límite ~1MB (por objeto etcd). Para archivos grandes usa Volumes (PVC) o ConfigMap solo para configs pequeñas. Nada específico a Secret sobre tamaño." }
+      ],
+      "explanation": "ConfigMap y Secret son wrappers alrededor de key-value data. Diferencias reales: (1) intent semántico (Secret significa 'sensible' → RBAC especial, no imprimir en logs); (2) volumen: los Secrets montados como archivos usan tmpfs (RAM), evitan que se escriban al disco del nodo; (3) encryption at rest disponible para Secrets en etcd; (4) External Secrets Operator y Vault CSI driver sincronizan Secrets desde stores externos (Vault, AWS Secrets Manager, Azure Key Vault) — mejor práctica moderna. Anti-patrón: commit Secrets a Git (aún encriptados como SealedSecrets requiere pipeline strict). Mejor: los Secrets viven en Vault/SSM y se sincronizan al cluster como Secrets ephimerals.",
+      "realWorld": "Bitnami SealedSecrets: encripta Secrets para commit a Git. AWS Secrets Manager con External Secrets Operator es common en EKS. Vault Agent Injector inyecta secrets como sidecar. GitLab public incident: leak de un ConfigMap con creds era un ejemplo del anti-patrón. HashiCorp Vault es standard en enterprises.",
+      "tags": ["configmap", "secret", "config", "sensitive data"],
+      "tech": ["kubernetes", "vault", "external-secrets"],
+      "references": [{ "title": "kubernetes.io — ConfigMaps and Secrets" }, { "title": "External Secrets Operator" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "kubernetes",
+      "topic": "Namespaces — separación lógica",
+      "difficulty": "mid",
+      "scenario": "Tu empresa tiene un cluster K8s. Hay 5 equipos con múltiples apps cada uno. Quieres aislar recursos por equipo y por environment (dev/staging).",
+      "question": "¿Para qué sirven los Namespaces y qué NO hacen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SÍ: separación lógica de recursos (dos equipos pueden tener un Service 'api' sin colisionar si están en namespaces distintos). Scope para RBAC (permisos por namespace). Scope para ResourceQuota (límite de CPU/mem por namespace). Scope para NetworkPolicy (aunque las policies pueden cross-namespace). Scope para DNS (api.team-a.svc.cluster.local).", "correct": true, "why": "Correcto. Namespaces son la unidad de agrupación multi-tenant SOFT. Permiten organizar y limitar sin ser aislamiento estricto." },
+        { "letter": "B", "text": "SÍ: separar dev/staging/prod usualmente. Pattern: 1 cluster con namespaces 'dev', 'staging', 'prod' con RBAC estricto. Alternativa: clusters separados por environment (más seguro pero más caro). Producción crítica suele estar en cluster separado.", "correct": true, "why": "Correcto. Trade-off costo vs isolation. Namespaces son cheap; clusters separados son isolation real. Muchas empresas usan namespaces para dev/staging y cluster separado para prod." },
+        { "letter": "C", "text": "NO: no proveen aislamiento de red por default — un Pod en namespace A puede hablar con Pod en namespace B a menos que apliques NetworkPolicies.", "correct": true, "why": "Correcto. Malentendido común: 'namespaces me aíslan' — falso. Por default, TODO el tráfico intra-cluster está permitido. Necesitas CNI que soporte NetworkPolicy (Calico, Cilium) y aplicar policies deny-by-default." },
+        { "letter": "D", "text": "NO: no son isolation de kernel — un Pod escapado sigue viendo todo el nodo (namespaces K8s ≠ Linux namespaces del container). Multi-tenant duro requiere clusters separados o sandboxing (gVisor, Kata Containers).", "correct": true, "why": "Correcto. Los namespaces K8s son metadata. Si un Pod malicioso escapa el container (CVE de runtime), ve todo el nodo — otros Pods, otros namespaces. Para multi-tenant hostil (compartir cluster con desconocidos) usa clusters separados o virtualización." },
+        { "letter": "E", "text": "SÍ: los Namespaces cifran el tráfico automáticamente entre Pods.", "correct": false, "why": "Falso. Namespaces no cifran nada. mTLS entre Pods requiere service mesh (Istio, Linkerd) o SPIFFE/SPIRE + apps que lo implementen." }
+      ],
+      "explanation": "Namespaces son la unidad organizacional de K8s. Usos típicos: por equipo (team-payments, team-search), por environment (dev, staging, prod), por app (app-checkout, app-catalog). Buenas prácticas: default namespace nunca en producción; kube-system reservado (no meter apps ahí); usar labels además de namespaces (namespace es hierarchy física, labels son múltiples dimensiones). ResourceQuota + LimitRange por namespace evita que un equipo consuma todo el cluster. Multi-tenant serio: (1) namespaces + RBAC + NetworkPolicy + ResourceQuota + PodSecurityStandards; (2) vClusters (virtual clusters); (3) clusters físicos separados (más caro, más seguro).",
+      "realWorld": "Airbnb organiza namespaces por servicio. Google GKE Autopilot enforces best practices por namespace. Kubevirt/vCluster ofrecen 'virtual clusters' (namespace que se comporta como cluster completo). Un incidente típico: equipo A hace `kubectl delete all --all` en namespace equivocado y borra prod (razón para RBAC estricto).",
+      "tags": ["namespace", "multi-tenancy", "isolation", "rbac"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Namespaces" }, { "title": "Multi-tenancy in Kubernetes — CNCF whitepaper" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "kubernetes",
+      "topic": "kubectl — anatomía y comandos esenciales",
+      "difficulty": "junior",
+      "scenario": "Eres nuevo en K8s. Necesitas aprender kubectl para operar clusters con confianza.",
+      "question": "¿Qué hacen estos comandos kubectl fundamentales?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "kubectl get / describe / logs / exec: verbos de INSPECCIÓN. 'get' lista recursos (get pods, get svc); 'describe' muestra detalle + events; 'logs' saca stdout/stderr del container; 'exec -it -- sh' abre shell dentro del Pod.", "correct": true, "why": "Correcto. Son el 90% del trabajo diario. `describe` es especialmente útil para debugging (muestra events que dicen POR QUÉ el Pod está pending/crashing)." },
+        { "letter": "B", "text": "kubectl apply -f: aplica un manifest YAML de forma declarativa. Idempotente (aplicar 10 veces = aplicar 1 vez). Es la forma correcta en producción (GitOps). 'create' es imperativo y falla si ya existe.", "correct": true, "why": "Correcto. apply implementa el modelo declarativo real: 'quiero este estado'. Tres-way merge (last-applied, live, wanted) permite convivir con otros controllers. Alternativa moderna: 'kubectl apply --server-side' con field ownership." },
+        { "letter": "C", "text": "kubectl config: gestiona kubeconfig (~/.kube/config). 'get-contexts' lista clusters/namespaces disponibles; 'use-context X' cambia. Esencial cuando tienes múltiples clusters (dev/prod). Anti-patrón: apuntar accidentalmente a prod y hacer delete.", "correct": true, "why": "Correcto. Herramientas como kubectx/kubens facilitan cambio rápido. Un pattern seguro: alias en shell que muestre siempre el contexto activo (kube-ps1). Los incidentes de 'creía que estaba en dev' son frecuentes." },
+        { "letter": "D", "text": "kubectl port-forward: túnel local → Pod para debugging (localhost:8080 → svc:80). Útil para testear sin exponer el Service. NO usar para prod (single-user, no HA).", "correct": true, "why": "Correcto. port-forward es solo para dev/debug. Si intentas exponer un servicio con port-forward permanente, tienes un problema arquitectural." },
+        { "letter": "E", "text": "kubectl delete all --all: comando seguro que solo borra Pods.", "correct": false, "why": "Extremadamente peligroso y engañoso. Borra TODOS los recursos comunes (Deployments, Services, Pods, ReplicaSets) en el namespace actual. Un typo en el contexto = pérdida de un servicio entero. Usa RBAC restrictivo para prevenirlo." }
+      ],
+      "explanation": "kubectl es la interfaz principal (cliente REST del API server). Estructura: `kubectl <verb> <resource> <name> [flags]`. Verbos: get, describe, apply, delete, edit, logs, exec, port-forward, rollout, scale, top. Recursos: pod (po), service (svc), deployment (deploy), configmap (cm), secret, ingress (ing), node (no), namespace (ns). Tips producción: (1) usa kubectx/kubens para cambiar contexto; (2) alias como 'k' para kubectl; (3) kube-ps1 en shell muestra contexto activo; (4) '--dry-run=server -o yaml' para preview; (5) RBAC estricto sobre el user de kubectl. Peligro real: contextos mezclados = deletes en prod. Un pattern: colorear el prompt según cluster (rojo = prod, verde = dev).",
+      "realWorld": "Story clásica: developer hace `kubectl delete ns` pensando estar en dev, estaba en prod, downtime largo. Muchas empresas usan Teleport / Boundary para audit trail. GitOps (ArgoCD/Flux) elimina la mayoría de kubectl apply manual — el cluster se reconcilia desde Git.",
+      "tags": ["kubectl", "cli", "operations", "debugging"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubectl Cheat Sheet — kubernetes.io" }, { "title": "kubectx/kubens" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "kubernetes",
+      "topic": "Kubelet — el agente del nodo",
+      "difficulty": "senior",
+      "scenario": "Un nodo del cluster deja de reportar estado. Los pods siguen corriendo pero el API server los muestra 'NotReady'. Investigas el kubelet.",
+      "question": "¿Qué hace el kubelet y cómo interactúa con el resto del sistema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kubelet es el agente que corre en cada WORKER node. Responsabilidades: (1) recibe PodSpecs del API server (a través de watch); (2) arranca/monitorea containers vía CRI (Container Runtime Interface — containerd, CRI-O); (3) reporta status del nodo (heartbeat cada 10s) y de los Pods; (4) ejecuta liveness/readiness/startup probes; (5) gestiona mounted volumes vía CSI (Container Storage Interface); (6) reporta métricas vía metrics endpoint.", "correct": true, "why": "Correcto. Si kubelet muere en un nodo, los Pods siguen corriendo (containerd los mantiene) PERO no hay quien reporte status → el API server marca el nodo NotReady después del grace period → el node controller marca los Pods como 'Terminating' y los reprograma en otro nodo (si hay Deployment/DS/SS). Los containers viejos siguen 'huérfanos' hasta que kubelet vuelva y los limpie." },
+        { "letter": "B", "text": "Kubelet corre en el control plane y controla todos los nodos.", "correct": false, "why": "Confusión. El controller-manager reside en control plane. Kubelet corre en CADA nodo worker localmente." },
+        { "letter": "C", "text": "Kubelet ejecuta directamente los containers sin ningún runtime.", "correct": false, "why": "No. Kubelet delega al Container Runtime vía CRI (Container Runtime Interface): containerd, CRI-O, o históricamente Docker (dockershim, deprecado desde 1.24)." },
+        { "letter": "D", "text": "Kubelet no ejecuta probes — eso lo hace el API server.", "correct": false, "why": "Falso. Las probes (HTTP GET, TCP socket, exec) las ejecuta el kubelet localmente en cada nodo. Es eficiente (no atraviesa red del control plane)." }
+      ],
+      "explanation": "Kubelet es el 'brazo local' del cluster. Watches del API server los Pods asignados a su nodo (kube-scheduler pone spec.nodeName). Reconcilia estado deseado (spec) con estado real (containers corriendo). Si un Pod desaparece del API server, kubelet lo mata. Si aparece uno nuevo, lo arranca. Interactúa: CRI (runtime), CSI (storage), CNI (networking — indirectamente vía runtime). Diagnóstico: `journalctl -u kubelet` o `crictl ps` (en el nodo) muestran qué containers reales están corriendo. Static Pods: un Pod definido en /etc/kubernetes/manifests/ del nodo — kubelet los arranca independientemente del API server (usado para bootstrap del control plane self-hosted).",
+      "realWorld": "Etcd, kube-apiserver, kube-scheduler, kube-controller-manager corren como static pods en clusters kubeadm — kubelet los arranca al bootear. Bugs kubelet documentados: memory leaks, CPU throttling issues, CRI socket incompatibilities. GKE/EKS gestionan kubelet auto-actualizado (node auto-upgrade).",
+      "tags": ["kubelet", "cri", "node", "runtime"],
+      "tech": ["kubernetes", "containerd", "cri-o"],
+      "references": [{ "title": "kubernetes.io — kubelet" }, { "title": "Container Runtime Interface (CRI)" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "kubernetes",
+      "topic": "Reconciliation loop — el patrón central",
+      "difficulty": "senior",
+      "scenario": "Escribes un Deployment con 3 réplicas. Un attacker mata manualmente un Pod (kill -9). ¿Qué pasa? Otro escenario: cambias replicas: 3 a replicas: 5. ¿Cómo K8s lo aplica?",
+      "question": "¿Cómo funciona el patrón de reconciliation en Kubernetes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cada controller (Deployment, ReplicaSet, Job, custom) corre un LOOP: (1) WATCH el estado deseado (spec en etcd vía API server); (2) OBSERVE el estado real (Pods running); (3) DIFF (cuántos faltan/sobran); (4) ACT (crear/matar Pods vía API server); (5) repeat. Es LEVEL-triggered, no edge-triggered: si el controller pierde un evento, la próxima iteración lo detecta igualmente. Este patrón es lo que hace K8s tolerante a fallos y consistente.", "correct": true, "why": "Correcto. Level-triggered es la razón por la que K8s es robusto: no importa si el controller se reinicia, pierde eventos, o llega tarde — siempre reconcilia hacia el estado deseado. Contra edge-triggered (procesar cada evento único), K8s es idempotente y self-healing. Escenario 1: Pod muere → ReplicaSet observa 2 en vez de 3 → crea uno. Escenario 2: cambio a 5 → ReplicaSet observa 3 → crea 2." },
+        { "letter": "B", "text": "K8s usa un cron interno que revisa cada 5 minutos.", "correct": false, "why": "No. Los controllers usan WATCH (long-polling HTTP con streams) del API server — reciben eventos en tiempo casi real. Además re-syncan periódicamente (resync period) para self-healing." },
+        { "letter": "C", "text": "El scheduler es el único que reconcilia.", "correct": false, "why": "El scheduler solo asigna Pods sin nodo. Los controllers de workload (Deployment, StatefulSet, DaemonSet) reconcilian el número/estado deseado." },
+        { "letter": "D", "text": "El API server ejecuta los loops de reconciliación.", "correct": false, "why": "No. El API server es stateless (solo API + persist a etcd). Los controllers son procesos separados (controller-manager) que ejecutan los loops." }
+      ],
+      "explanation": "El reconciliation loop es el patrón arquitectural central de K8s (y del cloud-native). Beneficios: (1) Self-healing — cualquier drift se corrige; (2) Declarativo — describes intent, no procedimiento; (3) Extensible — CRDs + custom controllers permiten a cualquiera añadir tipos de objetos con la misma semántica (Prometheus Operator, cert-manager, ArgoCD). Contra: (1) latencia (no todo es instantáneo); (2) complejidad para entender (spec vs status, cascading updates); (3) debugging requiere entender qué controller es dueño de qué. La CRDs + Operators son una extensión natural: escribes tu propio 'controller' que reconcilia CustomResources.",
+      "realWorld": "kubebuilder / Operator SDK dominan la creación de operators. Prometheus Operator reconcilia ServiceMonitors → Prometheus scrape configs. cert-manager reconcilia Certificate → orders TLS con Let's Encrypt. Istio, Linkerd, ArgoCD todos usan este patrón. Google Borg lo inspiró.",
+      "tags": ["reconciliation", "controller", "operator", "declarative", "level-triggered"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubebuilder book" }, { "title": "Kubernetes Controllers — kubernetes.io" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "kubernetes",
+      "topic": "Liveness, Readiness, Startup probes",
+      "difficulty": "senior",
+      "scenario": "Deployeas una app que tarda 90s en warm-up (carga cache). Al arrancar los Pods, kubelet los mata a los 60s. En prod, tu app se cuelga a veces pero recibe tráfico igual. Configuras probes.",
+      "question": "¿Qué diferencia hay entre liveness, readiness y startup probes?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Liveness probe: '¿está el proceso VIVO?'. Si falla, kubelet MATA el container y lo reinicia. Uso: detectar deadlocks, procesos colgados. Peligro: mal configurada puede reiniciar app healthy en loop (probe demasiado agresiva, endpoint pesado).", "correct": true, "why": "Correcto. Es la más peligrosa de las tres — reinicia containers. Si tu endpoint /health hace query a la DB, y la DB está lenta, tu app healthy se reinicia en loop → cascada. Best practice: liveness endpoint muy simple ('200 OK' si el proceso corre)." },
+        { "letter": "B", "text": "Readiness probe: '¿está listo para recibir TRÁFICO?'. Si falla, el Service DEJA de enviar tráfico al Pod (lo saca del endpoint), pero NO lo mata. Uso: warm-up, dependency down (DB unreachable), maintenance mode.", "correct": true, "why": "Correcto. Distinta responsabilidad. Un Pod puede estar vivo pero no listo (cargando cache, dependency down). Readiness protege downstream: tráfico no llega a Pods que no pueden servirlo. Vital para zero-downtime deploys." },
+        { "letter": "C", "text": "Startup probe: 'espera a que la app arranque, THEN empieza liveness/readiness'. Uso: apps con warm-up largo. Sin startup probe, ajustas initialDelaySeconds de liveness (peor: no puedes tener liveness rápida después del startup).", "correct": true, "why": "Correcto. Startup probe (K8s 1.16+) resuelve el trade-off: startup lento + liveness/readiness agresivos post-startup. Se ejecuta primero; una vez pasa, cambia a liveness+readiness normales." },
+        { "letter": "D", "text": "Todas las probes son opcionales — sin ellas K8s funciona igual.", "correct": false, "why": "Peligroso. Sin readiness probe, un Pod recibe tráfico inmediatamente al arrancar (aunque no esté listo) → primeros users tienen errores. Sin liveness, un Pod colgado sigue 'vivo' para siempre." },
+        { "letter": "E", "text": "Todas las probes hacen exactamente lo mismo con distinto nombre.", "correct": false, "why": "No. Liveness reinicia; readiness saca del LB; startup pospone las otras. Roles distintos." }
+      ],
+      "explanation": "Probes son el mecanismo por el que K8s verifica salud. Tipos de check: httpGet, tcpSocket, exec (correr comando), grpc (K8s 1.24+). Parámetros clave: initialDelaySeconds (esperar antes de primer check), periodSeconds (cada cuánto), timeoutSeconds, failureThreshold. Anti-patrones: (1) liveness que testea dependencies (DB down → toda tu app se reinicia); (2) readiness que hace check pesado (metric overhead); (3) sin readiness (primeros requests fallan). Best practice: liveness = simple '200 si el proceso responde'; readiness = 'listo para servir tráfico (incluyendo dependency checks razonables)'; startup para apps con warm-up largo (10-90s).",
+      "realWorld": "Incidents documentados: SREs cascade por liveness probe demasiado sensible reiniciando pods healthy. Netflix, Uber usan startup probes desde 1.16+. Spring Boot apps con warm-up de JVM son caso típico. Circuito breaker pattern (Hystrix) complementa readiness a nivel de dependency.",
+      "tags": ["probes", "liveness", "readiness", "startup", "health check"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Configure Liveness, Readiness and Startup Probes" }, { "title": "Google SRE Book — Handling Overload" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "kubernetes",
+      "topic": "Resource requests vs limits",
+      "difficulty": "senior",
+      "scenario": "Tu Pod tiene: requests {cpu: 100m, memory: 128Mi} y limits {cpu: 500m, memory: 512Mi}. En prod ves throttling de CPU y OOMKills ocasionales. Un colega dice: 'quítale los limits'.",
+      "question": "¿Qué diferencia hay entre requests y limits, y qué pasa cuando se exceden?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Requests = MÍNIMO garantizado que el scheduler reserva en el nodo (usado para bin-packing). Limits = MÁXIMO que el container puede usar. CPU sobre limit → THROTTLING (no muerte, solo pausa). Memoria sobre limit → OOMKill (Linux OOM Killer mata el proceso, K8s lo reinicia). Sin limits, el container puede consumir todo el nodo (noisy neighbor). Sin requests, el scheduler puede poner Pods en nodo que ya está saturado.", "correct": true, "why": "Correcto. Distinción crítica: request es política de scheduling; limit es política de enforcement en runtime (cgroups). CPU compressible (throttling ok), memoria incompressible (kill obligatorio). Los limits son debate: algunos dicen 'no memory limits para evitar OOMKill sorpresivos'; los CPU limits también polémicos (throttling puede matar latency)." },
+        { "letter": "B", "text": "Requests y limits son sinónimos.", "correct": false, "why": "Falso. Semántica completamente diferente. Requests para scheduling; limits para runtime enforcement." },
+        { "letter": "C", "text": "Superar el CPU limit mata el Pod inmediatamente.", "correct": false, "why": "Confusión con memoria. CPU es compressible → throttling (proceso pausado brevemente, no muerto). Memoria excedida → OOMKill (muerte)." },
+        { "letter": "D", "text": "Sin requests, K8s automáticamente asigna infinito.", "correct": false, "why": "Sin requests, el scheduler cree que el Pod necesita 0 recursos → puede colocarlo en nodo sobrecomprometido → noisy neighbor issues. Best practice: siempre requests explícitos." }
+      ],
+      "explanation": "Requests vs limits es el tema más debate en producción K8s. Debate CPU limits: throttling puede matar latency de p99 (Kubelet CFS quota). Algunos (Zalando, Grafana) recomiendan NO CPU limits (solo requests). Otros (regulados, multi-tenant) los requieren. Memoria: sin limits, un Pod runaway consume el nodo y mata a los vecinos vía OOM. Con limits, mueren SÓLO ese Pod. QoS classes derivan de esto: Guaranteed (requests==limits en todos los containers) — última prioridad para eviction; Burstable (algún request<limit); BestEffort (sin requests ni limits) — primera víctima de eviction. VPA (Vertical Pod Autoscaler) automatiza el tuning de requests basado en histórico.",
+      "realWorld": "Zalando (Henning Jacobs) publicó 'The Kubernetes Resource Model — Beyond the Basics' argumentando contra CPU limits. Grafana Labs OOM incident. Netflix ajusta requests basado en histórico. Google Borg tenía sistema similar (mem quota strictly enforced, CPU compressible).",
+      "tags": ["resources", "requests", "limits", "qos", "throttling", "oom"],
+      "tech": ["kubernetes", "linux cgroups"],
+      "references": [{ "title": "kubernetes.io — Resource Management for Pods and Containers" }, { "title": "Zalando — For the Love of God, Stop Using CPU Limits" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "kubernetes",
+      "topic": "Labels vs Annotations vs Selectors",
+      "difficulty": "senior",
+      "scenario": "Estás organizando 200 Pods de 20 microservicios en 3 environments. Necesitas: (a) que Services encuentren sus Pods; (b) etiquetar con metadata (version, environment); (c) guardar metadata larga (last-applied-config, checksum, git-sha).",
+      "question": "¿Cuál es la diferencia y uso correcto de labels vs annotations?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Labels: key=value CORTOS, indexados en etcd, USADOS PARA SELECCIÓN (Services, ReplicaSets, NetworkPolicies seleccionan Pods por labels). Ejemplos: app=payments, env=prod, tier=backend. Annotations: key=value LARGOS (multi-línea posible), NO indexados, para metadata que herramientas leen (checksum, last-applied-config, prometheus.io/scrape, ingress annotations). El selector NUNCA usa annotations.", "correct": true, "why": "Correcto. Regla mnemónica: 'labels para filtrar, annotations para info'. Un ejemplo canónico: nginx-ingress.kubernetes.io/rewrite-target es una annotation (config del controller); mientras app=nginx es un label (para Service selector). Confundirlos rompe tus queries." },
+        { "letter": "B", "text": "Labels y annotations son intercambiables.", "correct": false, "why": "Semántica y capacidad distintas. Solo labels son usados en selectors. Sólo annotations pueden guardar valores largos (JSON, YAML, checksums)." },
+        { "letter": "C", "text": "Annotations son para el usuario, labels para K8s.", "correct": false, "why": "Ambos son metadata del usuario. La diferencia es funcional (selection vs info), no owner." },
+        { "letter": "D", "text": "Solo puedes tener 1 label por objeto.", "correct": false, "why": "Falso. Múltiples labels; se combinan en selectors (env=prod,tier=backend requiere ambos)." }
+      ],
+      "explanation": "Labels son el mecanismo de SELECCIÓN DECLARATIVA en K8s. Un Service dice 'quiero enviar tráfico a Pods con label app=api'; automáticamente incluye Pods nuevos que aparezcan con ese label. Naming convention recomendado (Recommended Labels): app.kubernetes.io/name, app.kubernetes.io/instance, app.kubernetes.io/version, app.kubernetes.io/component, app.kubernetes.io/part-of, app.kubernetes.io/managed-by. Selectors: equality-based (app=nginx), set-based (env in (prod,staging)). Anti-patterns: valores con espacios/caracteres raros, labels que cambian frecuentemente (pierdes selección estable), guardar config real en labels (usa ConfigMap). Annotations típicos: kubectl.kubernetes.io/last-applied-configuration, deployment.kubernetes.io/revision, prometheus.io/scrape.",
+      "realWorld": "Prometheus usa annotations (prometheus.io/scrape=true) para descubrir targets. cert-manager usa annotations en Ingress para pedir certs. ArgoCD lee annotations app.kubernetes.io/managed-by. Standard 'Recommended Labels' de K8s facilita interop entre herramientas.",
+      "tags": ["labels", "annotations", "selectors", "metadata"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Labels and Selectors" }, { "title": "kubernetes.io — Recommended Labels" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "kubernetes",
+      "topic": "kube-proxy — cómo funcionan los Services",
+      "difficulty": "senior",
+      "scenario": "Un colega pregunta: 'cuando un Pod hace request a un Service (ClusterIP), ¿qué pasa a nivel de red? ¿Cómo va el paquete al Pod correcto?'",
+      "question": "¿Cómo implementa kube-proxy los Services?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "kube-proxy corre en cada nodo (DaemonSet). Watch el API server para Services y Endpoints. Instala reglas de NETFILTER (iptables o IPVS) que hacen DNAT del ClusterIP al IP+puerto de un Pod backend (round-robin o hash). El Service IP NO existe en ninguna interfaz — es una IP 'virtual' que solo las reglas iptables/IPVS reconocen. Modos: iptables (default, O(n) lookup, ok hasta ~1000 servicios), IPVS (O(1), mejor para clusters grandes con miles de servicios), userspace (legacy).", "correct": true, "why": "Correcto. Es contraintuitivo: no hay 'servidor' escuchando en el ClusterIP. El paquete sale del Pod source, iptables lo intercepta en el nodo local (PREROUTING), reescribe el destino a un Pod real elegido pseudo-randomly, forwarde. eBPF/Cilium reemplaza kube-proxy con lookups más eficientes. Los new nodes que se unen instalan reglas automáticamente." },
+        { "letter": "B", "text": "kube-proxy es un servidor HTTP que hace L7 proxying de todo.", "correct": false, "why": "Falso. kube-proxy trabaja a nivel L3/L4 (iptables/IPVS). L7 sería un Ingress Controller o service mesh (Istio Envoy)." },
+        { "letter": "C", "text": "Los paquetes van al API server que los redirige a los Pods.", "correct": false, "why": "Sería un bottleneck brutal. El data path NUNCA pasa por el API server (que solo maneja control plane). Los paquetes van directo nodo-a-nodo vía CNI + iptables/IPVS." },
+        { "letter": "D", "text": "kube-proxy corre solo en el control plane.", "correct": false, "why": "Al revés: kube-proxy corre en CADA WORKER como DaemonSet. Cada nodo necesita instalar las reglas locales para resolver Service IPs." }
+      ],
+      "explanation": "La 'magia' de los Services es kube-proxy + iptables/IPVS. Ejemplo request: Pod A (10.0.1.5) hace `curl http://my-svc:80`. DNS (CoreDNS) resuelve my-svc a ClusterIP 10.96.0.100. Pod A envía SYN a 10.96.0.100:80. En su nodo, iptables intercepta: 'match dest 10.96.0.100:80 → DNAT a 10.0.2.7:8080' (un Pod backend elegido). El paquete sale del nodo con dest 10.0.2.7:8080 (Pod backend). En el nodo de destino, kubelet+CNI lo entregan al Pod backend. Beneficios: sin single point of failure (cada nodo tiene reglas); low latency (kernel netfilter). Alternativas modernas: Cilium usa eBPF (más eficiente y observable); Calico eBPF también. Kube-proxyless mode (cilium) elimina kube-proxy entirely.",
+      "realWorld": "Cilium adopción creciente (Google GKE Dataplane V2, Datadog). eBPF revoluciona el data plane. IPVS para clusters muy grandes (Alibaba, Tencent con 10k+ nodos). Un famoso incident: Booking.com iptables performance degradation con muchos Services → migraron a IPVS.",
+      "tags": ["kube-proxy", "iptables", "ipvs", "service", "networking", "ebpf"],
+      "tech": ["kubernetes", "cilium", "iptables"],
+      "references": [{ "title": "kubernetes.io — Virtual IPs and Service Proxies" }, { "title": "Cilium — Kubernetes without kube-proxy" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "kubernetes",
+      "topic": "etcd — el corazón del estado",
+      "difficulty": "senior",
+      "scenario": "Tu cluster K8s se está portando raro: kubectl a veces tarda 30s, otras responde instantáneo. Investigas etcd y ves latencias altas.",
+      "question": "¿Qué es etcd, cómo funciona y qué prácticas operacionales son críticas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "etcd es una key-value store DISTRIBUIDA con consenso Raft. Guarda TODO el estado del cluster K8s (nodes, pods, secrets, RBAC, CRDs). Requiere latencia baja de disco (fsync frecuente — SSDs OBLIGATORIOS, NVMe idealmente). Necesita latencia baja de red entre miembros (<10ms recomendado).", "correct": true, "why": "Correcto. etcd es el bottleneck más común de clusters grandes. Un disco lento (HDD, SSD saturado) degrada TODO. Raft requiere que la mayoría de miembros confirme cada write → si la network entre miembros es lenta, throughput cae." },
+        { "letter": "B", "text": "Cluster impar (3, 5, 7 miembros) para tolerar (n-1)/2 fallos. Cluster de 3 tolera 1 fallo; de 5 tolera 2. Nunca uses pares (2, 4) — no dan más tolerancia y sí más overhead.", "correct": true, "why": "Correcto. Raft requiere quorum (mayoría). Con 2 nodos, si uno cae no hay quorum → cluster read-only. Con 3, tolera 1 y sigue funcionando. Con 4, aún tolera solo 1 (mayoría es 3) → mismo poder que 3 con más costo." },
+        { "letter": "C", "text": "Backup regulares (snapshots) + probar restore. Sin backup, un etcd perdido = cluster perdido (todos los objetos, secrets, configuration). Restore es rebuild parcial del cluster.", "correct": true, "why": "Correcto. etcd snapshots (etcdctl snapshot save) son cheap. La lección aprendida: probar el restore antes de necesitarlo. Muchos clusters tienen backups que nunca funcionaron cuando se necesitaron. Cadence típica: cada 30min con retention 7 días." },
+        { "letter": "D", "text": "Encryption at rest para Secrets: por default los Secrets están BASE64 en etcd (trivialmente decodificables). Configurar EncryptionConfiguration con AES-CBC o kms provider (AWS KMS, GCP KMS, Vault) → los Secrets se encriptan antes de escribir a etcd.", "correct": true, "why": "Correcto. Un dump de etcd sin encryption = todos los secrets legibles. Managed K8s (GKE, EKS) a veces lo habilita por default, pero no siempre. Verificar es responsabilidad tuya." },
+        { "letter": "E", "text": "etcd escala horizontalmente añadiendo más miembros.", "correct": false, "why": "Falso. Más miembros = más overhead de Raft (todos deben confirmar cada write) = MÁS lento, no más rápido. etcd escala vertical (mejor disco, más RAM) y con límite práctico de ~10 miembros." }
+      ],
+      "explanation": "etcd es lo más crítico del cluster. Sizing típico: 2-4 CPU, 8-16GB RAM, disco NVMe con IOPS altos. Métricas a monitorear: wal_fsync_duration_seconds (<10ms p99), backend_commit_duration_seconds, disk usage (<80%), leader elections (deben ser raras). Compaction: etcd guarda revision history — sin compaction periódico crece indefinidamente. Defrag necesario después de compaction para recuperar espacio. Producción managed K8s: EKS/GKE/AKS gestionan etcd por ti (auto backup, HA, upgrade). Self-managed: kubeadm setup con --etcd-servers, backups programados via etcdctl, monitoreo con Prometheus.",
+      "realWorld": "Cloudflare 2020 incident: etcd degradation causó API server timeouts. GitHub 2018 incident partially involved etcd. GKE Autopilot lo gestiona completamente. CoreOS (creator) fue adquirido por Red Hat 2018. Kubernetes 1.32+ soporta etcd v3.5.x con notable performance improvements.",
+      "tags": ["etcd", "raft", "consensus", "backup", "encryption"],
+      "tech": ["etcd", "kubernetes"],
+      "references": [{ "title": "etcd.io — etcd operations guide" }, { "title": "kubernetes.io — Encrypting Secret Data at Rest" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "kubernetes",
+      "topic": "Rolling update strategy — RollingUpdate vs Recreate",
+      "difficulty": "senior",
+      "scenario": "Deployas nueva versión de una app. Tienes 10 réplicas. Un cambio de esquema requiere que TODAS las versiones viejas mueran antes de arrancar las nuevas (incompatibilidad concurrente). Otra app quiere zero-downtime.",
+      "question": "¿Cuándo usar RollingUpdate vs Recreate strategy en un Deployment?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RollingUpdate (default): update INCREMENTAL. Parámetros: maxSurge (cuántos Pods extra permitidos durante update, default 25%) y maxUnavailable (cuántos pueden estar down, default 25%). Zero-downtime IF: readiness probes correctas + gracefully drain + versiones compatibles concurrentemente (v1 y v2 pueden coexistir). Recreate: mata TODOS los pods viejos primero, luego crea los nuevos. Downtime obligatorio. Usar cuando: incompatibilidad concurrente (esquema DB no compatible), migraciones que requieren cutover atómico, apps stateful sin support de rolling.", "correct": true, "why": "Correcto. La elección depende del contrato de compatibilidad. RollingUpdate es default por buena razón (zero-downtime) pero requiere que las versiones coexistan. Recreate para migraciones o apps que no permiten dos versiones en paralelo." },
+        { "letter": "B", "text": "Siempre usar Recreate — es más seguro.", "correct": false, "why": "Peor UX (downtime). Recreate solo si tu app realmente no puede tener dos versiones concurrentes." },
+        { "letter": "C", "text": "RollingUpdate produce downtime siempre.", "correct": false, "why": "Con readiness probes bien configuradas + maxUnavailable=0, hay cero downtime. El Service solo envía tráfico a Pods 'Ready'." },
+        { "letter": "D", "text": "Recreate es equivalente a Blue/Green.", "correct": false, "why": "Blue/Green mantiene ambas versiones en paralelo con Service switch (zero downtime + rollback rápido). Recreate es 'kill first, then create' (downtime + no rollback rápido)." }
+      ],
+      "explanation": "Estrategias de deploy avanzadas requieren más que Deployment: (1) Blue/Green con Service switching (Argo Rollouts, Flagger); (2) Canary (envia %  tráfico a nueva versión gradualmente); (3) A/B testing (routing por header/user). Argo Rollouts implementa esto vía CRD replacing Deployment. Feature flags (LaunchDarkly, Unleash) desacoplan deploy de release: deployeas código con la feature OFF, la enciendes cuando quieras — te da rollback instantáneo sin redeploy. RollingUpdate + readiness probe + gracefully shutdown (SIGTERM + drain + timeout) = zero-downtime bien hecho. Anti-patrón: RollingUpdate sin readiness probe = downtime durante update (Service envía a Pods no listos).",
+      "realWorld": "Argo Rollouts y Flagger dominan canary automation. Netflix pioneered canary con Kayenta (automated canary analysis). Facebook: 2x/day deploy con canary + gradual rollout. AWS Ecosystem: AppMesh + ECS también. Gradual rollout con feature flags: LinkedIn, Uber.",
+      "tags": ["rollout", "deployment strategy", "zero downtime", "canary", "blue-green"],
+      "tech": ["kubernetes", "argo-rollouts"],
+      "references": [{ "title": "kubernetes.io — Deployments strategies" }, { "title": "Argo Rollouts" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "kubernetes",
+      "topic": "Debugging Pods pending y crashloop",
+      "difficulty": "staff",
+      "scenario": "Tu Deployment nuevo tiene 5 Pods en estado 'Pending'. Otros dos en 'CrashLoopBackOff'. Uno en 'ImagePullBackOff'. Tu manager pide diagnóstico en 15 minutos.",
+      "question": "¿Cuál es la metodología correcta para debug de estos estados?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PENDING: `kubectl describe pod` — mira Events al final. Causas típicas: (1) no hay nodos con recursos suficientes (requests > available); (2) node selector/affinity no matchea nodos; (3) PVC pendiente (storage no provisioning); (4) taints en todos los nodos sin toleration. IMAGEPULLBACKOFF: image no existe, tag mal, registry unreachable, imagePullSecret faltante o incorrecto. CRASHLOOPBACKOFF: el container arranca y crashea. `kubectl logs <pod> --previous` para ver logs del container anterior. `kubectl describe` para reason (OOMKilled, Error, exit code).", "correct": true, "why": "Correcto. La metodología es siempre: (1) describe pod → Events; (2) logs (--previous si es crashloop); (3) get events -n <ns> --sort-by='.lastTimestamp'; (4) verificar recursos del nodo (`kubectl top nodes`, `describe node`). El 90% de los problemas se resuelven así." },
+        { "letter": "B", "text": "Solo mira kubectl get pods y reinicia hasta que arranquen.", "correct": false, "why": "Anti-diagnóstico. Reiniciar sin entender la causa perpetúa el problema. `describe` da events específicos que te dicen el POR QUÉ." },
+        { "letter": "C", "text": "Todos estos estados son el mismo — solo espera.", "correct": false, "why": "Falso — son problemas distintos que requieren fixes distintos. Pending esperando resources ≠ ImagePullBackOff (config problem) ≠ CrashLoop (app bug o config)." },
+        { "letter": "D", "text": "Elimina el Deployment y recréalo — resuelve todo.", "correct": false, "why": "Ineficaz — si es problema de config (image tag), recreate no arregla nada. Si es recursos, tampoco. Diagnosticar primero." }
+      ],
+      "explanation": "Metodología sistemática de debugging Pod: (1) `kubectl get pod <name> -o wide` (¿en qué nodo? ¿qué IP?); (2) `kubectl describe pod <name>` (Events al fondo — la sección más útil); (3) `kubectl logs <name> -c <container>` (o --previous para el last crash); (4) `kubectl get events -n <ns> --sort-by=.lastTimestamp` (contexto amplio); (5) para stuck Pods: `kubectl debug` (K8s 1.23+) crea ephemeral debug container; (6) exec into Pod: `kubectl exec -it -- sh`. Nivel nodo: `kubectl describe node` (allocatable vs allocated), `kubectl top nodes`. Ephemeral debug containers son útiles para Pods sin shell (distroless images).",
+      "realWorld": "Un incidente en Airbnb (documentado): un Deployment quedó pending horas porque taints en nodes específicos no tenían toleration. Metodología describe → events → node describe lo resolvió en minutos. Grafana Labs y Netflix usan `kubectl debug` con ephemeral containers desde 1.23.",
+      "tags": ["debugging", "pending", "crashloopbackoff", "imagepullbackoff", "kubectl"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Debug Running Pods" }, { "title": "kubectl debug ephemeral containers" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "kubernetes",
+      "topic": "API extension — CRDs y Operators",
+      "difficulty": "staff",
+      "scenario": "Tu empresa usa Prometheus, cert-manager y ArgoCD en el cluster. Cada uno introduce YAML types nuevos: ServiceMonitor, Certificate, Application. ¿Cómo K8s permite esto sin recompilar?",
+      "question": "¿Qué son CRDs y Operators y por qué son fundamentales al ecosistema K8s?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CRD (CustomResourceDefinition) = extiende el API de K8s con NUEVOS TIPOS de objetos declarativos. Registras un CRD → K8s expone ese tipo en el API (kubectl get certificates, apply -f cert.yaml). Es persistencia + validación (via JSON Schema) sin lógica.", "correct": true, "why": "Correcto. CRDs son solo persistencia + API. Un CRD solo lo hace 'existir' como tipo K8s. La LÓGICA (qué hacer cuando alguien crea un Certificate) la implementa el Operator." },
+        { "letter": "B", "text": "Operator = un controller (loop de reconciliación) que watchea CRs (Custom Resources) y actúa. Ejemplo: cert-manager watchea Certificate CRs, habla con Let's Encrypt, obtiene el cert, crea Secret. Combina 'CRD + Controller' = extensión completa.", "correct": true, "why": "Correcto. Operator = operational knowledge encoded as code. Un Operator es cómo un human operator manejaría el sistema, pero automatizado. Ejemplo: PostgresOperator sabe backup, restore, failover — todo declarativo (kubectl apply -f my-cluster.yaml)." },
+        { "letter": "C", "text": "Los Operators pueden ser complejos: Prometheus Operator gestiona Prometheus + Alertmanager + rules; PostgresOperators gestionan clusters PG con backups, failover, versión upgrades. Nivel de madurez: Level 1 (basic install) → Level 5 (autopilot: auto-scaling, auto-healing, insights).", "correct": true, "why": "Correcto. El Operator Capability Model (OperatorHub) define 5 levels de madurez. Level 5 operators actúan como un SRE experto encapsulado en código." },
+        { "letter": "D", "text": "kubebuilder / Operator SDK son frameworks para escribir Operators en Go. Generan boilerplate (CRD YAML, controller skeleton, reconcile loop). Facilitan la creación pero requieren comprender el patrón.", "correct": true, "why": "Correcto. Framework maduro. Alternativas: Metacontroller (Python/JS), KUDO (declarative), Ansible-based operators. Go domina por el ecosystem K8s original." },
+        { "letter": "E", "text": "Sin CRDs no puedes hacer casi nada en K8s.", "correct": false, "why": "Falso. K8s core (Pods, Deployments, Services, etc.) funciona sin CRDs. CRDs son EXTENSIÓN para casos avanzados." }
+      ],
+      "explanation": "CRDs + Operators revolucionaron el ecosistema K8s. En vez de que K8s tenga que soportar todo en su core, cualquiera puede añadir sus tipos. Prometheus Operator (2018) fue pionero. Hoy: cert-manager, ArgoCD, Flux, PostgresOperator (Zalando), Strimzi (Kafka), Elastic Operator, RabbitMQ Operator, Istio, Linkerd — todos son Operators. Pattern: (1) definir CRD (schema); (2) escribir controller (reconcile logic); (3) empaquetar (Helm chart u OLM bundle); (4) publish. OperatorHub.io lista Operators certified. Trade-off: Operators añaden complejidad (más CRDs, más controllers, más things to update). Best practice: usar Operators para lo que RECOMPENSA (databases, monitoring, mesh); para apps normales, Helm o Kustomize suele bastar.",
+      "realWorld": "CoreOS creó el término Operator (2016). Red Hat OpenShift OperatorHub. Prometheus Operator (Prometheus + Alertmanager + rules). Strimzi (Kafka on K8s). Databricks operator para clusters ML. Custom Resource Definition growth: cientos de CRDs comunes.",
+      "tags": ["crd", "operator", "custom resource", "extensibility", "kubebuilder"],
+      "tech": ["kubernetes", "operator-sdk", "kubebuilder"],
+      "references": [{ "title": "kubernetes.io — Custom Resources" }, { "title": "OperatorHub.io" }, { "title": "Operator SDK" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "kubernetes",
+      "topic": "Cuándo NO usar Kubernetes",
+      "difficulty": "staff",
+      "scenario": "Tu empresa tiene 1 app monolítica, 10K users/día, 1 database RDS gestionada. El CTO nuevo quiere migrar 'a Kubernetes porque es lo moderno'. Tu equipo son 3 devs sin experiencia K8s.",
+      "question": "¿Cuándo NO tiene sentido usar Kubernetes?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cuando el team no tiene expertise: K8s tiene curva empinada. Un solo cluster mal operado (etcd sin backup, RBAC laxo, sin upgrades) es peor que ECS/App Runner. Costo de operar K8s (SRE dedicado, training, on-call) puede exceder valor.", "correct": true, "why": "Correcto. Cargill migration study, Airbnb migration multi-year — K8s cuesta MUCHO en expertise. Sin ese expertise, terminas con un cluster frágil y peor que alternativas más simples." },
+        { "letter": "B", "text": "Apps simples con poco tráfico: 1-2 servicios, tráfico predecible, no necesidad de scaling elástico → Fly.io, Render, Heroku, ECS Fargate, App Runner son más simples, más baratos operacionalmente, cubren el 80% de casos.", "correct": true, "why": "Correcto. Regla de dedo: si tu app corre bien en 1-3 VMs y tráfico no es spiky, K8s es overkill. La complejidad no se justifica." },
+        { "letter": "C", "text": "Workloads que necesitan hardware específico o low latency crítica: FPGAs, GPUs con requerimientos custom, HFT (high-frequency trading). K8s añade overhead (kube-proxy, CNI, virtualización de storage). Bare metal + Nomad, o VMs directas pueden ser mejor.", "correct": true, "why": "Correcto. K8s data plane añade decenas de microsegundos de latencia. Para casos donde eso importa, K8s no es la solución. Hedge funds, embedded, algunos ML workloads prefieren otras opciones." },
+        { "letter": "D", "text": "Serverless-first: si tu app puede vivir en Lambda/Cloud Run/Cloudflare Workers y escala a cero, no necesitas K8s (con su costo permanente de control plane + nodos idle).", "correct": true, "why": "Correcto. Serverless elimina infra por completo. Pago por uso vs pago por capacidad. Para casos con tráfico burst, serverless > K8s." },
+        { "letter": "E", "text": "Nunca es válido evitar Kubernetes — es el estándar universal.", "correct": false, "why": "Peligrosa 'default culture'. K8s es una opción excelente para escala y complejidad, pero no es adecuada universalmente. Netflix corre parte en K8s y parte en Titus (Mesos). Amazon usa Fargate para muchas cosas. Elegir la herramienta correcta > elegir la de moda." }
+      ],
+      "explanation": "Kubernetes tiene ROI real cuando: (1) muchos servicios (>10-20 microservicios); (2) team con expertise K8s o dispuesto a construirla; (3) necesidad real de portabilidad multi-cloud; (4) escala elástica compleja; (5) infra estándar reutilizable. Sin esas condiciones, alternativas: ECS/Fargate (AWS managed containers), App Runner (AWS managed apps), Cloud Run (GCP), Fly.io (edge apps), Render/Railway (Heroku-like), Nomad (más simple que K8s), plain VMs (aún válido para muchas cosas). Migración incorrecta a K8s: Cargill, otros documentados donde el costo excedió el beneficio. Regla: si dudas si necesitas K8s, probablemente no. Empieza simple, evoluciona cuando el dolor lo justifique.",
+      "realWorld": "Fly.io argumenta contra K8s para apps simples. Kelsey Hightower (Google) 'You don't need Kubernetes'. Charity Majors habla de complejidad. Empresas que se migraron OUT de K8s: unos few casos documentados (37signals reversed cloud migration). Amazon retail corre en muchas plataformas — no todo K8s.",
+      "tags": ["kubernetes", "alternatives", "when not to use", "complexity"],
+      "tech": ["kubernetes", "ecs", "fargate", "cloud-run"],
+      "references": [{ "title": "Kelsey Hightower — Twitter thread on K8s alternatives" }, { "title": "Fly.io — Kubernetes and the New Complex" }]
+    }
+  ]
+}

@@ -1,0 +1,416 @@
+{
+  "id": "devops-sim-20-distributed-tracing",
+  "trackId": "devops",
+  "order": 20,
+  "title": "Simulacro 20 — Distributed tracing",
+  "focus": "OpenTelemetry (SDK, Collector, exporters), Jaeger, Tempo, Zipkin, spans/traces/baggage, sampling strategies (head/tail/adaptive), auto-instrumentation vs manual, W3C Trace Context, exemplars.",
+  "areaCoverage": ["monitoring"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "monitoring",
+      "topic": "¿Qué es distributed tracing?",
+      "difficulty": "junior",
+      "scenario": "Team con microservices. Un endpoint (/checkout) llama 8 servicios internos. Response time p99 = 3 segundos. Nadie sabe qué servicio es lento — cada dev revisa sus logs pero no ve el picture completo.",
+      "question": "¿Qué es distributed tracing y qué problema resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Distributed tracing: técnica que rastrea un REQUEST individual atravesando múltiples servicios distribuidos. Cada operation es un SPAN (start_time, end_time, service_name, attributes). Un TRACE es la colección de spans relacionados por trace_id, formando un árbol de causalidad. Result: visualización waterfall mostrando dónde exactamente tarda cada request. Para el scenario: 'checkout' trace muestra que payment_service tomó 2.5s de los 3s totales — culpable identificado. Sin tracing, cada equipo revisa logs de su service; con tracing, ves el request completo cross-service.", "correct": true, "why": "Correcto. Es LA herramienta para debug distributed systems. Metrics dan agregado (p99 alto), logs dan detalle per-service (fragmentado), traces dan el 'flow' completo del request. Google Dapper paper (2010) fue original; hoy standard con OpenTelemetry." },
+        { "letter": "B", "text": "Es sinónimo de logging.", "correct": false, "why": "Distinto. Logs son eventos discretos per-service. Traces son estructuras jerárquicas cross-service con timing." },
+        { "letter": "C", "text": "Es solo para debugging de errores.", "correct": false, "why": "Útil para performance analysis, dependency mapping, capacity planning también. Errors son un use case pero no el único." },
+        { "letter": "D", "text": "Reemplaza metrics y logs.", "correct": false, "why": "Complementario. Metrics para alerting eficiente; logs para detail per-event; traces para flow. Los tres pillars." }
+      ],
+      "explanation": "Concepts core: (1) Trace — colección de spans compartiendo trace_id; (2) Span — operación individual (HTTP call, DB query, function execution) con start/end/attributes; (3) Parent-child relationship — spans linked por parent_span_id; (4) Root span — first span del trace, sin parent; (5) Distributed propagation — trace_id + span_id viajan en headers (W3C traceparent); (6) Attributes — key-value metadata en span (http.method, db.statement, error). Waterfall visualization en Jaeger/Tempo UI muestra spans as horizontal bars, indented por parent-child, longer bar = longer operation. Instant identification de bottlenecks.",
+      "realWorld": "Google Dapper paper (2010) original. Twitter Zipkin (2012) primer OSS. Uber Jaeger (2016). Grafana Tempo (2020). OpenTelemetry (2019 merge of OpenTracing + OpenCensus). Empresas modernas: sin tracing = 5-10x más tiempo debugging distributed issues.",
+      "tags": ["distributed tracing", "spans", "traces", "waterfall"],
+      "tech": ["OpenTelemetry", "Jaeger", "Tempo"],
+      "references": [{ "title": "Google Dapper paper" }, { "title": "opentelemetry.io" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "monitoring",
+      "topic": "OpenTelemetry: componentes",
+      "difficulty": "junior",
+      "scenario": "Nuevo dev pregunta '¿qué es OpenTelemetry exactamente? Veo mencionado SDK, Collector, exporters. ¿Cómo se compone todo?'.",
+      "question": "¿Cuáles son los componentes principales de OpenTelemetry?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenTelemetry (OTel): standard OSS para telemetry (traces, metrics, logs) unificado. Componentes: (1) SPECIFICATION — data model y semantic conventions (nombres estandarizados para attributes: http.method, db.system, etc.). (2) SDK — bibliotecas per-language (Go, Java, Python, .NET, JS, Ruby, Rust, C++) que instrumentation apps. (3) API — interfaces mínimas para que instrumentation code sea agnóstico de SDK. (4) COLLECTOR — proxy/pipeline binary (receiver → processor → exporter) que ingesta telemetry, transforma, envía a backends. (5) EXPORTERS — envían data a backends específicos (OTLP genérico, Jaeger, Tempo, Prometheus, Datadog, etc.). (6) INSTRUMENTATION libraries — auto-instrumentation per framework (HTTP client/server, DB drivers, gRPC).", "correct": true, "why": "Correcto. OTel es el standard emergente (2019 merge de OpenTracing + OpenCensus). Governance CNCF. Vendor-neutral. Instrumentation code once → export to any backend. Antes de OTel, cada vendor tenía SDK propio (Datadog SDK, New Relic SDK) — vendor lock-in del código." },
+        { "letter": "B", "text": "OpenTelemetry es solo el backend de traces.", "correct": false, "why": "Falso. OTel es SDK/spec/protocolo, NO storage backend. Backends son Jaeger, Tempo, Zipkin, Datadog, etc." },
+        { "letter": "C", "text": "OpenTelemetry solo soporta traces.", "correct": false, "why": "Falso. Cubre traces (GA), metrics (GA), logs (GA). Signal unification es su promesa clave." },
+        { "letter": "D", "text": "OpenTelemetry es competitor de Prometheus.", "correct": false, "why": "Complementario. OTel puede exportar metrics a Prometheus (via receiver Prometheus scrape, o via OTLP push). Prometheus sigue siendo backend popular para metrics." }
+      ],
+      "explanation": "Ecosystem detail: (1) Instrumentation libraries — muchos frameworks tienen auto-instrumentation packages (opentelemetry-instrumentation-flask, io.opentelemetry:opentelemetry-instrumentation, etc.). Auto-instrumentation reduces manual boilerplate. (2) Manual instrumentation — usar API para crear spans custom. (3) OTLP (OpenTelemetry Protocol) — protocol wire format (gRPC or HTTP/protobuf) para transport telemetry. Standard entre SDK y collector, y collector y backends. (4) Semantic conventions — standardized attribute names (http.request.method, db.operation, messaging.system). Sin standards, cada app pone nombre distinto = queries impossible cross-service. (5) Language SDK maturity varies — Java/Go/Python/JS más maduros; Rust/C++ menos.",
+      "realWorld": "OpenTelemetry es CNCF proyecto graduado. Adopción masiva 2020-2026. Vendors (Datadog, New Relic, Splunk) support OTLP como ingestion. Grafana, Jaeger, Zipkin todos OTLP. Es el standard de facto para instrumentation.",
+      "tags": ["OpenTelemetry", "SDK", "Collector", "OTLP"],
+      "tech": ["OpenTelemetry"],
+      "references": [{ "title": "opentelemetry.io" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "monitoring",
+      "topic": "Spans y attributes",
+      "difficulty": "mid",
+      "scenario": "Dev instrumenta manualmente. Crea span para 'process_order'. Debate qué attributes agregar: user_id? order_id? processing_time? status?",
+      "question": "¿Qué es un span y qué attributes debe llevar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un SPAN representa una unidad de trabajo (operation) con: (1) name (short, low-cardinality, ej. 'process_order' no 'process_order_12345'); (2) start_time + end_time (o duration); (3) span_id + parent_span_id (para jerarquía); (4) trace_id; (5) attributes — key-value metadata; (6) events — timestamped logs dentro del span; (7) status (OK, ERROR); (8) kind (INTERNAL, SERVER, CLIENT, PRODUCER, CONSUMER). Attributes: seguir SEMANTIC CONVENTIONS (http.request.method, db.operation, user.id). Ok agregar business context (order.id, order.value). NO poner datos alta cardinality en name (usa attributes para IDs). NO PII sin scrubbing.", "correct": true, "why": "Correcto. Semantic conventions son crítico — sin ellas, queries cross-service son fragmentadas. Attributes son la 'search dimensions' de traces. Span name debe ser categoría; attributes son detail. Errors: set status=ERROR y record exception (event). Kind es hint para UI y processors (SERVER span en API gateway, CLIENT span en HTTP call downstream)." },
+        { "letter": "B", "text": "Span name debe incluir user_id específico.", "correct": false, "why": "Anti-patrón. Alta cardinality en name = imposible aggregate. user_id va como attribute." },
+        { "letter": "C", "text": "Attributes son opcionales — solo timing importa.", "correct": false, "why": "Timing sin context es limitado. Attributes son lo que hace tracing debuggable ('why is this specific span slow' → check attributes for context)." },
+        { "letter": "D", "text": "Cada línea de código debe ser un span.", "correct": false, "why": "Overhead masivo. Guideline: span per 'unit of work' (HTTP request, DB query, message process, significant function). Todo lo demás son events o attributes." }
+      ],
+      "explanation": "Semantic conventions ejemplos: (1) HTTP client span — http.request.method='GET', server.address='api.example.com', url.path='/users/123', http.response.status_code=200; (2) DB span — db.system='postgresql', db.name='orders', db.operation='SELECT', db.statement='SELECT * FROM orders WHERE id=?'; (3) Messaging span — messaging.system='kafka', messaging.destination.name='order-events', messaging.operation='publish'. Events: span.add_event('validation_failed', {reason: 'invalid_email'}). Errors: span.set_status(Status(ERROR)); span.record_exception(e). Span attributes máximo: SDK limits (default 128 attributes) para prevent explosion. Best practice: define standards internos para business attributes (tenant.id, feature.flag) — consistency cross-services.",
+      "realWorld": "OpenTelemetry semantic conventions repo (semantic-conventions) tiene 100+ signal-attribute definitions. Adopting them = queries cross-service work. Empresas maduras extend con conventions internas documented. Datadog, Honeycomb tienen guides sobre 'high cardinality events' (embrace cardinality en attributes, no en names).",
+      "tags": ["spans", "attributes", "semantic conventions"],
+      "tech": ["OpenTelemetry"],
+      "references": [{ "title": "opentelemetry.io — Semantic conventions" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "monitoring",
+      "topic": "W3C Trace Context propagation",
+      "difficulty": "mid",
+      "scenario": "Service A calls Service B via HTTP. Service B calls Service C. Sin propagation manual, cada service crea su propio trace_id — no correlacionan. ¿Cómo se resuelve?",
+      "question": "¿Qué es W3C Trace Context y cómo se propaga el trace context?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "W3C Trace Context (2020 standard): headers HTTP para propagar trace context entre services. traceparent header: '00-<trace_id>-<span_id>-<flags>' — versión 00, trace_id 32-hex chars, span_id 16-hex, flags (sampled bit). tracestate: header para vendor-specific extra. Propagation flow: (1) Service A recibe request; extrae traceparent (o crea nuevo si primer service); (2) A crea span, span_id nuevo pero misma trace_id; (3) A llama B via HTTP; inyecta traceparent header con nuevo span_id como parent. (4) B recibe, extrae, crea span como child. Continúa cross-service. OpenTelemetry SDK maneja propagation automáticamente si usas instrumentation libraries. Legacy alternatives: B3 (Zipkin), Jaeger uber-trace-id.", "correct": true, "why": "Correcto. W3C Trace Context es el standard cross-vendor. Antes de él, cada tracer (Zipkin B3, Jaeger uber-trace-id, Datadog x-datadog-*) tenía formato propio, incompatible. W3C unificó — hoy es standard adoptado por todos major tracers. Sin propagation, traces son fragmentados (un trace por service en vez de uno para request cross-service)." },
+        { "letter": "B", "text": "El trace_id se propaga en el body del request.", "correct": false, "why": "Anti-patrón. Body es business data; context propagation via HEADERS es standard (no requires body parsing). Message queues usan message headers/attributes." },
+        { "letter": "C", "text": "OpenTelemetry no requiere propagation — es automático.", "correct": false, "why": "SDK MANEJA propagation automáticamente si usas instrumentation libraries. Pero requires las libraries. Manual instrumentation requires manual propagation (SDK provides propagators API)." },
+        { "letter": "D", "text": "Propagation solo funciona con HTTP.", "correct": false, "why": "Falso. Multiple propagators: HTTP headers, gRPC metadata, message queue headers/attributes (Kafka, RabbitMQ), custom protocols. OpenTelemetry Propagator interface allows extension." }
+      ],
+      "explanation": "Propagator types (OpenTelemetry): (1) TraceContext (W3C standard, default); (2) B3 (Zipkin legacy); (3) B3Multi (Zipkin, 3 headers); (4) Jaeger; (5) OT (OpenTracing); (6) Composite (multiple simultaneously — durante migration). Baggage propagator: separate header 'baggage' with key-value data que viaja con el trace pero no es trace metadata — para business context (user_id, tenant, feature_flags) sin propagate manualmente per call. Careful: baggage crosses ALL boundaries — no PII, no secrets, keep small. Manual propagation ejemplo (rare): with tracer.start_as_current_span('outgoing_call'), inject context to headers before HTTP call: propagator.inject(carrier=headers). Downstream: extract from carrier → context.",
+      "realWorld": "W3C Trace Context Level 1 (2020), Level 2 (2022) con random field. Widely adopted: Google, Microsoft, Datadog, AWS, GitHub — todos soportan. Empresas legacy migrando de B3 to W3C. Multi-tracer setups (durante migration) usan composite propagator.",
+      "tags": ["W3C Trace Context", "propagation", "traceparent", "baggage"],
+      "tech": ["OpenTelemetry", "W3C"],
+      "references": [{ "title": "w3.org/TR/trace-context" }, { "title": "opentelemetry.io — Propagators" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "monitoring",
+      "topic": "Sampling strategies",
+      "difficulty": "senior",
+      "scenario": "Empresa con 10 billion spans/día. Storage cost prohibitivo si mantiene 100%. Team debate: head-based, tail-based, adaptive.",
+      "question": "¿Cuáles son las estrategias de sampling en distributed tracing?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Head-based sampling (aka upfront, front-loaded): decisión sampling tomada en primer service (root span). Ejemplo: TraceIdRatioBased(0.1) — 10% de traces sampled aleatorio pero consistente por trace_id (mismo trace_id = misma decisión). Pros: simple, low overhead (no buffering downstream). Cons: no ves anomalies rare (errors) unless coincidentally sampled.", "correct": true, "why": "Correcto. Head-based es default en OpenTelemetry. TraceIdRatioBased sampler: si hash(trace_id) < rate, keep. Guarantees consistency (todos los spans del mismo trace son kept juntos). Adecuado cuando storage cost dominant y errors son ok de perder en sampling." },
+        { "letter": "B", "text": "Tail-based sampling: decisión tomada DESPUÉS que trace completa. Collector buffers spans, cuando trace complete (o timeout), evalúa policies: keep si error, high latency, o critical span type. Pros: intelligent retention (keep interesting traces 100%). Cons: buffering requires más memory, latency antes de export, complejidad operacional. Requires OpenTelemetry Collector con tail_sampling_processor.", "correct": true, "why": "Correcto. Tail-based es el 'gold standard' para observability quality — retain 100% errors + slow requests, sample bulk healthy traffic. Cost: memory para buffer (default 30s wait for spans), infrastructure para collector cluster." },
+        { "letter": "C", "text": "Adaptive sampling: rate ajusta dinámicamente basado en volume o rules. Ejemplo: 100% cuando low traffic, 1% durante peak. O 100% para services critical, 5% para bulk background jobs. Puede combinar head o tail approach.", "correct": true, "why": "Correcto. Adaptive optimiza budget dinámicamente. Datadog, Honeycomb tienen adaptive sampling incorporado. OpenTelemetry Collector permite implement via processors." },
+        { "letter": "D", "text": "Priority sampling per service/endpoint: services críticos (payment) 100%, background (metrics ingest) 1%. Configurable per rule.", "correct": true, "why": "Correcto. Configuration-driven sampling. Un service reciente en producción quiere 100% durante primera semana; migration old cadence a 1% cuando maduro." },
+        { "letter": "E", "text": "Random sampling en cada service independiente.", "correct": false, "why": "Anti-patrón. Sin consistency por trace_id, un trace tiene solo 10% de spans (10% × 10% × 10% cross-service = fragmentado). Sampling debe ser CONSISTENT per trace_id." }
+      ],
+      "explanation": "Sampling implementation: OpenTelemetry SDK exposes Sampler interface. Built-in samplers: AlwaysOn, AlwaysOff, TraceIdRatioBased, ParentBased (respect parent's decision — enables cross-service consistency). Custom samplers: escribes tu propio. Tail-based en OpenTelemetry Collector: tail_sampling_processor con policies (name, type, options). Types: probabilistic, always_sample, status_code (keep errors), latency (keep slow), string_attribute (keep by attribute), rate_limiting, composite (multiple). Storage cost consideration: 1TB span data/day at 1% sampling = 3.65TB/year storage; at 100% = 365TB/year. Different backend costs vary widely: Tempo (S3-based) cheap, Datadog expensive per GB.",
+      "realWorld": "Uber published tail-based sampling paper. Honeycomb popularized 'wide events' + intelligent sampling. Grafana Cloud Tempo tail sampling. Datadog APM adaptive sampling. Cloudflare escribe sobre their approach. Cost management del pilar traces es tension permanente.",
+      "tags": ["sampling", "head-based", "tail-based", "adaptive"],
+      "tech": ["OpenTelemetry Collector"],
+      "references": [{ "title": "opentelemetry.io — Sampling" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "monitoring",
+      "topic": "OpenTelemetry Collector",
+      "difficulty": "senior",
+      "scenario": "Team no quiere que cada app exporte directo a Jaeger/Tempo. Prefieren un intermediario que pueda: recibir OTLP, transformar, ruta a múltiples backends, aplicar sampling.",
+      "question": "¿Qué es el OpenTelemetry Collector y qué hace?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenTelemetry Collector: binary Go que recibe telemetry (traces, metrics, logs) via multiple protocols, aplica processing pipeline, exporta a múltiples backends. Arquitectura: RECEIVER → PROCESSOR → EXPORTER en pipelines configurables. Receivers: OTLP (gRPC/HTTP), Jaeger, Zipkin, Prometheus scrape, Kafka, filelog, etc. Processors: batch, memory_limiter, tail_sampling, attributes (modify), resource, k8sattributes (enrich con K8s metadata), filter. Exporters: OTLP (to another collector or backend), Jaeger, Tempo, Prometheus, Loki, Kafka, Elasticsearch, cloud vendors (Datadog, New Relic, Splunk). Deploy patterns: (1) agent (sidecar/DaemonSet, close to workload); (2) gateway (centralized cluster, receives from agents, applies heavy processing). Common combo: agent → gateway → backend.", "correct": true, "why": "Correcto. Collector es swiss army knife del OTel ecosystem. Decouples apps de backends específicos (apps export OTLP; collector routes wherever). Enables gradual migration, multi-backend, sampling policy en un lugar." },
+        { "letter": "B", "text": "Collector es el backend de traces.", "correct": false, "why": "Falso. Collector es proxy/pipeline. Backends son Jaeger/Tempo/Datadog." },
+        { "letter": "C", "text": "Solo soporta OTLP.", "correct": false, "why": "Falso. Multiple receivers/exporters. Puede recibir Zipkin, exportar a Datadog, etc." },
+        { "letter": "D", "text": "Collector es opcional — no needed.", "correct": false, "why": "Técnicamente opcional (apps pueden export directo) pero en producción real casi siempre usas Collector para flexibility, sampling, transformation." }
+      ],
+      "explanation": "Collector configuration: YAML with receivers/processors/exporters/service.pipelines sections. Ejemplo: receivers: [otlp], processors: [batch, memory_limiter, k8sattributes], exporters: [otlp/tempo, otlp/datadog], service.pipelines.traces: {receivers: [otlp], processors: [batch, memory_limiter, k8sattributes], exporters: [otlp/tempo, otlp/datadog]}. Distros: Core (minimal), Contrib (todos los components community), plus vendor distros (adot for AWS, ocb for GCP, k8s-otel for Kubernetes). Custom builds via ocb (opentelemetry-collector-builder). Deployment: k8s Helm chart otel-collector, otel-operator (CRDs para managing). Resource usage: agent mode ~50MB RAM, gateway can scale to 1000s of spans/sec per instance.",
+      "realWorld": "OpenTelemetry Collector es el component más adoptado del ecosystem. Datadog agent similar architecture (has OTel receiver). Empresas mad grandes usan gateway clusters con dozens de nodes. Grafana Alloy (2024) es agent unified que puede replace collector + Prometheus agent + Fluent Bit + Promtail.",
+      "tags": ["OpenTelemetry Collector", "receivers", "processors", "exporters"],
+      "tech": ["OpenTelemetry Collector"],
+      "references": [{ "title": "opentelemetry.io/docs/collector" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "monitoring",
+      "topic": "Auto-instrumentation vs manual",
+      "difficulty": "mid",
+      "scenario": "Team quiere adopt tracing pero re-write cada service para instrumentar manualmente es prohibitivo. ¿Alternatives?",
+      "question": "¿Qué es auto-instrumentation y cuáles son sus trade-offs vs manual?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Auto-instrumentation: OpenTelemetry provee libraries que WRAP frameworks/libraries comunes automáticamente. Ejemplo Python: opentelemetry-instrument python app.py inyecta spans en HTTP requests (Flask, Django, requests), DB calls (psycopg2, SQLAlchemy), gRPC, redis, kafka, etc. Cero código change en la app. Java: agent JAR (-javaagent:opentelemetry-javaagent.jar) instrumenta 100+ libraries via bytecode manipulation. Node.js: require de instrumentation packages. Trade-offs: (1) Pros: fast adoption, no code change, cover 80% of instrumentation needs. (2) Cons: less control sobre span names/attributes, business context requires supplement con manual spans, overhead ligeramente mayor. Best practice: auto-instrumentation para infrastructure spans (HTTP, DB) + manual instrumentation para business logic spans (create_order, process_payment).", "correct": true, "why": "Correcto. Auto-instrumentation acelera adoption dramatically. Empresas cover technical layer via auto y agregan business spans manualmente donde importa. Sin auto, cada service requires weeks de trabajo instrumenting." },
+        { "letter": "B", "text": "Manual siempre es mejor.", "correct": false, "why": "Falso. Manual da control pero prohibitivo cost en org grande. Combo auto + manual es standard." },
+        { "letter": "C", "text": "Auto-instrumentation es limited a Java.", "correct": false, "why": "Multiple languages: Java (excellent), Python, .NET, Node.js, Go (limited, requires manual wrapping para many cases), Ruby, PHP." },
+        { "letter": "D", "text": "Auto-instrumentation no es production-ready.", "correct": false, "why": "Falso. Usada en producción por miles de empresas. Empresas OpenTelemetry maintainers (Splunk, Honeycomb, Datadog) invierten heavy." }
+      ],
+      "explanation": "Auto-instrumentation mechanisms per language: (1) Java — Java Agent, bytecode manipulation con ByteBuddy, cover 100+ libraries; (2) Python — monkey-patching de imports; (3) Node.js — CommonJS/ESM hooks; (4) .NET — DiagnosticSource + ILogger integration; (5) Ruby — module prepending; (6) Go — SIN auto-instrumentation clásico (compiled language), requires manual wrapping o eBPF-based (Odigos, Beyla) approaches. eBPF: emerging trend, kernel-level auto-instrumentation sin code change en app. Herramientas: Odigos (Grafana), Coroot, Beyla (Grafana), Cilium Hubble. Trade-offs eBPF: cero-code (excelente para legacy) pero less rich context que in-app instrumentation.",
+      "realWorld": "OpenTelemetry Java Agent muy adoptado — Netflix, Splunk documented. Datadog APM auto-instrumentation por años. Grafana Beyla (2023) usa eBPF para zero-code instrumentation. Odigos vende zero-code solution.",
+      "tags": ["auto-instrumentation", "eBPF", "Java Agent"],
+      "tech": ["OpenTelemetry", "Beyla", "Odigos"],
+      "references": [{ "title": "opentelemetry.io — Automatic instrumentation" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "monitoring",
+      "topic": "Jaeger vs Tempo vs Zipkin",
+      "difficulty": "senior",
+      "scenario": "Team eligiendo trace backend. Considera Jaeger, Tempo, Zipkin. Todos son OSS, OTel-compatible.",
+      "question": "¿Cuáles son diferencias arquitectónicas y de features entre estos backends?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Zipkin (2012, Twitter): primer OSS distributed tracing. Simple, Java-based, backends pluggable (Cassandra, ES, MySQL, in-memory). UI clásica. Menos features nuevos. Adoption legacy. Jaeger (2016, Uber): sucesor conceptual con arquitectura moderna. Backends: Cassandra, Elasticsearch, ClickHouse (v2), memory. Features: adaptive sampling incorporado, span writer/reader flexible, UI rich con service dependency graphs. CNCF graduated. Tempo (2020, Grafana Labs): storage-first design con OBJECT STORAGE only (S3/GCS/Azure Blob). Sin ES/Cassandra requirement — mucho más cheap. TraceQL (2023) permite queries complex sin trace_id. Grafana integration tight (metrics generator, service graph derivados de traces). Elección: Zipkin (legacy o simplicidad extrema); Jaeger (feature-rich, standalone UI); Tempo (Grafana stack, cheap storage).", "correct": true, "why": "Correcto. Cada tool tiene sweet spot. Tempo emergente por cost economics. Jaeger maduro estándar. Zipkin legacy. OpenTelemetry export a cualquiera via exporters." },
+        { "letter": "B", "text": "Son idénticos.", "correct": false, "why": "Arquitecturas y storage requirements distintos. Tempo object storage vs Jaeger requires database." },
+        { "letter": "C", "text": "Solo Tempo soporta OpenTelemetry.", "correct": false, "why": "Los 3 soportan OTLP ingestion. OpenTelemetry es agnóstico de backend." },
+        { "letter": "D", "text": "Jaeger es cerrado — no OSS.", "correct": false, "why": "Jaeger es OSS, CNCF graduated, Apache 2.0. Uber lo open-sourced." }
+      ],
+      "explanation": "Detailed comparison: (1) STORAGE — Zipkin (pluggable, ES popular), Jaeger (Cassandra/ES/ClickHouse), Tempo (S3/GCS only). Tempo dramáticamente cheaper. (2) UI — Zipkin (funcional), Jaeger (más rich, dependency graphs, latency histograms), Tempo (Grafana Explore, less standalone). (3) SEARCH — Zipkin (por trace_id, service, endpoint), Jaeger (rich por service/operation/attributes), Tempo (por trace_id fast; TraceQL para search sin ID). (4) SCALE — Jaeger + ES probado a millions spans/sec; Tempo scales via object storage; Zipkin limits based on backend. (5) COMMUNITY — Jaeger CNCF activa, Tempo growing, Zipkin mantenimiento reduced. (6) ECOSYSTEM — Tempo integra con Grafana Loki/Mimir/Alloy natively. Migration: OpenTelemetry Collector exporters permiten sending to multiple simultaneously durante migration.",
+      "realWorld": "Uber creó Jaeger, migrating from Zipkin. Grafana Labs uses Tempo internally. Empresas hoy: adoption Tempo growing (LGTM stack); Jaeger maduro para standalone; Zipkin en migration paths.",
+      "tags": ["Jaeger", "Tempo", "Zipkin", "trace backends"],
+      "tech": ["Jaeger", "Tempo", "Zipkin"],
+      "references": [{ "title": "jaegertracing.io" }, { "title": "grafana.com/oss/tempo" }, { "title": "zipkin.io" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "monitoring",
+      "topic": "Exemplars: metrics → traces bridge",
+      "difficulty": "mid",
+      "scenario": "Dashboard muestra p99 latency spike. Team pregunta '¿cuál request exactamente fue lento?'. Metrics dan agregado, no requests specific.",
+      "question": "¿Qué son exemplars y cómo permiten drill down de metric a trace?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Exemplars: metadata attached a metric samples que llevan trace_id ejemplo del span que contribuyó al bucket. Cuando instrumentas latency histogram, la SDK captura trace_id del span activo y lo adjunta al bucket correspondiente. En Grafana, exemplars se renderizan como diamond points sobre metric graphs. Click en un exemplar → open trace en Tempo/Jaeger. Es EL bridge que resuelve 'p99 alto' → 'cuál request específico'. Sin exemplars, drill down es imposible con metrics puros. Prometheus soporta exemplars desde 2.26 (2021). Requires: (1) app instrumentada con OTel (o SDK compatible que capture active span en observe); (2) Prometheus con --enable-feature=exemplar-storage; (3) Grafana panel con 'Show exemplars' + link a Tempo datasource.", "correct": true, "why": "Correcto. Exemplars son bridging technology critical para unified observability. Sin ellos, metric-to-trace correlation es imposible — sabes 'algo va mal' pero no CUÁL. Con ellos, un click identifica el trace específico. Cardinality: exemplars son ADICIONALES a samples, no crean nuevas series — cardinality safe." },
+        { "letter": "B", "text": "Exemplars son metric samples individuales.", "correct": false, "why": "No — exemplars son METADATA sobre samples. El sample sigue siendo agregado (bucket count). Exemplar dice 'aquí hay un ejemplo específico que contribuyó'." },
+        { "letter": "C", "text": "Exemplars explotan cardinality como labels.", "correct": false, "why": "Falso. Exemplars no son labels — son ancillary data attached a samples. Cardinality unchanged." },
+        { "letter": "D", "text": "Solo funcionan con Datadog.", "correct": false, "why": "Falso. OpenMetrics standard, Prometheus + Grafana OSS + Tempo. Datadog tiene equivalent pero no exclusivo." }
+      ],
+      "explanation": "Exemplar workflow: (1) app usa OpenTelemetry con auto-instrumentation → cada HTTP request tiene active span with trace_id; (2) app instruments latency histogram (prometheus-client library que soporta exemplars): histogram.observe(0.150) — SDK auto-captura trace_id; (3) exemplar emitido en Prometheus text format: http_request_duration_seconds_bucket{le=\"0.2\"} 42 # {trace_id=\"abc123\"} 0.150 1234567890; (4) Prometheus stores exemplar; (5) Grafana panel query returns bucket + exemplars; (6) Grafana renders diamonds, click opens trace in Tempo. Config Grafana: datasource Tempo referenciado en exemplars settings del Prometheus datasource. Alternative: Grafana Adaptive Metrics tiene similar concept para reduce cardinality.",
+      "realWorld": "OpenMetrics spec (2019) formalizó exemplars. Prometheus 2.26+ soporta. Grafana Labs promociona como parte de LGTM stack unified observability. Datadog Traces tiene 'sample metrics' concept similar propietario. En 2026 exemplars ampliamente adoptados.",
+      "tags": ["exemplars", "OpenMetrics", "unified observability", "drill down"],
+      "tech": ["Prometheus", "Grafana", "Tempo", "OpenTelemetry"],
+      "references": [{ "title": "prometheus.io — Exemplars" }, { "title": "openmetrics.io" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "monitoring",
+      "topic": "Baggage vs context",
+      "difficulty": "senior",
+      "scenario": "Team quiere carry business context (user_id, tenant_id, feature_flag) en cada span cross-service sin passing manual entre calls.",
+      "question": "¿Qué es baggage en OpenTelemetry y cuándo usarla?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Baggage: key-value data que viaja CON el trace context via header separate (baggage header per W3C spec). Se propaga a TODOS los downstream services automáticamente (como el trace context). Uso: carry business context que otros services necesitan para decisions o logging. Ejemplo: usuario 'baggage.user.tier=premium' — cada servicio downstream puede decidir behavior basado en tier sin pass manual en cada call. Cuidado: (1) todo lo que pongas en baggage viaja EN TODOS los cross-service calls — no PII, no secrets; (2) size limits (headers tienen limits); (3) baggage NO es automatically added a span attributes — SDK expone API para copy si quieres. Trade-offs vs pasar en request body: (a) baggage lo maneja SDK/framework automáticamente; (b) body-passing requires cambio en cada API contract.", "correct": true, "why": "Correcto. Baggage es feature útil pero fácil de abusar. Solve el problema 'todos los services necesitan tenant_id/region/user_tier'. Sin baggage, cada API needs additional parameter en request. Con baggage, se propaga transparentemente. Careful: NO secrets ni PII (viaja en headers)." },
+        { "letter": "B", "text": "Baggage es lo mismo que attributes de span.", "correct": false, "why": "Distintos. Attributes están EN un span (per-service). Baggage viaja ACROSS services en context propagation." },
+        { "letter": "C", "text": "Baggage se guarda en trace backend automáticamente.", "correct": false, "why": "Baggage viaja en propagation pero NO se auto-agrega a spans stored. Requires manual span.set_attributes(baggage) si quieres. Diseño intencional — baggage puede tener alta cardinality." },
+        { "letter": "D", "text": "Baggage es storage backend para traces.", "correct": false, "why": "Confusión. Baggage es concepto de propagation, no storage." }
+      ],
+      "explanation": "Baggage API: baggage.set(key, value) en context; baggage.get(key) para leer. W3C Baggage header format: key1=value1;prop1=value1,key2=value2. Propagator baggage separado del trace context propagator. Common use cases: (1) tenant/customer identification cross-services; (2) feature flags que multiple services necesitan; (3) A/B test variant; (4) user tier/plan. Anti-patterns: (a) putting PII (viaja en cleartext HTTP headers); (b) putting large data (headers limits); (c) putting security tokens (auth debe ser separate mechanism). Related concept: OpenTelemetry Context (in-process): thread-local o async-local context storage manages current span + baggage locally. Propagators handle across processes.",
+      "realWorld": "Uber uses baggage heavily. Datadog APM similar concept propietario. Careful pattern: whitelist keys allowed en baggage internamente + regex check en gateway to strip unknown. Empresas legales serious sobre header content en cross-region calls.",
+      "tags": ["baggage", "context propagation", "business context"],
+      "tech": ["OpenTelemetry"],
+      "references": [{ "title": "opentelemetry.io — Baggage" }, { "title": "w3.org/TR/baggage" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "monitoring",
+      "topic": "Service graphs y dependency mapping",
+      "difficulty": "mid",
+      "scenario": "New team member: '¿qué services llaman al service X? Y del X ¿qué llama? ¿Con qué latencia y error rate?'.",
+      "question": "¿Qué beneficios y capacidades proveen los service graphs derivados de traces?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Auto-discovery de dependencies: traces contienen inherentemente relaciones service-to-service (span de service A → span child en service B via HTTP call). Agregando traces, derivas graph: nodos = services, edges = calls con métricas (call rate, error rate, latency). Sin instrumentation trace, service graphs requires manual maintenance (inevitable stale).", "correct": true, "why": "Correcto. Es el beneficio primario — dependency map se mantiene siempre current automáticamente." },
+        { "letter": "B", "text": "Metrics per edge: RED metrics (rate, errors, duration) por cada par service-to-service. Permite alerting granular: 'latency checkout → payment > threshold' triggers investigation focalizada. Tempo Metrics Generator produce estas métricas automáticamente desde traces.", "correct": true, "why": "Correcto. Los edges no son solo visuales — llevan telemetría. Alerting per-edge es más precise que alerting per-service." },
+        { "letter": "C", "text": "Capacity planning y architecture review: entender qué services son critical (high fan-in), qué son bottlenecks. Después de reorgs/acquisitions, service graph auto-descubre real architecture (frequently diverges from docs).", "correct": true, "why": "Correcto. Documentation drifts; service graphs no. Basis for informed refactoring and capacity decisions." },
+        { "letter": "D", "text": "Herramientas: Jaeger 'Dependencies' view, Tempo Metrics Generator + Grafana service graph panel, Datadog Service Map, Dynatrace Smartscape. Multiple backends soportan.", "correct": true, "why": "Correcto. No vendor lock-in — ecosystem completo tiene esta feature." },
+        { "letter": "E", "text": "Requires configurar manually cada dependency.", "correct": false, "why": "Falso. Auto-descubrimiento desde traces es lo que hace service graphs valuable en primer lugar." }
+      ],
+      "explanation": "Service graph metrics derived from traces: (1) request rate per edge; (2) error rate per edge; (3) latency percentiles per edge; (4) DB connection graph; (5) message queue producer-consumer graph. Tempo Metrics Generator (2022) example: genera traces_service_graph_request_total{client=\"A\", server=\"B\", connection_type=\"virtual_node\"} — automatic RED metrics for each service pair. Alerts SLI-based por edge: 'checkout-service → payment-service error rate > 5%'. Visualization: force-directed graph, thickness of edge = call rate, color = error rate. Empresas grandes: 100s de services, graph muy denso — filter/highlight critical paths. Use case: dependency understanding after acquisition/reorg, capacity planning ('service X depends on Y — if Y down what breaks').",
+      "realWorld": "Netflix, Uber famous for complex service graphs con 1000+ services. Dynatrace pioneered 'topology' auto-discovery. Grafana Tempo + Grafana service graph panel es OSS equivalent. Datadog APM Service Map muy popular.",
+      "tags": ["service graph", "dependency mapping", "topology"],
+      "tech": ["Tempo", "Jaeger", "Grafana"],
+      "references": [{ "title": "grafana.com — Service graph view" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "monitoring",
+      "topic": "Overhead de instrumentation",
+      "difficulty": "senior",
+      "scenario": "Team preocupado: '¿instrumenting con traces va a slow down nuestra app?'. Nadie tiene número concreto.",
+      "question": "¿Cuál es el overhead típico de tracing y cómo se minimiza?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Overhead depende de: (1) instrumentation density (más spans = más overhead); (2) SDK efficiency; (3) sampling rate; (4) export mode (sync vs async, batch). Ranges típicos: (a) latency overhead — <1ms per span en Go/Java, más en Python (dynamic language cost); (b) CPU overhead — 1-5% en typical instrumentation; (c) memory — ~1-10KB per active span. Minimización: (1) async batch export (default en OTel SDK) — no bloquea request; (2) BatchSpanProcessor con reasonable batch size (typically 512-2048 spans); (3) sampling apropiado (no need 100% for high traffic); (4) resource limits (max_span_attributes, max_events); (5) avoid excessive attribute size (no full request bodies como attribute). Sin cuidado: 10-20% overhead posible. Con cuidado: 1-3% overhead totalmente aceptable. Modern SDKs OTel son bastante optimizados.", "correct": true, "why": "Correcto. Overhead REAL pero manageable con good practices. Muchos over-estimate cost, avoiding tracing y pierden observability critical. Real cost analysis: SDK overhead 1-3% vs cost de debugging distributed issues sin traces (10-100x). Tracing pays back." },
+        { "letter": "B", "text": "Tracing añade 50%+ overhead — siempre skip.", "correct": false, "why": "Extremo. Modern SDKs orders of magnitude better. Un solo bug distributed que traces te ayuden debugear justifica overhead." },
+        { "letter": "C", "text": "Sin overhead — es 'free'.", "correct": false, "why": "Falso también. Todo tiene cost. Honest engineering es acknowledge trade-off y managed carefully." },
+        { "letter": "D", "text": "Overhead independent del sampling.", "correct": false, "why": "Falso. Sampling reduce cost — no creas spans no sampled (en head-based). Head-based con 10% sample = 90% menos overhead vs 100%." }
+      ],
+      "explanation": "Overhead deep dive: (1) hot path per span operation — start span, record attributes, end span. Optimized to ~microsegundos. (2) memory: active spans allocated en memory hasta export. (3) network: batched export cada N ms o M spans. Careful with: (a) very deep call stacks (spans per function call — usually don't want); (b) high span cardinality (creating span per iteration of loop with 1000 iterations — hostil); (c) large attributes (headers full, request/response bodies). Benchmarks: Uber published tracing overhead numbers; OpenTelemetry SDK benchmarks per language en repos. Alternatives: eBPF-based (Beyla, Odigos) tiene lower overhead pero less rich context. In-process SDK richer y usually best trade-off.",
+      "realWorld": "Uber ran extensive benchmarks para Jaeger, published results. Datadog APM overhead numbers en docs. In practice, overhead problems usually indicate over-instrumentation (spans per function call en hot loop) — profile y fix specific issues.",
+      "tags": ["overhead", "performance", "sampling", "batch export"],
+      "tech": ["OpenTelemetry"],
+      "references": [{ "title": "opentelemetry.io — Performance" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "monitoring",
+      "topic": "TraceQL — buscar traces sin trace_id",
+      "difficulty": "senior",
+      "scenario": "Team encuentra p99 spike. No sabe qué trace_id. Solo sabe: hace 30 minutos, en service checkout, con duration > 2s. Sin trace_id, cómo find?",
+      "question": "¿Qué es TraceQL y cómo permite search de traces?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TraceQL (Grafana Tempo, 2023): DSL query-language para search traces sin trace_id específico. Sintaxis similar SQL/PromQL. Ejemplo: { .service.name = \"checkout\" && duration > 2s } — busca traces donde algún span cumple. { span.http.status_code = 500 } — traces con 5xx. Filtros complex: { .service.name = \"payment\" && duration > 500ms } | count() by (.error) — count grouped. Traces retornados con full trace tree. Antes de TraceQL, Tempo solo permitía lookup por trace_id — encontrar el ID era via logs con trace_id o exemplars. TraceQL abre ad-hoc investigation. Comparable en Jaeger UI (más limited), Datadog Trace Analytics, Honeycomb queries.", "correct": true, "why": "Correcto. TraceQL cerró gap important de Tempo (originalmente id-lookup only). Investigation flexibility ahora comparable Jaeger + Datadog. Ejemplos: buscar traces slow en period, con specific attribute, con error, cross-service patterns." },
+        { "letter": "B", "text": "Tempo no permite search sin trace_id.", "correct": false, "why": "Verdad hasta 2023, ahora TraceQL habilita. Feature core moderna." },
+        { "letter": "C", "text": "TraceQL es solo para metrics.", "correct": false, "why": "Confusión. TraceQL es para traces. Tempo Metrics Generator es feature separate que genera metrics FROM traces (usable en PromQL)." },
+        { "letter": "D", "text": "Requires reindex de traces existentes.", "correct": false, "why": "Tempo scans blocks para responder TraceQL queries — no requires reindex. Trade-off: slower que index-based (Elasticsearch) pero simpler storage." }
+      ],
+      "explanation": "TraceQL syntax examples: (1) { .service.name = \"api\" } — all traces con span en api; (2) { .service.name = \"payment\" && span.http.status_code >= 500 } — payment errors; (3) { duration > 5s } — slow traces; (4) { .service.name = \"checkout\" } && { .service.name = \"payment\" && span.http.status_code = 500 } — checkout traces que touch payment y payment falló. Aggregations: | count() by (attribute), | rate(). Structural: descendant(), ancestor() operators. TraceQL scans blocks; performance depends on time range + query specificity. Combine con exemplars: dashboard shows metric → click exemplar → open trace; sin exemplar → TraceQL query.",
+      "realWorld": "Grafana Labs launched TraceQL 2023 in Tempo 2.0. Rapid adoption in Grafana users. Alternative: SQL-like en Datadog, Honeycomb queries, Jaeger operation-based search. TraceQL es OSS response a needs previously requiring commercial APMs.",
+      "tags": ["TraceQL", "trace search", "investigation"],
+      "tech": ["Tempo", "Grafana"],
+      "references": [{ "title": "grafana.com — TraceQL" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "monitoring",
+      "topic": "Continuous profiling integración",
+      "difficulty": "staff",
+      "scenario": "Traces muestran service X slow. Pero no sabes DENTRO del service qué function/line consume time. Necesitas continuous profiling.",
+      "question": "¿Cómo integra continuous profiling con distributed tracing?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Continuous profiling: sampling low-overhead de call stacks + CPU/memory allocation en cada process constantly, generating flame graphs. Tools: (1) Grafana Pyroscope (adquirido 2023); (2) Pixie (New Relic); (3) Parca (Polar Signals); (4) Datadog Continuous Profiler; (5) Pprof (Go native). Integración con tracing: (a) profile attached a specific span (trace_id → profile lookup); (b) profile durante specific time range (linked to metric spike). Workflow: metric alert → open trace → identifica slow span → drill down to profile of that time/span en Pyroscope → flame graph muestra function/line consuming time. Overhead: 1-5% CPU típico para sampling profiling. Complementa tracing (traces muestran WHERE en distributed system, profiling muestra WHAT dentro del process).", "correct": true, "why": "Correcto. Profiling es el 4th pillar emergent de observability (metrics + logs + traces + profiles). Traces te llevan a service culprit; profiling te lleva a function/line culprit. Pyroscope (Grafana) es OSS líder emergente. eBPF-based profiling (Parca) permite kernel-level insight." },
+        { "letter": "B", "text": "Profiling es solo para dev — nunca en producción.", "correct": false, "why": "Anti-patrón. Continuous profiling designed para producción con low overhead. Modern profilers 1-5% overhead is standard, acceptable." },
+        { "letter": "C", "text": "Traces contienen ya function-level detail.", "correct": false, "why": "Falso. Traces muestran cross-service RPCs y logical operations. Function-level dentro del código requires profiling separate." },
+        { "letter": "D", "text": "Profiling ha existido siempre — no es novedad.", "correct": false, "why": "Parcial. Profiling herramientas exist decades pero CONTINUOUS profiling (siempre-on producción, low overhead) es emerging trend en observability moderna." }
+      ],
+      "explanation": "Profile types: (1) CPU (function on-CPU time); (2) Memory allocations; (3) Goroutines/threads count; (4) Off-CPU (blocked on I/O, locks); (5) Custom events. Sampling: usually per second or millisecond, captures stack of running threads. Flame graph visualization (Brendan Gregg): horizontal = time, vertical = call depth, width = time spent. eBPF-based tools work at kernel level, capture any language. Language-specific profilers: pprof (Go), async-profiler (Java), Python profilers. Integration en OpenTelemetry: profiling signal added 2023-2024, WIP. Pyroscope: flame graphs en Grafana UI, tag-based selection (service, region, env, trace_id).",
+      "realWorld": "Google internal continuous profiling. Grafana acquired Pyroscope 2023, integration with LGTM stack. Parca (Prometheus for profiling filosofía). Datadog Continuous Profiler mature commercial. Netflix, Uber use profiling extensively.",
+      "tags": ["continuous profiling", "flame graphs", "Pyroscope", "eBPF"],
+      "tech": ["Pyroscope", "Parca", "pprof"],
+      "references": [{ "title": "grafana.com/oss/pyroscope" }, { "title": "brendangregg.com/flamegraphs" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "monitoring",
+      "topic": "Trace-to-logs correlation",
+      "difficulty": "mid",
+      "scenario": "Ves trace en Tempo. Span slow en 'validate_order'. Necesitas los LOGS de ese request en checkout-service para ver qué exactamente pasó — errores, DB queries, etc.",
+      "question": "¿Cómo se implementa trace-to-logs correlation?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Prerequisite: structured logging incluye trace_id como field en CADA log emitido durante request context. OpenTelemetry logs integration o manual (extract trace_id from context, add a logger). Configuration Grafana: Tempo datasource → Trace to logs settings → target Loki datasource + label mappings (job matches service.name) → query template: {job=\"$__span.service.name\"} | trace_id=\"$__span.traceId\". Result: click en span en Tempo UI → 'View logs' button → open Loki query filtered para that trace_id → todos los logs del request en that service. Bidirectional: logs también show trace_id → click 'View trace' → open Tempo. Es cross-signal correlation critical para full investigation.", "correct": true, "why": "Correcto. Es LA feature clave para unified observability. Sin trace_id en logs, correlation manual (buscar en logs por timestamp aproximado — unreliable). Con trace_id in logs, exact correlation. OpenTelemetry Logs SDK auto-injecta trace_id si active span en context durante log emission. Manual: retrieve current span, extract trace_id, agregar como log field." },
+        { "letter": "B", "text": "No es posible — logs y traces son distintos.", "correct": false, "why": "Falso. Feature core de observability moderna. Requires solo instrumentation apropiada." },
+        { "letter": "C", "text": "Requires reemplazar logging library completa.", "correct": false, "why": "Falso. Most logging libraries permit adding context fields. OpenTelemetry provides bridge para popular libraries." },
+        { "letter": "D", "text": "Solo works con Grafana Cloud.", "correct": false, "why": "Falso. Grafana OSS + Tempo + Loki funciona idénticamente." }
+      ],
+      "explanation": "Implementation: (1) app instrumentada con OpenTelemetry (SDK con auto-instrumentation); (2) logging library con context awareness (Python's structlog + trace context injection; Go zap + otelzap; Java Logback + MDC populated con trace_id); (3) trace_id emitido en cada log line como field; (4) Loki datasource con derived field extraction para trace_id; (5) Grafana datasource config linking. Alternative approach: OpenTelemetry Logs API emerging — unified telemetry emission API for logs (like traces/metrics). Existing logging library bridge processors convert. Considerations: (a) log format debe incluir trace_id apparent (JSON structured, or logfmt); (b) trace_id propagation via context requires proper async context management (Node.js contexto async, Java ThreadLocal + MDC, Python contextvars).",
+      "realWorld": "OpenTelemetry Logs SDK stable en 2024. Grafana Labs promociona LGTM cross-signal correlation. Datadog APM automatic. Honeycomb events model diferente (no separate logs — todo son wide events con multiple dimensions). Empresas serious adoptan cross-signal — cost recovery en debugging speed enorme.",
+      "tags": ["trace-to-logs", "correlation", "unified observability"],
+      "tech": ["OpenTelemetry", "Loki", "Tempo", "Grafana"],
+      "references": [{ "title": "grafana.com — Trace to logs" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "monitoring",
+      "topic": "Tail-based sampling en Collector",
+      "difficulty": "staff",
+      "scenario": "Team quiere tail-based sampling: keep 100% de traces con errors, 100% con latency > 1s, y 1% del resto. Cómo configurar OpenTelemetry Collector?",
+      "question": "¿Cómo se configura tail-based sampling y cuáles son sus challenges?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenTelemetry Collector tail_sampling_processor: define policies evaluadas cuando trace complete (o timeout). Config example: policies: [{name: errors, type: status_code, status_code: {status_codes: [ERROR]}}, {name: slow, type: latency, latency: {threshold_ms: 1000}}, {name: bulk, type: probabilistic, probabilistic: {sampling_percentage: 1}}]. Cada policy independiente: si CUALQUIERA match, trace kept. Challenge #1: buffering — collector busca a trace_id todos los spans hasta timeout (default 30s). Requires memory (bytes per span × spans per trace × concurrent traces). Challenge #2: consistency across collector instances — mismo trace_id debe llegar al mismo collector. Solution: load balancer con hash-based routing por trace_id (loadbalancing exporter en front of tail collectors). Challenge #3: cardinality en tail policies (attribute-based sampling con high-cardinality attrs).", "correct": true, "why": "Correcto. Tail-based da observability best-quality (intelligent retention) pero requires operational sophistication. Load balancing por trace_id is critical — sin él, spans de mismo trace pueden llegar a distintas collector instances y no correlate para tail decision. Common architecture: agent collectors → LB con trace_id hash → tail collectors → backend." },
+        { "letter": "B", "text": "Head-based es siempre mejor — tail complica innecesariamente.", "correct": false, "why": "Trade-off. Head-based simpler pero pierde interesting traces. Tail-based worth complexity para high-signal observability." },
+        { "letter": "C", "text": "Tail-based sampling deprecates 100% de traces.", "correct": false, "why": "Al contrario — es método para keep INTERESTING traces 100% while sampling bulk." },
+        { "letter": "D", "text": "Requires backend específico.", "correct": false, "why": "Falso. Backend-agnostic; tail sampling happens en collector antes de export a backend elegido." }
+      ],
+      "explanation": "Tail sampling policies types: probabilistic, status_code, latency, string_attribute, numeric_attribute, rate_limiting, always_sample, and_ (all must match), or_ (any match), composite. Tuning: (a) num_traces (max traces held simultaneously); (b) expected_new_traces_per_sec (buffer sizing hint); (c) decision_wait (how long to wait for spans before deciding). Trade-offs: longer wait = better quality (all spans considered) but more memory + latency to backend. Shorter wait = risk incomplete traces if slow request in flight. Architecture: high-throughput setups use dedicated tail sampling tier separate de other processing. Grafana Tempo has 'metrics_generator' que puede correr on all traces (before tail sampling) to preserve RED metrics even si traces dropped.",
+      "realWorld": "Uber tail-based paper. Grafana Cloud offers managed tail sampling. Datadog APM adaptive sampling incluye tail component. Empresas grandes commonly implement tail-based con custom collector deployments.",
+      "tags": ["tail sampling", "OpenTelemetry Collector", "load balancing"],
+      "tech": ["OpenTelemetry Collector"],
+      "references": [{ "title": "opentelemetry.io — Tail sampling processor" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "monitoring",
+      "topic": "Metrics from traces",
+      "difficulty": "senior",
+      "scenario": "Team no ha instrumentado apps con metrics — solo tracing. Quiere RED dashboards. Se pueden generar metrics desde traces?",
+      "question": "¿Qué es 'metrics from traces' y cuáles herramientas lo hacen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Metrics from traces (aka span metrics): agregando spans, derivas métricas RED (Rate, Errors, Duration) automáticamente per service o per endpoint. Sin instrument metrics separately, obtienes dashboards. Herramientas: (1) Tempo Metrics Generator — genera Prometheus metrics traces_spanmetrics_calls_total, traces_spanmetrics_latency_bucket por service+span_name. Exported to Prometheus/Mimir. (2) OpenTelemetry Collector spanmetrics processor — similar, en collector pipeline. (3) Datadog APM automáticamente genera 'trace metrics'. Trade-offs: (a) simplicity — no need instrument metrics separately; (b) accuracy — metric es sampled if traces sampled (100% sampled required for accurate metrics — o mantener metrics separadas con 100% instrumentation); (c) cardinality risk — cada span attribute puede become metric label. Best practice: use metrics generator para RED dashboards; instrument custom business metrics separately (revenue, signup rate).", "correct": true, "why": "Correcto. Es feature elegante — un signal type serves multiple purposes. Grafana Labs promocionan como parte de LGTM value. Sin embargo, sampling caveat critical: metrics from sampled traces son estadísticas approximation, not accurate. Solution: 100% sample para spans que general metrics, sample bulk para storage." },
+        { "letter": "B", "text": "No es posible — metrics y traces separates.", "correct": false, "why": "Falso. Feature soportada por multiple tools." },
+        { "letter": "C", "text": "Reemplaza necesidad de metrics puros.", "correct": false, "why": "Falso para casos business metrics. Metrics from traces cover RED patterns, no business KPIs specific (revenue por hora requires instrumentation directa)." },
+        { "letter": "D", "text": "Cardinality-free — sin problemas.", "correct": false, "why": "Cuidado — attributes se convert en labels. High cardinality attributes (user_id) en spans → cardinality explosion en generated metrics. Requires filtering/whitelist." }
+      ],
+      "explanation": "Tempo Metrics Generator: enabled per tenant. Generates: (1) span metrics — traces_spanmetrics_calls_total, traces_spanmetrics_latency_bucket per service+span+status; (2) service graph metrics — traces_service_graph_request_total per client-server pair. Exported via Prometheus remote_write a Mimir/Prometheus. Configuration: label whitelist (include specific attributes as labels, drop rest). Sampling consideration: if traces sampled at 10%, metrics multipled by 10 for accurate rates — approximation. Alternative: separate 100% metrics instrumentation for critical RED, tail sample traces for storage. OpenTelemetry Collector spanmetrics: similar feature, config en collector processors, exports Prometheus format.",
+      "realWorld": "Grafana Cloud Tempo generates metrics by default. Datadog APM automatic. Empresas comparing 'instrument once vs instrument twice' cost. Emerging pattern: instrument once with OpenTelemetry, derive both metrics + traces at collector.",
+      "tags": ["metrics from traces", "spanmetrics", "RED"],
+      "tech": ["Tempo", "OpenTelemetry Collector"],
+      "references": [{ "title": "grafana.com — Metrics generator" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "monitoring",
+      "topic": "Debugging con traces",
+      "difficulty": "senior",
+      "scenario": "Incident: users reportan slow checkout. Alert dispara p99 latency. Team needs use traces para debug rápidamente.",
+      "question": "¿Cuál es un workflow efectivo de debugging con traces?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Start from symptom (metric alert) — abrir dashboard, ver metric spike time range. Click exemplar en histogram bucket p99 → open specific slow trace in Tempo. Analyze trace waterfall: qué span consumed most time? qué span erred? Root cause identification via drill down.", "correct": true, "why": "Correcto. Exemplars-based workflow es el más eficiente. Metric alerts you; exemplars guide you to specific culprit trace; trace waterfall reveals root cause. Sin exemplars, más manual (busca en logs, encontrar trace_id, abrir trace)." },
+        { "letter": "B", "text": "Search traces con TraceQL: { .service.name = \"checkout\" && duration > 3s } durante el period. Encuentra multiple traces slow. Pattern-match: son todos del mismo endpoint? mismo user? mismo downstream service?", "correct": true, "why": "Correcto. Sin exemplars, TraceQL query encuentra slow traces. Pattern analysis (todos slow desde payment service?) points to culprit." },
+        { "letter": "C", "text": "Compare fast vs slow traces: fast trace (baseline behavior) vs slow trace (current problem). Diff attributes, span structure. Encontrar what's different — un extra DB call? cache miss? retry?", "correct": true, "why": "Correcto. Comparative debugging es poderoso. Herramientas: Honeycomb tiene 'BubbleUp' auto-detect distinctive attributes de slow group. Jaeger/Tempo manual comparison." },
+        { "letter": "D", "text": "Correlate trace con logs (trace-to-logs): abre logs del span slow. Ve context detallado — SQL query que tardó, exception thrown, cache miss reason.", "correct": true, "why": "Correcto. Trace muestra WHERE, logs muestran WHY. Cross-signal navigation crucial. Un span 'DB query 3s' no dice nada; log 'SLOW QUERY: SELECT * FROM users WHERE email LIKE %...' explains." },
+        { "letter": "E", "text": "Solo mirar metrics — traces overkill.", "correct": false, "why": "Falso. Metrics indican problem pero no root cause. Traces + logs son requeridos para diagnosis en distributed systems." }
+      ],
+      "explanation": "Debugging playbook: (1) alert triggers → identify affected service/endpoint; (2) open metric dashboard, see trend + magnitude; (3) drill to specific slow trace (via exemplar o search); (4) analyze waterfall — critical path, longest span; (5) drill to logs of that time/service para context; (6) if inconclusive, profile the slow function (Pyroscope); (7) hypothesize root cause, verify con additional traces/logs; (8) fix + validate. Sin distributed tracing, este workflow es horas (grepping logs manually cross-service). Con tracing, minutos.",
+      "realWorld": "Charity Majors 'observability engineering' book detalla workflows. Honeycomb famoso por 'BubbleUp' auto-analysis. Empresas serios sobre uptime tienen playbooks documented para common incident patterns. Tracing skill: senior SRE competency.",
+      "tags": ["debugging", "incident response", "trace analysis"],
+      "tech": ["Tempo", "Jaeger", "Grafana"],
+      "references": [{ "title": "Honeycomb — Observability Engineering" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "monitoring",
+      "topic": "Costos y storage",
+      "difficulty": "staff",
+      "scenario": "Team acabará instrumentando full tracing. Genera 10B spans/día. Storage cost?",
+      "question": "¿Cuáles son los factores de cost en tracing y strategies para manage?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cost factors: (1) VOLUME de spans (span count × avg span size ~1KB); (2) SAMPLING rate; (3) STORAGE backend cost (Tempo/S3 cheap ~$0.023/GB/month; Datadog APM $x/million spans; Elasticsearch expensive); (4) INGESTION processing (collector CPU/RAM); (5) QUERY compute; (6) RETENTION duration. 10B spans/day at 1KB = 10TB/day. At 100% retention 30 days: 300TB. Tempo (S3): ~$7K/month. Datadog: potentially $100K+/month. Strategies: (a) sampling (head 10% = 90% cost reduction); (b) tail-based (keep interesting, sample rest); (c) attribute filtering (drop verbose attributes); (d) tier storage (recent hot, old cold); (e) generate metrics from traces (retain metrics longer, sample traces). Trade-off: sampling saves cost pero pierde specific events. Elite: instrument once (full sample) at edge, sample at collector, backend receives sampled. RED metrics from 100% at collector, traces sampled downstream.", "correct": true, "why": "Correcto. Tracing es signal más costoso en volume alto. Careful engineering necessary. Object storage backends (Tempo, Grafana Cloud) dramatically cheaper than search-index backends (ES-based). Sampling design es one of most impactful decisions." },
+        { "letter": "B", "text": "Tracing es gratuito.", "correct": false, "why": "Falso. Volume + storage + compute costs are real y large at scale." },
+        { "letter": "C", "text": "Sampling siempre es malo.", "correct": false, "why": "Anti-view. Sampling es essential engineering trade-off. Tail-based can retain quality mientras cost-manages." },
+        { "letter": "D", "text": "Elasticsearch más cheap para traces que Tempo.", "correct": false, "why": "Al contrario. Tempo (object storage) mucho más cheap que ES (SSD full-text index). ES useful para search velocity pero cost prohibitive at high volume." }
+      ],
+      "explanation": "Cost estimation: (1) spans/day × 1KB × 30 days retention × sampling_rate; (2) storage cost per GB (varies 10-100x by backend); (3) compute for ingest/query. Tempo economics: S3 storage ~$0.023/GB/month + minor compute. Empresas grandes negocian S3 discounts. Datadog: $1.31/million spans ingested (~$13/10B spans, but many features included). New Relic, Honeycomb similar SaaS pricing. Self-hosted Tempo: cheapest storage. Trade-off analysis: SaaS convenient but expensive at scale; self-hosted requires SRE investment. Hybrid emerging: keep hot recent in SaaS, archive cold in self-hosted S3.",
+      "realWorld": "Datadog earnings show tracing significant revenue. Grafana Cloud markets cost-effectiveness. Cloudflare escribió sobre trace pipeline scale. Netflix Keystone trace infrastructure interna. Cost of tracing frequently underestimated en initial planning, discovered painfully.",
+      "tags": ["cost", "storage", "sampling", "scalability"],
+      "tech": ["Tempo", "Datadog", "OpenTelemetry Collector"],
+      "references": [{ "title": "grafana.com — Tempo cost" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "monitoring",
+      "topic": "OpenTelemetry adoption roadmap",
+      "difficulty": "staff",
+      "scenario": "CTO: 'estrategia observability. Queremos adopt OpenTelemetry. ¿Roadmap?'.",
+      "question": "¿Cuál es un roadmap sensato de adopción OpenTelemetry?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Phase 1 (0-3m): pilot with 1-2 services. Deploy Collector (agent mode). Auto-instrumentation en pilot services (framework-supported languages). Send to backend (Jaeger/Tempo). Baseline: traces functional cross-service.", "correct": true, "why": "Correcto. Pilot approach. No big bang. Learn operational patterns con small blast radius. Auto-instrumentation reduces adoption friction dramatically." },
+        { "letter": "B", "text": "Phase 2 (3-9m): expand coverage. Instrument todos los services críticos. Deploy Collector gateway tier (centralized processing). Configure sampling policies. Establish semantic conventions internal. Correlation con logs (trace_id en logs).", "correct": true, "why": "Correcto. Expansión. Gateway pattern permite centralized policy. Semantic conventions internos = queries work cross-team. Correlation with logs = investigation unlocked." },
+        { "letter": "C", "text": "Phase 3 (9-18m): mature. Tail-based sampling for cost efficiency. Metrics generator para RED dashboards. Exemplars en Prometheus for metric-to-trace bridge. Establish trace-driven SLOs (latency-based).", "correct": true, "why": "Correcto. Sofisticación. Tail-based es cost-effective. Exemplars unifican pillars. Trace-based SLOs (p99 latency de traces) más accurate que synthetic monitoring." },
+        { "letter": "D", "text": "Phase 4 (18m+): advanced. Continuous profiling integration (Pyroscope). Custom instrumentation guidelines. Governance sobre trace attributes/sampling per service tier. Migration completa desde legacy APM si aplicable.", "correct": true, "why": "Correcto. Full observability platform. Profiling closes gap 'why is function slow'. Governance evita drift. Legacy APM migration cost-benefit por servicio." },
+        { "letter": "E", "text": "Skip fases; instrumentar todo semana 1.", "correct": false, "why": "Anti-patrón. Big-bang failures common. Incremental teaches team, catches issues early, delivers value early." }
+      ],
+      "explanation": "Adoption principles: (1) auto-instrumentation first para speed of adoption; (2) manual instrumentation for business context; (3) semantic conventions early — standardize attribute names; (4) OpenTelemetry Collector for flexibility (change backends without app changes); (5) sampling policy owned centrally; (6) documentation + examples para dev enablement; (7) champion pattern — assign observability lead. Common challenges: (a) Go SDK differences vs Java (no auto-instrumentation, requires wrapping); (b) legacy apps hard to instrument; (c) cultural — devs vs 'observability team'. Success signals: MTTR reduction, developer self-service de investigation, less pager escalation.",
+      "realWorld": "Salesforce, Microsoft, Uber, Netflix have documented OpenTelemetry migrations. Datadog, New Relic support OpenTelemetry ingestion (protects their business while user portable). CNCF OpenTelemetry survey annual shows adoption growing.",
+      "tags": ["OpenTelemetry", "roadmap", "adoption"],
+      "tech": ["OpenTelemetry"],
+      "references": [{ "title": "opentelemetry.io — Getting started" }]
+    }
+  ]
+}

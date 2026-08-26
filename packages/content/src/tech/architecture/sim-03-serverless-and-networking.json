@@ -1,0 +1,422 @@
+{
+  "id": "architecture-sim-03-serverless-and-networking",
+  "trackId": "architecture",
+  "order": 3,
+  "title": "Simulacro 03 — Serverless, cold start, DNS, CDN y latencia",
+  "focus": "Cold start real de Lambda, cuándo usar serverless y cuándo NO, DNS y TTL, CDN, dónde está la latencia.",
+  "areaCoverage": ["serverless", "networking", "scalability"],
+  "timeLimitMin": 60,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "networking",
+      "topic": "Vocabulario básico — HTTP status codes",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr confunde 401 con 403. Pregunta cuál es cuál.",
+      "question": "¿Cuál es la distinción CORRECTA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "401 Unauthorized: no te has autenticado (no hay credentials válidos). 403 Forbidden: te autenticaste pero no tienes permisos para este recurso.", "correct": true, "why": "Correcto. La nomenclatura de HTTP es un poco confusa (401 dice 'Unauthorized' pero técnicamente significa 'Unauthenticated'). La regla: 401 = 'quién eres' (auth), 403 = 'no puedes' (authorization). Muchas APIs devuelven 404 en lugar de 403 para no filtrar existencia de recursos (defensive posture)." },
+        { "letter": "B", "text": "401 y 403 son sinónimos.", "correct": false, "why": "Distintos. 401 puede resolverse con credentials; 403 no cambia con credentials adicionales del mismo user." },
+        { "letter": "C", "text": "401 es error de servidor, 403 de cliente.", "correct": false, "why": "Ambos son 4xx (client errors). Errores de servidor son 5xx." },
+        { "letter": "D", "text": "401 significa que la API está deprecated.", "correct": false, "why": "Deprecation se comunica con headers (Deprecation, Sunset — RFC 8594), no con status codes." }
+      ],
+      "explanation": "HTTP status codes básicos: 1xx (info), 2xx (success), 3xx (redirection), 4xx (client error), 5xx (server error). Los más importantes: 200 (OK), 201 (Created), 204 (No Content), 301 (Moved Permanently, cached), 302 (Found, temporary), 304 (Not Modified — para caching), 400 (Bad Request), 401 (Unauthenticated), 403 (Forbidden), 404 (Not Found), 409 (Conflict), 422 (Unprocessable Entity), 429 (Too Many Requests), 500 (Internal Server Error), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout). Usarlos correctamente permite a clientes hacer retries inteligentes (5xx y 429 son retriable, 4xx generalmente no).",
+      "realWorld": "Muchas APIs 'usan 200 con error en el body' — anti-patrón porque rompe intermediarios (proxies, monitoring). Stripe, GitHub, AWS APIs son ejemplo de uso correcto de status codes.",
+      "tags": ["HTTP", "status codes", "fundamentos"],
+      "tech": ["HTTP"],
+      "references": [{ "title": "RFC 9110 — HTTP Semantics" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "networking",
+      "topic": "HTTP/1.1 vs HTTP/2 vs HTTP/3",
+      "difficulty": "mid",
+      "scenario": "Tu app tiene 30 requests para cargar una página. En HTTP/1.1 tarda 4s. Alguien propone migrar a HTTP/3 pensando que es 'más rápido'.",
+      "question": "¿Cuál es la evolución real y qué gana cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HTTP/1.1: una request por conexión TCP a la vez (o pipelining nunca adoptado). Browsers abrían 6 conexiones paralelas por dominio. HTTP/2: multiplexing sobre una conexión TCP (múltiples streams simultáneos), header compression (HPACK), server push. HTTP/3: cambia TCP por QUIC (UDP), evita head-of-line blocking a nivel transport, mejor connection migration (mobile switching WiFi↔4G).", "correct": true, "why": "Correcto. Cada versión resuelve un bottleneck distinto. HTTP/2 fue enorme para páginas con muchos assets (eliminó necesidad de sprites, domain sharding). HTTP/3 mejora en redes con packet loss (móviles) y latencia variable. Trade-offs: HTTP/2 sufre TCP head-of-line blocking (un packet loss bloquea todos los streams); HTTP/3 lo evita con QUIC pero requiere UDP (algunos firewalls lo bloquean)." },
+        { "letter": "B", "text": "HTTP/3 es siempre más rápido.", "correct": false, "why": "Depende. En redes buenas (baja pérdida, latencia estable), diferencia es marginal. En móviles con pérdida y switching de red, ganancia significativa. Además, muchos CDNs, proxies y firewalls no soportan HTTP/3 aún completamente." },
+        { "letter": "C", "text": "HTTP/2 requiere HTTPS.", "correct": false, "why": "Técnicamente el spec permite HTTP/2 cleartext (h2c), pero navegadores REQUIEREN TLS. En la práctica: HTTP/2 = HTTPS. HTTP/3 igualmente requiere TLS 1.3." },
+        { "letter": "D", "text": "HTTP/2 elimina la necesidad de CDN.", "correct": false, "why": "CDN es sobre PROXIMIDAD geográfica y cache. HTTP/2 es sobre eficiencia de transport. Ortogonales." }
+      ],
+      "explanation": "Evolución HTTP: /1.0 (1996), /1.1 (1997), /2 (2015), /3 (2022). HTTP/2: binary framing, multiplexing streams, header compression HPACK, server push (deprecated en la mayoría de browsers 2022), stream prioritization. HTTP/3: QUIC transport (UDP-based), independent streams (no head-of-line blocking), 0-RTT resumption, connection migration. Trade-offs: /2 muy adoptado (~95% servers modernos), /3 en adopción creciente pero no ubicuo. Impacto real: para páginas con muchos assets, /2 fue transformativo (eliminó need de sprites, domain sharding). Para APIs (una request por página), diferencia menor. Antes de 'migrar', mide waterfall en DevTools — el bottleneck real puede ser server processing, no transport.",
+      "realWorld": "Google migró todo a HTTP/2 tempranamente. Cloudflare, Fastly ofrecen HTTP/3 desde 2020+. Facebook, YouTube usan QUIC. Adoption medida por Cloudflare Radar. En 2026: HTTP/2 default, HTTP/3 disponible en la mayoría de CDNs pero no universal por firewalls corporativos.",
+      "tags": ["HTTP/2", "HTTP/3", "QUIC", "networking"],
+      "tech": ["HTTP/2", "HTTP/3", "QUIC"],
+      "references": [{ "title": "RFC 9114 — HTTP/3" }, { "title": "High Performance Browser Networking (Grigorik)" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "networking",
+      "topic": "TCP vs UDP vs QUIC — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Estás diseñando un juego multiplayer online. Latencia crítica. Un desarrollador propone TCP porque 'es confiable'.",
+      "question": "¿Cuándo TCP y cuándo UDP (o QUIC)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TCP siempre — es más seguro.", "correct": false, "why": "'Seguro' no es la métrica. TCP: reliable, ordered, con retransmissions y congestion control. UDP: connectionless, best-effort. Para juegos, TCP causa 'stuttering': si un packet se pierde, TODOS los siguientes esperan la retransmission (head-of-line blocking) — 200ms de pausa donde el user ve 'freeze'." },
+        { "letter": "B", "text": "TCP para: files, APIs REST, databases (necesitas orden y no perder). UDP para: video/audio streaming en tiempo real, games (prefieres data actualizada a data ordenada), VoIP. QUIC (UDP + reliability opcional per-stream) es lo mejor de ambos.", "correct": true, "why": "Correcto. La elección depende de si 'mejor perder que esperar'. Streaming de video: si un frame se pierde, el user prefiere seguir a esperar 500ms para recibirlo tarde. Games: prefieres position update MÁS RECIENTE que el orden. TCP no lo permite — bloquea streams por packet loss. QUIC innovador porque tiene streams INDEPENDIENTES: pérdida en stream A no bloquea stream B." },
+        { "letter": "C", "text": "UDP siempre — es más rápido.", "correct": false, "why": "'Más rápido' es a costa de features (reliability, ordering, congestion control). Aplicaciones que necesitan garantías (banking, file transfer) las tendrían que reimplementar sobre UDP — reinventar TCP mal." },
+        { "letter": "D", "text": "En 2026 solo se usa QUIC para todo.", "correct": false, "why": "QUIC adoption creciente pero no universal. TCP sigue dominando servers, DBs, muchos protocolos. QUIC brilla en HTTP/3 y real-time. Web sigue mixto." }
+      ],
+      "explanation": "TCP vs UDP: TCP (reliable, ordered, connection-based, congestion controlled). UDP (unreliable, unordered, connectionless, no congestion control by default). QUIC = UDP + reliability + streams independientes + TLS 1.3 built-in + connection migration. QUIC combines lo mejor de TCP (reliability) con lo mejor de UDP (no head-of-line blocking). Usos típicos: TCP → HTTP/1.1, HTTP/2, SSH, DB connections, FTP; UDP → DNS, DHCP, RTP (VoIP), games, video streaming; QUIC → HTTP/3, moderno streaming, apps móviles. Consideraciones: NAT traversal (UDP más difícil), firewalls (algunos bloquean UDP), monitoring (QUIC encriptado end-to-end complica middleboxes).",
+      "realWorld": "Google inventó QUIC para reducir latencia de YouTube y Search en móviles. Cloudflare deploys QUIC en edge. Games (Fortnite, League of Legends) usan UDP con custom reliability. WhatsApp/Signal usa MTProto/Signal Protocol sobre TCP+TLS. Video conferencing (Zoom, Meet) usa mix WebRTC/UDP.",
+      "tags": ["TCP", "UDP", "QUIC", "protocolos"],
+      "tech": ["TCP", "UDP", "QUIC", "WebRTC"],
+      "references": [{ "title": "RFC 9000 — QUIC spec" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "networking",
+      "topic": "CDN — cómo funciona realmente",
+      "difficulty": "mid",
+      "scenario": "Tu app carga assets estáticos (JS, CSS, imágenes) desde S3. Users en Europa se quejan de lentitud. Alguien dice 'meter CloudFront delante'.",
+      "question": "¿Qué hace un CDN y qué debes configurar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CDN cachea contenido en edge locations globalmente. User en Madrid pide asset → va al edge de Madrid (10ms) en vez de S3 en us-east-1 (150ms). En cache miss, edge va al origin, cachea la respuesta según headers Cache-Control.", "correct": true, "why": "Correcto. CDN convierte latency multi-continent (100+ms) en latency intra-city (~10ms) para contenido cacheado. La primera request es 'cache miss' (paga la latency completa + populate cache); las siguientes son 'cache hit'. Con ratio alto de cache hits, gran mayoría del traffic servido desde edge." },
+        { "letter": "B", "text": "Cache-Control headers son la interfaz para controlar CDN: `max-age=3600` (cache 1h), `s-maxage=86400` (CDN cache 1 día, distinto del browser), `public` (cacheable), `private` (solo browser), `no-store` (no cachear).", "correct": true, "why": "Correcto. Headers HTTP son cómo declaras 'esto es cacheable, por cuánto tiempo, por quién'. `s-maxage` es específico para shared caches (CDN, proxies) — permite diferenciar browser TTL de CDN TTL. `stale-while-revalidate` (SWR) permite servir stale mientras se revalida en background." },
+        { "letter": "C", "text": "Cache invalidation: cuando actualizas un asset, puedes (1) purge explícito del CDN (API call, cuesta $ o toma tiempo); (2) versioning de URL (`app.v2.js` o `app-hash.js`) — cada cambio genera nuevo URL, viejos siguen cacheados hasta expirar. Versioning es superior — 'immutable assets' pattern.", "correct": true, "why": "Correcto. Immutable assets es el pattern moderno: build tool (webpack, vite) genera hashed filenames, HTML apunta al nuevo hash. CDN nunca necesita invalidar — los viejos URLs siguen sirviendo (para users con HTML viejo), los nuevos URLs son fresh. Cero cache invalidation drama." },
+        { "letter": "D", "text": "CDN solo sirve para assets estáticos (imágenes, CSS, JS).", "correct": false, "why": "También API responses cacheables (GET pública, `Cache-Control: public, max-age=60`), HTML de landing pages, streaming (HLS/DASH chunks). Cloudflare Workers, Fastly Compute@Edge, Lambda@Edge permiten computación en el edge — dynamic behavior con cache." },
+        { "letter": "E", "text": "CDN elimina la necesidad de origin.", "correct": false, "why": "Origin sigue siendo source of truth. CDN solo cachea. Origin recibe cache misses y revalidations. Bien configurado, CDN reduce carga al origin en 90%+." }
+      ],
+      "explanation": "CDN key concepts: (1) Edge locations (miles globalmente); (2) Cache hierarchy (edge → regional → origin); (3) Cache-Control headers como interfaz declarativa; (4) TTL vs invalidation vs versioning; (5) Compute at edge (Workers, Lambda@Edge). CDN providers: CloudFront (AWS), Cloudflare, Fastly, Akamai, Bunny. Modernos incluyen Workers/Compute for dynamic edge logic. Métricas clave: cache hit ratio (aim >90%), origin bandwidth reduction, latency p95. Anti-patterns: (a) cache-busting con timestamps (?t=123456) — cache miss siempre; (b) sin Cache-Control headers — cada CDN adivina; (c) invalidar todo tras cada deploy — expensive y innecesario con versioning. Vary header maneja variaciones (Accept-Encoding, Accept-Language).",
+      "realWorld": "Netflix distribuye TBs de video via Open Connect (CDN propia). Cloudflare tiene el DNS público más rápido (1.1.1.1) y CDN masivo. Vercel/Netlify usan CDN como product core. Twitter usa Fastly. GitHub Pages es CloudFront + S3.",
+      "tags": ["CDN", "cache", "edge", "Cache-Control"],
+      "tech": ["CloudFront", "Cloudflare", "Fastly", "Akamai"],
+      "references": [{ "title": "RFC 9111 — HTTP Caching" }, { "title": "Cloudflare Learning — CDN basics" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "serverless",
+      "topic": "Serverless — cuándo NO usarlo",
+      "difficulty": "mid",
+      "scenario": "Startup adopta 'serverless everywhere' — Lambda, DynamoDB, API Gateway. 6 meses después, factura mensual es 3x lo esperado. Además latencia p99 sigue alta.",
+      "question": "¿Cuándo serverless NO es la elección correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Serverless siempre es más barato — la factura debe estar mal calculada.", "correct": false, "why": "Falso. Serverless es económico para cargas variables y bajas (idle → no pagas). Para cargas ALTAS SOSTENIDAS (>50% CPU utilization 24/7), containers o VMs son 5-10x más baratos. Lambda cobra por ms de ejecución + memoria — a millones de invocations/mes suma rápido." },
+        { "letter": "B", "text": "Serverless NO conviene cuando: (a) carga sostenida alta 24/7 → containers/VMs; (b) latencia p99 crítica sin margen (cold starts problemáticos); (c) long-running tasks >15 min (Lambda timeout); (d) heavy computation (Lambda no tiene GPU, memoria limitada a 10GB); (e) websocket/persistent connections (API Gateway WebSocket es costoso y complejo). Serverless brilla en: cargas variables, event-driven, prototyping, glue code entre servicios.", "correct": true, "why": "Correcto. Serverless tiene un sweet spot: workloads con variabilidad alta (traffic burst → autoscale sin ops). Fuera de ahí, es cara. Regla: si tu utilización promedio >30-50%, considera Fargate/ECS. Si es <10%, Lambda es 10x más barato. Análisis honesto requiere modelar costos con tráfico real (Lambda tiene calculadora oficial)." },
+        { "letter": "C", "text": "Solo si tu carga es 100% predecible.", "correct": false, "why": "Al revés: serverless brilla en cargas IMPREDECIBLES. La pregunta es si el promedio justifica pagarlo o si containers 'siempre-on' saldrían más baratos." },
+        { "letter": "D", "text": "Solo si usas AWS.", "correct": false, "why": "Serverless en todos los clouds: Azure Functions, GCP Cloud Functions/Cloud Run, Cloudflare Workers, Vercel Functions. La discusión es sobre modelo, no vendor." }
+      ],
+      "explanation": "Serverless economics: Lambda a $0.20 por millón de invocations + $0.0000166667 por GB-second. Ejemplo: función de 512MB corriendo 100ms, 100M invocations/mes = $875 en compute. Fargate task 24/7 con misma spec = $30/mes. Break-even ~3M invocations/mes de esa función. Para cargas altas sostenidas: ECS Fargate, EKS, EC2 spot. Cold start considerations: crítico para APIs sync (user-facing); irrelevante para async (SQS-triggered). Provisioned Concurrency mitiga a costo. Alternativas serverless con menos cold start: Cloudflare Workers (V8 isolates, ~5ms cold), Fastly Compute (WASM, similar). Considera 'serverless containers' (Fargate, Cloud Run, App Runner) como middle ground: no idle cost, but pods stay warm.",
+      "realWorld": "Coca-Cola migró millones de eventos a Lambda pero mantuvo ECS para APIs core. Amazon Prime Video famoso post 2023 sobre migrar de microservicios Lambda a monolito ECS (90% ahorro). Segment escribió sobre limitaciones de Lambda para cargas altas. Serverless no es free lunch — es un trade-off específico.",
+      "tags": ["serverless", "Lambda", "cost analysis", "cuándo NO"],
+      "tech": ["Lambda", "Fargate", "ECS", "Cloud Run"],
+      "references": [{ "title": "Amazon Prime Video — 'Scaling up the Prime Video audio/video monitoring service and reducing costs by 90%'" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "serverless",
+      "topic": "Cold start — causa raíz",
+      "difficulty": "senior",
+      "scenario": "Tu API en Lambda tiene un p50 = 80ms y p99 = 3.2s. El equipo se queja del p99. Al investigar CloudWatch, ves que los peaks de p99 correlacionan con inicios de nuevo contenedor Lambda.",
+      "question": "¿Cuál es la explicación técnica MÁS precisa del cold start y qué opciones lo mitigan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cold start = Lambda debe descargar el código, iniciar el runtime (JVM/Node/Python) y correr tu handler init. En JVM puede ser 3-10s; en Node/Python 100-500ms; en Rust/Go ~20-50ms.", "correct": true, "why": "Correcto. El cold start tiene 3 fases: (1) INIT del sandbox Firecracker/microVM, (2) INIT del runtime (arranque VM lenguaje), (3) INIT de tu código (imports, conexiones). La 2 domina en JVM/.NET, la 3 domina si tu bundle es grande." },
+        { "letter": "B", "text": "Provisioned Concurrency mantiene N contenedores 'calientes' — elimina cold start pero cuesta como si estuviera siempre corriendo, aunque haya menos tráfico.", "correct": true, "why": "Correcto. Provisioned Concurrency vale la pena para latencia crítica en horas pico predecibles. Fuera de esas horas, tráfico va a on-demand y sí cold-starta. Costo: por cada instancia caliente pagas la memoria configurada 24/7." },
+        { "letter": "C", "text": "SnapStart (Java) y ARM64 Graviton reducen cold start dramáticamente en Java.", "correct": true, "why": "Correcto. Lambda SnapStart snapshotea el estado post-init y restaura en <200ms. Solo Java 11+/17+. ARM64 mejora price/performance. Ambas opciones válidas antes de pagar Provisioned Concurrency." },
+        { "letter": "D", "text": "Cold start solo ocurre 1 vez en la vida de un contenedor Lambda. Luego reutiliza el sandbox.", "correct": true, "why": "Correcto. Un cold start crea el sandbox y ese sandbox atiende requests siguientes (execution context reuse). Se destruye tras ~5-15 min de inactividad (variable). Por eso 'primer request tras período tranquilo = cold start'." },
+        { "letter": "E", "text": "Cold start desaparece si aumentas la memoria de la función.", "correct": false, "why": "Parcialmente engañoso. Más memoria da MÁS CPU (proporcional), lo que sí acelera el init de código pesado. Pero no elimina las fases de sandbox init. Puede ayudar 30-50% en muchos casos, no todo." }
+      ],
+      "explanation": "Cold start es inherente al modelo serverless: 'no pagas si no ejecutas' implica 'levantar cuando llega el request'. Mitigaciones: (1) elegir runtime rápido (Go/Rust/Python < JVM/.NET); (2) mantener bundle pequeño; (3) mover init pesado FUERA del handler (top-level, se ejecuta 1 vez); (4) SnapStart para Java; (5) Provisioned Concurrency para latencia crítica; (6) reutilizar clientes SDK/DB en la ejecución (los inicia solo la primera vez). Cuándo NO usar Lambda: cargas continuas altas (Fargate/ECS más barato), latencia p99 crítica sin margen (usar container siempre-on).",
+      "realWorld": "Coca-Cola migró millones de eventos a Lambda pero mantuvo ECS para latencia crítica. Cold start es la razón #1 por la que empresas eligen contenedores over Lambda para APIs core.",
+      "tags": ["cold start", "Provisioned Concurrency", "SnapStart", "serverless"],
+      "tech": ["Lambda", "ECS", "Fargate", "SnapStart"],
+      "references": [{ "title": "AWS — 'Lambda cold start'" }, { "title": "AWS re:Invent 2022 — Understanding cold starts" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "networking",
+      "topic": "DNS, TTL y failover",
+      "difficulty": "senior",
+      "scenario": "Tu servicio en us-east-1 se cae. Tienes réplica idéntica en us-west-2. Configuras Route 53 con health check + failover DNS: cuando us-east-1 falla, Route 53 apunta el registro A a us-west-2. Tras el fail, los usuarios siguen viendo error 'connection refused' durante varios minutos aunque las réplicas están sanas.",
+      "question": "¿Cuál es la razón MÁS PROBABLE y su solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El TTL del registro DNS es alto (300s o 3600s). Los resolvers y clientes cachean la IP vieja hasta que expira. Solución: bajar TTL a 60s o menos para failover rápido.", "correct": true, "why": "Correcto. DNS es CACHEADO en todos los niveles (browser, OS resolver, ISP DNS, resolvers públicos). El TTL le dice a cada nivel cuánto puede cachear. Con TTL=3600, algunos clientes ven la IP vieja durante hasta 1 hora. Solución estándar: TTL bajo (30-60s) para registros con failover — al costo de más queries DNS a Route 53 (mínimo)." },
+        { "letter": "B", "text": "Route 53 tardó en detectar el fallo. Solución: usar más health checks.", "correct": false, "why": "Cerca pero secundario. Los health checks tienen intervalo mínimo 10-30s y umbral configurable. Aún si Route 53 detecta rápido, el CAMBIO DNS solo llega al cliente cuando el TTL de su cache expira. TTL es el driver principal." },
+        { "letter": "C", "text": "Route 53 requiere que la aplicación cierre las conexiones existentes.", "correct": false, "why": "Route 53 no gestiona conexiones — solo devuelve IPs. Conexiones existentes al pod caído se rompen naturalmente (RST). El problema es que nuevas conexiones siguen resolviendo la IP vieja por cache." },
+        { "letter": "D", "text": "Solución robusta: usar un load balancer (ALB/NLB) delante en lugar de DNS failover. El LB detecta y redirige en segundos, sin depender de TTL DNS.", "correct": false, "why": "TÉCNICAMENTE mejor solución arquitectural (LB regional o Global Accelerator para cross-region), pero el enunciado dice 'usas DNS failover'. La respuesta más adecuada a la PREGUNTA es explicar por qué DNS failover tarda — que es el TTL. En una respuesta abierta, mencionar Global Accelerator + Multi-region LB es lo correcto." }
+      ],
+      "explanation": "DNS caching es la propiedad más incomprendida de la web. TTL debe balancear: (1) failover rápido → TTL bajo; (2) menos carga en autoritative servers → TTL alto. Para production HA: TTL 30-60s. Además, muchos ISP IGNORAN TTLs (usan mínimo propio 5+ minutos) — para failover REAL, no dependas solo de DNS. Alternativas robustas: (a) load balancer regional + failover interno; (b) AWS Global Accelerator con anycast IP fija que redirige sin cambios DNS; (c) client-side retries en múltiples endpoints.",
+      "realWorld": "El outage de Facebook 2021 fue causado por config DNS: los health checks fallaron, los BGP se retiraron, y ni los ingenieros podían acceder al edificio (badges usaban el mismo DNS). Un TTL bajo no habría salvado ese caso, pero DNS design fue central.",
+      "tags": ["DNS", "TTL", "failover", "Route 53", "HA"],
+      "tech": ["Route 53", "Global Accelerator", "ALB"],
+      "references": [{ "title": "RFC 1035 — DNS spec, TTL semantics" }, { "title": "Facebook outage post-mortem, Oct 2021" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "networking",
+      "topic": "Latencia — dónde REALMENTE está",
+      "difficulty": "senior",
+      "scenario": "Usuarios en Argentina se quejan de que la app (backend en us-east-1) 'va lenta'. Métricas del backend: p50 = 40ms, p99 = 120ms. Frontend en CloudFront con edge en São Paulo. Un desarrollador dice: 'movamos el backend a São Paulo'.",
+      "question": "¿Cuál es el análisis MÁS correcto antes de mover infra?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El backend está bien. La latencia física AR → us-east-1 es ~130ms round-trip. Cada request agrega esa base. Si el frontend hace 10 requests secuenciales para renderizar una página, son ~1.3s de espera SOLO en RTT. Solución primera: reducir requests (agregación, GraphQL/BFF), no mover infra.", "correct": true, "why": "Correcto. Es el diagnóstico del arquitecto experimentado. RTT AR-Virginia es física — no puedes mejorarlo (velocidad de la luz + routing). Si tu frontend hace 10 fetch secuenciales, agregar 1300ms es matemática. Antes de gastar en mover servicios, colapsa las llamadas (agregación en BFF, batch requests, WebSockets)." },
+        { "letter": "B", "text": "Mover backend a São Paulo. Reduce latencia 60ms → 20ms para AR.", "correct": false, "why": "Ganancia real pero costosa: duplicar backend, replicar DB (con consistencia?), gestionar dos regiones. Antes de esto, verifica que el diseño frontend no cause N+1 requests. Muchas veces la 'app lenta' es problema de arquitectura frontend, no de backend physics." },
+        { "letter": "C", "text": "Meter Redis en São Paulo para cache.", "correct": false, "why": "No resuelve nada. El cliente sigue hablando con el backend en us-east-1 para la mayoría de operaciones. Cache remoto no evita RTT del cliente al backend." },
+        { "letter": "D", "text": "Migrar todo a CloudFront + Lambda@Edge.", "correct": false, "why": "Puede ayudar para read-heavy con lógica simple. Pero mueve el problema: si Lambda@Edge llama a la DB en us-east-1, la latencia aumenta (Edge → us-east). Es útil solo para respuestas cacheables o compute pequeño con datos locales." }
+      ],
+      "explanation": "Antes de arreglar 'latencia' hay que MEDIR dónde está: (1) RTT cliente-servidor (curl -w, ping — pero ping se rutea distinto en muchos ISPs); (2) tiempo en cada capa (browser timing API, distributed tracing X-Ray/Jaeger); (3) TTFB; (4) cantidad de requests (waterfall en DevTools). La regla: 'la latencia percibida = RTT * número de round-trips secuenciales + tiempo de procesamiento'. Reducir round-trips (HTTP/2 multiplexing, BFF, GraphQL, WebSockets, batch APIs) suele dar más ganancia que mover infra.",
+      "realWorld": "Instagram optimizó su feed reduciendo 40 requests a 3 con un BFF, ganando más de lo que hubieran ganado moviendo servers. Netflix pre-loads playlists agresivamente para eliminar RTT en interacciones críticas.",
+      "tags": ["latencia", "RTT", "waterfall", "BFF", "geografía"],
+      "tech": ["CloudFront", "Lambda@Edge", "GraphQL", "WebSockets"],
+      "references": [{ "title": "Google — 'Latency: The New Web Performance Bottleneck'" }, { "title": "High Performance Browser Networking (Grigorik)" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "serverless",
+      "topic": "Lambda + DB — el pattern trap",
+      "difficulty": "senior",
+      "scenario": "Lambda que consulta Postgres. Bajo carga escala a 500 concurrent invocations. Cada Lambda abre su propia conexión a Postgres. Errores: 'FATAL: too many clients'.",
+      "question": "¿Cómo se resuelve correctamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Usar RDS Proxy: cada Lambda abre conexión al Proxy (muy barato), Proxy multiplexa sobre pool limitado al RDS real. Es el pattern canónico AWS para Lambda + Postgres/MySQL.", "correct": true, "why": "Correcto. RDS Proxy resuelve exactamente este problema. Managed connection pooler (basado en PgBouncer). Añade ~5ms de latencia pero previene connection exhaustion completamente. Alternativa DIY: PgBouncer en ECS delante de RDS." },
+        { "letter": "B", "text": "Usar DynamoDB (HTTP-based, no persistent connections). O bases 'serverless-native' como Aurora Serverless v2, PlanetScale, Neon, Turso — diseñadas para escalar conexiones o para acceso HTTP-based.", "correct": true, "why": "Correcto. Muchas bases modernas nacieron para el mundo serverless. PlanetScale (MySQL con HTTP), Neon (Postgres serverless), Turso (SQLite distribuida con HTTP), Supabase, Xata — todas resuelven el problema desde el diseño. DynamoDB nunca tuvo el problema (siempre HTTP)." },
+        { "letter": "C", "text": "Reservar concurrency limit en la Lambda (max 20 concurrent). Trade-off: peticiones extra son throttled (429), pero la DB no colapsa.", "correct": true, "why": "Correcto pattern defensivo. Reserved Concurrency en Lambda limita cuántas invocations simultáneas — protege downstream. Trade-off explícito: latencia mayor en peaks, pero controlado en lugar de outage. Se combina con SQS buffering típicamente." },
+        { "letter": "D", "text": "Configurar Lambda con memoria max para tener más CPU y así procesar más rápido — libera conexión más rápido.", "correct": false, "why": "Ayuda marginalmente pero no resuelve. El problema es number of concurrent connections, no throughput por Lambda." },
+        { "letter": "E", "text": "Conectar directo a la DB desde Lambda con connection reuse.", "correct": false, "why": "Connection reuse dentro de UN sandbox Lambda funciona (execution context reuse), pero no entre sandboxes. Con 500 sandboxes concurrent, tienes 500 conexiones — el problema original." }
+      ],
+      "explanation": "Lambda + relational DB es una tension arquitectural clásica: Lambda escala rápidamente (miles de instances en segundos), pero Postgres/MySQL tienen limits de conexiones (~200-500 típicos). Soluciones: (1) Connection pooler managed (RDS Proxy) o self-hosted (PgBouncer); (2) DB serverless-native (Aurora Serverless v2 scales conexiones, PlanetScale HTTP, Neon con connection pooling); (3) Reserved concurrency para bound throughput; (4) HTTP-based DBs (DynamoDB, Firestore) — no persistent connections. Alternativa: usar API/BFF layer (containers) que sí mantiene pool, y Lambda solo para async trabajos que no necesitan DB directa.",
+      "realWorld": "Vercel + Postgres serverless (Neon) fue diseñado precisamente por este problema. Muchas apps Next.js con Prisma sufrieron. AWS lanzó RDS Proxy tras years de este pain. Cloudflare Workers + D1 (SQLite) sigue mismo patrón HTTP-based.",
+      "tags": ["Lambda + DB", "connection pool", "RDS Proxy", "serverless DB"],
+      "tech": ["Lambda", "RDS Proxy", "PgBouncer", "Neon", "PlanetScale"],
+      "references": [{ "title": "AWS — 'Using RDS Proxy for AWS Lambda'" }, { "title": "Neon docs — Serverless Postgres" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "networking",
+      "topic": "TLS handshake — el hidden cost",
+      "difficulty": "senior",
+      "scenario": "API sirve millones de requests/día. Cada nuevo cliente hace TLS handshake completo. Métricas muestran ~100ms overhead per new connection.",
+      "question": "¿Cómo optimizar el costo del TLS handshake?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TLS 1.3 reduce handshake de 2 round trips (TLS 1.2) a 1 RT (o 0-RT con session resumption). Migrar TLS 1.2 → 1.3 es una ganancia significativa. TLS 1.3 obligatorio en HTTP/3.", "correct": true, "why": "Correcto. TLS 1.3 (RFC 8446, 2018) fue diseñado para reducir latency. 1-RT full handshake, 0-RT resumption. Simplifica cipher suites (elimina inseguras). Adoption alta en 2026 (>90% del web moderno). Migración es tema de config, no código." },
+        { "letter": "B", "text": "Session resumption / session tickets: cliente y servidor mantienen 'session ID' — nuevas conexiones (dentro de ventana) reusan la sesión sin full handshake. En TLS 1.3, 0-RT permite enviar app data en el primer paquete (con caveat de replay).", "correct": true, "why": "Correcto. Session resumption existe desde TLS 1.2 (session ID) y se refinó en 1.3 (session tickets encriptados). Ganancia: primer visit paga full cost; subsequent visits (dentro de horas/días) son 'casi gratis'. 0-RT tiene risk de replay attacks — solo usa para idempotent requests." },
+        { "letter": "C", "text": "Connection keep-alive / HTTP persistent connections: reutilizar UNA conexión TCP+TLS para múltiples requests. HTTP/1.1 keep-alive por default. HTTP/2 va más allá con multiplexing. Cliente y servidor mantienen conexión abierta (typically 60-120s).", "correct": true, "why": "Correcto. Persistent connections son la primera línea de defensa. Un request paga el handshake; los siguientes 100 requests dentro de la ventana no pagan nada. HTTP client libraries lo hacen por default correctamente configuradas. Verifica Connection: keep-alive header, y que tu HTTP client no crea nueva conexión por request." },
+        { "letter": "D", "text": "Cambiar HTTPS a HTTP para APIs internas.", "correct": false, "why": "Anti-patrón: dentro del datacenter aún hay riesgos (compromised pod, lateral movement). Zero Trust requiere mTLS incluso internally. La optimización correcta es TLS 1.3 + session resumption, no eliminar cifrado." },
+        { "letter": "E", "text": "Terminar TLS en el load balancer, comunicar HTTP hacia backend.", "correct": true, "why": "Correcto pattern común: TLS termination en ALB/CloudFront/Nginx (que tiene ciphers optimizados, hardware TLS a veces), traffic interno HTTP. Trade-off: interno HTTP requiere network isolation (VPC private, security groups) para no comprometer. Muchos ambientes ahora hacen 'end-to-end TLS' (LB re-encripta al backend) por Zero Trust." }
+      ],
+      "explanation": "TLS handshake costs matter at scale. TLS 1.2 full handshake: 2 RTs. TLS 1.3: 1 RT (full) o 0 RT (resumption). Combined with persistent connections (HTTP/1.1 keep-alive, HTTP/2 multiplexing, HTTP/3 QUIC), amortized cost is minimal. Optimizations: (1) TLS 1.3 across the board; (2) session resumption / tickets; (3) OCSP stapling (avoid extra RTT for revocation check); (4) modern ciphers (ChaCha20-Poly1305 for mobile, AES-GCM); (5) HTTP/2 or /3 to multiplex on one connection. Anti-patterns: creating new HTTP client per request (bypasses connection pooling), disabling TLS session cache, using ancient cipher suites. Tools: `openssl s_client -connect host:443` for testing; SSL Labs (ssllabs.com) for grading.",
+      "realWorld": "Google evangeliza TLS 1.3 desde 2018. Cloudflare offers TLS 1.3 y 0-RT como default. LinkedIn migró a TLS 1.3 con measurable latency improvements. Apple pushed TLS 1.2+ como minimum en iOS.",
+      "tags": ["TLS", "handshake", "TLS 1.3", "keep-alive", "performance"],
+      "tech": ["TLS 1.3", "HTTP/2", "HTTP/3"],
+      "references": [{ "title": "RFC 8446 — TLS 1.3" }, { "title": "Cloudflare — 'Introducing TLS 1.3'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "serverless",
+      "topic": "Serverless containers — Fargate, Cloud Run, App Runner",
+      "difficulty": "senior",
+      "scenario": "Tu app en containers. Actualmente en EC2 con auto-scaling. Ops team quiere 'menos ops'. Debate: Kubernetes (EKS), Lambda, Fargate, o Cloud Run.",
+      "question": "¿Qué es 'serverless containers' y cuándo elegirlos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Serverless containers (Fargate, Cloud Run, App Runner) corren tus containers SIN gestionar EC2/nodes. AWS/GCP maneja el underlying compute. Escalas a cero o a miles automáticamente. Pagas por CPU/RAM usados, no por instances 24/7. Sweet spot entre Lambda (functions, cold start) y Kubernetes (full control, ops heavy).", "correct": true, "why": "Correcto. Fargate/Cloud Run son la respuesta 2026 a 'quiero containers sin ops'. Ventajas sobre Kubernetes: no manejas nodes, upgrades, scaling groups. Ventajas sobre Lambda: no cold start (pods stay warm), long-running procesos, familiar container model. Trade-off: menos control, algo más caro por CPU-hour que EC2 spot, pero ahorros ops enormes." },
+        { "letter": "B", "text": "Kubernetes es siempre mejor por flexibilidad.", "correct": false, "why": "Flexibilidad tiene costo enorme: cluster ops, node management, upgrades, networking, RBAC, autoscaling groups, storage. Un equipo pequeño no debería manejar K8s a menos que lo justifique escala/complejidad." },
+        { "letter": "C", "text": "Lambda para todo.", "correct": false, "why": "Lambda tiene limits (15min, 10GB, cold start). No adecuado para procesos long-running, servidores WebSocket persistente, apps con state, o cargas sostenidas altas." },
+        { "letter": "D", "text": "EC2 con AMI custom sigue siendo lo mejor.", "correct": false, "why": "EC2 requiere manejar OS updates, security patches, autoscaling groups, capacity planning. Serverless containers eliminan todo esto." }
+      ],
+      "explanation": "Espectro de compute: (1) VMs/EC2 — máximo control, máximo ops; (2) Kubernetes — control granular, ops significativo; (3) Serverless containers (Fargate, Cloud Run, App Runner, Azure Container Apps) — containers sin node ops; (4) Serverless functions (Lambda, Cloud Functions) — funciones stateless con cold start. Cada nivel trades control por ops burden. 2026 sweet spot para la mayoría: serverless containers. Cloud Run es particularmente elegante (scale to zero, HTTP + Pub/Sub triggered, 60min timeout). AWS App Runner similar (Cloud Run-inspired). Fargate para cargas más complejas con Task Definitions. Elegir: start con serverless containers, migrate to K8s solo si necesitas control específico (custom operators, GPU workloads, complex networking).",
+      "realWorld": "Google Cloud Run es amado por developers por su simplicidad. AWS App Runner respondió a esto. Muchas startups modernas nunca tocan K8s. Empresas con equipos especializados sí (Netflix, Spotify tienen platforms K8s masivas). Fargate popular en AWS shops. La tendencia: 'as much serverless as possible'.",
+      "tags": ["serverless containers", "Fargate", "Cloud Run", "App Runner"],
+      "tech": ["Fargate", "Cloud Run", "App Runner", "Azure Container Apps"],
+      "references": [{ "title": "Google Cloud — Cloud Run docs" }, { "title": "AWS — Fargate vs Lambda" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "networking",
+      "topic": "Load balancers — L4 vs L7",
+      "difficulty": "senior",
+      "scenario": "Tu app tiene traffic mix: HTTP APIs, WebSockets, gRPC, un servicio TCP raw. Debate: usar ALB o NLB en AWS.",
+      "question": "¿Cuál es la diferencia entre L4 y L7 y cuándo cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "L4 (NLB, transport layer) rutea por IP:port, ve TCP/UDP packets. Pass-through de traffic (no parsing). Rápido, low latency, high throughput. Solo balancing round-robin/hash. Cliente ve la IP del NLB pero conexión llega end-to-end.", "correct": false, "why": "Descripción correcta de NLB pero incompleta como respuesta a 'cuál elegir'." },
+        { "letter": "B", "text": "L7 (ALB, application layer) parsea HTTP/HTTPS, puede rutear por path, header, host. Termina TLS, puede modificar headers, integrar con WAF, hacer sticky sessions con cookies. Adecuado para HTTP/HTTPS/gRPC/WebSockets. L4 (NLB) para: TCP/UDP raw (Redis, DBs, protocolos custom), millones de conexiones/segundo, static IP requirements, mantener source IP.", "correct": true, "why": "Correcto. La regla: si es HTTP y necesitas smart routing, ALB. Si es TCP puro o extreme throughput/low latency, NLB. Muchas apps modernas: NLB → Ingress Controller (ALB o Nginx dentro del cluster) → services. GCP equivalents: Cloud Load Balancer HTTP(S) vs TCP/UDP. Azure: Application Gateway vs Load Balancer." },
+        { "letter": "C", "text": "L7 siempre — es más moderno.", "correct": false, "why": "L7 no puede manejar protocolos no-HTTP (DB traffic, custom TCP). Su parsing añade latencia (marginal but real). Para gaming, VoIP, DB proxying, L4 es mejor." },
+        { "letter": "D", "text": "L4 siempre porque es más rápido.", "correct": false, "why": "Pierdes features clave: path-based routing, host-based routing, TLS termination centralizada, WAF integration, HTTP-level metrics." }
+      ],
+      "explanation": "OSI layers relevant: L3 (IP routing — routers), L4 (transport — TCP/UDP, NLBs), L7 (application — HTTP, ALBs). L7 LBs entienden el contenido de la request (URL, headers, method). L4 LBs solo ven packets (IP:port). Otras dimensiones: (1) sticky sessions (cookies para L7, source IP para L4); (2) health checks (L7 puede hacer HTTP health check con status code; L4 hace TCP connect); (3) TLS termination (L7 típicamente termina; L4 puede terminar o pass-through). Envoy, Nginx, HAProxy son proxies que pueden actuar como L4 o L7 según config. Kubernetes: Ingress (L7), Service type=LoadBalancer (L4 nativo). AWS Global Accelerator combina anycast IP con NLB para multi-region.",
+      "realWorld": "Netflix usa Zuul (L7) en edge. Cloudflare hace L7 con features avanzadas. Kubernetes Ingress controllers (Nginx, Traefik, HAProxy, Envoy-based) son L7. Redis clients suelen conectar a NLB (L4). Video streaming CDN mix: HLS chunks via HTTP (L7), source ingest a veces L4 (RTMP).",
+      "tags": ["load balancer", "L4", "L7", "ALB", "NLB"],
+      "tech": ["ALB", "NLB", "Envoy", "Nginx", "HAProxy"],
+      "references": [{ "title": "AWS — 'Choose between ALB, NLB, CLB'" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "networking",
+      "topic": "WebSockets vs SSE vs long-polling",
+      "difficulty": "senior",
+      "scenario": "Necesitas 'push' desde server a browser: notificaciones en tiempo real, chat, dashboard live. Debate: WebSockets, Server-Sent Events (SSE), o long-polling.",
+      "question": "¿Cuándo cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "WebSockets: full-duplex (bidireccional), protocolo binario, upgrade desde HTTP. Ideal para chat, gaming, colaboración en tiempo real (Figma, Google Docs), high-frequency updates. Trade-offs: complejidad de reconnection, escalar conexiones persistentes en backend (por instance), stateful.", "correct": true, "why": "Correcto. WebSocket es el estándar para real-time bidirectional. Framework: Socket.IO (con fallbacks), ws (Node), Django Channels. Escalado: pub/sub backend (Redis, Kafka) para propagar mensajes entre pods. Sticky sessions o pub/sub distribution son las dos estrategias." },
+        { "letter": "B", "text": "SSE (Server-Sent Events): unidireccional (server → client), HTTP-based, texto (no binario), auto-reconnect built-in. Ideal para: notifications, live feeds, streaming responses (ChatGPT-style token-by-token), progress updates. Ventaja: HTTP simple, funciona a través de proxies/firewalls sin issues.", "correct": true, "why": "Correcto. SSE es underrated. Para casos 'server push, client not push', SSE es más simple que WS. HTTP-native (funciona con HTTP/2 multiplexing, mismo TLS session, header auth). Framework: EventSource browser API. AI chatbots streaming responses son perfect fit." },
+        { "letter": "C", "text": "Long-polling: client hace request, server holds until data available (o timeout). Fallback histórico para browsers antiguos sin WS/SSE. Hoy raramente necesario.", "correct": true, "why": "Correcto. Long-polling era workaround pre-2015. Sirve solo como fallback legacy. En 2026 todos los browsers soportan WS y SSE. Overhead alto (HTTP request headers per poll), latency variable." },
+        { "letter": "D", "text": "gRPC streaming es una alternativa moderna a WebSockets para service-to-service o cuando controlas cliente.", "correct": true, "why": "Correcto. gRPC bidirectional streaming es como WebSockets pero con schema (Protobuf), HTTP/2 based, buen tooling. Para APIs internas o mobile (React Native, native iOS/Android con gRPC support), es superior. Web browser: gRPC-Web tiene limitaciones (no bidirectional streaming nativo)." },
+        { "letter": "E", "text": "WebRTC es lo mismo que WebSockets.", "correct": false, "why": "WebRTC es peer-to-peer para audio/video/data (video calls, streaming). Distinto de WS (client-server). WebRTC usa DataChannel para data messages, típicamente peer-to-peer via STUN/TURN servers." }
+      ],
+      "explanation": "Real-time communication options: (1) WebSockets — bidirectional, binary, para chat/games/collab. (2) SSE — server → client, text, HTTP-native, para notifications/streams. (3) Long-polling — legacy fallback. (4) gRPC streaming — service-to-service o mobile con schema. (5) WebRTC — P2P audio/video/data. (6) HTTP/2 server push — deprecated en browsers 2022, olvidar. Consideraciones para escalar WebSockets: sticky sessions (todas las conexiones de user X a mismo pod) o pub/sub backend (Redis, Kafka propagando mensajes cross-pod). Managed WS: AWS API Gateway WebSocket, Pusher, Ably, Socket.IO cloud. Managed SSE: less options, típicamente self-host.",
+      "realWorld": "Slack, Discord: WebSockets a escala masiva (millones concurrent). Figma: WebSockets para collaborative editing. OpenAI/Anthropic: SSE para streaming chat responses. WhatsApp: WebSockets-like custom. YouTube live chat: SSE-based. Zoom: WebRTC para video, WebSocket para signaling.",
+      "tags": ["WebSockets", "SSE", "real-time", "long-polling", "gRPC streaming"],
+      "tech": ["WebSocket", "SSE", "gRPC", "WebRTC"],
+      "references": [{ "title": "MDN — WebSockets, EventSource" }, { "title": "High Performance Browser Networking Ch. 17" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "serverless",
+      "topic": "Edge functions — cuándo tienen sentido",
+      "difficulty": "senior",
+      "scenario": "Vercel Edge Functions, Cloudflare Workers, Lambda@Edge, Deno Deploy. Todos prometen 'compute at the edge, low latency'. Un compañero jr quiere migrar toda su API a edge functions.",
+      "question": "¿Cuándo edge functions ganan y cuándo pierden?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Edge functions BRILLAN para: (a) auth/session validation (check JWT en edge, evita hop al origin); (b) A/B testing y personalization (rewrite response); (c) geolocation-based routing; (d) simple transformations (headers, redirects); (e) request validation. La latency win viene de proximidad al user (~5-30ms vs 100+ms a origin).", "correct": true, "why": "Correcto. Edge compute optimiza el 'último mile' entre user y compute. Casos donde procesar sin ir al origin es win. Cloudflare Workers, Vercel Edge, Fastly Compute son los populares. Fast cold start (V8 isolates: ~5ms vs Lambda ~200ms)." },
+        { "letter": "B", "text": "Edge PIERDEN cuando: (a) necesitas acceso a DB en region específica — el edge está lejos de la DB, latencia edge→DB destruye la ganancia; (b) computation pesada (edge functions tienen limits de CPU/memoria más estrictos); (c) state consistente global (edges son distribuidos, state consistency es difícil); (d) integraciones con systems que no están en edge.", "correct": true, "why": "Correcto. El anti-pattern clásico: edge function que consulta Postgres en us-east-1 → user en Europa paga latencia us-east-1 desde edge europeo, PEOR que si el servicio estuviera en us-east-1. Regla: edge functions deben ser SELF-CONTAINED o consultar edge-local state (Cloudflare KV, D1 SQLite distribuido, Durable Objects)." },
+        { "letter": "C", "text": "Edge functions requieren repensar architecture: data locality (D1, KV, R2 storage cerca del compute), stateless design, escalabilidad automática. No es 'lift and shift Lambda a edge'.", "correct": true, "why": "Correcto. Edge-native architectures usan storage edge-distributed: Cloudflare (KV para eventual consistency, D1 SQLite distribuida, R2 for objects, Durable Objects for strongly-consistent state at edge). Vercel (Edge Config para read-heavy config, KV via Upstash). Deno KV. Diseñar para edge es diferente de diseñar para region-central compute." },
+        { "letter": "D", "text": "Edge functions son siempre más rápidas que Lambda regional.", "correct": false, "why": "Solo si TODA la lógica es edge-local. Si edge llama a origin/DB regional, latency total = edge latency + origin latency (peor que Lambda regional que solo paga la segunda)." },
+        { "letter": "E", "text": "Edge functions son un fad, no van a durar.", "correct": false, "why": "Falso: Cloudflare Workers procesan billones de requests. Vercel, Netlify, Fastly invierten heavily. Es un modelo real con casos de uso genuinos. No es la respuesta para todo, pero es persistente." }
+      ],
+      "explanation": "Edge compute paradigm: procesar cerca del user (edge = ~200+ POPs globalmente). V8 isolates (Cloudflare Workers, Vercel Edge, Deno) tienen cold start ~5ms vs Lambda ~200ms. Trade-offs: (1) limits estrictos (CPU time, memoria); (2) no filesystem, no long-running; (3) storage edge-local es diferente (eventual, KV-style, distributed SQLite); (4) modelo mental distinto (no puedes 'llamar la DB' fácilmente). Casos de uso ideales: auth/rate limit al edge, A/B testing y personalization, geo-routing, image transformation, header manipulation, form validation. Casos NO ideales: heavy compute, DB-heavy workflows, stateful sessions. Middle ground: edge for 'hot path' (auth, routing), origin for cold path (compute-heavy).",
+      "realWorld": "Cloudflare Workers procesa 50M+ req/s. Vercel Edge para Next.js middleware. Shopify Hydrogen (headless commerce) usa Oxygen (edge). Deno KV es edge-native. Vercel migró de Node runtime a Edge para ISR revalidation. Not everything migra a edge, pero hot paths sí.",
+      "tags": ["edge functions", "edge compute", "Cloudflare Workers", "Vercel Edge"],
+      "tech": ["Cloudflare Workers", "Vercel Edge", "Lambda@Edge", "Deno Deploy"],
+      "references": [{ "title": "Cloudflare — 'How Workers works'" }, { "title": "Vercel Edge Runtime docs" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "networking",
+      "topic": "VPC, subnets, security groups — networking fundamentals",
+      "difficulty": "senior",
+      "scenario": "Diseñas arquitectura AWS: web app en ALB, backend en ECS, RDS Postgres. Debes decidir cómo estructurar VPC, subnets, security groups.",
+      "question": "¿Cuál es la estructura CORRECTA de VPC?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Todo en subnet pública para simplicidad.", "correct": false, "why": "Anti-patrón grave: DB con IP pública es riesgo enorme (brute force, exploits). Backend directamente accesible desde internet elimina defense in depth. Nunca poner recursos internos en subnets públicas." },
+        { "letter": "B", "text": "Estructura estándar: (1) subnets PÚBLICAS (con IGW, para ALB y NAT Gateway); (2) subnets PRIVADAS (para ECS tasks y RDS, sin IP pública, salen a internet via NAT); (3) subnets DATABASE (opcional, sin egress a internet — máximo aislamiento para DB). Security groups: ALB SG allows 443 desde internet; ECS SG allows 80/443 desde ALB SG only; RDS SG allows 5432 desde ECS SG only.", "correct": true, "why": "Correcto. Es la arquitectura AWS canónica. Subnets públicas: rutean via Internet Gateway. Subnets privadas: rutean egress via NAT Gateway (en subnet pública). DB subnets: pueden ser 'isolated' sin ruta a internet. Security groups son stateful firewalls — permite traffic solo desde SGs specific (source = SG ID, no CIDR). Encadenamiento SG → SG es defense in depth: comprometer ALB no da acceso directo a RDS." },
+        { "letter": "C", "text": "Un solo security group 'all-allow' porque estamos en VPC privada.", "correct": false, "why": "VPC privada no es 'confiable' — cualquier pod comprometido puede pivotear. Least privilege dentro de la VPC es Zero Trust básico." },
+        { "letter": "D", "text": "NAT Gateway no es necesario si ECS solo habla con RDS.", "correct": false, "why": "Falso: ECS necesita pull images de ECR (endpoint AWS, puede via VPC endpoint), llamar APIs externas (Stripe, Twilio), fetch dependencies at runtime. NAT Gateway o VPC Endpoints (más baratos para AWS APIs) son needed." }
+      ],
+      "explanation": "AWS VPC design principles: (1) Multi-AZ (subnets en al menos 2 AZs para HA); (2) tiered subnets (public, private, database); (3) Security groups como micro-firewalls stateful; (4) NACLs stateless (defense adicional, coarser); (5) VPC Endpoints para AWS services (S3, DynamoDB) — evitan NAT + data transfer. Patterns: (a) 'three-tier': public (ALB) → private (app) → private/isolated (DB); (b) hub-and-spoke con Transit Gateway; (c) VPC peering para conectar VPCs; (d) PrivateLink para exponer servicios cross-VPC/cross-account sin peering. Kubernetes on AWS (EKS) tiene similar structure con pods en private subnets y ALB Ingress. Security groups: source = SG (referencing other SG) es más robusto que CIDR (auto-updates when SG changes).",
+      "realWorld": "AWS Well-Architected Framework detalla estos patrones. Netflix, Airbnb tienen sofisticados setups multi-account, multi-VPC. Kubernetes en AWS: comprender pod networking (VPC CNI, Cilium) es essential. Cloud egress costs pueden ser sorpresa — NAT Gateway carga por GB.",
+      "tags": ["VPC", "subnets", "security groups", "NAT Gateway"],
+      "tech": ["AWS VPC", "Security Groups", "NAT Gateway", "Internet Gateway"],
+      "references": [{ "title": "AWS — 'VPC Best Practices'" }, { "title": "AWS Well-Architected — Security pillar" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "serverless",
+      "topic": "Step Functions vs orchestrated Lambdas",
+      "difficulty": "senior",
+      "scenario": "Workflow: (1) validar input → (2) llamar API externa → (3) guardar en DB → (4) enviar notification. Cada paso tiene retries, error handling. Un dev implementa: Lambda que llama a otras Lambdas en secuencia. Otro propone Step Functions.",
+      "question": "¿Cuál es la diferencia y cuándo cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lambda-invoking-Lambda es simple para 2-3 pasos pero degrada: (a) el 'orchestrator Lambda' debe esperar (pagando compute por wait); (b) manejar retries/errors manually (código boilerplate); (c) sin visibility del workflow; (d) timeouts cascada (si outer Lambda timeout = todo se pierde).", "correct": false, "why": "Descripción correcta de problemas pero incompleta como respuesta." },
+        { "letter": "B", "text": "AWS Step Functions es 'workflow as code declarativo': define state machine con ASL (JSON), cada state es Lambda/service call. AWS orquesta: retries automáticos con backoff, error catching por state, timeouts, parallel branches, wait states. Visibility completa (visual execution history). NO paga compute por waiting. Serverless orchestration verdadera.", "correct": true, "why": "Correcto. Step Functions resuelve exactamente los problemas de Lambda-orquestando-Lambda. State machine explícito, retries declarativos, error handling built-in, parallel/choice states, wait states (paga solo por transitions, no wait time), long-running (up to 1 year Standard). Alternativa: Temporal (más potente pero self-managed), Airflow (batch/data pipelines), StepFunctions Express (cheaper para short workflows)." },
+        { "letter": "C", "text": "Lambda-chaining es siempre mejor por simplicidad.", "correct": false, "why": "Para workflows complejos (>3 pasos, error handling, retries), Step Functions es dramáticamente más simple. La 'simplicidad' de Lambda chaining se traduce en boilerplate de error handling constante." },
+        { "letter": "D", "text": "Step Functions es lo mismo que Lambda destinations.", "correct": false, "why": "Lambda destinations es simple event routing on success/failure. Step Functions es orquestación completa con state machine." }
+      ],
+      "explanation": "Serverless workflow orchestration options: (1) AWS Step Functions (JSON DSL, visual, integrated with AWS services, standard vs express modes); (2) Temporal (code-first workflows, self-managed or Cloud, powerful for complex business logic); (3) Camunda (BPMN-based, java-heavy); (4) Airflow (batch/ETL, not real-time); (5) Google Cloud Workflows / Azure Logic Apps. Step Functions integration: 200+ AWS services natively (no code needed). Standard vs Express: Standard for long-running (up to 1yr), Express for high-volume short (<5min). Trade-off vs Temporal: SF is AWS-native, less powerful for arbitrary code. Temporal is language-native (Go, Java, TS, Python, .NET), programmatic workflows with automatic retries and replay. Elegir: SF si AWS-heavy y workflows simple-moderate; Temporal si necesitas power y control cross-cloud.",
+      "realWorld": "Coca-Cola usa Step Functions para procesamiento de eventos. Uber creó Cadence (ahora Temporal) para su escala. Netflix Conductor. Los sistemas 'sagas' de e-commerce/booking casi siempre necesitan uno. Sin workflow engine, se reinventa mal.",
+      "tags": ["Step Functions", "workflows", "orchestration", "sagas"],
+      "tech": ["AWS Step Functions", "Temporal", "Airflow"],
+      "references": [{ "title": "AWS Step Functions docs" }, { "title": "Temporal.io docs" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "networking",
+      "topic": "Ingress vs Egress — cost trap",
+      "difficulty": "staff",
+      "scenario": "AWS bill sorpresa: $8k/mes en 'data transfer out'. Traffic normal. ¿De dónde viene?",
+      "question": "¿Cómo se manejan costos de networking en cloud y cuáles son las trampas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cloud providers cobran INGRESS (into cloud) $0 típicamente, EGRESS (out of cloud) $0.05-$0.09/GB. Sale caro rápido: 100TB/mes = $9k. Sources típicos: (a) responses to users (unavoidable but optimizable con CDN + compression); (b) inter-region traffic ($0.02/GB entre regiones); (c) inter-AZ traffic ($0.01/GB); (d) NAT Gateway data processing ($0.045/GB en AWS).", "correct": true, "why": "Correcto. Data transfer es 'hidden cost' que sorprende a arquitectos. Cross-AZ, cross-region, egress a internet — todos suman. NAT Gateway en particular tiene doble cost (per GB processed + hourly). Startups a menudo descubren esto tarde." },
+        { "letter": "B", "text": "Mitigaciones: (1) CDN para egress (Cloudflare tiene egress GRATIS de sus caches — enorme win vs AWS CloudFront); (2) VPC Endpoints (Gateway endpoints para S3/DynamoDB son GRATIS, evitan NAT y data transfer); (3) mantener servicios en misma AZ cuando posible (evitar cross-AZ); (4) compresión (gzip/brotli responses); (5) reducir data en responses (BFF pattern, GraphQL selective fields).", "correct": true, "why": "Correcto. VPC Endpoints son underused — S3 traffic desde VPC via Gateway Endpoint es free vs NAT ($$$). Cloudflare Free CDN egress vs AWS CloudFront (aún tiene egress cost aunque menor que direct EC2) es big pricing arbitrage." },
+        { "letter": "C", "text": "Herramientas: AWS Cost Explorer con filter por 'usage type' (DataTransfer-Out-Bytes, NatGateway-Bytes, etc). AWS Cost Anomaly Detection. Vantage.sh, cloudability para multi-cloud. Sin visibility, es imposible optimizar.", "correct": true, "why": "Correcto. Observability de costos es tan importante como de performance. Tag resources by service/team para attribution. Cost per feature/customer is possible con good tagging discipline." },
+        { "letter": "D", "text": "Cloudflare tiene 'bandwidth alliance' con AWS/GCP — egress a Cloudflare es free desde participating clouds.", "correct": true, "why": "Correcto. Es un antitrust/competitive dynamic: Cloudflare pushed for 'free egress' as pricing model. Bandwidth Alliance (2018) tiene participantes (GCP, some others). AWS NO participa officially pero muchos clouds ofrecen zero egress a CDN partners." },
+        { "letter": "E", "text": "Data transfer entre servicios AWS en misma region es siempre free.", "correct": false, "why": "Falso. Cross-AZ (misma region, distintas AZ) cuesta $0.01/GB en cada dirección ($0.02 round-trip). RDS Multi-AZ cross-AZ replication cuesta. Es sorpresa común." }
+      ],
+      "explanation": "Cloud networking costs breakdown: (1) Egress to internet: $0.05-0.09/GB (más caro que compute per byte); (2) Inter-region: $0.02/GB; (3) Inter-AZ: $0.01/GB (each direction); (4) NAT Gateway: $0.045/GB processed + $0.045/hour; (5) VPC Endpoints Gateway (S3, DynamoDB): FREE; (6) VPC Endpoints Interface (other services): $0.01/hour + $0.01/GB (aún más barato que NAT); (7) CloudFront egress: cheaper than direct EC2 pero not free ($0.02-0.085 depending on volume/region). Cloudflare comes out very favorably (free egress from cache). Optimizations: (a) CDN heavy for egress; (b) VPC endpoints for AWS services; (c) same-AZ for chatty services; (d) compression everywhere; (e) architect for locality (edge compute avoids some egress). This is under-taught but massive at scale.",
+      "realWorld": "Corey Quinn (Duckbill Group) documented casi todos los ways AWS charges for networking. 37signals moved out of cloud partly for egress costs. Netflix, YouTube built their own CDNs partly for this. A startup optimizing egress went from $50k → $5k in a month. Understanding networking economics separates senior from mid.",
+      "tags": ["cloud costs", "egress", "networking", "FinOps"],
+      "tech": ["AWS", "Cloudflare", "VPC Endpoints", "NAT Gateway"],
+      "references": [{ "title": "AWS pricing docs — Data Transfer" }, { "title": "Duckbill Group — Corey Quinn blog" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "networking",
+      "topic": "Rate limiting — patterns and pitfalls",
+      "difficulty": "staff",
+      "scenario": "Tu API pública sufre abuse: unos pocos clients hacen 10k req/s cada uno, saturando la infra. Necesitas rate limiting.",
+      "question": "¿Cuáles son los algoritmos y consideraciones para rate limiting?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Token bucket: bucket con capacidad N tokens, refill rate R/s. Cada request consume 1 token. Sin tokens = reject (429). Permite bursts (hasta N) y sostiene rate (R). Es el algoritmo más usado. AWS API Gateway, Stripe API, GitHub API lo usan.", "correct": true, "why": "Correcto. Token bucket balancea burst tolerance y sustained rate. Configurable: burst limit (bucket size) y sustain limit (refill rate). Usuarios normales rara vez tocan el limit; abusers son rejected. Alternativa: leaky bucket (similar pero smooth output rate, sin burst)." },
+        { "letter": "B", "text": "Fixed window: contar requests in fixed intervals (por minuto). Simple pero tiene 'boundary problem': un client puede hacer N/interval al final del minuto Y N al inicio del siguiente = 2N en ~2 segundos. Sliding window mitigates este problem.", "correct": true, "why": "Correcto. Fixed window es fácil de implementar (Redis INCR con TTL) pero tiene el boundary issue. Sliding window log (track individual timestamps) es más preciso pero costoso en memoria. Sliding window counter (weighted average de dos windows) es compromise común (Cloudflare, Discord)." },
+        { "letter": "C", "text": "Consideraciones críticas: (1) identity key (per user? per IP? per API key? — combined); (2) distributed rate limiting (Redis atomic ops, o token-per-node con approximation); (3) response headers (X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset — clients pueden self-throttle); (4) 429 Too Many Requests con Retry-After header.", "correct": true, "why": "Correcto. Rate limiting bien hecho incluye: (a) key strategy que evita false positives (shared IPs de corporate NATs); (b) atomic ops distributed (Redis Lua scripts, sorted sets); (c) informative response headers (buenos clients auto-adaptan); (d) different tiers per plan (free tier stricter que enterprise). Herramientas: nginx limit_req, Envoy rate limit filter, AWS API Gateway usage plans, Kong rate-limiting plugin." },
+        { "letter": "D", "text": "Rate limiting solo debería estar en el load balancer.", "correct": false, "why": "Defense in depth: LB rate limit (coarse, per IP) + API gateway (per API key) + application (per user, per resource, sensitivity-specific). Múltiples layers atrapan diferentes tipos de abuse." },
+        { "letter": "E", "text": "429 responses NO cuentan para rate limit del usuario.", "correct": false, "why": "Depende de la implementación. Algunas cuentan (para prevenir loops de 429 abuse), otras no (para no doblemente penalizar). Diseño explícito requerido." }
+      ],
+      "explanation": "Rate limiting algoritmos: (1) Token bucket — burst-friendly, most common; (2) Leaky bucket — smooth output; (3) Fixed window — simple pero boundary issues; (4) Sliding window log — precise, memory-heavy; (5) Sliding window counter — approximation, good balance. Distributed rate limiting: Redis atomic INCR o Lua scripts para atomicity; approximate algorithms para reducir Redis load (per-node local counter + periodic sync). Headers estándar (RFC 6585, common conventions): X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset (Unix timestamp or seconds), Retry-After. Advanced: per-endpoint limits (search endpoint stricter), per-tier limits (free vs paid), quota vs rate (monthly limit vs per-second). Tools: nginx limit_req_zone, HAProxy stick-table, Envoy global rate limit, Kong plugin, AWS WAF rate rules, Cloudflare Rate Limiting.",
+      "realWorld": "GitHub API: 60 requests/hour unauthenticated, 5000 authenticated. Stripe: 100 read/25 write per second per account (higher for enterprise). Twitter API tiene famosos rate limits agresivos. Cloudflare Rate Limiting popular por su edge coverage. Sin rate limiting, todo API pública será eventualmente abusada.",
+      "tags": ["rate limiting", "token bucket", "429", "API protection"],
+      "tech": ["Redis", "nginx", "Envoy", "Kong", "Cloudflare"],
+      "references": [{ "title": "Stripe — 'Rate limiting API'" }, { "title": "Cloudflare — 'How we built rate limiting'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "serverless",
+      "topic": "Cost optimization — serverless in production",
+      "difficulty": "staff",
+      "scenario": "Tu Lambda cost es $12k/mes. CFO pregunta si es normal. Debes hacer análisis y proponer optimizations.",
+      "question": "¿Cuáles son los ejes de optimization de costo en serverless?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Memoria vs CPU vs duration: Lambda cobra $/(GB×second). Más memoria = más CPU proportional. A veces MÁS memoria = MENOS duration = MENOS costo total (curva no lineal). Usa Lambda Power Tuning tool (open source, corre función con diferentes memory settings) para encontrar sweet spot.", "correct": true, "why": "Correcto. Non-intuitive pero measurable: función CPU-bound at 128MB puede tardar 3000ms; at 1024MB, 400ms. Costo: 128×3000 vs 1024×400 = 384 vs 410 (marginally more expensive at high memory). Pero al 3008MB: 300ms → 3008×300 = 902 (worse). Sweet spot exists. Power Tuning automates." },
+        { "letter": "B", "text": "ARM64 (Graviton): ~20% mejor price/performance vs x86_64 (Intel). Cambio de config, no de código para most languages. Test para verificar tu code funciona (algunas native deps requieren arm compile).", "correct": true, "why": "Correcto. AWS Graviton (ARM) offering: same performance at lower cost, or better performance at same cost. Node.js, Python, Java Just Work. Native modules pueden requerir specific compilation. Migration risk bajo, savings 20%+ típico." },
+        { "letter": "C", "text": "Provisioned Concurrency: si tráfico predecible (business hours), Provisioned Concurrency puede ser MÁS BARATO que on-demand + cold start pain. AWS Cost Explorer + application load pattern análisis. Compute Savings Plans para 1-3yr commitment.", "correct": true, "why": "Correcto. Provisioned Concurrency es más barato per unit pero paga 24/7. Solo win si utilización alta (>60%). Combine con Application Auto Scaling para ajustar Provisioned Concurrency schedule. Compute Savings Plans aplican a Lambda + Fargate — puede darte 15-17% adicional off." },
+        { "letter": "D", "text": "Analizar 'invocations que fallan': cada retry cost. Fallos por bad input, dependency down. Circuit breakers + validation en el edge previenen invocations wasted.", "correct": true, "why": "Correcto. Cada Lambda invocation cost, sea success or fail. Retries de failures son doubly wasteful. Best practice: reject invalid input at API Gateway (schema validation, mapping templates) — never invoke Lambda para 400 errors. Circuit break downstream when systematically failing." },
+        { "letter": "E", "text": "Migrate everything to Fargate para ahorrar.", "correct": false, "why": "Solo si utilización alta y sostenida. Migrating variable/spiky workloads to Fargate desperdicia (idle capacity). Analysis case-by-case." }
+      ],
+      "explanation": "Serverless cost optimization framework: (1) Measure: CloudWatch metrics, Cost Explorer con Lambda breakdown, X-Ray for latency; (2) Right-size memory: Lambda Power Tuning para curva costo/tiempo; (3) Migrate to ARM64: 20% savings free-ish; (4) Reduce invocations: batching (SQS batch triggers hasta 10k messages per invoke), API Gateway request validation (reject sin Lambda), efficient triggering; (5) Optimize duration: connection reuse (init outside handler), efficient code (avoid heavy imports), streaming responses; (6) Provisioned Concurrency con schedule para tráfico predecible; (7) Savings Plans (Compute type) para long-term commitment. Beyond Lambda: consider Fargate for sustained loads (>50% utilization); consider batching to reduce invocations 100x; consider EventBridge Pipes to eliminate glue Lambdas.",
+      "realWorld": "AWS re:Invent talks anualmente. Aleksandr Filichkin, Yan Cui (theburningmonk), James Beswick blogs are references. Companies successful with serverless: iRobot, Coca-Cola, Autodesk documented case studies. The pattern of $X spend then optimization to X/3 is common.",
+      "tags": ["serverless", "cost optimization", "Lambda tuning", "FinOps"],
+      "tech": ["Lambda", "Graviton", "Provisioned Concurrency", "Savings Plans"],
+      "references": [{ "title": "AWS — 'Lambda Power Tuning'" }, { "title": "Yan Cui — 'The Burning Monk' blog" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "networking",
+      "topic": "Multi-region architecture — decisiones fundamentales",
+      "difficulty": "staff",
+      "scenario": "Tu app crece a 5M users globalmente. Latencia y disponibilidad son críticas. CEO quiere 'multi-region deployment'. Debes diseñar strategy.",
+      "question": "¿Cuáles son las opciones y trade-offs de multi-region?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Active-passive: primaria activa (us-east-1), otra region standby (us-west-2). Failover manual o automático (Route 53 health check + DNS). Simpler: one region writes, others idle o read replicas. Trade-off: idle capacity paid, failover no es instant.", "correct": true, "why": "Correcto. Es el simpler multi-region pattern. Good for DR (Disaster Recovery). RTO (Recovery Time Objective) 5-30min típico con DNS failover. RPO (Recovery Point Objective) depende de replication (async lag). Approach conservador — la mayoría de outages en una region no requieren cross-region failover si tienes multi-AZ." },
+        { "letter": "B", "text": "Active-active: tráfico distribuido a múltiples regiones simultáneamente (Route 53 latency-based routing, o Global Accelerator anycast). Cada region atiende usuarios geográficamente cercanos. Requiere: data replication multi-region (bidirectional!), conflict resolution, eventual consistency, distributed session, complex ops.", "correct": true, "why": "Correcto y complex. Active-active da mejor latency (edge to user) y disponibilidad (survives region failure sin failover). Costs: (a) full compute in each region; (b) data replication bandwidth ($$$); (c) consistency challenges (cross-region writes, conflict resolution — CRDTs, Last-Write-Wins, custom merges); (d) architectural complexity multiplied. Solo justifica cuando tienes escala + tolerance para complexity." },
+        { "letter": "C", "text": "Databases para multi-region: (a) DynamoDB Global Tables (multi-master, eventual consistency); (b) Aurora Global Database (single-writer, cross-region read replicas, ~1s lag); (c) Spanner (Google, strong consistency global via TrueTime — pero write latency); (d) CockroachDB (Postgres-wire, distributed SQL). Cada tiene trade-offs distintos.", "correct": true, "why": "Correcto. La DB es la parte más difícil de multi-region. Async replication (Aurora, Postgres logical) es fácil pero pierde writes en failover. Multi-master (DynamoDB Global, Cosmos DB) escala reads/writes pero conflict resolution es complicada. Strong consistency globally (Spanner) sacrifica latency (>100ms writes). Elegir basado en consistency requirements + latency tolerance." },
+        { "letter": "D", "text": "CDN + regional edge computing puede aproximarse a multi-region para read-heavy workloads. Vercel, Cloudflare Workers, Netlify pushed 'edge-first architecture' — data en edge storage (KV, D1), compute en edge, single origin más simple.", "correct": true, "why": "Correcto. Para muchas apps (read-heavy, no strong-consistency-writes), edge-first architecture da beneficios de multi-region sin la complejidad. Cloudflare Workers + KV + D1 permite building apps where users worldwide get sub-50ms without traditional multi-region. Limitations: writes to edge storage tienen eventual consistency; complex apps may need traditional DBs." },
+        { "letter": "E", "text": "Multi-region es siempre worth it para availability.", "correct": false, "why": "Multi-region es EXPENSIVE (2x+ costs) y COMPLEX. Muchos apps: single region con multi-AZ (99.99% typical) es sufficient. Multi-region para (a) real DR requirements (99.999%+), (b) global user base needing low latency, (c) regulatory (data residency por country). Sin necesidad concreta, evitar." }
+      ],
+      "explanation": "Multi-region architecture: dimensions (1) DR only vs performance/availability; (2) active-passive vs active-active; (3) data replication (async vs strong consistency); (4) traffic routing (DNS latency-based, Global Accelerator anycast, CDN); (5) session/state handling (sticky vs distributed sessions, geo-partitioned state). Cost analysis: 2 regions ~2x compute + replication bandwidth + operational complexity. AWS services: Route 53 Application Recovery Controller, Global Accelerator (anycast IP), CloudFront (edge CDN), DynamoDB Global Tables, Aurora Global, S3 Cross-Region Replication. Design principles: (a) start with multi-AZ (99.99% single region), avoid multi-region unless justified; (b) if multi-region, define RTO/RPO explicitly; (c) test failover regularly (chaos engineering, GameDays); (d) data model must handle cross-region consistency; (e) budget for higher costs.",
+      "realWorld": "Netflix runs active-active across 3 AWS regions (each can handle full load, one region can be evacuated). Amazon retail: multi-region with elaborate coordination. Cloudflare: everything is edge, no 'regions' really. AWS re:Invent talks on Netflix architecture. GameDay exercises common at large companies. Multi-region often the difference between $10M and $100M infra bill.",
+      "tags": ["multi-region", "DR", "active-active", "global architecture"],
+      "tech": ["Route 53", "Global Accelerator", "DynamoDB Global", "Aurora Global"],
+      "references": [{ "title": "AWS Well-Architected — Reliability pillar" }, { "title": "Netflix Tech Blog — 'Active-Active for multi-regional resiliency'" }]
+    }
+  ]
+}

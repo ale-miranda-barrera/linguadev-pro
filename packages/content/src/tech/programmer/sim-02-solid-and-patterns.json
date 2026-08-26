@@ -1,0 +1,415 @@
+{
+  "id": "programmer-sim-02-solid-and-patterns",
+  "trackId": "programmer",
+  "order": 2,
+  "title": "Simulacro 02 — SOLID, patrones y anti-patrones",
+  "focus": "Aplicación real de SOLID en decisiones concretas de diseño, cuándo un patrón es útil y cuándo es sobre-ingeniería.",
+  "areaCoverage": ["oop-solid", "patterns", "refactor"],
+  "timeLimitMin": 22,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "oop-solid",
+      "topic": "Definición de encapsulamiento",
+      "difficulty": "junior",
+      "scenario": "Un compañero define encapsulamiento como 'poner `private` delante de todos los campos y generar getters/setters con el IDE'. Otro dice que es 'proteger los datos del acceso directo'.",
+      "question": "¿Cuál es la definición MÁS PRECISA de encapsulamiento?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Encapsulamiento = campos privados + getters/setters para todos.", "correct": false, "why": "Es el estereotipo pero es incorrecto. Un objeto con getters/setters para TODO su estado interno NO está encapsulado — sigue exponiendo su representación. Bloch le llama 'JavaBean con anemia'." },
+        { "letter": "B", "text": "Encapsulamiento = OCULTAR representación interna y exponer solo COMPORTAMIENTO relevante. Los getters/setters son a menudo un smell — sugieren que el llamador maneja el estado del objeto en lugar de pedirle acciones (Tell Don't Ask).", "correct": true, "why": "Correcto. Encapsulamiento genuino significa que puedes cambiar la representación INTERNA (ej. cambiar List<Order> por Map<OrderId, Order>) sin romper clientes. Con getters exponiendo todo, cualquier cambio interno rompe usuarios. Método `applyDiscount()` encapsula; `getDiscount() + setDiscount()` no." },
+        { "letter": "C", "text": "Encapsulamiento = no permitir acceso a los datos, ni siquiera lectura.", "correct": false, "why": "Extremo. A veces exponer LECTURA de datos es válido (records, DTOs, value objects). El punto es no exponer INTERNALS mutables ni forzar al cliente a orquestar el estado." },
+        { "letter": "D", "text": "Encapsulamiento y abstracción son sinónimos.", "correct": false, "why": "Relacionados pero distintos. Abstracción = qué es (interfaz conceptual). Encapsulamiento = cómo se implementa (ocultamiento de representación). Puedes tener buena abstracción y mala encapsulamiento (interfaz clara pero implementación filtrando detalles)." }
+      ],
+      "explanation": "'Tell, Don't Ask' (Andy Hunt, Dave Thomas): en vez de preguntar por el estado y decidir fuera, dile al objeto qué haga. `if (order.getStatus() == PAID) order.setStatus(SHIPPED)` es Ask. `order.markAsShipped()` (que internamente valida el estado) es Tell. Encapsular = poder cambiar 'status' de enum a state machine sin tocar clientes. Herramienta: si tu IDE puede autogenerar TODOS los getters/setters, la clase probablemente es un record/DTO — usa records de Java 14+ o data classes de Kotlin.",
+      "realWorld": "Effective Java (Bloch) tiene el ítem 16: 'In public classes, use accessor methods, not public fields'. Pero el ítem 17 clarifica: 'minimize mutability'. Los sistemas más robustos (Erlang OTP, Rust ownership) van más allá: no hay setters, cambios de estado son transiciones explícitas.",
+      "tags": ["encapsulamiento", "tell don't ask", "getters setters", "OOP"],
+      "tech": ["Java", "Kotlin"],
+      "references": [{ "title": "Andy Hunt & Dave Thomas — 'The Pragmatic Programmer'" }, { "title": "Effective Java (Bloch) Item 16-17" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "oop-solid",
+      "topic": "Herencia vs composición",
+      "difficulty": "junior",
+      "scenario": "Un desarrollador quiere modelar 'Manager es-un Employee'. Además quiere que Manager tenga 'ability to review employees'. Su primer instinto: `class Manager extends Employee { void review(Employee e) {...} }`.",
+      "question": "¿Qué principio general debe considerarse antes de heredar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Herencia siempre es mejor que composición — reutiliza código.", "correct": false, "why": "Falso. La comunidad OOP moderna (desde Effective Java 1st ed, Gamma et al.) recomienda 'Favor composition over inheritance'. Herencia acopla fuertemente clases, propaga cambios, y frecuentemente el 'es-un' no es tan claro como parece." },
+        { "letter": "B", "text": "'Favor composición sobre herencia' (Gang of Four). Herencia crea acoplamiento fuerte con la superclase — cualquier cambio en Employee afecta Manager. Composición (Manager tiene-un Employee, o Manager con un objeto Reviewer) es más flexible. Además, ¿el CEO es Manager? ¿Un Manager promovido de Employee cambia su tipo?", "correct": true, "why": "Correcto y matizado. Herencia funciona bien cuando el 'es-un' es INVARIANTE (Square es-un Shape para siempre) Y el subtipo cumple LSP. En el caso 'Manager es-un Employee', la relación es más 'Manager tiene rol de Manager' — un Employee puede ganar/perder este rol en la vida real, lo cual herencia estática no permite. Composición con `Employee.roles: Set<Role>` es más fiel." },
+        { "letter": "C", "text": "Usar herencia múltiple — hereda de Employee Y de Reviewer.", "correct": false, "why": "Java no lo permite (por diamond problem históricamente). C++ sí pero rara vez es buena idea. La comunidad C++ post-2000 también prefiere composición." },
+        { "letter": "D", "text": "Usar interfaces (Reviewable) para mantener herencia + capacidades.", "correct": false, "why": "Puede ser válido para SEPARAR contratos (SRP), pero no resuelve el problema de fondo del 'es-un' cuestionable. Y muchas interfaces implementadas es su propio smell." }
+      ],
+      "explanation": "Herencia introduce 3 problemas: (1) acoplamiento a la implementación de la superclase — cambios en padre afectan hijo (Fragile Base Class); (2) rigidez — un objeto tiene UN tipo para siempre; (3) LSP puede violarse silenciosamente (Rectangle/Square es el ejemplo clásico). Composición evita esto: pass an object that does the thing. En Java: strategy pattern, delegation. En Kotlin: `by` keyword para delegation nativa. Regla mental: '¿Realmente ES un X, o simplemente USA/HACE cosas de X?'. Si es lo segundo, componer.",
+      "realWorld": "Java Collections framework tiene un ejemplo famoso: LinkedHashSet extends HashSet. Correcto por herencia si HashSet no cambia. Pero muchos jerarquías corporativas (BusinessEntity extends Entity extends Persistable extends Object) generan pesadillas de mantenimiento. Effective Java Item 18: 'Favor composition over inheritance'.",
+      "tags": ["herencia", "composición", "LSP", "acoplamiento"],
+      "tech": ["Java", "Kotlin"],
+      "references": [{ "title": "GoF — Design Patterns (Introduction)" }, { "title": "Effective Java Item 18" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "oop-solid",
+      "topic": "Single Responsibility Principle real",
+      "difficulty": "mid",
+      "scenario": "Un servicio 'InvoiceService' hace: (1) calcular impuestos, (2) generar el PDF, (3) enviar email al cliente, (4) actualizar el estado en la DB. Tiene 800 líneas y todos los cambios recientes tocan métodos distintos. El líder técnico propone: 'aplica SRP y divide en 4 clases: TaxCalculator, PdfRenderer, EmailSender, InvoiceRepository'.",
+      "question": "¿Cuál es la interpretación más correcta de Single Responsibility en este contexto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dividir por 'lo que hace' (4 clases) es correcto: cada verbo del enunciado es una responsabilidad.", "correct": false, "why": "Sutil pero incorrecto. La versión clásica de SRP (Uncle Bob) dice 'una razón para cambiar', NO 'una cosa que hace'. Dividir por verbos superficialmente puede llevar a proliferación de clases anémicas y dependencias en 4 direcciones sin resolver el problema real." },
+        { "letter": "B", "text": "SRP dice 'una razón para cambiar'. La pregunta correcta es: ¿quién PIDE cambios? Si legal cambia impuestos, marketing cambia el template del PDF/email, y finanzas cambia estados — son 3 stakeholders distintos, luego 3 responsabilidades. La división debe seguir a los actores, no a la sintaxis.", "correct": true, "why": "Correcto y matizado. SRP en la definición actualizada de Uncle Bob es 'un módulo debería tener una y solo una razón para cambiar = servir a un solo actor'. Si legal, marketing y finanzas piden cambios independientes, hay 3 responsabilidades. Puede coincidir con los 4 verbos o no. El PDF y el email podrían fusionarse si ambos son de marketing." },
+        { "letter": "C", "text": "SRP no aplica a servicios: es solo para clases. Refactorizar servicios es responsabilidad del DDD, no de SOLID.", "correct": false, "why": "Falso. SRP se aplica a cualquier unidad de código (función, clase, módulo, servicio). DDD y SOLID no compiten: DDD ayuda a encontrar los 'actores' que SRP necesita." },
+        { "letter": "D", "text": "Ignorar. 800 líneas está bien si los tests pasan. El código funcional es el mejor código.", "correct": false, "why": "Aunque funcione hoy, la evidencia de que 'cambios recientes tocan métodos distintos' es exactamente el smell que SRP diagnostica: la clase cambia por múltiples razones. La deuda técnica es el costo futuro, no el estado actual." }
+      ],
+      "explanation": "SRP se malinterpreta como 'una clase hace una cosa'. La formulación correcta (Uncle Bob, revisada 2014+) es 'una clase debe tener una razón para cambiar = responder a UN actor'. El actor es la persona/rol que solicita el cambio. Dos métodos que suenan distintos pero que siempre cambian juntos (mismo actor) pertenecen en la misma clase. Dos métodos que suenan similares pero cambian por razones distintas (distintos actores) deben separarse. Herramienta práctica: mira `git log` — si dos métodos siempre aparecen en el mismo commit, están cohesionados.",
+      "realWorld": "El diseño del kernel de Linux es un ejemplo: subsistemas de red, filesystem, memory management están separados porque responden a comunidades y ciclos de release distintos, no porque 'hacen cosas distintas' abstractamente.",
+      "tags": ["SOLID", "SRP", "cohesión", "actor"],
+      "tech": [],
+      "references": [{ "title": "Robert C. Martin — 'Clean Architecture', Ch. 7 (SRP)" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "patterns",
+      "topic": "Cuándo NO usar un patrón (sobre-ingeniería)",
+      "difficulty": "mid",
+      "scenario": "Un equipo agrega una feature: 'enviar notificación al usuario'. Hoy solo por email. Un jr propone implementar el patrón Strategy + Factory + Abstract Factory 'para poder agregar SMS y push más adelante sin cambiar el código'. Estimación: 3 días extra.",
+      "question": "¿Cuál es la respuesta correcta desde un buen criterio de ingeniería?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aceptar. Es una buena aplicación del Open/Closed Principle: preparar el sistema para extensiones futuras.", "correct": false, "why": "Aplica OCP prematuramente. YAGNI (You Aren't Gonna Need It) advierte contra construir generalidad para requisitos hipotéticos. Además, hay riesgo de que la abstracción diseñada AHORA no encaje cuando SMS/push lleguen (interfaz mal predicha)." },
+        { "letter": "B", "text": "Rechazar completamente los patrones. Solo introducir cuando el problema exista y sea visible.", "correct": false, "why": "Correcto en espíritu pero demasiado tajante. 'Nunca patrones' no es la respuesta — patrones nacen de dolor real. La respuesta madura considera el costo/beneficio." },
+        { "letter": "C", "text": "Implementar solo el email hoy, con la firma de la clase clara (ej. NotificationService.send(user, message)). Cuando llegue el segundo canal, refactor a Strategy con contexto real. Menos código, menos deuda, decisión informada.", "correct": true, "why": "Correcto. Esto es 'Rule of Three' (Martin Fowler): duplica una vez, extrae la tercera. Y YAGNI. El costo de refactor cuando el segundo canal llegue es MENOR que el costo de mantener una abstracción incorrecta durante meses. Y una interfaz diseñada con UN caso real siempre es cuestionable." },
+        { "letter": "D", "text": "Implementar solo email pero usar interfaz NotificationSender aún con una única implementación, 'por si acaso'.", "correct": false, "why": "La interfaz con una sola implementación es un smell (speculative generality). Si la interfaz es solo por 'testability', usar test doubles directamente o mockear el service concreto. Mocks tampoco requieren interfaces si tu framework lo permite (JMockit, Mockito con final classes)." }
+      ],
+      "explanation": "Los patrones de diseño resuelven problemas concretos que YA existen. Aplicarlos preventivamente inflate el código, introducen indirection sin propósito, y frecuentemente la abstracción NO encaja cuando el segundo caso llega (porque el diseño se hizo con un solo caso en mente = adivinación). Reglas de oro: (1) Rule of Three — refactorizar en el tercer uso; (2) YAGNI — no construir para requisitos hipotéticos; (3) las abstracciones nacen del segundo caso, no del primero.",
+      "realWorld": "Basecamp (DHH) tiene un famoso post 'The Majestic Monolith' argumentando que MUCHO código enterprise se ahoga en abstracciones speculative. Y el proverbio de Kent Beck: 'Make it work, make it right, make it fast — in that order'.",
+      "tags": ["YAGNI", "sobre-ingeniería", "Rule of Three", "Strategy"],
+      "tech": [],
+      "references": [{ "title": "Martin Fowler — Refactoring (Rule of Three)" }, { "title": "Kent Beck — 'Design principles behind Smalltalk'" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "oop-solid",
+      "topic": "Open/Closed Principle en la práctica",
+      "difficulty": "mid",
+      "scenario": "Servicio de cálculo de descuentos. Actualmente:\n\n```java\nif (customer.type == VIP) discount = 0.20;\nelse if (customer.type == GOLD) discount = 0.10;\nelse if (customer.type == REGULAR) discount = 0.0;\n```\n\nEl PM pide agregar STUDENT (0.15) y SENIOR (0.12). Cada nuevo tipo requiere modificar este if.",
+      "question": "¿Cuál es la aplicación correcta de OCP y su justificación?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reemplazar por polimorfismo: cada CustomerType es una clase con `getDiscount()`. El código de cálculo NO cambia al agregar nuevos tipos — solo se añade una clase nueva. Open for extension, closed for modification.", "correct": true, "why": "Correcto. Es la aplicación clásica de OCP. El if-chain viola OCP porque cada nuevo tipo modifica código existente = riesgo de romper casos existentes. Polimorfismo permite extender sin modificar. Alternativas equivalentes: Map<CustomerType, DiscountStrategy>, tabla en DB, enum con método (Java enum con abstract method)." },
+        { "letter": "B", "text": "Añadir los nuevos casos al if — es la forma más simple y directa.", "correct": false, "why": "Funciona técnicamente pero es el patrón que OCP identifica como problemático: el código de cálculo cambia cada vez que se añade un tipo. En sistemas grandes, esto genera 'shotgun surgery' (Fowler) — un requisito nuevo requiere cambios dispersos." },
+        { "letter": "C", "text": "Usar reflection para descubrir tipos dinámicamente.", "correct": false, "why": "Sobre-ingeniería y difícil de debuggear. Reflection tiene su lugar (frameworks, ORMs) pero no en lógica de negocio." },
+        { "letter": "D", "text": "OCP es un principio obsoleto. Los sistemas modernos no lo necesitan.", "correct": false, "why": "Falso. OCP sigue vigente — de hecho, es más importante en microservicios (queremos deployar servicios independientemente sin tocar el resto)." }
+      ],
+      "explanation": "OCP: 'una entidad debe estar abierta para extensión, cerrada para modificación'. En práctica: si añadir una feature requiere modificar MUCHOS puntos de código existentes, has violado OCP. Herramientas: polimorfismo (interfaces + implementaciones), strategy pattern, plug-in architecture, tablas de configuración. Balance con YAGNI: no polimorfices cada if — solo aquellos que sabes que crecerán. La regla de tres ayuda: si aparece el tercer caso, extrae.",
+      "realWorld": "Stripe expone 100+ métodos de pago (card, ACH, SEPA, Alipay, WeChat, Klarna, etc.) — todos con una interfaz común. Añadir un nuevo método NO modifica el core del checkout. Es OCP a nivel arquitectural. En contraste, sistemas legacy con miles de if por país/moneda son famosos por ser imposibles de mantener.",
+      "tags": ["OCP", "polimorfismo", "SOLID", "extensibilidad"],
+      "tech": ["Java", "polimorfismo"],
+      "references": [{ "title": "Bertrand Meyer — 'Object-Oriented Software Construction' (origen OCP)" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "oop-solid",
+      "topic": "Liskov Substitution Principle — el ejemplo clásico",
+      "difficulty": "senior",
+      "scenario": "Un desarrollador modela: `class Square extends Rectangle` porque 'un cuadrado es un rectángulo con lados iguales'. Sobrescribe `setWidth(w)` para setear tambien height, y viceversa. Un test escribe: `Rectangle r = new Square(); r.setWidth(5); r.setHeight(4); assertEquals(20, r.area());` — falla con 16.",
+      "question": "¿Qué principio se viola y cuál es la lección?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Encapsulamiento — Square no debería sobrescribir setters de Rectangle.", "correct": false, "why": "El problema no es el override en sí — es que el override viola CONTRATOS heredados. Encapsulamiento no lo diagnostica." },
+        { "letter": "B", "text": "LSP (Liskov Substitution): las subclases deben ser sustituibles por su padre SIN romper expectativas del cliente. Rectangle promete 'setWidth cambia solo width'; Square lo rompe. Lección: 'es-un' matemático NO implica 'es-un' de tipo. Square y Rectangle son distintos tipos aunque compartan concepto geométrico. Preferir composición o interfaz Shape común sin herencia entre ellos.", "correct": true, "why": "Correcto. Es EL ejemplo canónico de LSP violado. El contrato heredado de Rectangle (setters ortogonales) no lo cumple Square. Aunque 'un cuadrado ES un rectángulo' en matemáticas, la HERENCIA de tipo requiere que TODO lo que el padre permite, el hijo lo permita. Solución: no heredar; Square y Rectangle implementan Shape con `area()` y son tipos separados." },
+        { "letter": "C", "text": "SRP — Rectangle hace demasiadas cosas.", "correct": false, "why": "Rectangle es una clase simple. El bug no viene de exceso de responsabilidades." },
+        { "letter": "D", "text": "OCP — el diseño no permite extensión sin modificación.", "correct": false, "why": "Diagnóstico incorrecto. El problema no es dificultad de extender sino que la extensión existente rompe la abstracción." }
+      ],
+      "explanation": "LSP formal (Barbara Liskov, 1987): si S es subtipo de T, objetos de tipo T pueden reemplazarse por objetos de tipo S sin alterar propiedades deseadas del programa. Formalizado con: (1) pre-condiciones no pueden fortalecerse en el subtipo; (2) post-condiciones no pueden debilitarse; (3) invariantes deben preservarse. Consecuencia práctica: 'is-a' del mundo real NO implica 'is-a' de tipo. Pinguino ES un pájaro pero no vuela — si Bird.fly() está en la interfaz, Pinguino no es sustituible → separar Bird y FlyingBird.",
+      "realWorld": "Rectangle/Square es el ejemplo enseñado en toda universidad. Otro caso real: Java Stack extends Vector — Stack hereda métodos como `add(index, element)` que rompen la invariante LIFO. Bloch lo usa como ejemplo de mala herencia en Effective Java.",
+      "tags": ["LSP", "Liskov", "herencia", "contratos"],
+      "tech": ["Java"],
+      "references": [{ "title": "Barbara Liskov — 'Data Abstraction and Hierarchy', 1987" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "oop-solid",
+      "topic": "Interface Segregation Principle",
+      "difficulty": "senior",
+      "scenario": "Tienes una interfaz `Worker` con métodos: `work()`, `eat()`, `sleep()`. Ahora necesitas modelar un `Robot` que trabaja pero no come ni duerme. Un desarrollador implementa `Robot` con `throw new UnsupportedOperationException()` en eat() y sleep().",
+      "question": "¿Qué principio se viola y cuál es la solución idiomática?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ISP (Interface Segregation): 'clientes no deben depender de métodos que no usan'. Worker es una interfaz GORDA — mezcla capacidades. Solución: dividir en Workable, Feedable, Sleepable. Robot implementa solo Workable. Los clientes de Workable no cargan métodos irrelevantes.", "correct": true, "why": "Correcto. ISP evita 'fat interfaces' que fuerzan a implementadores a rellenar métodos que no aplican. Lanzar UnsupportedOperationException es un LSP violation además (rompe expectativa del cliente que llama). Interfaces pequeñas y cohesivas > interfaces grandes. Java 8+ facilita con default methods, pero eso no es excusa para meter todo en una interfaz." },
+        { "letter": "B", "text": "SRP — Worker hace demasiadas cosas.", "correct": false, "why": "Cercano pero no exacto. SRP es sobre CLASES/módulos. ISP es específicamente sobre INTERFACES y sus consumidores. Ambos apuntan a cohesión, pero ISP es más preciso aquí." },
+        { "letter": "C", "text": "Robot debería heredar de Worker y sobrescribir eat/sleep con no-op vacío.", "correct": false, "why": "No-op silencioso es peor que exception — el cliente cree que 'comió' o 'durmió'. Y sigue habiendo un método que no aplica al concepto real de Robot." },
+        { "letter": "D", "text": "Usar herencia múltiple para separar capacidades.", "correct": false, "why": "Java no permite. Y aún permitiéndolo, la solución idiomática es interfaces segregadas + composición." }
+      ],
+      "explanation": "ISP se manifiesta como: 'muchas interfaces específicas > una interfaz general'. Beneficios: (1) los tests solo mockean lo que necesitan; (2) implementadores no tienen métodos irrelevantes; (3) los cambios en una capacidad no propagan a implementadores de otras. En Go, ISP es cultural: interfaces son pequeñas y implícitas ('io.Reader tiene solo Read'). En Java/C#, requiere disciplina — es fácil que una interfaz crezca. Regla mental: si un implementador tiene 'partes que no aplican', segrega.",
+      "realWorld": "Java IO clásico (java.io.*) tiene interfaces gordas — InputStream tiene mark, reset, available que muchas implementaciones no soportan. Java NIO se rediseñó con interfaces más pequeñas y bien segregadas. Go stdlib es un ejemplo modelo: io.Reader, io.Writer, io.Closer, io.ReadWriter — componibles.",
+      "tags": ["ISP", "SOLID", "interfaces", "cohesión"],
+      "tech": ["Java", "Go"],
+      "references": [{ "title": "Robert C. Martin — 'Agile Software Development', Ch. ISP" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "oop-solid",
+      "topic": "Dependency Inversion en la práctica",
+      "difficulty": "senior",
+      "scenario": "Tu módulo de dominio (OrderProcessor) importa la clase concreta PostgresOrderRepository directamente. Un revisor dice: 'viola Dependency Inversion — depende de una concreción de infra'. Otro responde: 'no importa, es la única DB que vamos a tener'. Un tercero: 'crea la interfaz OrderRepository en la capa de dominio, y que la infra la implemente'.",
+      "question": "¿Cuál es la razón MÁS FUERTE para preferir la interfaz aún si no vas a cambiar de DB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Para poder mockear en tests de dominio sin conectar a Postgres. Los tests corren en segundos y son deterministas.", "correct": true, "why": "Correcto. Este es el beneficio REAL de DIP en el 95% de los casos — no 'cambiar de DB'. Sin la interfaz, los tests unitarios del dominio requieren PostgresContainer, red, transacciones — se vuelven test de integración, lentos y frágiles. La interfaz permite un InMemoryOrderRepository de 20 líneas para tests." },
+        { "letter": "B", "text": "Para poder cambiar Postgres por MongoDB en el futuro.", "correct": false, "why": "Argumento débil. Cambios de DB son eventos poquísimos en la vida real de un sistema. Y aún con interfaz, cambiar DB implica repensar queries, transacciones, consistencia — la interfaz no te salva ese trabajo. Vender DIP por este motivo lleva a diseñar abstracciones que nunca se ejercen." },
+        { "letter": "C", "text": "Para cumplir con arquitectura hexagonal / clean architecture 'porque sí'.", "correct": false, "why": "Dogma. Si no puedes explicar el BENEFICIO concreto, la abstracción es speculative. Clean architecture funciona porque libera al dominio de infra — pero eso mismo debe justificarse con ganancia observable." },
+        { "letter": "D", "text": "Para permitir mocks polimórficos. Aunque en Java con Mockito puedas mockear clases concretas, con Kotlin/Scala final es problemático.", "correct": false, "why": "Es cierto en algunos lenguajes pero es un tema de tooling, no un argumento arquitectural. La razón profunda es testabilidad y aislamiento de infra." }
+      ],
+      "explanation": "DIP se justifica principalmente por: (1) testabilidad — el dominio se testea sin arrancar infra; (2) evolución independiente — infra puede cambiar (nueva versión de driver, timeout, retry policy) sin tocar dominio; (3) claridad conceptual — el dominio no sabe cómo persiste. El argumento 'cambiar de DB' es real pero raro. La testabilidad es el argumento diario que paga la abstracción. Contra-ejemplo: en un script CLI de 100 líneas que persiste en SQLite, la interfaz es sobre-ingeniería.",
+      "realWorld": "Spring Framework abraza DIP hasta la médula: @Repository, @Service, @Autowired. El costo: config compleja y magia. El beneficio: cambios masivos sin romper cosas y tests hipnóticamente rápidos con @MockBean.",
+      "tags": ["SOLID", "DIP", "testabilidad", "clean architecture"],
+      "tech": ["Java", "Spring", "Mockito"],
+      "references": [{ "title": "Uncle Bob — 'The Dependency Inversion Principle', 1996" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "patterns",
+      "topic": "Singleton — dolor y alternativas",
+      "difficulty": "senior",
+      "scenario": "Un compañero implementó una clase Config como Singleton clásico (getInstance() estático + estado global). Ahora los tests fallan porque el estado del singleton persiste entre tests: TestA setea `Config.dbUrl = 'test1'`, TestB espera 'prod' y falla.",
+      "question": "¿Cuál es la mejor solución arquitectural (no un parche)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Agregar un método `Config.reset()` que los tests llaman en @Before. Mantiene el Singleton.", "correct": false, "why": "Parche. Requiere disciplina, se olvida, no funciona con tests en paralelo. Los tests tampoco deberían saber sobre 'estado global'." },
+        { "letter": "B", "text": "Reemplazar Singleton por inyección de dependencias: pasa Config como parámetro al constructor de las clases que lo necesitan.", "correct": true, "why": "Correcto. Rompe el estado global. Cada test crea su propia instancia de Config con los valores que necesita. Sin acoplamiento a estático, sin orden de tests, funciona en paralelo. Es la razón por la que DI containers (Spring, Guice) desplazaron a Singletons en enterprise." },
+        { "letter": "C", "text": "Usar un DI container (Spring, Guice, Dagger) con scope 'test' — el container gestiona el ciclo de vida.", "correct": true, "why": "Correcto también. Es la versión industrial de B. En un proyecto grande, DI container ahorra boilerplate y hace explícito el grafo de dependencias. Para proyectos pequeños, DI manual (B) es suficiente." },
+        { "letter": "D", "text": "Marcar Config como thread-local. Cada test tiene su propio thread → su propia instancia.", "correct": false, "why": "Genera bugs distintos: thread-local es invisible, difícil de razonar, y en runtime concurrente puede leakearse. Además, no resuelve el problema de acoplamiento — el código sigue usando estático." },
+        { "letter": "E", "text": "El Singleton es un anti-patrón moderno. En 2026 casi nadie lo usa correctamente. Cuando lo veas, cuestiona.", "correct": true, "why": "Cierto. Singleton acopla el código al globlal, hace tests frágiles, oculta dependencias, y en la práctica raramente hay UNA sola instancia (multi-tenant, testing, procesos separados). Sigue siendo válido en muy pocos casos (Logger cross-cutting), y aún así preferible el DI." }
+      ],
+      "explanation": "Singleton (GoF, 1994) resolvía un problema de 'acceso global' en un mundo sin DI containers. Hoy es considerado anti-patrón por: (1) esconde dependencias (el consumidor no las declara), (2) rompe tests por estado global, (3) impide sustitución en runtime (multi-tenant, testing), (4) plantea problemas de concurrencia (getInstance() con lock si tardó). DI resuelve el problema original de 'acceso global' de forma segura.",
+      "realWorld": "El logger de Log4j 1.x era Singleton — causó bugs cuando se necesitaba logging por tenant. Log4j 2 y SLF4J introdujeron LoggerFactory (factory pattern) resolviendo el problema. Angular y Spring nunca escribieron una app real con Singleton clásico.",
+      "tags": ["Singleton", "anti-patrón", "DI", "tests"],
+      "tech": ["Spring", "Guice", "Dagger"],
+      "references": [{ "title": "Misko Hevery — 'Singletons are Pathological Liars'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "patterns",
+      "topic": "Factory Method vs Abstract Factory",
+      "difficulty": "senior",
+      "scenario": "Un equipo debate: ¿usar Factory Method o Abstract Factory para el módulo de renderers de PDF (que además necesita fonts, watermarks, y encryption providers dependientes del entorno: dev/prod/cloud)?",
+      "question": "¿Cuál es la distinción clave entre estos dos patrones y cuándo cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son sinónimos.", "correct": false, "why": "Son patrones DISTINTOS. Confundirlos es error conceptual." },
+        { "letter": "B", "text": "Factory Method crea UN tipo de objeto (subclases deciden qué instancia concreta). Abstract Factory crea FAMILIAS de objetos relacionados que deben usarse juntos (PDFRenderer + FontProvider + Encrypter deben ser todos de la variante dev o todos de prod, no mezclados).", "correct": true, "why": "Correcto. Factory Method: 'createRenderer()' con subclases; útil cuando solo varía UN tipo. Abstract Factory: interfaz con 'createRenderer()', 'createFont()', 'createEncrypter()' — implementaciones DevFactory, ProdFactory, CloudFactory garantizan consistencia. En el caso del enunciado (múltiples objetos deben coordinarse por entorno), Abstract Factory encaja." },
+        { "letter": "C", "text": "Factory Method para clases pequeñas, Abstract Factory para grandes.", "correct": false, "why": "Métrica incorrecta. La diferencia es sobre FAMILIAS coordinadas, no tamaño." },
+        { "letter": "D", "text": "Abstract Factory está obsoleto — usa DI container.", "correct": false, "why": "DI containers frecuentemente IMPLEMENTAN Abstract Factory bajo el capó (Spring Profiles, Guice Modules). El patrón sigue vigente aunque a menudo no lo escribas explícitamente." }
+      ],
+      "explanation": "Factory patterns resuelven distintos problemas: (1) Simple Factory: función/clase que devuelve objetos según parámetro; (2) Factory Method: método polimórfico en jerarquía de clases; (3) Abstract Factory: interfaz que crea familias coordinadas. En el mundo moderno, DI containers (Spring @Profile, Guice Module) hacen Abstract Factory declarativo. Sigue siendo útil escribirlo explícito cuando: (1) la familia de objetos es cross-cutting; (2) la selección se hace en runtime (no en config); (3) hay validación complejo de coherencia entre variantes.",
+      "realWorld": "AWS SDK tiene ClientBuilders (Factory Method) por servicio. Databases con múltiples engines (Postgres/MySQL) tienen Abstract Factory (DialectFactory en Hibernate). GUI frameworks (Swing L&F, Qt Styles) usan Abstract Factory para coherencia visual de widgets.",
+      "tags": ["factory", "abstract factory", "patterns", "GoF"],
+      "tech": ["Java", "Spring"],
+      "references": [{ "title": "GoF — 'Design Patterns' §3 Creational" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "patterns",
+      "topic": "Observer vs Pub/Sub — matices",
+      "difficulty": "senior",
+      "scenario": "Debate técnico: 'El patrón Observer y Pub/Sub son lo mismo'. Otro responde: 'No exactamente — hay una diferencia importante de acoplamiento'.",
+      "question": "¿Cuál es la diferencia CORRECTA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son idénticos: ambos notifican a suscriptores cuando algo cambia.", "correct": false, "why": "Superficialmente sí, pero hay diferencia importante de acoplamiento y arquitectura." },
+        { "letter": "B", "text": "Observer: el subject conoce a sus observers DIRECTAMENTE (lista de referencias); acoplamiento in-process. Pub/Sub: publisher y subscriber no se conocen — un BROKER intermedio (event bus, Kafka, RabbitMQ) los desacopla. Pub/Sub puede ser cross-process, cross-machine.", "correct": true, "why": "Correcto. Observer clásico (GoF) es intra-proceso, con referencias directas — útil para UI (button.onClick, model-view). Pub/Sub añade indirection via broker: publishers emiten a topics, subscribers escuchan topics, sin conocerse. Habilita distribución, replay, filtering. Kafka, SNS/SQS, EventBridge son Pub/Sub industrial." },
+        { "letter": "C", "text": "Observer es síncrono, Pub/Sub es asíncrono siempre.", "correct": false, "why": "Parcialmente cierto pero no es la esencia. Observer puede ser async (con event loop), Pub/Sub puede ser síncrono con broker in-memory. La diferencia clave es el ACOPLAMIENTO." },
+        { "letter": "D", "text": "Observer es para OOP, Pub/Sub para functional.", "correct": false, "why": "Falso. Ambos aparecen en cualquier paradigma." }
+      ],
+      "explanation": "Modelo de acoplamiento: Observer = punto a punto directo, in-process. Pub/Sub = mediado por broker, permite N publishers / M subscribers sin conocimiento mutuo. Trade-offs: Observer es simple, síncrono predecible, sin infraestructura. Pub/Sub añade infraestructura y complejidad pero permite: (1) escala independiente; (2) replay de eventos; (3) fan-out sin acoplamiento; (4) evolución independiente. Pattern relacionado: Event Sourcing = el estado se deriva de eventos publicados históricos.",
+      "realWorld": "Netflix migró de Observer local a Kafka Pub/Sub para desacoplar microservicios — los servicios pueden agregarse/quitarse sin coordinar deploys. GitHub Webhooks son Pub/Sub. En Angular/React, hooks como useEffect son Observer local. En 2020, Airbnb documentó su migración de RPC a event-driven Pub/Sub como paso clave para reducir acoplamiento.",
+      "tags": ["Observer", "Pub/Sub", "event-driven", "acoplamiento"],
+      "tech": ["Kafka", "RabbitMQ", "EventBridge"],
+      "references": [{ "title": "Enterprise Integration Patterns (Hohpe & Woolf)" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "patterns",
+      "topic": "Decorator vs Herencia",
+      "difficulty": "mid",
+      "scenario": "Tienes una clase `HttpClient.send(req)`. Necesitas añadir capacidades: logging, retry, rate limiting, cache, auth. Un desarrollador crea `LoggingHttpClient extends HttpClient`, `RetryingHttpClient extends HttpClient`... rápidamente aparece 'CachedRetryingLoggingHttpClient extends...'.",
+      "question": "¿Qué patrón resuelve mejor y cómo se compone?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Decorator Pattern: cada capacidad es un HttpClient que envuelve OTRO HttpClient. `new CachingClient(new RetryingClient(new LoggingClient(new HttpClient())))`. Composición flexible en runtime, cada decorator es una clase pequeña con SRP.", "correct": true, "why": "Correcto. Decorator permite AÑADIR RESPONSABILIDADES sin modificar la clase base ni crear subclases combinatorias. Cada decorator implementa la misma interfaz, delega al inner. Composición se hace en runtime (config, DI). Es el patrón detrás de Java InputStream (BufferedInputStream(GZIPInputStream(FileInputStream))), middleware de Express/Django, ASP.NET Core." },
+        { "letter": "B", "text": "Herencia múltiple.", "correct": false, "why": "Java no permite. Y aún permitiéndolo, no elimina la combinación combinatoria de subclases." },
+        { "letter": "C", "text": "Singleton HttpClient con métodos condicionales `if (loggingEnabled) log()`.", "correct": false, "why": "Concentra toda la lógica en una clase gigante violando SRP. Difícil de testear cada capacidad aisladamente." },
+        { "letter": "D", "text": "Template Method — HttpClient abstracta con hooks para cada capacidad.", "correct": false, "why": "Template Method fuerza a subclasear y no compone: no puedes mezclar retry+cache sin definir la combinación explícitamente. Decorator es más flexible." }
+      ],
+      "explanation": "Decorator es composición ortogonal: cada capa añade una preocupación independiente. Ventajas: (1) cada decorator es simple, single-purpose; (2) orden importa y se hace explícito (retry alrededor de cache vs cache alrededor de retry difieren); (3) testable en aislamiento; (4) configurable en runtime. Downside: puede complicar debugging (muchas capas). Alternativa moderna: middleware chain (Express, Rack, Django) que es Decorator con convención de firma. En Kotlin: `object : HttpClient by inner` (delegation nativa).",
+      "realWorld": "Netflix Zuul, AWS API Gateway, Kong — todos son Decorator/Middleware chains sobre HTTP requests. Java IO (BufferedReader wrapping FileReader) es Decorator de manual. Middlewares de Express.js implementan literalmente Decorator. ASP.NET Core pipeline es Decorator explícito con delegates.",
+      "tags": ["decorator", "composición", "middleware", "GoF"],
+      "tech": ["Java IO", "Express middleware", "ASP.NET Core"],
+      "references": [{ "title": "GoF — 'Design Patterns' Decorator" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "patterns",
+      "topic": "Command Pattern y undo/redo",
+      "difficulty": "mid",
+      "scenario": "Diseñas un editor gráfico. Los usuarios pueden mover objetos, cambiar colores, aplicar filtros. Pide requisito: undo/redo ILIMITADO.",
+      "question": "¿Qué patrón facilita esto y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Command Pattern: cada acción del usuario se encapsula en un objeto Command con `execute()` y `undo()`. Se guarda en un stack. Undo = pop y llama undo(). Redo = push. Habilita también macros (secuencia de commands), logging, replay.", "correct": true, "why": "Correcto. Es el patrón canónico para undo/redo. Cada Command captura la información necesaria para hacer Y deshacer. Beneficios adicionales: (1) macros — grabar secuencia; (2) transacciones — apply/rollback; (3) audit log — historial de acciones; (4) undo/redo en distintos hilos. Usado en Word, Photoshop, IDEs." },
+        { "letter": "B", "text": "Guardar snapshots del estado completo tras cada acción.", "correct": false, "why": "Funciona pero es caro en memoria (snapshots grandes) y tiempo (serialización). Aceptable para estados pequeños o con optimizaciones (structural sharing como React/Immer)." },
+        { "letter": "C", "text": "Event Sourcing: el estado se deriva de la secuencia de eventos.", "correct": false, "why": "Relacionado a Command pero es un patrón arquitectural más completo (para persistencia). Undo/redo en un editor no necesita full event sourcing." },
+        { "letter": "D", "text": "Observer Pattern.", "correct": false, "why": "Observer notifica cambios, no captura acciones reversibles. Confusión de patrones." }
+      ],
+      "explanation": "Command encapsula 'una petición como objeto', permitiendo: (1) parametrizar clientes con acciones distintas; (2) encolar, loggear, undoable operations. La 'firma canónica' es Command con execute()/undo(). Para undo, cada Command debe capturar suficiente contexto (ej. 'MoveCommand' guarda posición previa y nueva). Para acciones no reversibles (side-effects externos, red), el undo puede requerir compensación (compensating action, saga pattern en microservices). Command está en la base de Redux (actions), CQRS (commands vs queries), y muchos frameworks.",
+      "realWorld": "IntelliJ, VSCode, Photoshop, Figma — todos usan Command para undo. Git usa commits (Command-like: cada commit se puede revert). Redux es Command Pattern aplicado a UI state. En sistemas bancarios, Command + compensating transactions es la base del pattern Saga.",
+      "tags": ["command", "undo redo", "patterns", "GoF"],
+      "tech": ["Redux", "IDE"],
+      "references": [{ "title": "GoF — 'Design Patterns' Command" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "patterns",
+      "topic": "Repository vs Active Record",
+      "difficulty": "senior",
+      "scenario": "Un equipo debate el patrón de acceso a datos. Ruby on Rails favorece Active Record (`user.save`); Java con Spring/JPA favorece Repository (`userRepository.save(user)`). ¿Cuáles son los trade-offs?",
+      "question": "¿Cuáles afirmaciones son CIERTAS sobre estos patrones?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Active Record acopla el modelo de dominio con persistencia — `user.save()` obliga a User a conocer la DB. Simple para CRUD, difícil para dominio rico.", "correct": true, "why": "Correcto. Active Record (Fowler, PoEAA) une comportamiento de dominio con acceso a datos. Excelente para CRUD rápido (Rails scaffolding), problemático cuando el dominio se complica: tests requieren DB, cambios en persistencia afectan dominio." },
+        { "letter": "B", "text": "Repository separa persistencia del dominio — User es un POJO puro, UserRepository maneja save/find/delete. Habilita testabilidad, DDD, cambios de storage sin tocar dominio.", "correct": true, "why": "Correcto. Repository (Evans, DDD) es una colección conceptual de agregados. El dominio no sabe cómo persiste — puede ser SQL, NoSQL, memoria. Testeable con InMemoryRepository. Permite reglas de dominio ricas sin dependencias de framework." },
+        { "letter": "C", "text": "Rails eligió Active Record por productividad; startups iterando rápido lo prefieren.", "correct": true, "why": "Correcto y práctico. Active Record + Rails permitió el 'Rails moment' de 2005-2010: apps de startup en semanas. Trade-off consciente: menos separación por más velocidad." },
+        { "letter": "D", "text": "Repository es siempre superior para cualquier caso.", "correct": false, "why": "Falso. Para CRUDs simples con lógica mínima, Repository añade boilerplate innecesario. La elección depende del dominio: rico → Repository/DDD; simple → Active Record OK." },
+        { "letter": "E", "text": "Los ORMs modernos (JPA, Sequelize, Prisma) implementan Repository nativamente.", "correct": true, "why": "Correcto. Spring Data JPA con `JpaRepository<T, ID>` genera métodos CRUD sin código. Prisma expone `prisma.user.findMany()` — Repository-like. TypeORM soporta ambos estilos." }
+      ],
+      "explanation": "Elección arquitectural: acoplamiento vs separación. Active Record es 'code as configuration' — el modelo ES la tabla. Rápido, pero fragilidad crece con complejidad. Repository es 'domain first' — modelo puro + capa de mapping. Más setup, mejor escala. En arquitecturas hexagonales / clean architecture, Repository es el default. En Rails/Django, Active Record es el default cultural. Ambos son válidos — la clave es reconocer el trade-off y elegir consciente.",
+      "realWorld": "Shopify (Rails, Active Record) alcanzó escala masiva sin migrar. Netflix, Amazon, Google favorecen Repository/DDD por complejidad de dominio. GitHub migró parte de su código de Active Record a service objects+repositories cuando el dominio creció. La decisión NO es técnica pura — es sobre equipo, complejidad, velocidad.",
+      "tags": ["repository", "active record", "DDD", "persistencia"],
+      "tech": ["Spring Data", "Rails", "Prisma"],
+      "references": [{ "title": "Fowler — 'Patterns of Enterprise Application Architecture'" }, { "title": "Evans — 'Domain-Driven Design'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "patterns",
+      "topic": "Strategy Pattern — real vs sobre-ingeniería",
+      "difficulty": "mid",
+      "scenario": "Un servicio calcula el shipping cost. Actualmente:\n\n```java\nif (country == US) cost = weight * 0.5;\nelse if (country == EU) cost = weight * 0.7 + 5;\nelse if (country == ASIA) cost = weight * 1.2 + 10;\n```\n\nHay 25 países cada uno con su fórmula. Un desarrollador propone Strategy Pattern con una clase por país.",
+      "question": "¿Es apropiado Strategy aquí?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí. Strategy es exactamente para esto: encapsular algoritmos intercambiables. Cada país es una ShippingStrategy. Añadir un nuevo país no toca el resto del código (OCP).", "correct": true, "why": "Correcto. 25 casos con fórmulas distintas es Strategy legítimo. Ganancia: OCP (nuevos países sin tocar existentes), testabilidad (cada strategy aislada), claridad (una clase = un país, fácil de leer). Alternativa aceptable: Map<Country, Function<Weight, Cost>> — versión funcional del mismo patrón sin OOP puro." },
+        { "letter": "B", "text": "No. Strategy para 25 países crea 25 clases — sobre-ingeniería.", "correct": false, "why": "Cantidad de clases NO es el criterio. La cantidad de casos que crecen orgánicamente Y con lógica que puede evolucionar independientemente justifica separarlos." },
+        { "letter": "C", "text": "No. Mejor un solo método `calculate(country, weight)` con un switch grande.", "correct": false, "why": "Es exactamente lo que se quiere evitar: un método monolítico que crece sin control, difícil de testear individualmente, viola OCP." },
+        { "letter": "D", "text": "Sí, pero solo si hay 3+ tipos.", "correct": false, "why": "Regla arbitraria. Depende de complejidad de cada estrategia, no del número." }
+      ],
+      "explanation": "Strategy vs sobre-ingeniería: la diferencia es CANTIDAD Y COMPLEJIDAD de casos. Con 2-3 branches simples, un if está bien. Con 25 casos que crecen y cada uno tiene su lógica, Strategy separa preocupaciones. Versión funcional: un Map<Key, Function> es equivalente a Strategy pero sin overhead de clases. En lenguajes con first-class functions (Python, JS, Scala), Strategy suele ser un dict de lambdas — menos código, misma intención. Regla mental: si añadir un caso nuevo requiere tocar MUCHOS lugares o riesgo de romper existentes, extrae Strategy.",
+      "realWorld": "Stripe internamente tiene strategies por país para tax computation, payment method, compliance. AWS SDK tiene RetryStrategy (Standard, Adaptive, Legacy) intercambiables. Netflix tiene compression strategies distintas por device.",
+      "tags": ["strategy", "OCP", "patterns", "sobre-ingeniería"],
+      "tech": ["Java", "Python"],
+      "references": [{ "title": "GoF — 'Design Patterns' Strategy" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "oop-solid",
+      "topic": "Law of Demeter — cadena de llamadas",
+      "difficulty": "senior",
+      "scenario": "En code review ves:\n\n```java\norder.getCustomer().getAddress().getCountry().getTaxRate();\n```\n\nUn senior comenta 'esto viola la Ley de Demeter'.",
+      "question": "¿Por qué es un smell y cuál es la corrección más idiomática?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ley de Demeter: 'un objeto debe hablar solo con sus amigos INMEDIATOS'. Cadenas largas de getters revelan la estructura interna de otros objetos y acoplan al llamador a esa estructura. Fix: mover la lógica al objeto que tiene la información. `order.getTaxRate()` — Order lo delega internamente si hace falta.", "correct": true, "why": "Correcto. LoD (aka 'principle of least knowledge') dice que un método M de una clase C solo debe invocar métodos de: (1) C misma; (2) parámetros de M; (3) objetos creados dentro de M; (4) campos directos de C. `order.getCustomer().getAddress()` viola porque llama a getAddress() sobre algo que no es amigo directo. Fix: encapsular la cadena en un método de Order (Tell Don't Ask)." },
+        { "letter": "B", "text": "El problema es performance — hay 4 llamadas a método.", "correct": false, "why": "Falso. 4 llamadas son triviales en performance. El problema es de DISEÑO/ACOPLAMIENTO, no performance." },
+        { "letter": "C", "text": "Solo un tema estético. Funciona correctamente.", "correct": false, "why": "Funciona hoy, pero: (1) cualquier cambio en Customer o Address rompe Order; (2) el llamador conoce demasiado sobre estructura interna; (3) tests requieren mockear la cadena entera; (4) viola Tell Don't Ask." },
+        { "letter": "D", "text": "Es un patrón de builder — no viola nada.", "correct": false, "why": "Builder es cadena de métodos que RETORNAN this en el mismo objeto (fluent interface). Aquí cada getter devuelve OTRO objeto — 'train wreck', LoD violation." }
+      ],
+      "explanation": "LoD reduce acoplamiento entre módulos. Beneficios: (1) cambios internos en Customer no afectan Order; (2) tests más simples (no hay que mockear toda la cadena); (3) refactor más seguro. Excepciones legítimas: fluent APIs (StringBuilder, jQuery), builders (que retornan this — no navegan a otros objetos), DTOs (structs sin comportamiento). Regla mental: 'no talk to strangers'. Si necesitas info profunda, pide al vecino que la traiga.",
+      "realWorld": "Google guidelines de Java desincentivan train wrecks. El libro 'Object Design' de Rebecca Wirfs-Brock enfatiza Tell Don't Ask. En Rails, ActiveRecord delegate ayuda: `delegate :country, to: :address`. En Java: métodos wrapper. La cadena larga es a menudo síntoma de Feature Envy (código de Order que envidia info de Customer).",
+      "tags": ["law of demeter", "tell don't ask", "acoplamiento", "train wreck"],
+      "tech": [],
+      "references": [{ "title": "Karl Lieberherr — 'Assuring good style for object-oriented programs', IEEE 1989" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "patterns",
+      "topic": "Adapter vs Facade",
+      "difficulty": "senior",
+      "scenario": "Migras de un cliente HTTP A (legacy, feo, difícil de usar) a un cliente HTTP B (moderno). Muchos módulos usan A. Un desarrollador propone crear una clase que 'envuelve A y expone la API de B para minimizar cambios'. Otro propone 'crear una clase que expone una API simple, hidando la complejidad de ambos'.",
+      "question": "¿Cuál es Adapter y cuál es Facade?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Adapter: convierte interfaz de una clase a OTRA interfaz que el cliente espera (adapta A para que parezca B). Facade: crea una interfaz SIMPLIFICADA sobre un subsistema complejo (esconde la fealdad). El primero es Adapter (envuelve A con API de B); el segundo es Facade (nueva API simple).", "correct": true, "why": "Correcto. Adapter tiene target concreto (una interfaz existente). Facade INVENTA una interfaz nueva simple. Ambos son wrappers pero con propósitos distintos. Adapter útil para migrar / integrar librerías incompatibles; Facade para simplificar acceso a un subsistema (ej. AuthFacade que oculta OAuth + JWT + refresh)." },
+        { "letter": "B", "text": "Son sinónimos.", "correct": false, "why": "Falso. Ambos wrappers, pero con intenciones distintas." },
+        { "letter": "C", "text": "Adapter siempre añade lógica, Facade es solo delegation.", "correct": false, "why": "Ambos pueden añadir lógica. La distinción es sobre TARGET (interfaz existente vs interfaz nueva)." },
+        { "letter": "D", "text": "Facade siempre es una clase única, Adapter puede ser múltiples.", "correct": false, "why": "Distinción irrelevante. Ambos pueden ser una o varias clases según el caso." }
+      ],
+      "explanation": "Patrones de wrapper (GoF): (1) Adapter — convierte interfaz A → interfaz B; (2) Facade — inventa interfaz simple sobre subsistema complejo; (3) Proxy — misma interfaz pero añade control (lazy, security, cache); (4) Decorator — misma interfaz pero añade responsabilidades apiladas. Elegir el correcto depende de la INTENCIÓN, no solo la mecánica de envolver. Adapter tiene sabor de integración/migración; Facade de simplificación; Proxy de intercepción transparente; Decorator de composición ortogonal.",
+      "realWorld": "SLF4J es un Adapter — te da una API uniforme sobre Log4j, Logback, java.util.logging. Spring's JdbcTemplate es un Facade sobre JDBC (que es horrible). GraphQL es un Facade sobre múltiples microservicios REST. AWS SDK v2 tiene Adapters para el estilo v1.",
+      "tags": ["adapter", "facade", "wrapper", "GoF"],
+      "tech": ["SLF4J", "JdbcTemplate", "GraphQL"],
+      "references": [{ "title": "GoF — 'Design Patterns' Structural" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "patterns",
+      "topic": "Anti-patrón: God Object / God Class",
+      "difficulty": "mid",
+      "scenario": "Heredas un módulo con clase `UserManager` de 4500 líneas: crea usuarios, autentica, envía emails, genera reportes, exporta CSV, gestiona sesiones, calcula estadísticas de uso, y controla permisos.",
+      "question": "¿Cuál es el anti-patrón y la estrategia de refactor?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "God Object / God Class: viola SRP masivamente. Estrategia: (1) identificar 'clusters' de responsabilidad (auth, notifications, reporting); (2) extraer clases nuevas usando 'Extract Class' (Fowler); (3) hacer refactor incremental con tests como red. NO reescribir de cero.", "correct": true, "why": "Correcto. God Class es de los smells más comunes en legacy — código que absorbe responsabilidades hasta ser inmantenible. Refactor: characterization tests + Extract Class incremental (AuthService, NotificationService, ReportService, PermissionService). Cada uno con SRP. UserManager queda solo con coordinación mínima o desaparece." },
+        { "letter": "B", "text": "Dependency Inversion Violation.", "correct": false, "why": "Diagnóstico parcial y no principal. El smell primario es exceso de responsabilidades, no dependencias a concretas." },
+        { "letter": "C", "text": "Es un design intencional — 'user' es su núcleo, todo alrededor de user va aquí.", "correct": false, "why": "Racionalización de God Class. Que las funcionalidades tengan a user como parámetro no las hace la misma responsabilidad. Notifications de user, reports de user, auth de user son responsabilidades DISTINTAS que responden a actores distintos." },
+        { "letter": "D", "text": "Reescribir desde cero es la única solución.", "correct": false, "why": "Anti-patrón conocido ('second system syndrome'). Rewrites masivos casi siempre fracasan. Refactor incremental gana." }
+      ],
+      "explanation": "God Class es acumulación gradual de código en un módulo 'central'. Aparece por: (1) falta de rigor arquitectural; (2) 'está ahí, lo añado también'; (3) miedo a crear nuevas clases. Refactor: (1) tests de red primero; (2) extract class por cluster; (3) rename clases quedando; (4) eventualmente la god class desaparece o queda como fachada delgada. Herramientas: SonarQube, static analysis detectan god classes automáticamente. Métricas: LOC, cyclomatic complexity, fan-out.",
+      "realWorld": "El infame `UserService` de LinkedIn 2011 tenía miles de líneas y fue refactorizado durante años. Twitter monolith Rails tenía God Models como User de miles de líneas — parte del incentivo para migrar a Scala + microservicios. En sistemas legacy, casi siempre encuentras uno o más God Classes.",
+      "tags": ["god object", "anti-patrón", "SRP", "legacy"],
+      "tech": ["SonarQube", "static analysis"],
+      "references": [{ "title": "Fowler — 'Refactoring' Ch. 3 Bad Smells" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "patterns",
+      "topic": "CQRS — cuándo lo introducimos",
+      "difficulty": "staff",
+      "scenario": "Sistema de e-commerce. Los admins reportan que los dashboards de ventas hacen queries lentas que impactan el checkout (mismo DB). Un ingeniero propone 'CQRS: separar el modelo de escritura del modelo de lectura'.",
+      "question": "¿Cuáles afirmaciones sobre CQRS son CIERTAS?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CQRS separa el modelo/DB para writes (commands) del modelo/DB para reads (queries). Permite optimizar cada lado independientemente: writes en Postgres normalizado, reads en views/Elasticsearch/read replicas.", "correct": true, "why": "Correcto. Los patrones de acceso de writes (transaccionales, integridad) y reads (agregaciones, joins, búsqueda) son muy distintos. Separarlos permite: (1) escalar reads con replicas; (2) usar storage optimizado por caso (Elasticsearch para búsqueda, columnstore para analytics); (3) evitar que reads pesadas afecten writes." },
+        { "letter": "B", "text": "CQRS introduce consistencia EVENTUAL entre write model y read model. El cliente puede leer datos ligeramente antiguos después de un write.", "correct": true, "why": "Correcto y es el TRADE-OFF crítico. La sincronización asincrona (event bus, CDC, replica lag) introduce delay. Debe diseñarse para UX (leer tu propia escritura tras un command puede requerir workaround: read-your-writes consistency, session affinity)." },
+        { "letter": "C", "text": "CQRS es sobre-ingeniería para 99% de aplicaciones. Solo justifica en sistemas de alta escala con patrones de acceso muy distintos entre reads y writes.", "correct": true, "why": "Correcto. CQRS añade complejidad significativa (dos modelos, sincronización, consistencia eventual). Para un CRUD normal, un solo modelo con read replicas es suficiente. Introducirlo prematuramente es costoso. Regla: cuando el read model divergiría MUCHO del write model, considera CQRS." },
+        { "letter": "D", "text": "CQRS siempre requiere Event Sourcing.", "correct": false, "why": "Falso. CQRS y Event Sourcing son ORTOGONALES aunque frecuentemente combinados. Puedes hacer CQRS con Postgres para writes y Elasticsearch para reads, sincronizando por eventos de app o CDC (Debezium) — sin event sourcing." },
+        { "letter": "E", "text": "Es un patrón moderno inventado por AWS.", "correct": false, "why": "Falso. Fue formalizado por Greg Young en 2010, basado en trabajos previos de Bertrand Meyer (Command-Query Separation, 1988). Preexistente a AWS." }
+      ],
+      "explanation": "CQRS = Command Query Responsibility Segregation. Separa modelos, no necesariamente DBs. Uso apropiado: (1) reads MUY distintos de writes (analytics, search); (2) escala independiente (10000x more reads than writes); (3) requisitos de UI que no encajan con normalización de escritura. Costos: complejidad de sincronización, debugging cross-model, consistencia eventual. Alternativas más baratas: read replicas del mismo modelo, cache, materialized views. Introducirlo cuando la ganancia justifica la deuda.",
+      "realWorld": "Amazon usa CQRS masivamente: catálogo (read) vs orders (write) están en sistemas totalmente distintos. eBay migró de monolítico a CQRS en 2010s. Uber usa CQRS para location tracking (write masivo) vs discovery (read). En casos más simples, es sobre-diseño — muchas startups lo introducen sin necesidad real.",
+      "tags": ["CQRS", "arquitectura", "consistencia eventual", "read/write"],
+      "tech": ["Postgres", "Elasticsearch", "Debezium"],
+      "references": [{ "title": "Greg Young — 'CQRS Documents'" }, { "title": "Bertrand Meyer — 'Object-Oriented Software Construction'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "patterns",
+      "topic": "Anti-patrón: Anemic Domain Model",
+      "difficulty": "staff",
+      "scenario": "Un sistema DDD tiene: (1) entities con solo getters/setters (`User` con firstName, lastName, email); (2) toda la lógica de negocio en 'services' (`UserService.validateEmail(user)`, `UserService.calculateAge(user)`, `UserService.canPurchase(user, item)`). Un consultor visita y dice: 'esto es DDD anémico — no es DDD'.",
+      "question": "¿Qué es Anemic Domain Model y cuál es la corrección arquitectural?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Anemic Domain Model (Fowler): entities son solo bags of getters/setters, la lógica está en services procedurales. Es programación estructurada disfrazada de OOP. Fix: mover comportamiento a las entities. `user.canPurchase(item)`, `user.calculateAge()`. Services quedan como orquestadores delgados.", "correct": true, "why": "Correcto. Fowler acuñó el término en 2003. El anti-patrón: se PARECE a OOP (clases, propiedades) pero es procedural (funciones sobre estructuras). Pierde beneficios de OOP: encapsulamiento, polimorfismo, Tell Don't Ask. Fix: la lógica que OPERA sobre los datos de la entity DEBE VIVIR en la entity. Services solo orquestan (transacciones, workflow cross-entity)." },
+        { "letter": "B", "text": "Es diseño correcto — separar data (entities) de comportamiento (services) es más testable.", "correct": false, "why": "Es la RACIONALIZACIÓN típica. Testar user.canPurchase() es igual de fácil que UserService.canPurchase(user). El costo real: dispersión de lógica, imposibilidad de garantizar invariantes en la entity (cualquiera puede setear cualquier valor), acoplamiento fuerte a services." },
+        { "letter": "C", "text": "Anemic Model es lo mismo que DTO — ambos correctos.", "correct": false, "why": "DTOs son intencionalmente anémicos porque solo transportan datos (API boundaries, mensajes). Entities de dominio NO deberían serlo — deben capturar la LÓGICA del dominio." },
+        { "letter": "D", "text": "Es un patrón moderno que reemplaza DDD tradicional.", "correct": false, "why": "Fowler explícitamente lo identifica como ANTI-patrón. La respuesta de DDD (Evans) es rich domain model — entities con comportamiento, value objects, agregados con invariantes." }
+      ],
+      "explanation": "Anemic vs Rich Domain Model: (1) Anemic — data + services procedurales; parece OOP, es procedural. (2) Rich — entities con comportamiento, invariantes, factory methods; comportamiento junto a datos. Beneficios de rich: (1) invariantes garantizadas (no puedes setear un email inválido, el constructor rechaza); (2) tell don't ask; (3) descubribilidad — dot autocomplete muestra qué puedes hacer con user; (4) menos duplicación (validación en un solo sitio). Cuándo anemic es aceptable: DTOs, records, projections read-only. Nunca para entities del dominio real.",
+      "realWorld": "Sistemas Java enterprise de los 2000s tendían a Anemic Model por influencia de JavaBeans + EJB + Service layers. Fowler escribió 'AnemicDomainModel' (2003) para nombrar el problema. En Kotlin/F#, la sintaxis facilita rich models (data classes con métodos). Vaughn Vernon en 'Implementing DDD' (2013) enfatiza rich modeling con múltiples ejemplos.",
+      "tags": ["DDD", "anemic model", "anti-patrón", "OOP"],
+      "tech": ["Java", "Kotlin"],
+      "references": [{ "title": "Martin Fowler — 'AnemicDomainModel' (2003)" }, { "title": "Eric Evans — 'Domain-Driven Design'" }]
+    }
+  ]
+}

@@ -1,0 +1,417 @@
+{
+  "id": "devops-sim-30-api-gateways",
+  "trackId": "devops",
+  "order": 30,
+  "title": "Simulacro 30 — API Gateways",
+  "focus": "API Gateways como single entry point para microservicios. Kong, AWS API Gateway (REST vs HTTP API), Nginx, Envoy Gateway, Traefik, Apigee. Rate limiting, authentication (OAuth 2.0, API keys, JWT validation), request/response transformation. Cuando API Gateway vs service mesh vs ambos. BFF pattern. GraphQL federation. Casos reales: Netflix Zuul → Zuul 2, Airbnb migration, LinkedIn Rest.li, Google Espresso.",
+  "areaCoverage": ["networking"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "networking",
+      "topic": "¿Qué ES un API Gateway y por qué?",
+      "difficulty": "junior",
+      "scenario": "Tu empresa tiene 40 microservicios. Los clientes móviles hoy hacen requests directas a cada uno (auth-service, catalog-service, cart-service...). Cada cliente debe conocer las URLs, manejar auth de forma distinta y agregar respuestas. Un arquitecto propone poner un API Gateway como single entry point.",
+      "question": "¿Qué ES un API Gateway y qué problemas resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un API Gateway es un componente que actúa como SINGLE ENTRY POINT para requests externas hacia microservicios internos. Responsabilidades típicas: (1) routing (URL → servicio); (2) authentication/authorization centralizada; (3) rate limiting/quotas; (4) request/response transformation; (5) observability (logs, metrics, tracing); (6) TLS termination; (7) protocol translation (HTTP → gRPC, REST → GraphQL). Desacopla clientes de la topología interna de servicios.", "correct": true, "why": "Correcto. Patrón documentado en Microservices Patterns (Chris Richardson). Sin gateway: cada cliente conoce N servicios, cada servicio implementa auth/rate limit N veces. Con gateway: 1 punto de entrada, cross-cutting concerns centralizados. Netflix Zuul (2013), Amazon API Gateway (2015), Kong (2015) popularizaron el patrón." },
+        { "letter": "B", "text": "Es un load balancer que reparte tráfico entre servidores.", "correct": false, "why": "Reducción incompleta. Un LB (nginx/ALB) hace L4/L7 routing pero no maneja auth, rate limiting por API key, transformation ni policy engine. API Gateway es una capa por encima." },
+        { "letter": "C", "text": "Es lo mismo que un service mesh.", "correct": false, "why": "Confusión común. API Gateway maneja north-south traffic (externo → interno); service mesh (Istio, Linkerd) maneja east-west (servicio ↔ servicio interno). Complementarios, no equivalentes." },
+        { "letter": "D", "text": "Es un firewall que bloquea IPs maliciosas.", "correct": false, "why": "WAF (Web Application Firewall) es una función que puede estar EN el gateway o al lado, pero no es la definición. El gateway maneja mucho más que security." }
+      ],
+      "explanation": "API Gateway centraliza cross-cutting concerns: auth, rate limiting, logging, transformation. Beneficios: (a) clientes simples — 1 endpoint, no N; (b) evolución interna libre — refactor de servicios sin romper clientes; (c) policies uniformes — rate limit se define 1 vez, no 40; (d) observability holística — 1 lugar para logs/traces. Costos: (1) punto único de fallo (mitigar con HA); (2) latencia extra (~1-5ms típico); (3) puede volverse God Object si mete demasiada lógica de negocio.",
+      "realWorld": "Netflix Zuul 1 (2013) fue el primer API Gateway open-source famoso — Java + servlets bloqueantes. Escaló a billones de requests/día pero sufría de thread starvation. Rewrote Zuul 2 (2018) en Netty con non-blocking I/O. Amazon API Gateway (2015) fue el primer gateway managed serverless. Airbnb usa su propio 'API Gateway' custom escrito en Ruby/Java para 1B+ requests/día.",
+      "tags": ["API Gateway", "microservicios", "single entry point", "routing"],
+      "tech": ["Kong", "Zuul", "AWS API Gateway"],
+      "references": [{ "title": "Chris Richardson — Microservices Patterns" }, { "title": "Netflix Tech Blog — Zuul 2" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "networking",
+      "topic": "Kong Gateway — arquitectura",
+      "difficulty": "junior",
+      "scenario": "Tu equipo elige Kong como API Gateway. Es open-source, construido sobre Nginx + OpenResty (Lua). Un compañero pregunta por qué Kong es popular vs Nginx solo.",
+      "question": "¿Qué diferencia a Kong de Nginx puro y cuál es su arquitectura?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kong = Nginx + OpenResty (Lua) + plugin system + admin API + DB (PostgreSQL o DB-less mode). Kong añade sobre Nginx: (1) declarative config para services/routes/consumers; (2) 200+ plugins (rate limiting, JWT, OAuth2, ACL, transformation, logging); (3) Admin API REST para configurar en runtime; (4) dashboard (Kong Manager en Enterprise). Nginx puro requiere config manual + módulos custom en C.", "correct": true, "why": "Correcto. Kong (2015, Mashape) es esencialmente Nginx con una capa de abstracción para API gateway concerns. El plugin system Lua permite extensiones sin recompilar. DB-less mode (2019) es popular en Kubernetes." },
+        { "letter": "B", "text": "Kong es un fork de Nginx completamente reescrito.", "correct": false, "why": "Falso. Kong USA Nginx como el motor HTTP. Añade capas encima, no reescribe." },
+        { "letter": "C", "text": "Kong es más rápido que Nginx porque está escrito en Go.", "correct": false, "why": "Falso. Kong Gateway está escrito en Lua sobre OpenResty (que es Nginx + LuaJIT). Kong Ingress Controller para K8s sí tiene componentes Go, pero el data plane es Lua/Nginx." },
+        { "letter": "D", "text": "Kong requiere Kubernetes obligatoriamente.", "correct": false, "why": "Falso. Kong corre en VMs, Docker standalone, o Kubernetes. Kong Ingress Controller es una opción para K8s pero no obligatoria." }
+      ],
+      "explanation": "Kong architecture: Data Plane (Nginx workers ejecutando plugins Lua) + Control Plane (Admin API + DB o declarative YAML). Modos: (1) DB-mode con PostgreSQL — config dinámica via Admin API; (2) DB-less — config declarativa en YAML (kong.yaml), ideal para GitOps/K8s; (3) Hybrid — control plane centralizado + data planes distribuidos. Plugins ejecutan en fases del request cycle: certificate, rewrite, access (auth, rate limit), header_filter, body_filter, log. Performance: ~50k req/s por node en HW modesto.",
+      "realWorld": "Kong es usado por Cisco, Yahoo Japan, SAP, Rakuten. Kong Konnect (SaaS 2020) compite con Apigee/AWS. En 2023 Kong reportó 400M+ downloads de la imagen Docker. Alternativas: Tyk (Go), APISIX (Apache, Lua también), Gravitee.",
+      "tags": ["Kong", "Nginx", "OpenResty", "plugins", "Lua"],
+      "tech": ["Kong", "Nginx", "OpenResty", "PostgreSQL"],
+      "references": [{ "title": "Kong Docs — Architecture" }, { "title": "OpenResty — Nginx + LuaJIT" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "networking",
+      "topic": "AWS API Gateway — REST API vs HTTP API",
+      "difficulty": "mid",
+      "scenario": "En AWS creas un API Gateway y ves dos opciones: 'REST API' y 'HTTP API'. Ambas dicen ser 'HTTP'. Un compañero elige REST API 'porque nuestro backend es REST', pero el costo es 3.5x mayor y la latencia también mayor.",
+      "question": "¿Cuál es la diferencia real entre AWS API Gateway REST API y HTTP API?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "REST API (v1, 2015) = feature-rich, legacy: API keys built-in, request/response transformation (VTL templates), WAF integration nativa, private APIs con VPC endpoints, usage plans, SDK generation, caching. HTTP API (v2, 2019) = simplified, 60-70% más barato, hasta 60% menor latencia, soporta JWT/OIDC nativo, CORS built-in, pero NO tiene: request validation avanzada, VTL transformation, API keys nativas, caching, edge-optimized. Elección: HTTP API por default (más barato y rápido); REST API solo si NECESITAS features específicos (WAF, VTL, edge, private).", "correct": true, "why": "Correcto. El nombre confunde: 'REST API' vs 'HTTP API' NO se refiere al protocolo del backend (ambos sirven HTTP y ambos aceptan REST). Se refiere a la generación del gateway. HTTP API es la v2 más moderna, minimalista y barata." },
+        { "letter": "B", "text": "REST API sirve HTTP; HTTP API sirve HTTP/2 y WebSockets.", "correct": false, "why": "Falso. WebSockets es una tercera opción separada (WebSocket API). HTTP API sí soporta HTTP/2 pero REST API también en edge-optimized." },
+        { "letter": "C", "text": "REST API es para backends REST; HTTP API es para backends gRPC.", "correct": false, "why": "Falso. Ambos soportan HTTP hacia el backend. gRPC no está soportado directamente en AWS API Gateway (usar ALB/NLB o AppMesh)." },
+        { "letter": "D", "text": "HTTP API es solo para desarrollo; REST API para producción.", "correct": false, "why": "Falso. HTTP API es producción-ready y usado por miles de empresas. La diferencia es features, no ambiente." }
+      ],
+      "explanation": "AWS API Gateway pricing (us-east-1, aprox 2024): REST API $3.50/millón requests + data transfer; HTTP API $1.00/millón. Latencia típica: HTTP API adds ~5-10ms; REST API ~15-30ms (por VTL processing). Cuándo usar cada uno: HTTP API si (a) auth simple JWT/OIDC/IAM/Lambda; (b) proxy simple a Lambda/ALB/NLB/HTTP endpoint; (c) costo importa. REST API si (a) necesitas WAF managed; (b) request/response transformation compleja con VTL; (c) usage plans + API keys managed; (d) private API con VPC endpoints; (e) caching en gateway; (f) SDK generation para clientes.",
+      "realWorld": "En re:Invent 2019 AWS lanzó HTTP API precisamente porque customers pedían algo más simple/barato que REST API. Muchas empresas migran de REST API a HTTP API cuando no necesitan features avanzados. AppRunner y Lambda Function URLs son alternativas aún más simples para casos sencillos.",
+      "tags": ["AWS API Gateway", "REST API", "HTTP API", "pricing", "latencia"],
+      "tech": ["AWS API Gateway", "AWS Lambda"],
+      "references": [{ "title": "AWS Docs — Choosing between REST APIs and HTTP APIs" }, { "title": "AWS re:Invent 2019 — HTTP APIs launch" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "networking",
+      "topic": "Nginx como API Gateway",
+      "difficulty": "mid",
+      "scenario": "Tu startup no quiere adoptar Kong/Apigee todavía. Un compañero propone: 'usamos Nginx como API Gateway — es lo que ya conocemos, es rápido, gratis, y podemos configurar rate limiting, upstream routing y JWT validation con módulos'.",
+      "question": "¿Cuáles son ventajas y límites de usar Nginx puro como API Gateway?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ventaja: rendimiento excelente. Nginx maneja 100k+ req/s en HW modesto, latencia sub-milisegundo. Consume memoria/CPU predecible incluso bajo carga.", "correct": true, "why": "Correcto. Nginx es event-driven (single thread per worker) — muy eficiente. Es el web server más usado del mundo (Netflix, Dropbox, Airbnb, Wikipedia). Como gateway simple es sólido." },
+        { "letter": "B", "text": "Ventaja: configurable como gateway con proxy_pass, upstream blocks, limit_req_zone (rate limiting), auth_request module para JWT/OAuth externo. Nginx Plus (comercial) añade active health checks, dynamic reconfiguration, JWT validation nativa.", "correct": true, "why": "Correcto. Nginx puro puede hacer routing, rate limit por IP/header, TLS termination, response caching. Módulos como ngx_http_auth_jwt_module (Plus) validan JWTs. Muchas empresas usan Nginx como gateway simple." },
+        { "letter": "C", "text": "Límite: gestión de config declarativa es dolorosa. Cambiar rutas requiere editar nginx.conf y reload. Sin admin API en OSS (existe en Plus). No hay concepto nativo de 'consumer' (API key + quota + plan) — hay que construir custom con Lua/OpenResty.", "correct": true, "why": "Correcto. Kong existe precisamente porque Nginx puro requiere trabajo manual para features de API Management. Añadir un API key + quota + usage plan a Nginx = escribir lógica Lua. Con Kong = 3 llamadas a Admin API." },
+        { "letter": "D", "text": "Límite: no hay plugin ecosystem con soluciones ready-made (OAuth2, OpenID Connect, JWT introspection, IP restriction avanzada, request transformation compleja). Hay que escribir Lua o depender de módulos comerciales de Nginx Plus.", "correct": true, "why": "Correcto. Nginx tiene módulos pero no un ecosystem tan rico como Kong plugins o Apigee. Para casos avanzados (mTLS a upstream, OAuth introspection cache, quota por consumer, transformación JSON compleja), es más productivo un gateway dedicado." },
+        { "letter": "E", "text": "Nginx no puede hacer TLS termination.", "correct": false, "why": "Falso. Nginx hace TLS termination excepcionalmente bien — es una de sus funciones principales desde 2004." }
+      ],
+      "explanation": "Nginx como gateway 'ligero' es válido para: (1) startups pequeñas; (2) internal APIs; (3) reverse proxy con auth delegada a upstream; (4) cuando ya lo dominas y no quieres nueva dependencia. Nginx como gateway 'pesado' (multi-tenant, developer portal, complex policies) es incómodo — usa Kong/APISIX/Tyk que están construidos sobre Nginx pero añaden abstracciones. OpenResty (Nginx + LuaJIT) permite escribir gateway custom en Lua — pero entonces estás construyendo Kong desde cero. Regla: si solo necesitas proxy + TLS + rate limit por IP + JWT básico → Nginx. Si necesitas developer portal + quotas + plans + policies complejas → gateway dedicado.",
+      "realWorld": "Cloudflare usa una fork custom de Nginx (ahora migrando a Pingora en Rust) para proxy edge. GitHub usa Nginx delante de sus APIs. Muchas empresas Fortune 500 usan Nginx Plus como gateway. APISIX y Kong son ambos Nginx internamente — demuestra la solidez del engine.",
+      "tags": ["Nginx", "API Gateway", "reverse proxy", "OpenResty"],
+      "tech": ["Nginx", "OpenResty", "Nginx Plus"],
+      "references": [{ "title": "Nginx as an API Gateway (Nginx Blog)" }, { "title": "OpenResty Documentation" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "networking",
+      "topic": "Rate limiting — algoritmos",
+      "difficulty": "mid",
+      "scenario": "Configuras rate limiting en tu API Gateway. Un compañero pregunta cuál algoritmo usar: Fixed Window, Sliding Window, Token Bucket o Leaky Bucket. Cada uno tiene trade-offs.",
+      "question": "¿Cuáles son las diferencias entre estos algoritmos de rate limiting?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Fixed Window: cuenta requests en ventanas fijas (ej: 100 req/minuto por reloj). Simple e implementable con Redis INCR + EXPIRE. Problema: 'burst en el borde' — un cliente puede hacer 100 req en el segundo 59 del minuto 1 y 100 más en el segundo 0 del minuto 2 = 200 req en 2 segundos.", "correct": true, "why": "Correcto. Fixed window es el más simple pero el menos justo. Usado en Redis rate limiter básico. Aceptable para límites laxos o cuando el burst en el borde no es crítico." },
+        { "letter": "B", "text": "Sliding Window Log: guarda timestamp de cada request y cuenta cuántos entran en la ventana móvil. Preciso pero memoria = O(N requests). Sliding Window Counter: aproximación híbrida — cuenta ventana actual + weighted % de ventana previa. Buena precisión con memoria O(1).", "correct": true, "why": "Correcto. Sliding window es más fair que fixed. La versión 'counter' es la más usada en producción por ser eficiente. Cloudflare la usa. Kong tiene ambos modos." },
+        { "letter": "C", "text": "Token Bucket: bucket con capacidad C, se rellena a rate R tokens/segundo. Cada request consume 1 token. Si hay tokens → pasa; si no → rechaza. Permite BURSTS (hasta C requests instantáneos) pero enforce rate promedio R. Ideal para APIs que quieren tolerar picos legítimos pero limitar el rate sostenido.", "correct": true, "why": "Correcto. Token bucket es el algoritmo más usado en gateways serios (AWS API Gateway, Envoy, Stripe). Permite ráfagas legítimas. AWS API Gateway usa token bucket para quotas ('burst' = capacidad C, 'rate' = R)." },
+        { "letter": "D", "text": "Leaky Bucket: bucket con salida constante — requests llegan y se procesan a rate fijo, cualquier exceso se descarta. NO permite bursts. Útil para SUAVIZAR tráfico (traffic shaping) hacia un backend frágil, no para rate limiting de user-facing APIs.", "correct": true, "why": "Correcto. Leaky bucket enforce rate CONSTANTE. Es rígido — bueno para proteger un backend que no tolera picos (base de datos legacy). Menos usado que token bucket porque los usuarios odian que se les rechace bursts pequeños." },
+        { "letter": "E", "text": "Todos estos algoritmos son equivalentes.", "correct": false, "why": "Falso. Cada uno tiene semántica distinta (permite bursts o no, precisión temporal, memoria). Elegir el equivocado causa UX pobre o cost overrun." }
+      ],
+      "explanation": "En producción: (1) Token Bucket es el default moderno — permite bursts controlados; (2) Sliding Window Counter para límites estrictos con fairness; (3) Fixed Window solo para prototipos o límites laxos; (4) Leaky Bucket para traffic shaping upstream. Dimensiones de rate limiting: (a) por IP — DDoS defense; (b) por API key — plans/quotas; (c) por user — fair use; (d) por endpoint — proteger endpoints caros. Storage: in-memory (por instancia, requires session affinity o consistent hashing), Redis (compartido, source of truth), local + gossip (Envoy global rate limit service). Cuidado: rate limiting distribuido con eventual consistency puede permitir sobrepasar el límite bajo alta concurrencia — usar Redis con Lua scripts para atomicity.",
+      "realWorld": "Stripe publicó blog post famoso sobre su rate limiting basado en token bucket (2017). GitHub usa sliding window con headers X-RateLimit-Remaining. Twitter usó fixed window; ahora token bucket. Kong tiene plugin rate-limiting (fixed/sliding) y rate-limiting-advanced (token bucket, sliding window counter en Enterprise).",
+      "tags": ["rate limiting", "token bucket", "sliding window", "leaky bucket"],
+      "tech": ["Redis", "Kong", "Envoy"],
+      "references": [{ "title": "Stripe Engineering — Scaling your API with rate limiters" }, { "title": "Cloudflare Blog — Sliding window rate limiter" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "networking",
+      "topic": "Authentication — OAuth 2.0 en gateway",
+      "difficulty": "mid",
+      "scenario": "Tu API expone endpoints /orders, /users, /admin. Cada uno requiere permisos distintos. Un cliente móvil hace login y obtiene un OAuth 2.0 access token del IdP (Auth0/Okta/Keycloak). El gateway debe validar el token en cada request.",
+      "question": "¿Cómo debe el API Gateway validar OAuth 2.0 access tokens?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dos estrategias principales: (1) INTROSPECTION — llamar al IdP en cada request (RFC 7662): POST /introspect con el token, IdP responde {active: true, scope: 'read:orders', sub: 'user123'}. Precisa (revocación inmediata) pero AÑADE latencia (1 llamada extra por request) — mitigar con cache corto (30-60s). (2) JWT LOCAL VALIDATION — si el IdP emite JWTs firmados (RS256), el gateway descarga JWKS (JSON Web Key Set) del IdP UNA VEZ, cachea las public keys, y valida firma + claims LOCALMENTE. Sin latencia extra, pero revocación es tardía (hasta que expira el JWT).", "correct": true, "why": "Correcto. Trade-off clásico: introspection = accurate pero lento; JWT local = rápido pero revocación diferida. En producción se usa JWT local con tokens cortos (15min-1h) + refresh tokens. Introspection para casos que requieren revocación instantánea (banking)." },
+        { "letter": "B", "text": "El gateway debe hacer login OAuth en cada request.", "correct": false, "why": "Falso. Login es en el cliente. El gateway solo valida tokens que ya recibió el cliente. Hacer login en gateway = 3+ round trips extra." },
+        { "letter": "C", "text": "El gateway debe pasar el token directamente al backend sin validar.", "correct": false, "why": "Anti-patrón. El backend debería confiar en un token ya validado (con claims verificados) y no re-validar. Además, permitir tokens inválidos ocupa recursos del backend inútilmente." },
+        { "letter": "D", "text": "OAuth 2.0 no es adecuado para gateways.", "correct": false, "why": "Falso. OAuth 2.0 es EL estándar para API auth. Gateways como Kong (oauth2 plugin), AWS API Gateway (Cognito authorizer), Apigee (OAuthV2 policy) lo soportan nativamente." }
+      ],
+      "explanation": "OAuth 2.0 flows relevantes: (1) Authorization Code (con PKCE para mobile/SPA) — user-facing apps; (2) Client Credentials — machine-to-machine (M2M); (3) Refresh Token — renovar access tokens. El access token puede ser opaco (requires introspection) o JWT (self-contained). Best practices: (a) tokens cortos (15min) + refresh tokens (días); (b) validar issuer, audience, expiration, signature; (c) validar scopes contra el endpoint solicitado (scope 'read:orders' para GET /orders); (d) cachear JWKS con TTL de 1h y refresh en background; (e) implementar 'kid' (key ID) rotation. Cuidado con 'alg: none' attack (rechazar tokens no firmados).",
+      "realWorld": "Auth0, Okta, Keycloak, AWS Cognito son IdPs comunes. Google usa OAuth 2.0 para Google APIs (Gmail, Drive, YouTube). El OAuth 2.0 spec (RFC 6749) es de 2012; OAuth 2.1 (draft) consolida best practices. OpenID Connect (2014) añade capa de identidad sobre OAuth 2.0.",
+      "tags": ["OAuth 2.0", "authentication", "JWT", "introspection", "JWKS"],
+      "tech": ["Auth0", "Okta", "Keycloak", "Kong"],
+      "references": [{ "title": "RFC 6749 — OAuth 2.0 Framework" }, { "title": "RFC 7662 — OAuth 2.0 Token Introspection" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "networking",
+      "topic": "API Keys vs JWT — cuándo usar cada uno",
+      "difficulty": "mid",
+      "scenario": "Tu API tiene dos tipos de clientes: (1) partners B2B que consumen APIs desde sus backends (server-to-server); (2) app móvil de usuarios finales. Un compañero propone usar API keys para todos; otro dice usar JWT para todos.",
+      "question": "¿Cuál es la elección correcta de auth para cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Partners B2B (M2M): API KEYS (o OAuth 2.0 Client Credentials → JWT). API keys son simples, long-lived, asociadas a un consumer con quota/plan. Ideal para server-to-server porque el cliente puede almacenar el secret de forma segura. Usuarios finales (mobile/web): OAUTH 2.0 + JWT. NO usar API keys porque no puedes almacenar secret de forma segura en un móvil/browser. JWT contiene identidad del usuario, claims, scopes, y expira rápido. Auth code flow (con PKCE) + refresh tokens.", "correct": true, "why": "Correcto. La distinción es sobre IDENTIDAD y STORAGE. API key = 'esta APP tiene acceso' (identidad = app). JWT/OAuth = 'este USUARIO autorizó a esta app'. Móvil no puede guardar secretos long-lived de forma segura (reverse engineering); usa tokens cortos + refresh." },
+        { "letter": "B", "text": "Usar API keys para todos porque es más simple.", "correct": false, "why": "Peligroso. En mobile app, la API key va embebida en el binario — cualquier atacante la extrae con jadx/hopper y hace requests como si fuera tu app. Sin identidad de usuario tampoco puedes auditar 'quién hizo esta acción'." },
+        { "letter": "C", "text": "Usar JWT para todos porque es el estándar moderno.", "correct": false, "why": "Sobre-ingeniería para M2M. JWT expira — un partner tendría que renovar cada hora, complica su integración. API key es más simple y suficiente para trust relationship establecida." },
+        { "letter": "D", "text": "Usar mTLS solamente sin auth adicional.", "correct": false, "why": "mTLS es útil (autentica el canal) pero no identifica al usuario dentro del cliente. Complementario a OAuth/JWT, no sustituto." }
+      ],
+      "explanation": "Matriz de decisión: (1) M2M interno (microservicios): mTLS (service mesh identity); (2) M2M externo (partners): API keys o OAuth Client Credentials; (3) B2C mobile/web: OAuth 2.0 Auth Code + PKCE → JWT access token corto + refresh token; (4) B2B con user delegation: OAuth 2.0 con user consent. API key storage en gateway: hash en DB (nunca plaintext), asociar con consumer + plan + quota. JWT en gateway: validar sig con JWKS pública, verificar iss/aud/exp/nbf, extraer claims al header (X-User-Id) para el backend. Rotation: API keys deben rotarse manualmente (dar UI a partners); JWT auto-rotan al re-login.",
+      "realWorld": "Stripe usa API keys (sk_live_...) para M2M — el estándar de facto en fintech. Google Cloud APIs usan OAuth 2.0 + API keys. AWS usa AWS SigV4 (variant de HMAC signing). GitHub soporta ambos: personal access tokens (API keys) y OAuth apps.",
+      "tags": ["API keys", "JWT", "OAuth 2.0", "authentication"],
+      "tech": ["OAuth 2.0", "JWT"],
+      "references": [{ "title": "Stripe API — Authentication" }, { "title": "OAuth 2.0 for Native Apps (RFC 8252)" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "networking",
+      "topic": "JWT validation — signature verification",
+      "difficulty": "mid",
+      "scenario": "Tu gateway valida JWTs. El IdP emite tokens con RS256 (RSA + SHA-256). El header del JWT dice: `{\"alg\":\"RS256\",\"kid\":\"key123\",\"typ\":\"JWT\"}`. El payload tiene claims: `{iss, aud, sub, exp, iat, scope}`.",
+      "question": "¿Qué debe validar el gateway al procesar un JWT (más allá de decodificarlo)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SIGNATURE: obtener la public key del IdP via JWKS endpoint (usualmente /.well-known/jwks.json), buscar por 'kid' del header, verificar la firma RS256 sobre header.payload. RECHAZAR si signature inválida o si alg='none' (attack conocido). Cachear JWKS con TTL 1h + refresh en background.", "correct": true, "why": "Correcto. Signature es lo primero — sin ella, cualquiera puede fabricar tokens. RS256 = firma asimétrica (IdP tiene private key, gateway solo public). Bug histórico: librerías que aceptan alg='none' (permite tokens sin firma) — CVE-2015-9235 (node-jsonwebtoken)." },
+        { "letter": "B", "text": "TIMESTAMPS: verificar 'exp' (expiration) > ahora, 'nbf' (not before) < ahora, 'iat' (issued at) razonable (no futuro). Rechazar tokens expirados con 401. Aceptar leeway pequeño (30s) para clock skew entre servicios.", "correct": true, "why": "Correcto. Tokens expirados deben rechazarse SIEMPRE. Sin exp validation, un token robado sirve para siempre. Clock skew leeway es best practice porque NTP no es perfecto." },
+        { "letter": "C", "text": "ISSUER Y AUDIENCE: verificar 'iss' coincide con tu IdP configurado (https://your-idp.com/) y 'aud' coincide con tu API identifier. Previene ataques de 'confused deputy' donde un token válido para OTRA API se usa contra la tuya.", "correct": true, "why": "Correcto. iss/aud validation es crítico en entornos multi-tenant o con múltiples APIs. Sin aud check, un token de Service A puede autenticar contra Service B si comparten IdP." },
+        { "letter": "D", "text": "SCOPES/PERMISSIONS: verificar que el token tiene los scopes necesarios para el endpoint solicitado (ej: 'read:orders' para GET /orders, 'write:orders' para POST /orders). Rechazar 403 si scope insuficiente.", "correct": true, "why": "Correcto. Authentication (¿quién eres?) vs Authorization (¿puedes hacer esto?). Scope check es authorization. Un JWT válido pero sin scope 'admin:users' NO debe acceder /admin/users." },
+        { "letter": "E", "text": "Solo verificar que el token está bien formado (base64 decodifica).", "correct": false, "why": "Peligroso. Sin verificar signature/timestamps/issuer/audience/scope, un JWT es solo un JSON — cualquiera lo puede fabricar." }
+      ],
+      "explanation": "JWT structure: header.payload.signature (base64url). Validation pipeline: (1) parse — reject malformed; (2) signature — reject if invalid or alg=none; (3) exp/nbf/iat — reject expired/future; (4) iss — reject wrong issuer; (5) aud — reject wrong audience; (6) scopes — reject insufficient permissions. Common bugs: (a) trust alg header (attacker sets alg=none); (b) confuse HS256 vs RS256 (attacker firma con HS256 usando public key como secret); (c) no verify aud (confused deputy); (d) accept expired tokens; (e) JWKS cached forever (miss key rotation). Libraries reputadas: jose (Node), pyjwt (Python), jjwt (Java), go-jose.",
+      "realWorld": "Auth0, Okta, AWS Cognito emiten JWTs RS256. Kong tiene plugin JWT que valida signature + claims. AWS API Gateway HTTP API tiene JWT authorizer nativo. Attack real: en 2018, varios sistemas Ruby aceptaban tokens con alg='none' (CVE-2018-1000531).",
+      "tags": ["JWT", "validation", "RS256", "JWKS", "security"],
+      "tech": ["JWT", "OAuth 2.0"],
+      "references": [{ "title": "RFC 7519 — JSON Web Token" }, { "title": "OWASP — JWT Cheat Sheet" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "networking",
+      "topic": "Request/Response transformation",
+      "difficulty": "mid",
+      "scenario": "Tu backend legacy espera XML pero tus clientes móviles nuevos quieren JSON. También necesitas: añadir header X-Request-ID a cada request upstream, remover header interno X-Internal-Secret de respuestas al cliente, renombrar 'user_id' → 'userId' en el body de respuesta.",
+      "question": "¿Cómo maneja un API Gateway estas transformaciones?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los gateways ofrecen transformation policies en fases del request cycle: (1) request-transformer — modifica headers, query params, body ANTES de reenviar al upstream (añadir X-Request-ID, convertir JSON→XML, renombrar campos); (2) response-transformer — modifica headers y body DESPUÉS del upstream y ANTES del cliente (remover X-Internal-Secret, XML→JSON, renombrar user_id→userId). Kong tiene plugins request-transformer/response-transformer; AWS API Gateway REST API tiene VTL templates (Velocity); Apigee tiene AssignMessage/JSONtoXML policies; Envoy tiene Lua filters.", "correct": true, "why": "Correcto. Transformation en gateway es súper útil para (a) desacoplar clientes de formato backend legacy; (b) enriquecer requests con metadata (request ID, trace context); (c) sanitizar responses (remover PII, secrets internos). Cuidado: transformaciones complejas de negocio no van en gateway (crea God Object)." },
+        { "letter": "B", "text": "El gateway no puede transformar — hay que modificar el backend.", "correct": false, "why": "Falso. Transformation es feature nativa de casi todos los gateways serios. Modificar backend legacy no siempre es viable (equipo distinto, sistema tercero, etc.)." },
+        { "letter": "C", "text": "El cliente debe hacer la transformación.", "correct": false, "why": "Anti-patrón. Fuerza a cada cliente (mobile iOS, mobile Android, web, partners) a implementar la misma lógica de transformación. Centralizar en gateway es el punto." },
+        { "letter": "D", "text": "Solo AWS API Gateway REST API puede hacer transformation.", "correct": false, "why": "Falso. Kong, Apigee, Nginx (con Lua), Envoy (con Lua/WASM filters), Traefik (middlewares limitados), Tyk todos soportan transformation." }
+      ],
+      "explanation": "Casos legítimos de transformation en gateway: (1) protocol translation (SOAP↔REST, REST↔GraphQL, HTTP↔gRPC); (2) format translation (XML↔JSON); (3) header manipulation (add tracing, remove secrets); (4) versioning (v1 client → v2 backend con field renames); (5) response filtering (remover campos PII para clients menos privilegiados). Casos MALOS de transformation: (1) lógica de negocio (calcular precios, validar reglas); (2) orchestration multi-servicio (mejor: BFF layer); (3) transformaciones complejas que dependen de state. Regla: transformation en gateway = stateless, side-effect free, testable en aislamiento.",
+      "realWorld": "Netflix Zuul filters escritos en Groovy transforman requests/responses en el edge. Apigee es famoso por sus policies XSLT/XPath para clients SOAP legacy. AWS API Gateway REST API usa VTL (Apache Velocity Template Language) — poderoso pero críptico. Envoy WASM filters (2020+) permiten transformation en cualquier lenguaje compilable a WASM (Rust, Go, C++).",
+      "tags": ["transformation", "request", "response", "policies"],
+      "tech": ["Kong", "AWS API Gateway", "Apigee", "Envoy"],
+      "references": [{ "title": "Kong Plugin Hub — Request/Response Transformer" }, { "title": "AWS API Gateway — Mapping templates (VTL)" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "networking",
+      "topic": "API Gateway vs Service Mesh vs ambos",
+      "difficulty": "senior",
+      "scenario": "Un arquitecto propone: 'ya tenemos Istio como service mesh, no necesitamos API Gateway'. Otro dice: 'ya tenemos Kong como API Gateway, no necesitamos service mesh'. Ambos usan mTLS y hacen observability.",
+      "question": "¿Cuándo usar API Gateway, cuándo Service Mesh, cuándo ambos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SON COMPLEMENTARIOS, no equivalentes. API Gateway = NORTH-SOUTH (tráfico externo → interno): auth de usuarios externos, rate limiting por API key, developer portal, plans/quotas, request/response transformation. Service Mesh = EAST-WEST (servicio ↔ servicio interno): mTLS entre pods, retries automáticos, circuit breakers, service discovery, traffic splitting para canary. Empresas medianas/grandes usan AMBOS: gateway en el edge (Kong/AWS API Gateway/Envoy Gateway) + mesh internamente (Istio/Linkerd). Empresas pequeñas: solo gateway (mesh añade complejidad significativa).", "correct": true, "why": "Correcto. Es el consenso de industria (Solo.io, HashiCorp, Google Cloud). Gateway y mesh se especializan en flujos distintos. El error común es intentar hacer 'todo con uno' — resulta en Gateway pesado que hace east-west (mal) o Mesh pesado que hace developer portal (mal)." },
+        { "letter": "B", "text": "Service Mesh reemplaza al API Gateway completamente.", "correct": false, "why": "Falso. Un mesh no ofrece developer portal, quotas por consumer, request transformation avanzada, WAF, etc. Istio Gateway existe pero es un ingress simple — no un API Management platform." },
+        { "letter": "C", "text": "API Gateway reemplaza al Service Mesh completamente.", "correct": false, "why": "Falso. Un gateway central para east-west se vuelve cuello de botella y single point of failure para tráfico interno de alta cardinalidad (N servicios × M endpoints). Mesh es distribuido (sidecar por pod)." },
+        { "letter": "D", "text": "Los dos hacen exactamente lo mismo — elegir cualquiera.", "correct": false, "why": "Falso. Superficialmente ambos hacen 'proxy con features', pero especializaciones distintas. Elegir mal = trabajo doble o gaps de funcionalidad." }
+      ],
+      "explanation": "Convergencia: Envoy es el data plane de muchos meshes (Istio, Consul Connect) Y de muchos gateways (Envoy Gateway, AWS App Mesh, Gloo Edge). Emissary/Ambassador (Envoy-based) intenta ser 'gateway consciente de mesh'. Solo.io promueve 'API Gateway + Service Mesh unificados' con Gloo. Pero conceptualmente son capas distintas: gateway se enfoca en developer experience externo (portal, docs, keys, plans); mesh se enfoca en policy interno (mTLS, retries, splits). Complementarios. Anti-patrón: empresa con Istio + Kong donde Kong hace routing interno = duplicación.",
+      "realWorld": "Airbnb usa Envoy como service mesh (SmartStack sucesor) + un API Gateway custom para tráfico externo. Lyft creó Envoy en 2016 justo para este problema. Google usa Google Frontend (GFE) como gateway global + Traffic Director / gRPC-based mesh interno. Netflix migró de Zuul (gateway) + Eureka (discovery) a Zuul 2 + Envoy interno.",
+      "tags": ["service mesh", "API gateway", "north-south", "east-west", "Istio"],
+      "tech": ["Kong", "Istio", "Envoy", "Linkerd"],
+      "references": [{ "title": "Solo.io — API Gateway vs Service Mesh" }, { "title": "Envoy Proxy Documentation" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "networking",
+      "topic": "BFF Pattern — Backend for Frontend",
+      "difficulty": "senior",
+      "scenario": "Tu empresa tiene 3 clientes: web (React), mobile iOS y mobile Android. Cada uno necesita datos diferentes: web muestra rich dashboard con 20 fields, mobile solo 5 fields esenciales por ancho de banda. Los backends son 30 microservicios. El equipo mobile se queja: 'hacemos 8 llamadas para renderizar la home, cada respuesta tiene 200KB pero solo usamos 5KB'.",
+      "question": "¿Qué es el patrón BFF (Backend for Frontend) y cómo se relaciona con API Gateway?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "BFF = Backend for Frontend. En vez de UN gateway genérico para TODOS los clientes, se crea UN backend dedicado POR CLIENTE (BFF-web, BFF-iOS, BFF-Android) que: (1) agrega datos de múltiples microservicios en un solo endpoint (reduce N calls a 1); (2) filtra/reshape la respuesta para las necesidades específicas del cliente (mobile obtiene 5 fields, web obtiene 20); (3) puede tener su propia auth/session logic específica al cliente. El BFF PUEDE estar detrás de un API Gateway (gateway hace cross-cutting concerns; BFF hace client-specific aggregation) o SER el gateway efectivo para ese cliente.", "correct": true, "why": "Correcto. BFF fue popularizado por Sam Newman y SoundCloud (2015). Resuelve el 'API design tension': una API general no puede ser óptima para todos los clientes simultáneamente. Cada cliente tiene su BFF que sirve exactamente lo que necesita." },
+        { "letter": "B", "text": "BFF significa Big Fat Frontend — un frontend monolítico.", "correct": false, "why": "Falso. BFF es un patrón backend, no frontend. Es un layer intermedio entre frontend y microservicios." },
+        { "letter": "C", "text": "BFF es una alternativa a API Gateway — no se usan juntos.", "correct": false, "why": "Falso. Se usan juntos. Gateway maneja cross-cutting (auth, rate limit, TLS) para todos los BFFs. Cada BFF hace aggregation específica." },
+        { "letter": "D", "text": "BFF solo aplica a mobile apps.", "correct": false, "why": "Falso. Cualquier cliente con necesidades distintas se beneficia: web, mobile, smart TV, IoT, partners externos. Cada uno puede tener BFF distinto." }
+      ],
+      "explanation": "Beneficios BFF: (1) API optimizada por cliente — mobile no downloadea datos que no usa (ahorra battery, bandwidth); (2) evolución independiente — el equipo mobile itera su BFF sin coordinar con web team; (3) client-specific auth (mobile OAuth flow vs web session cookies); (4) resiliencia — mobile BFF puede tener fallback cache si un servicio downstream falla, web BFF puede tener otro. Trade-offs: (1) más código a mantener (N BFFs); (2) potencial duplicación de lógica; (3) requiere ownership claro (¿frontend team u backend team?). En práctica: frontend team es dueño de su BFF (usualmente Node.js/TS para compartir types con frontend).",
+      "realWorld": "SoundCloud publicó 'BFFs at SoundCloud' (Phil Calçado, 2015) — origen del patrón. Netflix usa BFFs escritos en Node.js (Falcor originalmente, ahora GraphQL). Uber tiene 'edge gateway' + BFFs por client (rider, driver, eats). Airbnb tiene 'niaggregator' pattern (Rest.li aggregator). Twitter (X) usa GraphQL como BFF layer para móvil/web.",
+      "tags": ["BFF", "Backend for Frontend", "aggregation", "microservicios"],
+      "tech": ["Node.js", "GraphQL"],
+      "references": [{ "title": "Sam Newman — Pattern: Backends For Frontends" }, { "title": "SoundCloud Engineering — BFFs at SoundCloud" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "networking",
+      "topic": "GraphQL Federation en gateway",
+      "difficulty": "senior",
+      "scenario": "Tu empresa tiene 15 microservicios REST. Los clientes hacen múltiples llamadas para construir vistas. Un equipo propone: 'migremos a GraphQL y usemos Apollo Federation — un supergraph que compone schemas de múltiples subgraphs (equipos)'.",
+      "question": "¿Qué es GraphQL Federation y qué rol juega el gateway?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GraphQL Federation (Apollo, 2019) permite componer UN GraphQL schema global (supergraph) a partir de MÚLTIPLES subgraphs, cada uno owned por un equipo distinto. El GraphQL Gateway (Apollo Router escrito en Rust, o Apollo Gateway en Node) recibe queries del cliente, las descompone en subqueries por subgraph, las envía en paralelo, y compone la respuesta. Beneficios: (1) cliente hace UNA query, gateway orquesta N; (2) cada equipo owna su subgraph; (3) evolución independiente (extender un tipo desde otro subgraph via @key/@extends); (4) tipado end-to-end. Cost: complejidad, N+1 queries si no se optimiza con DataLoader.", "correct": true, "why": "Correcto. Federation es el modelo dominante para GraphQL en microservicios. Directives @key, @extends, @external permiten que Subgraph B extienda tipos definidos en Subgraph A. Es una alternativa a schema stitching (deprecated). Apollo Router (Rust) reemplazó Apollo Gateway (Node) para performance." },
+        { "letter": "B", "text": "GraphQL Federation es lo mismo que schema stitching.", "correct": false, "why": "Falso. Schema stitching (Apollo 1.x) era manual y frágil. Federation es un modelo declarativo con directives — mucho más robusto. Apollo deprecó stitching a favor de Federation." },
+        { "letter": "C", "text": "GraphQL Federation solo funciona con Apollo — no hay alternativas.", "correct": false, "why": "Parcialmente falso. Apollo lidera pero existen alternativas: WunderGraph, GraphQL Mesh, Hasura Remote Schemas, Netflix DGS (con Apollo Federation). Federation v2 spec puede implementarse por otros." },
+        { "letter": "D", "text": "GraphQL Federation reemplaza a los API Gateways REST.", "correct": false, "why": "Parcialmente falso. Federation es GRAN gateway para GraphQL, pero muchas empresas usan GraphQL Gateway + un API Gateway REST tradicional (Kong/AWS) delante para cross-cutting concerns (auth, rate limit, WAF)." }
+      ],
+      "explanation": "Federation vs BFF: BFF = un backend por cliente (múltiples BFFs); Federation = un supergraph unificado que cualquier cliente puede consumir con queries específicas. GraphQL Federation resuelve el 'BFF explosion' — en vez de N BFFs, un supergraph con selección de fields por query. Trade-offs: (a) GraphQL query complexity attacks — cliente puede pedir queries muy profundas/costosas (mitigar con query depth/complexity limits); (b) caching más difícil que REST (no URL-based); (c) federation adds latency por query planning; (d) requiere schema governance disciplinado. Cuándo Federation: múltiples equipos + múltiples clientes + necesidad de UI flexible.",
+      "realWorld": "Netflix creó DGS Framework (Domain Graph Service) para Federation — powered en producción sirviendo millones de queries. Airbnb migró de Rest.li a GraphQL Federation gradualmente. Expedia, PayPal, Volvo son usuarios notables de Apollo Federation. Netflix Studio publicó 'How Netflix Scales its API with GraphQL Federation'. Facebook (creador de GraphQL) usa un enfoque distinto (relay + fragmentos) sin Apollo.",
+      "tags": ["GraphQL", "Federation", "Apollo", "supergraph"],
+      "tech": ["Apollo Federation", "GraphQL", "Apollo Router"],
+      "references": [{ "title": "Apollo Docs — Federation" }, { "title": "Netflix Tech Blog — How Netflix Scales its API with GraphQL Federation" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "networking",
+      "topic": "Apigee — API Management enterprise",
+      "difficulty": "senior",
+      "scenario": "Una empresa grande (banca, telco) evalúa API Management. Su equipo propone Apigee (Google Cloud, ex-Apigee 2016). Otro sugiere Kong Enterprise o AWS API Gateway. Apigee cuesta significativamente más.",
+      "question": "¿Qué diferencia a Apigee de gateways más simples y cuándo justifica su costo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Apigee es una plataforma ENTERPRISE API Management completa, no solo un gateway. Incluye: (1) Developer Portal — publicar APIs, docs (OpenAPI/Swagger), sign-up, API key issuance para partners externos; (2) Analytics avanzados — dashboards de uso por API/consumer/geo, monetization; (3) Policy engine rico — 100+ policies (OAuth, SAML, XML/JSON transformation, quotas, spike arrest, threat protection); (4) Monetization — cobrar a partners por uso; (5) API versioning + deprecation workflows; (6) Multi-cloud/hybrid deployment. Justifica costo cuando: (a) exposición de APIs externas a partners como producto de negocio; (b) developer portal es crítico; (c) monetization de APIs; (d) requisitos regulatorios de audit/policy formal.", "correct": true, "why": "Correcto. Apigee compite con MuleSoft AnyPoint, IBM API Connect, Axway. Su diferenciador es 'API as Product' completo. Empresas donde APIs son producto de revenue (Stripe-like, Twilio-like) o donde partners son críticos (banks con Open Banking) justifican el costo." },
+        { "letter": "B", "text": "Apigee es simplemente Kong con otro nombre.", "correct": false, "why": "Falso. Diferente arquitectura, diferente owner (Google). Apigee es más 'suite completa'; Kong es 'gateway + plugins'. Kong Enterprise se acerca pero Apigee tiene features enterprise más maduros (portal, monetization)." },
+        { "letter": "C", "text": "Apigee solo se puede correr en Google Cloud.", "correct": false, "why": "Parcialmente falso. Apigee X (2021) es GCP-native. Apigee Hybrid permite runtime en cualquier K8s. Apigee OPDK (Edge on-prem) fue legacy pero soportado." },
+        { "letter": "D", "text": "Apigee no soporta OAuth 2.0.", "correct": false, "why": "Falso. Apigee tiene policies OAuthV2 completas — es una de sus fortalezas históricas (venía de identity management)." }
+      ],
+      "explanation": "API Management landscape: (1) Enterprise Suites — Apigee, MuleSoft, IBM API Connect, Axway ($$$); (2) Open Source Gateways — Kong, APISIX, Tyk, Gravitee (freemium); (3) Cloud Native — AWS API Gateway, Azure API Management, Google API Gateway (cloud-locked); (4) Kubernetes Gateway API — Envoy Gateway, Istio, Gloo (K8s-native). Decisión: si tienes >10 partners externos que necesitan developer portal + API keys managed + billing por uso → Apigee/Kong Enterprise. Si solo microservicios internos → Kong OSS o cloud gateway. Si K8s-first → Envoy Gateway/Istio.",
+      "realWorld": "Walgreens, T-Mobile, Live Nation usan Apigee para partner APIs. Adobe migró a Apigee para su Developer Platform. Kong Enterprise es popular en fintech (Capital One, ADP). En 2016 Google adquirió Apigee por $625M — testimonio del valor del API Management enterprise.",
+      "tags": ["Apigee", "API Management", "developer portal", "enterprise"],
+      "tech": ["Apigee", "Google Cloud"],
+      "references": [{ "title": "Apigee Documentation" }, { "title": "Gartner Magic Quadrant — Full Life Cycle API Management" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "networking",
+      "topic": "Envoy Gateway y Kubernetes Gateway API",
+      "difficulty": "senior",
+      "scenario": "Tu cluster K8s usa Ingress-Nginx pero limitaciones te frustran (falta rate limiting distribuido, transformation limitada). Alguien menciona 'Kubernetes Gateway API' y 'Envoy Gateway' como el futuro.",
+      "question": "¿Qué es Kubernetes Gateway API y Envoy Gateway, y cómo se comparan con Ingress?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kubernetes Gateway API (v1.0 en 2023) es el SUCESOR estándar de Ingress. Ingress era limitado: solo HTTP básico, extensiones via annotations propietarias (nginx.ingress.kubernetes.io/...). Gateway API introduce RECURSOS TIPADOS: GatewayClass (tipo de gateway), Gateway (instancia), HTTPRoute/TCPRoute/TLSRoute/GRPCRoute (routing rules), con soporte nativo para traffic splitting, header matching, weighted routing. Envoy Gateway (2022) es una IMPLEMENTACIÓN de Gateway API basada en Envoy proxy — traduce recursos Gateway API a config Envoy. Otras implementaciones: Istio, Contour, Cilium, Kong Gateway Operator.", "correct": true, "why": "Correcto. Gateway API es el futuro consensual del ingress en K8s (SIG-Network). Envoy Gateway es co-mantenido por VMware, Ambassador Labs, Fidelity — modelo similar a K8s (multi-vendor)." },
+        { "letter": "B", "text": "Envoy Gateway es lo mismo que Envoy Proxy.", "correct": false, "why": "Diferencia importante. Envoy Proxy = el proxy L7 estándar de la industria. Envoy Gateway = capa de control plane que expone Envoy como implementación de K8s Gateway API." },
+        { "letter": "C", "text": "Kubernetes Gateway API reemplaza service mesh.", "correct": false, "why": "Falso. Gateway API se enfoca en INGRESS (north-south). Para east-west (service mesh) hay GAMMA (Gateway API for Mesh Management and Administration) — subset. Complementarios." },
+        { "letter": "D", "text": "Ingress sigue siendo suficiente — Gateway API no aporta valor.", "correct": false, "why": "Falso. Ingress tiene limitaciones fundamentales: annotations vendor-specific, no soporta múltiples protocolos nativamente, ownership pobre (un solo Ingress por dominio). Gateway API resuelve todos estos." }
+      ],
+      "explanation": "Gateway API design principles: (1) role-oriented — Infra team maneja GatewayClass, cluster ops maneja Gateway, dev teams manejan HTTPRoute (RBAC natural); (2) tipado en spec (no annotations); (3) protocol-agnostic (HTTP, gRPC, TLS, TCP, UDP); (4) portable across implementaciones. Envoy Gateway específicamente: (a) instala Envoy proxies como Deployment; (b) traduce HTTPRoute → Envoy xDS config; (c) soporta EnvoyPatchPolicy para extensiones custom; (d) soporta EnvoyExtensionPolicy (Lua/WASM filters). Cuándo migrar: si estás iniciando cluster nuevo → Gateway API. Si tienes Ingress-Nginx production estable → considera cuidadosamente (impact/beneficio).",
+      "realWorld": "Envoy Proxy fue creado por Lyft (2016) y donado a CNCF. Sirve billions of requests/día en Lyft, Netflix, Google, Airbnb. Envoy Gateway 1.0 lanzado en octubre 2023. Google Anthos, VMware Tanzu Service Mesh usan Envoy internamente. GKE Gateway usa Envoy. AWS AppMesh también.",
+      "tags": ["Envoy Gateway", "Kubernetes Gateway API", "Ingress", "CNCF"],
+      "tech": ["Envoy", "Kubernetes", "Envoy Gateway"],
+      "references": [{ "title": "Kubernetes Gateway API Docs" }, { "title": "Envoy Gateway Documentation" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "networking",
+      "topic": "Traefik — dynamic routing",
+      "difficulty": "mid",
+      "scenario": "Tu equipo usa Docker Compose para desarrollo. Los servicios se crean/destruyen dinámicamente. Configurar Nginx cada vez es tedioso. Alguien sugiere Traefik: 'auto-descubre servicios via Docker/K8s labels'.",
+      "question": "¿Qué diferencia a Traefik de gateways tradicionales como Nginx/Kong?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Traefik (Go, 2015) fue diseñado desde el principio para AMBIENTES DINÁMICOS (containers, orchestrators). Su killer feature: SERVICE DISCOVERY automático via 'providers' (Docker labels, Kubernetes CRDs, Consul, etcd, file). Añades una label a tu container ('traefik.http.routers.myapp.rule=Host(`app.example.com`)') y Traefik automáticamente configura el routing — sin reload manual. Otras features: Let's Encrypt automático (issue+renew certs), dashboard web, middlewares (auth, rate limit, headers), soporte HTTP/2/3, WebSocket, gRPC, TCP/UDP. Trade-off vs Kong: menos plugins ready-made, menos features de API Management, pero MUCHO más simple para uso en containers.", "correct": true, "why": "Correcto. Traefik es 'edge router para dynamic infrastructure'. Popular en Docker Compose, K8s (via IngressRoute CRD), Nomad. Comparado con Nginx: automation. Comparado con Kong: menos features de API management pero más simple." },
+        { "letter": "B", "text": "Traefik es un fork de Nginx.", "correct": false, "why": "Falso. Traefik está escrito en Go from scratch. No compartió código con Nginx." },
+        { "letter": "C", "text": "Traefik solo funciona con Docker.", "correct": false, "why": "Falso. Docker es UN provider. También K8s (Ingress + IngressRoute + Gateway API), Consul, etcd, ECS, Nomad, plain files." },
+        { "letter": "D", "text": "Traefik no soporta TLS.", "correct": false, "why": "Falso. Traefik hace TLS termination excelente y de hecho AUTOMATIZA obtención de certificados con Let's Encrypt (ACME) — feature killer para desarrollo/prototipos." }
+      ],
+      "explanation": "Traefik architecture: entrypoints (puertos de entrada) → routers (matching rules) → middlewares (transformación) → services (upstreams). Providers watchean sources externas (Docker daemon socket, K8s API) y updatean config en runtime. Comparación gateways: Nginx = manual config, high performance, poco automation. Traefik = dynamic config, buena performance, ideal containers. Kong = plugin-rich API management sobre Nginx. Envoy = L7 proxy de service meshes. HAProxy = LB de alta performance, less features. Elección: Traefik para setup rápido en containers; Kong si necesitas developer portal/quotas; Envoy si estás en service mesh; Nginx si necesitas máximo control.",
+      "realWorld": "Traefik es popular en la comunidad self-hosted (r/selfhosted lo ama por Let's Encrypt automation + Docker labels). Empresas: Containous (creador, ahora Traefik Labs). Traefik Enterprise añade auth OIDC, distributed rate limit, advanced observability. Traefik Mesh (ex-Maesh) intenta hacer service mesh simple. La versión 3.0 (2024) añadió soporte completo Gateway API.",
+      "tags": ["Traefik", "service discovery", "Docker", "Let's Encrypt"],
+      "tech": ["Traefik", "Docker", "Kubernetes"],
+      "references": [{ "title": "Traefik Docs — Concepts" }, { "title": "Traefik Blog — Container-Native Architecture" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "networking",
+      "topic": "Circuit breakers y retries en gateway",
+      "difficulty": "senior",
+      "scenario": "Un servicio downstream (payment-service) empieza a fallar intermitentemente (30% errores). Tu gateway hace retries automáticos con 3 attempts. Efecto: el tráfico al servicio se TRIPLICA justo cuando está sobrecargado, empeorando el problema (retry storm). El servicio cae completamente.",
+      "question": "¿Cómo debe un gateway manejar fallos downstream con circuit breakers y retries?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "RETRIES: solo retry métodos IDEMPOTENTES (GET, PUT, DELETE) — NO POST (crearía duplicados). Usar exponential backoff con JITTER (backoff aleatorio para evitar retry storms sincronizados). Máximo 2-3 retries. Retry solo en errores TRANSIENT (5xx, timeout, connection reset), NO 4xx (bad request no cambiará).", "correct": true, "why": "Correcto. Retries mal implementados amplifican problemas. Idempotency es clave — retry un POST que 'creó orden' puede crear 2 órdenes. Exponential backoff + jitter previene el 'thundering herd' cuando N clientes retryn a la vez." },
+        { "letter": "B", "text": "CIRCUIT BREAKER: si el % de fallos supera threshold (ej: 50% en 30s), el circuit OPEN — el gateway rechaza inmediatamente sin ir al servicio (fast fail). Después de cooldown (ej: 60s), HALF-OPEN — deja pasar algunas requests de prueba. Si pasan, CLOSED (normal). Si fallan, OPEN otra vez. Protege al servicio downstream de morir por sobrecarga y al cliente de esperar timeouts largos.", "correct": true, "why": "Correcto. Patrón introducido por Michael Nygard en 'Release It!' (2007), popularizado por Netflix Hystrix (2012). Envoy y Istio tienen circuit breakers nativos. Kong tiene plugin. Es el complemento crítico de retries." },
+        { "letter": "C", "text": "BULKHEADS: aislar recursos por servicio downstream. Si el pool de conexiones al servicio A se agota, no debería afectar requests al servicio B. Aplicar límites de concurrent requests por upstream, timeouts agresivos (no infinitos), y connection pools separados.", "correct": true, "why": "Correcto. Bulkhead pattern (barcos: compartimentos que se sellan si uno se inunda). Un servicio lento no debe consumir todos los threads del gateway. Envoy tiene 'max_pending_requests', 'max_requests' por cluster." },
+        { "letter": "D", "text": "TIMEOUTS: siempre configurar timeouts en gateway — NUNCA esperar indefinidamente. Timeout = P99 latency del servicio + margen. Sin timeouts, un servicio colgado propaga la falla (todos los threads del gateway esperan). Con timeouts, fallas rápido y liberas recursos.", "correct": true, "why": "Correcto. Timeouts son la primera línea de defensa. 'The Tail at Scale' (Dean & Barroso, 2013) explica cómo latencia de P99 domina en sistemas distribuidos — sin timeouts, el gateway se llena de requests esperando." },
+        { "letter": "E", "text": "Retries infinitos son la mejor estrategia.", "correct": false, "why": "Peligroso. Genera retry storms, amplifica problemas del downstream, consume recursos del gateway. Siempre limitar retries a 2-3 max con backoff." }
+      ],
+      "explanation": "Resilience patterns en gateway: (1) Timeout — no esperar >P99 + margen; (2) Retry — idempotent methods, exponential backoff + jitter, max 2-3; (3) Circuit Breaker — CLOSED/OPEN/HALF-OPEN, threshold based; (4) Bulkhead — isolate resources per upstream; (5) Rate Limit — protect self from overload; (6) Fallback — respuesta degradada cuando circuit OPEN (cached data, default value, error graceful). Netflix Hystrix (2012) fue seminal — deprecado 2018 a favor de Resilience4j y proxies con circuit breakers nativos. Envoy circuit breakers están integrados en Istio, Consul Connect, Kuma. AWS API Gateway carece de circuit breakers formales (limitación).",
+      "realWorld": "Netflix Hystrix protegió Netflix contra fallos cascada durante años. Su blog 'Making the Netflix API more resilient' (2011) es clásico. Amazon usa retries con backoff en su SDK para todo (SDK behavior default). Google publicó 'The Tail at Scale' — latencia P99 domina en distribuidos. Zuul 2 rewrote precisamente para mejor async I/O + circuit breakers.",
+      "tags": ["circuit breaker", "retries", "timeouts", "resilience", "Hystrix"],
+      "tech": ["Envoy", "Istio", "Hystrix", "Resilience4j"],
+      "references": [{ "title": "Michael Nygard — Release It!" }, { "title": "Netflix Tech Blog — Hystrix" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "networking",
+      "topic": "Netflix Zuul 1 → Zuul 2 migration",
+      "difficulty": "senior",
+      "scenario": "Netflix corrió Zuul 1 (2013-2018) como su edge gateway sirviendo billones de requests/día. En 2018 completaron la migración a Zuul 2. La razón: Zuul 1 usaba servlets bloqueantes (thread per connection) — cada connection ocupaba un thread. Con miles de conexiones long-lived (push notifications, WebSockets), Zuul 1 sufría thread starvation.",
+      "question": "¿Por qué Netflix migró de Zuul 1 a Zuul 2 y qué lecciones ofrece?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Zuul 1 usaba modelo BLOCKING I/O con servlets (thread por request). Bajo carga con muchas connections concurrentes (especialmente idle o slow), el pool de threads se agotaba — nuevas requests fallaban aunque el CPU estuviera bajo. Zuul 2 reescribió sobre Netty con NON-BLOCKING I/O (event loops) — un pequeño número de threads maneja miles de connections. Beneficio: mismo hardware sirve MUCHO más tráfico, mejor manejo de connections idle, resiliencia superior. Lección: para gateway con alta concurrencia + connections long-lived (WebSockets, HTTP/2, gRPC streams, mobile push), non-blocking I/O es crítico. Complexity: código async es más difícil de escribir/debuggear que síncrono.", "correct": true, "why": "Correcto. Migración Zuul 1 → 2 tardó AÑOS (2016-2018) por la complejidad de rewriting filters async. Netflix documentó extensivamente el proceso. Es la razón por la que Envoy (Netty-inspired en C++), Nginx (event-driven), Node.js son populares para gateways/proxies — modelo async escala mejor." },
+        { "letter": "B", "text": "Zuul 1 era demasiado rápido — Zuul 2 fue creado para ser más lento.", "correct": false, "why": "Absurdo. Zuul 2 fue creado para ser MÁS eficiente, no menos." },
+        { "letter": "C", "text": "Zuul 2 abandonó Java por Go.", "correct": false, "why": "Falso. Zuul 2 sigue siendo Java, sobre Netty. Netflix mantiene JVM stack (Kotlin/Java) en su edge." },
+        { "letter": "D", "text": "Zuul 2 no funcionó y volvieron a Zuul 1.", "correct": false, "why": "Falso. Zuul 2 es su gateway en producción desde 2018 y sigue siéndolo." }
+      ],
+      "explanation": "Blocking vs Non-blocking I/O: (1) Blocking (Zuul 1, Tomcat classic) — thread por request; simple pero limita concurrencia a #threads (típicamente 200-2000). Bueno para requests rápidas CPU-bound. (2) Non-blocking (Zuul 2, Netty, Nginx, Node.js) — event loop; miles de connections en pocos threads. Requiere código async (callbacks, futures, coroutines). Mejor para I/O bound + connections long-lived. Netflix Zuul 2 lessons: (a) latency mejoró; (b) throughput por instancia subió significativamente; (c) manejo de spikes mejor; (d) desarrollo async es DURO (todos los filters tuvieron que reescribirse). Otras migraciones similares: HAProxy siempre fue event-driven, Envoy nace event-driven en C++, Nginx desde 2004 event-driven.",
+      "realWorld": "Netflix Tech Blog publicó 'Zuul 2: The Netflix Journey to Asynchronous, Non-Blocking Systems' (2018) — recurso obligatorio para entender la migración. Similar journey: LinkedIn migró de Rest.li síncrono a async. Twitter (X) reescribió Finagle async desde el inicio. Airbnb usa SmartStack + Envoy. Uber usa múltiples gateways (edge, service-to-service) en Go/Java async.",
+      "tags": ["Netflix", "Zuul", "async", "non-blocking", "Netty"],
+      "tech": ["Netflix Zuul", "Netty", "Java"],
+      "references": [{ "title": "Netflix Tech Blog — Zuul 2: The Netflix Journey to Asynchronous, Non-Blocking Systems" }, { "title": "Netflix Tech Blog — Announcing Zuul: Edge Service in the Cloud" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "networking",
+      "topic": "LinkedIn Rest.li y Google Espresso",
+      "difficulty": "senior",
+      "scenario": "LinkedIn desarrolló Rest.li desde 2011 — un framework REST + service infrastructure. Google desarrolló ESB/gateway internos que evolucionaron a Espresso (no confundir con la DB Espresso). Ambas empresas fueron pioneras pre-Kubernetes en API infrastructure.",
+      "question": "¿Qué son LinkedIn Rest.li y qué lecciones ofrecen las arquitecturas de gateway pre-K8s de LinkedIn y Google?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "LinkedIn Rest.li (open-source 2013): framework Java para servicios REST con schema-first design (Pegasus data schemas), client-side load balancing (D2 — Dynamic Discovery), resource-oriented URIs, batch/partial updates. En vez de gateway central, Rest.li promovía SMART CLIENTS — cada servicio cliente conoce topología via ZooKeeper y hace routing localmente (menos hop, mejor latencia). Google infra: Stubby (RPC precursor a gRPC), Global Frontend (GFE) como edge, Espresso como orchestration layer. Insights: (1) client-side LB reduce latencia vs central gateway; (2) schema-first APIs facilitan compatibilidad; (3) discovery service (ZooKeeper, etcd, Consul) es crítico; (4) versionar APIs desde día 1.", "correct": true, "why": "Correcto. Rest.li fue influyente — el modelo 'smart client + service discovery' es lo que hoy hace un service mesh (Envoy sidecar). Google GFE es el gateway de todos los Google products (search, Gmail, YouTube). Espresso el nombre confunde: hay varios sistemas 'Espresso' en Google/LinkedIn con nombres reciclados." },
+        { "letter": "B", "text": "Rest.li es un framework GraphQL de LinkedIn.", "correct": false, "why": "Falso. Rest.li es REST-based (resource-oriented). LinkedIn adoptó GraphQL más tarde (2022+) para casos específicos." },
+        { "letter": "C", "text": "Google Espresso es lo mismo que Google App Engine.", "correct": false, "why": "Falso. Distintos productos. App Engine es platform-as-a-service. Los sistemas Espresso internos son distintos." },
+        { "letter": "D", "text": "LinkedIn nunca usó APIs — solo streaming.", "correct": false, "why": "Falso. LinkedIn tiene APIs REST + Kafka streaming + GraphQL. Rest.li fue su spine de APIs por años." }
+      ],
+      "explanation": "Arquitecturas pre-K8s notables: (1) LinkedIn — Rest.li + D2 (client discovery via ZooKeeper) + Kafka; (2) Google — Stubby (RPC), Chubby (locks), Borg (orchestration), GFE (edge); (3) Netflix — Zuul + Eureka + Ribbon (client LB) + Hystrix; (4) Twitter — Finagle + ZooKeeper + Mesos. Common patterns: service discovery + smart clients + gateway edge + observability. K8s absorbió muchos de estos patterns (Service resource = Eureka-like, kube-proxy = Ribbon-like, Ingress = Zuul-like). Envoy proxy consolida muchos patterns en un sidecar. Lección histórica: los patterns se estabilizan primero en escala Netflix/Google, luego se democratizan (K8s, service mesh).",
+      "realWorld": "Rest.li Github tiene 2.4k stars — usado por LinkedIn, Coursera, otros. Google no publica GFE (interno) pero papers de SRE mencionan su rol. LinkedIn migró parcialmente a gRPC y GraphQL (con Rest.li como legacy backbone). Netflix documenta constantemente su edge (Zuul + más). En 2020s, muchos patterns pioneros por LinkedIn/Google están en K8s + Istio + Envoy.",
+      "tags": ["LinkedIn", "Rest.li", "Google", "service discovery"],
+      "tech": ["Rest.li", "gRPC", "ZooKeeper"],
+      "references": [{ "title": "LinkedIn Engineering — Rest.li" }, { "title": "Google SRE Book — Load Balancing at the Frontend" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "networking",
+      "topic": "Airbnb API Gateway migration",
+      "difficulty": "senior",
+      "scenario": "Airbnb pasó por múltiples generaciones de arquitectura: monolito Rails (2009) → SOA (2013+) → gateway custom (2016+) → SmartStack (Envoy-based east-west) + API Gateway custom para north-south. Cada migración presentó desafíos.",
+      "question": "¿Qué lecciones ofrece la evolución del API Gateway de Airbnb?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Airbnb documentó su journey: (1) monolito Rails inicial — simple pero acopló todo; (2) SOA split — introdujo N problemas: discovery, LB, timeouts; (3) SmartStack (2013) — client-side discovery + HAProxy per host, precursor de service mesh; (4) migración a Envoy (2017+) reemplazando HAProxy — mejor observability, HTTP/2, gRPC; (5) API Gateway custom en el edge (Java/Kotlin) para auth, rate limit, aggregation. Lecciones: (a) architecture evolution es continua — no hay 'state final'; (b) migrar a nuevo gateway/mesh toma AÑOS (multi-year projects, ownership crítico); (c) home-grown vs OSS es decisión constante — Airbnb combina both; (d) observability desde día 1 (sin traces distribuidos, debugging SOA es infierno).", "correct": true, "why": "Correcto. Airbnb es un case study clásico de evolución. Su blog publicó 'SmartStack: Service Discovery in the Cloud' (2013) — antes de Consul/etcd popularizarse. Su migración a Envoy es representativa de muchas empresas que empezaron con HAProxy y migraron a Envoy por HTTP/2 + observability." },
+        { "letter": "B", "text": "Airbnb usa AWS API Gateway managed en producción.", "correct": false, "why": "Parcialmente falso. Airbnb usa infraestructura híbrida. Su edge gateway principal es custom, aunque usa AWS extensivamente para compute/storage." },
+        { "letter": "C", "text": "Airbnb nunca tuvo problemas de escalabilidad porque siempre usaron microservicios.", "correct": false, "why": "Falso. Empezaron con Rails monolítico. Su journey de monolith → SOA fue difícil (documentado). No hay atajo — cada arquitectura tiene su época." },
+        { "letter": "D", "text": "Airbnb usa Kong Enterprise como gateway principal.", "correct": false, "why": "Falso. Airbnb tiene gateway custom. Kong es solución excelente pero Airbnb, dada su escala, prefiere control total con build custom." }
+      ],
+      "explanation": "Common gateway evolution en empresas grandes: (1) start con lo simple (Rails monolith, Django, ExpressJS); (2) split servicios cuando escala del equipo lo requiere (Conway's Law); (3) enfrentar problemas SOA: discovery, LB, timeouts, tracing; (4) adoptar gateway central o service mesh; (5) refinar continuamente. Airbnb, Netflix, Uber, Lyft todos siguieron variantes de esto. Lección key: NO empezar con gateway/mesh complejo. Empezar simple y evolucionar. Prematuros = complejidad injustificada. Tardíos = deuda técnica insoportable. Signal para adoptar gateway: >5 microservicios + >2 clientes + necesidades auth/rate limit uniformes.",
+      "realWorld": "Airbnb Engineering publicó múltiples posts sobre SmartStack (2013), migración a Envoy (2018), Nerve+Synapse (discovery). Uber pasó por journey similar: monolito Python → microservices Go → Envoy mesh + Edge Gateway. Lyft creó Envoy directamente por sus necesidades (donde vino Envoy inicialmente). Netflix creó Zuul + Ribbon + Eureka. Todas estas empresas fueron pioneras en patterns que hoy son estándar via K8s/Istio.",
+      "tags": ["Airbnb", "evolution", "SmartStack", "Envoy", "SOA"],
+      "tech": ["Envoy", "HAProxy", "Rails"],
+      "references": [{ "title": "Airbnb Engineering — SmartStack" }, { "title": "Airbnb Engineering — Envoy migration" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "networking",
+      "topic": "Anti-patterns y elección de gateway",
+      "difficulty": "staff",
+      "scenario": "Como Staff Engineer debes decidir la estrategia de API Gateway para tu empresa (200 devs, 50 servicios, K8s + AWS, expone APIs a 20 partners externos y app móvil). Varias opciones: Kong Enterprise, AWS API Gateway, Apigee, custom Envoy Gateway. Cada equipo tiene su preferencia.",
+      "question": "¿Qué anti-patterns evitar y qué framework de decisión aplicar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ANTI-PATTERN 1: 'Gateway como God Object'. Meter lógica de negocio en el gateway (calcular precios, orchestrar transacciones multi-servicio, transformaciones específicas de use case). El gateway debe ser stateless, cross-cutting, dumb pipe. Lógica va en servicios o BFF layer.", "correct": true, "why": "Correcto. Es el error más común. El gateway crece, se vuelve intocable, acopla equipos. Regla: si un cambio de producto requiere modificar el gateway, es señal roja. Gateway debe ser infrastructural, no business layer." },
+        { "letter": "B", "text": "ANTI-PATTERN 2: 'Multiple gateways sin coordinación'. Cada equipo elige su propio gateway (uno usa Kong, otro AWS API Gateway, otro Nginx). Resultado: policies inconsistentes, observability fragmentada, duplicación de esfuerzo, ownership confuso. Necesitas GOVERNANCE — decidir 1-2 gateways estándar para toda la empresa.", "correct": true, "why": "Correcto. Governance es crítico en empresas grandes. No prohibir experimentación, pero estandarizar donde importa. Platform team debe ofrecer 'paved road' (gateway soportado) con opción de 'off-road' (equipos que necesitan diferente pero con propio soporte)." },
+        { "letter": "C", "text": "ANTI-PATTERN 3: 'Vendor lock-in ciego'. Elegir AWS API Gateway sin considerar portabilidad, o Apigee sin considerar dependencia de Google. Todos tienen trade-offs. Framework: evaluar (a) exit cost (¿qué requiere migrar en 5 años?); (b) portabilidad (¿open standards? OpenAPI? Gateway API?); (c) costo TCO — no solo licencia sino training, migration, ops.", "correct": true, "why": "Correcto. Lock-in no siempre es malo (managed reduce ops burden) pero debe ser decisión consciente. Kong/Envoy Gateway son más portables (self-hosted, open source). AWS API Gateway es SaaS conveniente pero migrar es costoso." },
+        { "letter": "D", "text": "FRAMEWORK DE DECISIÓN: (1) ¿Qué exposes? — solo interno (mesh sufficiente) vs partners externos (necesitas developer portal → Apigee/Kong Enterprise); (2) ¿Cuál es tu infra? — K8s-first (Envoy Gateway, Kong K8s, Istio) vs AWS-native (API Gateway) vs on-prem (Kong OSS/Apigee OPDK); (3) ¿Ops capacity? — pequeña (managed AWS/Apigee X) vs grande (self-hosted); (4) ¿Volumen? — bajo (managed OK) vs alto (custom o self-hosted más económico); (5) ¿Multi-cloud? — evitar lock-in cloud-specific.", "correct": true, "why": "Correcto. Decisión debe ser deliberada, no 'lo que sabemos' o 'lo que suena bien'. Escribir ADR (Architectural Decision Record) con estos criterios. Involucrar security, platform, product, partners." },
+        { "letter": "E", "text": "Siempre elegir el gateway más popular (Kong).", "correct": false, "why": "Anti-approach. Popularidad != fit. Kong es excelente pero no siempre la mejor opción. Cada organización tiene contexto único." }
+      ],
+      "explanation": "Framework Staff-level para gateway strategy: (1) Assess — inventory de APIs, clients, security requirements, compliance, ops capacity; (2) Options — matrix de gateways vs criteria (developer portal, k8s-native, cloud, features); (3) Prototype — POC con 2-3 top options en real workload; (4) Decide — ADR documentando decisión y trade-offs; (5) Migrate gradually — no big bang; run old + new en paralelo, migrate services incrementally; (6) Govern — establecer platform team ownership, SLIs/SLOs del gateway, on-call, upgrade cadence. Common outcome en empresas grandes: 2-3 gateways complementarios (edge gateway + K8s ingress + partner API gateway). NO 1 gateway 'universal' para todo — cada layer tiene concerns distintos.",
+      "realWorld": "Netflix: Zuul 2 (edge) + Envoy (internal). Airbnb: custom edge + SmartStack/Envoy internal. Uber: Muttley (edge) + Envoy mesh. Adobe: Apigee (partner APIs) + custom internal. Capital One: Kong Enterprise + AWS API Gateway híbrido. Casi ninguna gran empresa usa UN solo gateway. Pero todas tienen governance clara sobre cuál usar cuándo.",
+      "tags": ["strategy", "governance", "anti-patterns", "staff engineer"],
+      "tech": ["Kong", "Apigee", "AWS API Gateway", "Envoy Gateway"],
+      "references": [{ "title": "ThoughtWorks Technology Radar — API Gateways" }, { "title": "Gartner — API Management Market Guide" }]
+    }
+  ]
+}

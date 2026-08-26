@@ -1,0 +1,427 @@
+{
+  "id": "devops-sim-13-ansible-and-config-management",
+  "trackId": "devops",
+  "order": 13,
+  "title": "Simulacro 13 — Ansible y gestion de configuracion",
+  "focus": "Ansible como herramienta de configuration management: playbooks, inventory static y dinamico, roles y Galaxy, idempotency, handlers, when y loops, Vault, comparacion con Chef/Puppet/SaltStack, agent-less vs agent, push vs pull, ad-hoc, facts, Jinja2, block/rescue, delegate_to, ansible-lint.",
+  "areaCoverage": ["iac"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "iac",
+      "topic": "Que es Ansible",
+      "difficulty": "junior",
+      "scenario": "Tu equipo tiene 40 servidores Linux configurados a mano con SSH y bash scripts. Un ingeniero propone Ansible para 'declarar el estado deseado' y aplicarlo de forma consistente. Tu manager pregunta que hace Ansible y por que es distinto de un script bash.",
+      "question": "Cual es la definicion correcta de Ansible?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ansible es una herramienta de configuration management y automation AGENT-LESS que ejecuta playbooks YAML sobre SSH (Linux) o WinRM (Windows). Es DECLARATIVA e IDEMPOTENTE: describes el estado deseado (paquete X instalado, servicio Y running, archivo Z presente) y Ansible aplica solo los cambios necesarios. Push model: el control node envia instrucciones a los nodos.", "correct": true, "why": "Correcto. Ansible (creado por Michael DeHaan 2012, adquirido por Red Hat 2015) es agent-less: solo requiere SSH y Python en el target. Playbooks YAML declarativos. Idempotency es property clave: correr el playbook N veces produce el mismo estado que correrlo una vez." },
+        { "letter": "B", "text": "Ansible es un scheduler de containers como Kubernetes.", "correct": false, "why": "Confusion de dominios. Kubernetes orquesta containers en runtime; Ansible configura servidores/aplica estado. Se complementan (Ansible puede desplegar clusters Kubernetes)." },
+        { "letter": "C", "text": "Ansible es un lenguaje de programacion imperativo tipo Python.", "correct": false, "why": "Ansible es declarativo YAML, no imperativo. Aunque tiene loops y conditionals, el paradigma es 'estado deseado'." },
+        { "letter": "D", "text": "Ansible requiere instalar un agent en cada nodo gestionado como Puppet.", "correct": false, "why": "Falso, es su feature distintivo. Solo SSH+Python en el target. Puppet/Chef si requieren agent (puppetd, chef-client)." }
+      ],
+      "explanation": "Ansible cambio el paradigma de config management al ser agent-less: no hay agente que instalar/mantener/parchear en los targets. Solo SSH+Python. Esto simplifica adopcion masivamente. Componentes: (1) control node (donde corres ansible-playbook); (2) inventory (lista de hosts); (3) playbooks (YAML con tasks); (4) modules (units de trabajo, ej: apt, yum, service, copy, template); (5) plugins (connection, callback, filter). Cada tarea llama a un modulo, que se ejecuta en el target y reporta 'changed' o 'ok' (idempotency). Diferencia clave vs bash script: bash no sabe si ya hizo algo (correr dos veces puede romper); Ansible chequea estado actual vs deseado y solo actua si difiere.",
+      "realWorld": "Red Hat adquirio Ansible en 2015 por $150M porque simplifico dramaticamente Linux automation. NASA, Twitter, Verizon, Cisco lo usan a escala. GitHub Actions y GitLab CI usan Ansible para provisionar runners. Empresas migran desde Puppet/Chef porque Ansible tiene curva de aprendizaje mucho menor (YAML vs Ruby DSL).",
+      "tags": ["ansible", "config-management", "agent-less", "declarativo"],
+      "tech": ["Ansible", "YAML", "SSH"],
+      "references": [{ "title": "Ansible Documentation — Getting Started" }, { "title": "Michael DeHaan — Ansible origin story" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "iac",
+      "topic": "Estructura de un playbook",
+      "difficulty": "junior",
+      "scenario": "Tu primer playbook Ansible: quieres instalar nginx en 3 servidores web, copiar un config, y arrancar el servicio. Un colega te muestra un archivo webserver.yml. Debes entender la estructura basica.",
+      "question": "Cual es la estructura correcta de un playbook Ansible?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "YAML con lista de PLAYS. Cada play tiene: hosts (patron de inventory), become (privilege escalation, ej: sudo), vars (variables), tasks (lista ordenada de acciones), handlers (notificados por tasks). Cada task usa un MODULE (ej: apt, copy, service) con parametros key:value.", "correct": true, "why": "Correcto. Estructura canonica. Un playbook = lista de plays; cada play apunta a un grupo de hosts y define tasks. Los handlers son tasks especiales que solo corren cuando se notifican (ej: reiniciar nginx tras cambiar config)." },
+        { "letter": "B", "text": "JSON con hooks lifecycle tipo Terraform.", "correct": false, "why": "Ansible usa YAML (aunque acepta JSON tecnicamente). No tiene hooks lifecycle como Terraform — Ansible es procedural en cada play (tasks se ejecutan en orden)." },
+        { "letter": "C", "text": "XML con directivas <play> y <task>.", "correct": false, "why": "Ansible nunca uso XML. Fue diseñado para ser legible como texto simple." },
+        { "letter": "D", "text": "Codigo Python con decoradores @task.", "correct": false, "why": "Confusion con Airflow o Prefect. Ansible playbooks son YAML puro; solo los modulos son Python." }
+      ],
+      "explanation": "Un playbook minimo: --- (YAML start), lista con -, cada elemento es un play con hosts/tasks. Ejemplo: hosts: webservers, become: yes, tasks: [ {name: install nginx, apt: name=nginx state=present}, {name: copy config, template: src=nginx.conf.j2 dest=/etc/nginx/nginx.conf, notify: reload nginx}, {name: start nginx, service: name=nginx state=started enabled=yes}], handlers: [ {name: reload nginx, service: name=nginx state=reloaded}]. Clave: name descriptivo (aparece en output), modules idempotentes (state=present, state=started), handlers para acciones triggered. Best practice: un playbook = un flow logico, no un monolito de 500 tasks (para eso: roles).",
+      "realWorld": "GitHub open-sourceo su Ansible playbooks internos como parte de su migracion de Chef en 2019. Digital Ocean documenta patterns Ansible en sus tutoriales oficiales — su equipo interno usa Ansible para provisionar la flota completa. Netflix Simple Systems team documento uso de Ansible para bootstrap de instancias.",
+      "tags": ["playbook", "yaml", "tasks", "handlers"],
+      "tech": ["Ansible", "YAML"],
+      "references": [{ "title": "Ansible Docs — Intro to Playbooks" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "iac",
+      "topic": "Inventory static vs dinamico",
+      "difficulty": "mid",
+      "scenario": "Tu inventory estatico tiene 20 IPs hardcodeadas en INI. Migras a AWS y las instancias son autoscaling: IPs cambian cada dia, cantidad varia entre 5 y 50. Mantener el INI a mano es imposible.",
+      "question": "Cuando usas inventory STATIC vs DYNAMIC en Ansible?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "STATIC (INI o YAML): hosts conocidos y estables (on-prem, VMs long-lived, lab). Fichero commit-eado, facil de leer, groups organizados manualmente. Ej: [webservers] web1.example.com, web2.example.com, [dbservers] db1.example.com.", "correct": true, "why": "Correcto. Static es simple y auditable. Ideal cuando la lista cambia poco (weeks/months). Version control friendly. Un archivo INI o YAML se lee en 2 segundos." },
+        { "letter": "B", "text": "DYNAMIC (script o plugin): hosts descubiertos en runtime desde cloud APIs (AWS EC2, GCP, Azure, VMware). Ansible ejecuta el plugin, obtiene lista actualizada de instancias con tags como grupos. Sin mantener a mano.", "correct": true, "why": "Correcto. Plugins oficiales: amazon.aws.aws_ec2, google.cloud.gcp_compute, azure.azcollection.azure_rm. Filtras por tags/regions. Los grupos se derivan de tags (ej: tag:Role=web → grupo webservers automatico)." },
+        { "letter": "C", "text": "Dynamic solo funciona en AWS.", "correct": false, "why": "Existen plugins para AWS, GCP, Azure, DigitalOcean, OpenStack, VMware, Kubernetes, Nutanix, Hetzner, etc. Ademas puedes escribir plugins custom." },
+        { "letter": "D", "text": "Static es siempre mejor porque es reproducible.", "correct": false, "why": "Static es reproducible pero no escala a infra elastica. En autoscaling, el IP de la instancia no existe hasta que se lanza — no puedes hardcodearlo." },
+        { "letter": "E", "text": "Puedes combinar ambos: inventory directory con varios archivos (static + dynamic plugins) que Ansible mergea.", "correct": true, "why": "Correcto. Best practice en entornos hibridos: static para bastion/on-prem, dynamic para cloud. Ansible acepta -i con directorio y mergea todos los sources." }
+      ],
+      "explanation": "Static inventory (hosts.ini): sintaxis INI simple, groups como secciones, children para nested groups, variables por host/group. Dynamic: plugins declarados en aws_ec2.yml o gcp_compute.yml con filtros y keyed_groups (auto-crea grupos por tag). El comando ansible-inventory --graph o --list valida el inventory renderizado. En cloud dinamico, deshabilitas cache o le pones TTL (cache_plugin en ansible.cfg). Autenticacion: dynamic plugins usan credentials del cloud (env vars, IAM role del control node). Anti-patron: mantener CSV en Excel de IPs (deprecated en la primera semana).",
+      "realWorld": "AWS Well-Architected recomienda dynamic inventory para EC2/ASG. Netflix uso dynamic inventory extensively para su flota de miles de instancias en su epoca de bootstrap con Ansible antes de moverse a Spinnaker/Chaos suite. Empresas como Wikimedia usan static YAML inventory (~1000 hosts fisicos, cambios raros) porque su infra es on-prem estable.",
+      "tags": ["inventory", "dynamic", "static", "aws", "cloud"],
+      "tech": ["Ansible", "AWS EC2", "GCP", "Azure"],
+      "references": [{ "title": "Ansible Docs — Dynamic Inventory" }, { "title": "amazon.aws.aws_ec2 plugin" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "iac",
+      "topic": "Idempotency",
+      "difficulty": "mid",
+      "scenario": "Escribes una task: shell: 'echo hello >> /tmp/log.txt'. La corres 5 veces y /tmp/log.txt tiene 5 lineas. Otra task usa lineinfile: line=hello path=/tmp/log.txt. La corres 5 veces y solo hay 1 linea. Tu senior te dice: 'la segunda es idempotente, la primera no'.",
+      "question": "Que significa idempotency en Ansible y por que es critica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Idempotency = correr la task N veces produce el MISMO estado final que correrla 1 vez. Los modulos idempotentes CHEQUEAN estado antes de actuar y solo cambian si difiere (state=present no reinstala si ya existe). shell/command NO son idempotentes por default (siempre ejecutan). Es critica porque playbooks se re-ejecutan constantemente y romper estado es catastrofico.", "correct": true, "why": "Correcto. Casi todos los modulos oficiales (apt, yum, copy, template, service, user, file, lineinfile) son idempotentes. shell/command/raw NO — evita usarlos, o combina con creates=/removes=/changed_when= para hacerlos idempotentes." },
+        { "letter": "B", "text": "Idempotency significa que Ansible corre en paralelo.", "correct": false, "why": "Confusion. Paralelismo (fork/serial) es otra propiedad. Idempotency es sobre el efecto de correr multiples veces la MISMA task." },
+        { "letter": "C", "text": "Idempotency significa que las tasks no fallan.", "correct": false, "why": "Diferente concepto. Una task idempotente PUEDE fallar (ej: paquete no existe en el repo). Idempotency es sobre el estado resultante, no sobre exitos." },
+        { "letter": "D", "text": "Idempotency es opcional — puedes elegir ignorarla.", "correct": false, "why": "Ignorarla lleva a playbooks fragiles. Si tus tasks no son idempotentes, tienes que asegurar que corran exactamente una vez — lo que rompe el modelo de re-aplicar continuamente." }
+      ],
+      "explanation": "Idempotency es la PIEDRA ANGULAR de configuration management. Sin ella no puedes tratar el playbook como 'estado deseado' — se vuelve un script imperativo. Reglas: (1) prefiere modulos oficiales sobre shell/command; (2) si usas shell, añade creates=/removes= (ej: shell: mkdir /foo, creates: /foo) o registra el resultado y usa changed_when; (3) --check mode simula y reporta que hubiera cambiado sin aplicar (dry-run); (4) --diff muestra el diff de archivos afectados. Modulos como service state=started: si ya running, ok (no changed); si stopped, arrancar (changed). El output de Ansible tiene contadores: ok=N changed=N failed=N — idealmente en una segunda corrida changed=0 (converged state).",
+      "realWorld": "Michael DeHaan (creador) escribio explicitly que idempotency era el design goal principal. Red Hat's OpenShift-Ansible installer corre el mismo playbook multiples veces durante upgrades sin romper el cluster. Cuando GitHub migro a Ansible desde Chef (2019 aprox), la garantia de idempotency permitio re-aplicar en produccion sin miedo. Sin idempotency, un rerun accidental puede duplicar users, DNS records, firewall rules.",
+      "tags": ["idempotency", "estado-deseado", "check-mode", "declarativo"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Desired State and Idempotency" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "iac",
+      "topic": "Handlers y notify",
+      "difficulty": "mid",
+      "scenario": "Tu playbook cambia /etc/nginx/nginx.conf via template. Nginx no lee el cambio hasta que se reinicia. Pones service: name=nginx state=restarted en la task siguiente. Un colega dice: 'no, usa un handler'.",
+      "question": "Como funcionan handlers en Ansible y cuando usarlos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Handler = task especial que solo se ejecuta si es NOTIFICADO por otra task que reporta 'changed'. Se corre UNA SOLA VEZ al final del play, aunque multiples tasks lo notifiquen. Ejemplo tipico: reiniciar nginx solo si el config cambio.", "correct": true, "why": "Correcto. Si haces state=restarted incondicional, nginx reinicia en cada corrida (impacto en usuarios). Handler asegura que solo reinicia si el config realmente cambio. Deduplication automatica: si 3 tasks notifican 'restart nginx', se ejecuta 1 vez." },
+        { "letter": "B", "text": "Se ejecutan al FINAL del play por default. Si el play falla antes de llegar al final, los handlers no se ejecutan (peligro: config cambiado pero servicio no reiniciado). Solucion: force_handlers: true o meta: flush_handlers.", "correct": true, "why": "Correcto. Comportamiento documentado. flush_handlers fuerza ejecucion inmediata (util despues de cambios criticos). force_handlers: yes garantiza que corran aunque haya fallo posterior." },
+        { "letter": "C", "text": "Handlers pueden llamar a otros handlers via listen (topics).", "correct": true, "why": "Correcto. listen permite subscribir multiples handlers a un topic. Ej: notify: 'restart web stack' triggerea handlers que listen: 'restart web stack' (puede ser varios: nginx, php-fpm, varnish)." },
+        { "letter": "D", "text": "Handlers son sinonimo de tasks — misma cosa.", "correct": false, "why": "No. Tasks corren siempre en orden; handlers solo cuando notificados y una vez, al final. Estructura del playbook los separa (tasks: vs handlers:)." },
+        { "letter": "E", "text": "Handlers solo funcionan con el modulo service.", "correct": false, "why": "Falso. Cualquier task puede ser handler (copiar archivo, ejecutar comando, notificar Slack). Restart de servicio es el uso mas comun pero no unico." }
+      ],
+      "explanation": "Handlers = pattern observer. Tasks que MODIFICAN estado notifican handlers que REACCIONAN al cambio. Beneficio: (1) evita restarts innecesarios; (2) agrupa acciones costosas al final; (3) deduplica cuando multiples cambios comparten misma reaccion. Tricky point: si el playbook falla despues de cambiar el config pero antes de flush_handlers, quedas con estado inconsistente. Best practice: usar meta: flush_handlers en puntos criticos, o force_handlers: true en el play. Debug: --list-tasks --list-hosts para ver que se ejecutara. En roles, handlers viven en handlers/main.yml del rol.",
+      "realWorld": "Wikimedia's ansible/puppet setup usa handlers extensively para reload de mediawiki config sin restart. Netflix Simple Systems team documento el patron 'notify + flush_handlers' para deploys donde el orden importa (DB migration antes de restart de app). El bug clasico: config change + fail en task siguiente + no flush → produccion queda con config nuevo pero servicio viejo cargado.",
+      "tags": ["handlers", "notify", "listen", "flush_handlers"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Handlers: running operations on change" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "iac",
+      "topic": "Ansible vs Chef vs Puppet vs SaltStack",
+      "difficulty": "senior",
+      "scenario": "Tu CTO quiere elegir una herramienta de config management. Alguien menciona Chef (Ruby DSL, agent, pull), Puppet (Ruby DSL, agent, pull), SaltStack (Python, agent + agent-less, push/pull), Ansible (YAML, agent-less, push). Debes comparar honestamente.",
+      "question": "Cuales son diferencias reales entre estas 4 herramientas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ansible: YAML declarativo, agent-less (SSH), PUSH, curva baja, ideal para orquestacion ad-hoc y automation general. Sacrifica velocidad a escala masiva (>1000 nodos) por simplicidad. Adquirido por Red Hat.", "correct": true, "why": "Correcto. Ansible gano el mind-share por su simplicidad. La friccion de agent-installation y Ruby learning curve de Puppet/Chef fue determinante. A escala muy grande, SSH secuencial es lento (aunque mitigado con forks/serial/Mitogen)." },
+        { "letter": "B", "text": "Puppet: DSL propio (Puppet Language, tipo Ruby), AGENT en cada nodo, PULL (agent contacta master cada 30min), fuerte typing y catalog compilation. Mejor para infra estatica muy grande con compliance fuerte. Curva alta.", "correct": true, "why": "Correcto. Puppet fue el pionero (Luke Kanies 2005). Diseño orientado a large enterprise: catalog server, PuppetDB, cert-based auth, compliance auditable. Downside: complejidad, agent-based, DSL propio. Puppet Enterprise es paid." },
+        { "letter": "C", "text": "Chef: Ruby DSL puro (recetas y cookbooks), AGENT (chef-client), PULL desde Chef Server. Muy poderoso porque es Ruby real (loops, condicionales, custom logic). Curva muy alta por Ruby. Chef fue adquirido por Progress Software y luego cambio de licencia.", "correct": true, "why": "Correcto. Chef (Adam Jacob 2009) apunto a devs Ruby. Poder maximo pero curva empinada. Cambio a licencia mas restrictiva (2019) y pivote a Progress lo hicieron perder mind-share. Facebook uso Chef masivamente durante años." },
+        { "letter": "D", "text": "SaltStack: Python, agent (salt-minion) O agent-less (salt-ssh), master-minion con ZeroMQ pub/sub, MUY rapido a escala (miles de nodos), event-driven (reactor). YAML + Jinja2 similar a Ansible. Adquirido por VMware 2020.", "correct": true, "why": "Correcto. Salt destaca en velocidad y event-driven automation (reactor system reacciona a eventos en tiempo real). Escala muy bien. Downside: complejidad de setup, dos modelos (agent vs ssh) confunden, comunidad menor." },
+        { "letter": "E", "text": "Todas son identicas y solo cambian el nombre.", "correct": false, "why": "Diferencias reales en modelo (push/pull, agent/agent-less), lenguaje (YAML vs Ruby DSL vs Python), escalabilidad, y ecosistema. Eleccion depende del contexto." }
+      ],
+      "explanation": "Trade-offs por eje: (1) LEARNING CURVE: Ansible < Salt < Puppet ≈ Chef; (2) AGENT: Ansible (none), Salt (opcional), Puppet/Chef (obligatorio); (3) MODELO: Ansible push, Puppet/Chef pull, Salt ambos; (4) LENGUAJE: Ansible/Salt YAML, Puppet DSL propio, Chef Ruby; (5) ESCALA: Salt > Puppet > Chef > Ansible en miles de nodos; (6) EVENT-DRIVEN: Salt reactor unico; Ansible tiene Ansible Automation Platform pero no nativo; (7) COMMUNITY 2024: Ansible dominante en config-management. Regla practica: si necesitas simplicidad y agentless → Ansible; enterprise compliance con muchos nodos estables → Puppet; event-driven a escala → Salt; power Ruby y flexibility total → Chef (pero decliving).",
+      "realWorld": "Facebook uso Chef masivamente en los 2010s (Phil Dibowitz publico charlas sobre 20k+ nodos Chef). Wikimedia migro de Puppet legacy a mix Puppet+Ansible. LinkedIn uso Salt para orchestacion de miles de nodos. Comcast uso Puppet a escala. Ansible tomo el mind-share general por su simplicidad; Chef sufrio con el cambio de licencia; Puppet sigue fuerte en regulated industries; Salt fue adquirido por VMware.",
+      "tags": ["ansible", "puppet", "chef", "salt", "comparacion"],
+      "tech": ["Ansible", "Puppet", "Chef", "SaltStack"],
+      "references": [{ "title": "Puppet Docs — Language Basics" }, { "title": "Chef — Learn Chef" }, { "title": "SaltStack Docs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "iac",
+      "topic": "Push vs Pull model",
+      "difficulty": "senior",
+      "scenario": "Tu arquitecto pregunta: Ansible es push (control node → targets), Puppet/Chef son pull (agent contacta master). Debes explicar trade-offs y cuando cada uno es mejor.",
+      "question": "Diferencias reales entre push y pull, y cuando elegir cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "PUSH (Ansible): control node inicia conexion SSH a los targets cuando corres el playbook. Beneficios: control explicito de CUANDO se aplica cambio, facil rollback (no aplicas la nueva version), no requiere agent, cambios en tiempo real (deploy en 5 minutos). Downside: control node debe alcanzar todos los targets (firewalls, VPNs); a escala masiva el fanout es lento.", "correct": true, "why": "Correcto. Push es ideal para orchestracion controlada: rolling deploys, hotfixes, ad-hoc. El operador decide EL momento. Sin agent = menos superficie de ataque. Firewall inverso puede ser problema (target en red privada sin ingress desde control node)." },
+        { "letter": "B", "text": "PULL (Puppet/Chef): agente en cada nodo contacta master en intervalos (default 30min) para pedir su catalog. Beneficios: escala a miles de nodos naturalmente (cada agente maneja lo suyo), self-healing (drift detectado y corregido automaticamente cada 30min), funciona detras de NAT/firewall (target inicia la conexion outbound).", "correct": true, "why": "Correcto. Pull es superior para self-healing continuo y escala. Ideal para infra estatica grande donde quieres convergence garantizada. Downside: menos control preciso (cambio se aplica cuando el agente se despierta), agent mantenimiento, latencia hasta 30min. Cambios urgentes requieren trigger manual (puppet agent -t)." },
+        { "letter": "C", "text": "Modelo hibrido posible: Ansible-pull (script cron en cada nodo que corre ansible localmente desde repo git). Combina beneficios de pull sin necesidad de agent Puppet.", "correct": true, "why": "Correcto. ansible-pull invierte el modelo: cada nodo hace git pull y ansible-playbook local. Util para bootstrapping en cloud (instancia se auto-configura al iniciar), o para nodos detras de firewalls sin ingress." },
+        { "letter": "D", "text": "Push es siempre mas seguro.", "correct": false, "why": "Depende del threat model. Push requiere credenciales SSH robustas en control node (si te comprometen, comprometen todo). Pull tiene agents que pueden ser atacados. Ambos tienen threat models validos." },
+        { "letter": "E", "text": "Pull es obsoleto — solo push tiene sentido en cloud moderno.", "correct": false, "why": "Falso. Compañias con infra estatica grande y compliance (banking, telcos) siguen prefiriendo pull por su garantia de convergence continua. Kubernetes es pull-based (kubelet pulls de API server)." }
+      ],
+      "explanation": "Push vs pull no es religion, es contexto: (1) ESCALA <500 nodos y control preciso → push (Ansible); (2) ESCALA >5000 nodos con drift auto-corrected → pull (Puppet); (3) INFRA DINAMICA (autoscaling) → push cuando la instancia se lanza, luego cloud-init o ansible-pull para self-config; (4) COMPLIANCE que requiere convergence continua → pull con audit logs. Ansible-pull es sweet spot: sin agent Puppet, con self-healing pull. Kubernetes tomo prestado el modelo pull (kubelet reconciliation loop cada segundos) y demostro que pull scale-out es superior para dynamic infra. Detalle: push tiene 'thundering herd' problem si todos apuntan a un solo control node.",
+      "realWorld": "GitHub migro de Chef pull a Ansible push cuando su infra se volvio mas dinamica (2019). Facebook usaba Chef pull a escala masiva porque su infra era estatica de bare-metal. Kubernetes gano por el modelo pull-reconcile (self-healing continuo). Empresas con datacenters propios grandes tienden a pull; empresas cloud-native tienden a push + immutable infrastructure.",
+      "tags": ["push", "pull", "modelo", "escala", "ansible-pull"],
+      "tech": ["Ansible", "Puppet", "Chef"],
+      "references": [{ "title": "Ansible Docs — ansible-pull" }, { "title": "Puppet Docs — Agent architecture" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "iac",
+      "topic": "Ad-hoc commands",
+      "difficulty": "mid",
+      "scenario": "Necesitas verificar el disco libre en 50 servidores AHORA. No quieres escribir un playbook. Un colega te dice: 'usa ad-hoc: ansible all -m shell -a df -h'.",
+      "question": "Que son ansible ad-hoc commands y cuando usarlos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Comandos one-off desde CLI usando el binario ansible (no ansible-playbook). Sintaxis: ansible <pattern> -m <module> -a '<args>'. Ideales para: verificaciones rapidas (uptime, df), acciones puntuales (reiniciar servicio), operaciones no repetibles. Ejemplos: ansible webservers -m ping, ansible db -m service -a 'name=postgres state=restarted' -b, ansible all -m shell -a 'uptime'.", "correct": true, "why": "Correcto. Ad-hoc = un solo modulo aplicado inmediatamente. Bueno para SRE tasks manuales, debug, exploracion. Malo para cambios repetibles (esos van en playbooks version-controlled). No hay handlers, no hay vars files, no hay orden — es solo 'corre este modulo aqui'." },
+        { "letter": "B", "text": "Comandos para automatizar CI/CD.", "correct": false, "why": "Confusion. Para CI/CD escribes playbooks (repeatable, auditables). Ad-hoc es para lo NO repetible." },
+        { "letter": "C", "text": "Equivalente a hacer SSH manual — sin ventajas sobre bash.", "correct": false, "why": "Falso. Ventajas: (1) fanout paralelo automatico a N hosts; (2) usa modulos idempotentes (service, package, file); (3) output estructurado por host; (4) integra con inventory y grupos." },
+        { "letter": "D", "text": "Solo funciona con el modulo command.", "correct": false, "why": "Falso. Cualquier modulo funciona ad-hoc: apt, yum, service, copy, template, user, file, shell, etc. Default es command si no especificas -m." }
+      ],
+      "explanation": "Ad-hoc pattern: ansible <hosts> -m <module> -a '<args>' [-b para become]. Usos tipicos: (1) ping check: ansible all -m ping (verifica SSH y Python); (2) file gather: ansible all -m setup > facts.json; (3) restart cascada: ansible web -m service -a 'name=nginx state=restarted' -b; (4) copy urgente: ansible all -m copy -a 'src=/tmp/patch.sh dest=/tmp/'; (5) shell paralelo: ansible all -m shell -a 'uptime'. Cuidado: ad-hoc con shell/command NO son idempotentes. --check funciona en ad-hoc tambien (dry-run). Regla: si vas a repetir el comando >2 veces, conviertelo en playbook.",
+      "realWorld": "SREs usan ad-hoc extensively para incident response: 'necesito ver logs en los 50 nodos afectados YA'. Netflix documento uso de ad-hoc para triage rapido de outages. En audits de compliance se prefiere playbooks (audit trail) sobre ad-hoc (efimero). Ansible Tower/AWX loguea ad-hoc en su UI para compliance de operaciones one-off.",
+      "tags": ["ad-hoc", "cli", "sre", "debug"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Introduction to ad hoc commands" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "iac",
+      "topic": "Facts y setup module",
+      "difficulty": "mid",
+      "scenario": "Tu playbook necesita instalar apt en Debian, yum en RHEL. Necesita saber el OS del target. Un colega dice: 'usa ansible_facts, se recolectan automaticamente con el modulo setup'.",
+      "question": "Que son facts en Ansible y como se usan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Facts = informacion recolectada del target al inicio del play por el modulo setup (implicito por default). Incluyen: OS (ansible_distribution), kernel, IP, memoria, CPU, network interfaces, mounted disks, users, packages, services. Accesibles como variables en tasks y templates.", "correct": true, "why": "Correcto. Facts son la fuente de verdad sobre el estado del target. ansible_distribution=Ubuntu, ansible_distribution_version=22.04, ansible_memory_mb, ansible_processor_count, etc. Comando: ansible <host> -m setup lista todos los facts." },
+        { "letter": "B", "text": "Puedes deshabilitarlos (gather_facts: no) para speed-up si no los necesitas. Util cuando el playbook es solo un comando simple sin logica condicional.", "correct": true, "why": "Correcto. Setup task añade 1-3s por host. Si no usas facts, gather_facts: no ahorra tiempo a escala. Alternativa: gather_subset para recolectar solo un subset (ej: only network)." },
+        { "letter": "C", "text": "Custom facts: puedes definir facts propios en /etc/ansible/facts.d/*.fact (JSON, INI, o executable) que se cargan como ansible_local.<name>. Util para app-specific metadata (ej: version instalada de tu app).", "correct": true, "why": "Correcto. Custom facts extienden el sistema. Executable fact = script que retorna JSON. Ansible los lee al hacer setup. Util para exponer info que Ansible no conoce nativamente." },
+        { "letter": "D", "text": "Facts son inmutables durante un play.", "correct": false, "why": "Falso. Puedes re-gatherar facts con meta: clear_facts + gather_facts. Util cuando cambias algo (ej: instalas nuevo paquete) y quieres que las tasks siguientes lo sepan." },
+        { "letter": "E", "text": "Facts solo funcionan en Linux.", "correct": false, "why": "Falso. Facts se recolectan en Windows (via WinRM), macOS, BSD, Solaris. Los nombres pueden diferir (ansible_os_family varia)." }
+      ],
+      "explanation": "Facts habilitan playbooks CROSS-PLATFORM: when: ansible_distribution == 'Ubuntu' ejecuta apt; when: ansible_distribution == 'CentOS' ejecuta yum. O usa modulo generico package (que resuelve al modulo apropiado). Fact caching: setup es costoso a escala; ansible.cfg puede habilitar fact_caching (redis, jsonfile, memcached) para cachear entre plays. gather_subset='!all,!min,network' filtra facts. Ejemplos utiles: ansible_default_ipv4.address (IP principal), ansible_hostname, ansible_kernel, ansible_virtualization_type (kvm/vmware/aws), ansible_all_ipv4_addresses. Custom facts: /etc/ansible/facts.d/myapp.fact retorna {'version': '1.2.3'} → accesible como ansible_local.myapp.version.",
+      "realWorld": "OpenStack usa facts extensively para playbooks cross-distro que soportan RHEL, CentOS, Ubuntu, Debian con un solo codebase. Empresas con flotas mixtas (RHEL prod + Ubuntu dev) dependen de when: ansible_os_family. Netflix documento fact_caching para speed-up de playbooks sobre miles de instancias (evitan setup en cada play).",
+      "tags": ["facts", "setup", "gather_facts", "custom-facts"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Discovering variables: facts and magic variables" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "iac",
+      "topic": "when y loops",
+      "difficulty": "mid",
+      "scenario": "Necesitas: (a) instalar nginx solo en hosts con >4GB RAM; (b) crear 5 usuarios de una lista; (c) instalar paquetes distintos segun OS. Un colega menciona when: y loop:.",
+      "question": "Como funcionan when y loop en Ansible?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "when: expresion Jinja2 evaluada por task/play. Skip la task si es false. Ejemplo: when: ansible_memory_mb.real.total > 4096. Acepta operadores logicos (and/or/not) y multiples condiciones como lista (AND implicito).", "correct": true, "why": "Correcto. when: es el conditional principal. Se evalua ANTES de ejecutar la task. Sintaxis Jinja2 (sin {{ }}). Puedes referenciar facts, vars, register results. When en un bloque aplica a todas las tasks dentro." },
+        { "letter": "B", "text": "loop: itera sobre lista o dict. Item disponible como {{ item }}. Ejemplo: loop: ['alice', 'bob', 'charlie'] con user: name={{ item }} state=present. Reemplaza el deprecated with_items.", "correct": true, "why": "Correcto. loop es la sintaxis moderna (Ansible 2.5+). with_items sigue funcionando pero es legacy. Para iteraciones complejas: loop con loop_control (label, index_var, pause, extended)." },
+        { "letter": "C", "text": "Puedes combinar when + loop: when se evalua POR CADA item. Ej: loop: [users] cuando el user tiene state=present. Util para filtrar items sin pre-procesar la lista.", "correct": true, "why": "Correcto. when se evalua por item en cada iteracion. Alternativa mas eficiente: pre-filtrar la lista con Jinja2 select() para no iterar innecesariamente." },
+        { "letter": "D", "text": "loop reemplaza el paralelismo — Ansible no puede hacer loops paralelos.", "correct": false, "why": "Confusion. loop es sequential dentro de la task. Paralelismo entre HOSTS es automatico (fork). Para paralelismo dentro de un host, usar async + poll." },
+        { "letter": "E", "text": "when: solo acepta strings, no expresiones.", "correct": false, "why": "Falso. Acepta expresiones Jinja2 completas: matematicas, boolean, filters, tests. Ej: when: item.age > 18 and 'admin' in item.roles." }
+      ],
+      "explanation": "when: patterns comunes: (1) OS-specific: when: ansible_os_family == 'RedHat'; (2) fact-based: when: ansible_memory_mb.real.total > 8192; (3) var-based: when: enable_feature | bool; (4) register result: when: previous_result.rc != 0. loop patterns: (1) simple: loop: [1,2,3]; (2) dict: loop: '{{ users | dict2items }}'; (3) nested: loop: '{{ groups | product(users) | list }}'; (4) file glob: loop: '{{ query(fileglob, /path/*.conf) }}'. loop_control: label={{ item.name }} para output limpio, pause=5 para rate limiting. Anti-pattern: shell loops (usa loop de Ansible, no bash for).",
+      "realWorld": "OpenShift-Ansible installer tiene playbooks con cientos de tasks condicionales por version, arquitectura, y capabilities. GitHub's Ansible playbooks usan loops para provisionar cientos de usuarios y SSH keys de forma declarativa. Comun anti-pattern en principiantes: usar shell con bash loop cuando Ansible loop haria idempotency correctamente.",
+      "tags": ["when", "loop", "conditional", "iteracion"],
+      "tech": ["Ansible", "Jinja2"],
+      "references": [{ "title": "Ansible Docs — Conditionals" }, { "title": "Ansible Docs — Loops" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "iac",
+      "topic": "Roles y Ansible Galaxy",
+      "difficulty": "senior",
+      "scenario": "Tu playbook crecio a 2000 lineas: instala DB, app, monitoring, backups. Es imposible mantener. Un colega dice: 'refactorea a roles y publica en Galaxy los reusables'.",
+      "question": "Que son roles en Ansible y para que sirve Galaxy?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ROLE = paquete de tasks/handlers/vars/templates/files organizados en directorio con estructura convencional: tasks/main.yml, handlers/main.yml, vars/main.yml, defaults/main.yml, templates/, files/, meta/main.yml (dependencies). Se llama desde playbook con roles: [rolename] o dinamicamente con include_role/import_role.", "correct": true, "why": "Correcto. Roles son la unidad de reuso en Ansible. Encapsulan una responsabilidad (instalar nginx, configurar postgres, deployar monitoring). Estructura convencional permite que roles sean intercambiables. defaults/ vs vars/: defaults son overridables, vars tienen precedencia alta." },
+        { "letter": "B", "text": "GALAXY = repositorio publico (galaxy.ansible.com) de roles y collections. Comando ansible-galaxy install <namespace.role> descarga role de Galaxy o de git. Requirements.yml declara dependencias reproducibles.", "correct": true, "why": "Correcto. Galaxy es el 'npm' de Ansible. Roles populares: geerlingguy.docker, geerlingguy.mysql, ansible.posix. Ecosistema masivo. Requirements.yml es lock-file equivalente (pin versiones)." },
+        { "letter": "C", "text": "COLLECTIONS (Ansible 2.9+): formato moderno que agrupa roles + modules + plugins + docs en un paquete versionado. Reemplaza al modelo antiguo de 'todo en core'. Namespaces evitan colisiones. Ej: community.general, amazon.aws, kubernetes.core.", "correct": true, "why": "Correcto. Collections fueron introducidas para modularizar Ansible (core mas ligero, funcionalidad en collections). ansible-galaxy collection install <ns.name>. Casi todo modulo actual vive en una collection, no en core." },
+        { "letter": "D", "text": "Roles y collections son lo mismo con distinto nombre.", "correct": false, "why": "Falso. Role = solo tasks/handlers/vars. Collection = puede contener roles + modules + plugins. Collection es superset. Un role puede vivir dentro de una collection." },
+        { "letter": "E", "text": "Roles no pueden tener defaults sobreescribibles.", "correct": false, "why": "Falso. defaults/main.yml es EXACTAMENTE para valores overridables. Precedencia: role defaults < inventory < playbook vars < role vars < extra vars." }
+      ],
+      "explanation": "Estructura de role (ansible-galaxy init crea el esqueleto): mi_role/tasks/main.yml (tasks principales), handlers/main.yml (handlers), templates/ (Jinja2 templates), files/ (static files), vars/main.yml (variables non-overridable), defaults/main.yml (defaults overridables), meta/main.yml (dependencies + Galaxy metadata), tests/, README.md. Uso: en playbook, roles: [{role: mi_role, vars: {port: 8080}}]. Best practices: (1) un rol = una responsabilidad; (2) usar defaults para todo lo overridable; (3) documentar en README; (4) semver en tags de git; (5) tests con Molecule (framework testing para roles). Galaxy vs collections: Galaxy es platform (hosts roles y collections); collections son formato empaquetado. requirements.yml declara ambos.",
+      "realWorld": "Jeff Geerling (geerlingguy) publico decenas de roles en Galaxy con millones de descargas — su libro 'Ansible for DevOps' es referencia. Red Hat mantiene collections oficiales (redhat.rhel_system_roles). NASA usa roles Ansible para provisionar infra JPL. Anti-pattern comun: hacer un mega-role de 500 lineas en lugar de 5 roles chicos composables.",
+      "tags": ["roles", "galaxy", "collections", "reuso"],
+      "tech": ["Ansible", "Galaxy", "Molecule"],
+      "references": [{ "title": "Ansible Docs — Roles" }, { "title": "Ansible Galaxy" }, { "title": "Jeff Geerling — Ansible for DevOps" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "iac",
+      "topic": "Ansible Vault",
+      "difficulty": "senior",
+      "scenario": "Tu playbook necesita passwords de DB, API keys de AWS, certificados TLS. Commit-earlos en el repo en plain text es catastrofe de seguridad. Un colega menciona ansible-vault.",
+      "question": "Como funciona ansible-vault y patrones de uso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Vault encripta archivos (YAML enteros o strings individuales) con AES256 usando password derivada. Comandos: ansible-vault encrypt/decrypt/edit/rekey. En runtime: --ask-vault-password o --vault-password-file para desencriptar en memoria durante el play.", "correct": true, "why": "Correcto. Vault es la solucion nativa para secrets in-repo encriptados. AES256 con PBKDF2. La password puede ser interactiva, archivo, o script. La clave esta afuera del repo (nunca commitees la password)." },
+        { "letter": "B", "text": "Puedes encriptar solo VALORES individuales con !vault tags dentro de un YAML plain. Util para tener mayoria del YAML legible en git (variables no-secretas visibles) y solo los secretos encriptados.", "correct": true, "why": "Correcto. ansible-vault encrypt_string 'mypassword' produce un blob que pegas en el YAML con !vault. El resto del archivo queda legible. Best practice para maintainability." },
+        { "letter": "C", "text": "Multiple vault passwords: puedes tener secrets encriptados con distintas passwords (por env: dev, staging, prod) y Ansible las resuelve por vault-id. Reduce blast radius si una password se filtra.", "correct": true, "why": "Correcto. --vault-id dev@dev-vault-pass.txt --vault-id prod@prompt permite mezclar. Si dev password se filtra, prod sigue seguro." },
+        { "letter": "D", "text": "Alternativa: integrar con HashiCorp Vault, AWS Secrets Manager, Azure Key Vault via lookups. Ansible-vault es simple pero centralizar secrets en un secret manager externo escala mejor a org grande.", "correct": true, "why": "Correcto. Para orgs grandes, Ansible-vault se vuelve dificil de rotar. Lookups como hashi_vault, amazon.aws.aws_secret, community.general.passwordstore integran con secret managers dedicados." },
+        { "letter": "E", "text": "Ansible-vault provee proteccion contra atacantes con acceso al control node.", "correct": false, "why": "Falso. Si el atacante tiene la vault password (archivo, o memoria del control node), puede desencriptar. Vault protege contra secrets en repo/backup, no contra compromise del control node." }
+      ],
+      "explanation": "Vault workflow: (1) crear vault-password-file fuera del repo (permisos 600); (2) encrypt secrets con vault-password; (3) commit archivos encriptados; (4) runtime: ansible-playbook --vault-password-file <file>. Best practices: (1) NUNCA commit la password; (2) rotar vault-password periodicamente (rekey); (3) usar vault-id por entorno; (4) para CI/CD, inyectar la password como env var/secret; (5) preferir encrypt_string sobre encriptar YAML entero (mejor legibilidad); (6) para orgs grandes → HashiCorp Vault/AWS SM/Azure KV via lookups. Rotacion: rekey masivo puede ser costoso; secret managers externos permiten rotacion sin cambiar el repo. Anti-pattern: commit vault-password.txt en el repo (visto en producciondesastres reales).",
+      "realWorld": "Red Hat migro internamente de ansible-vault a HashiCorp Vault por dificultades de rotacion. GitHub usa OIDC + AWS secrets manager para inyectar credentials en runners. Empresas fintech regulated combinan ansible-vault (bootstrap) + HashiCorp Vault (runtime dynamic secrets). Anti-pattern documentado: password de vault en Slack/wiki con 'temp' que dura años.",
+      "tags": ["vault", "secrets", "aes256", "seguridad"],
+      "tech": ["Ansible", "HashiCorp Vault", "AWS Secrets Manager"],
+      "references": [{ "title": "Ansible Docs — Encrypting content with Ansible Vault" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "iac",
+      "topic": "Templates Jinja2",
+      "difficulty": "senior",
+      "scenario": "Necesitas generar nginx.conf con hostname dinamico, upstream servers segun inventory, y SSL habilitado si es env=prod. Un colega dice: 'usa template Jinja2, no copy'.",
+      "question": "Como usar templates Jinja2 en Ansible?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Modulo template: renderiza archivo .j2 con variables/facts y lo copia al target. Sintaxis Jinja2: {{ variable }}, {% for/if %}, filters {{ var | default(val) | upper }}. template: src=nginx.conf.j2 dest=/etc/nginx/nginx.conf owner=root mode=0644.", "correct": true, "why": "Correcto. Templates son el mecanismo principal de config dinamico. Todo el poder de Jinja2: loops, conditionals, filters, macros. Diferencia con copy: copy es estatico, template renderiza." },
+        { "letter": "B", "text": "Jinja2 en Ansible tiene acceso a: (1) todas las vars del play; (2) todos los facts; (3) hostvars['<host>'].xxx (info de otros hosts); (4) groups[<group>] (miembros de un grupo); (5) inventory_hostname; (6) filters custom (to_yaml, to_json, hash, ipaddr, regex_replace).", "correct": true, "why": "Correcto. hostvars y groups habilitan patterns como 'generar upstream nginx con TODOS los backend servers del inventory'. Los filters convierten datos (json_query, from_yaml, b64encode, quote)." },
+        { "letter": "C", "text": "Whitespace control: {%- -%} para trim linebreaks, importante para generar YAML/JSON valido sin lineas vacias. trim_blocks/lstrip_blocks configurables en ansible.cfg para comportamiento global.", "correct": true, "why": "Correcto. Whitespace matters cuando generas formatos sensibles (YAML). Sin control, el template puede generar lineas en blanco que rompen parsing. {%- if x %} elimina newline previo, {% if x -%} elimina siguiente." },
+        { "letter": "D", "text": "Templates solo soportan variables simples, no logica.", "correct": false, "why": "Falso. Soportan if/else/elif, for con else, macros, includes, imports, blocks (herencia), filters chain. Casi un lenguaje completo (declaratively)." },
+        { "letter": "E", "text": "Templates renderizan en el target.", "correct": false, "why": "Falso. Templates renderizan en el CONTROL NODE con vars/facts recolectados del target, luego se copia el resultado al target. El target no necesita Jinja2 instalado." }
+      ],
+      "explanation": "Template best practices: (1) usar defaults para todas las vars ({{ port | default(80) }}) para evitar undefined errors; (2) mode/owner/group explicit; (3) validate parameter valida sintaxis del archivo generado antes de copiarlo (ej: validate: nginx -t -c %s para nginx.conf); (4) backup: yes para guardar version anterior; (5) para archivos grandes, considerar assemble module (concatenar fragmentos). Filters comunes: default, mandatory, to_json, to_nice_yaml, b64encode, hash('sha256'), regex_replace, ipaddr, dict2items, selectattr, rejectattr, groupby. Custom filters: escribir Python en filter_plugins/. Template loop clasico: {% for host in groups['webservers'] %} server {{ hostvars[host].ansible_default_ipv4.address }}; {% endfor %}.",
+      "realWorld": "OpenStack config files (Nova, Neutron, Keystone) son 100% Jinja2 templates en su deployment tooling. Nginx/HAProxy configs dinamicos son casos comunes. Anti-pattern: hacer sed/awk en shell tasks en lugar de template (peor idempotency y legibilidad). Wikimedia's puppet+ansible mix usa Jinja2 (Ansible) y ERB (Puppet) — ambos con capacidades similares.",
+      "tags": ["templates", "jinja2", "filters", "hostvars"],
+      "tech": ["Ansible", "Jinja2"],
+      "references": [{ "title": "Ansible Docs — Templating (Jinja2)" }, { "title": "Jinja2 Documentation" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "iac",
+      "topic": "block/rescue/always (error handling)",
+      "difficulty": "senior",
+      "scenario": "Tu playbook hace: (1) apagar servicio, (2) hacer backup, (3) migrar DB, (4) reiniciar servicio. Si la migracion falla, necesitas rollback + reiniciar el servicio SI o SI para no dejar el sistema abajo.",
+      "question": "Como funciona block/rescue/always en Ansible?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "block: agrupa tasks. rescue: se ejecuta si CUALQUIER task del block falla (equivalente a catch). always: se ejecuta SIEMPRE (equivalente a finally), aunque haya fallo. Estructura tipo try/catch/finally.", "correct": true, "why": "Correcto. Pattern estandar de manejo de errores. block agrupa lo 'peligroso', rescue el recovery, always el cleanup. Introducido en Ansible 2.0." },
+        { "letter": "B", "text": "En rescue, la variable ansible_failed_task y ansible_failed_result contienen info del fallo. Puedes decidir en rescue si es recuperable o si debes fallar el play con fail: msg='...'.", "correct": true, "why": "Correcto. Rescue no oculta el error — decides que hacer con el. Puedes registrar el fallo, notificar Slack, hacer rollback, y luego decidir si continuar o abortar con fail:." },
+        { "letter": "C", "text": "when: y become: son heredados por todas las tasks del block. Util para aplicar condiciones o privileged escalation a un grupo entero sin repetir.", "correct": true, "why": "Correcto. DRY: pones when: env=='prod' en el block y aplica a todas las tasks dentro. También tags:, become:, vars: se heredan." },
+        { "letter": "D", "text": "always corre solo si el block tuvo exito.", "correct": false, "why": "Falso. always corre SIEMPRE — exito, fallo, o rescate. Es su proposito (equivalente a Python's finally). Ideal para cleanup obligatorio (borrar temp files, liberar locks)." },
+        { "letter": "E", "text": "block/rescue/always no soporta anidamiento.", "correct": false, "why": "Falso. Puedes anidar blocks dentro de blocks (nested try/catch). Util para operaciones complejas con recovery multi-nivel." }
+      ],
+      "explanation": "Pattern tipico: block: [task1, task2, task3], rescue: [restore_backup, alert_oncall, fail], always: [cleanup_tempfiles, unlock]. Beneficios sobre ignore_errors: (1) semantica clara (que es recovery vs cleanup); (2) mejor logging; (3) heredado inheritance. Contrast con ignore_errors: true: ignore_errors solo silencia el fallo pero no permite reaccionar. rescue permite reactive logic. failed_when custom conditions definen que cuenta como 'failed' (util cuando rc=0 pero output indica fallo). Anti-pattern: usar shell task con || true para 'ignorar errores' — mejor usar failed_when: false o block/rescue. Ejemplo comun: DB migration con rollback en rescue.",
+      "realWorld": "OpenShift-Ansible installer usa block/rescue para manejar upgrades cluster: si un master falla el upgrade, rescue hace rollback antes de continuar con el siguiente. Digital Ocean's DB automation Ansible playbooks usan always para asegurar que locks se liberan aunque falle la migracion. Anti-pattern comun: no usar always para cleanup y dejar temp files/locks huerfanos que rompen la siguiente corrida.",
+      "tags": ["block", "rescue", "always", "error-handling"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Blocks" }, { "title": "Ansible Docs — Error Handling" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "iac",
+      "topic": "delegate_to y local_action",
+      "difficulty": "senior",
+      "scenario": "Tu playbook itera sobre webservers, pero para cada uno necesita: (a) sacar el webserver del load balancer (accion en el LB, no en el webserver); (b) hacer rolling deploy; (c) hacer curl desde localhost para verificar. Un colega menciona delegate_to.",
+      "question": "Como funciona delegate_to y cuando usarlo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "delegate_to: <host> ejecuta la task en OTRO host distinto al inventory_hostname actual, PERO mantiene el contexto de vars del host original. Ejemplo: iterando webservers, delegate_to: loadbalancer.example.com para llamar API del LB con info del webserver actual.", "correct": true, "why": "Correcto. Uso clasico: rolling deploy donde para cada webserver, primero le dices al LB '{{ inventory_hostname }}' out of rotation, deployas, y luego LB 'inventory_hostname' back in. delegate_to inverte el host de ejecucion pero conserva variables." },
+        { "letter": "B", "text": "delegate_to: localhost (o local_action:) ejecuta en el control node. Util para: llamar APIs externas, notificar Slack, hacer DNS queries, git operations, generar archivos que luego se copian a targets.", "correct": true, "why": "Correcto. Local execution en control node es comun para integrations. connection: local es el shortcut. delegate_to: localhost es equivalente pero mas explicito. local_action es sintaxis legacy pero funcional." },
+        { "letter": "C", "text": "run_once: true + delegate_to: localhost: la task corre UNA SOLA VEZ (no por cada host del inventario), en el control node. Ideal para acciones globales: crear un ticket unico en Jira, actualizar un DNS record una vez, enviar reporte al final del play.", "correct": true, "why": "Correcto. Sin run_once, delegate_to correria por cada iteracion del inventory (N veces). run_once garantiza single execution. Combinacion muy comun para acciones de coordinacion." },
+        { "letter": "D", "text": "delegate_to cambia el host DEFINITIVAMENTE para el resto del play.", "correct": false, "why": "Falso. delegate_to es POR TASK. La siguiente task vuelve a ejecutar en el inventory_hostname original salvo que tambien tenga delegate_to." },
+        { "letter": "E", "text": "delegate_facts: true guarda facts del host delegado como si fueran del host original.", "correct": true, "why": "Correcto. Sin delegate_facts, los facts recolectados del delegated host van al delegated host. Con delegate_facts: true, se atribuyen al host original — util para wire-up complejo." }
+      ],
+      "explanation": "delegate_to patterns: (1) LB rotation: rolling deploy sacando/metiendo cada webserver de un LB por API; (2) DNS updates: cambiar A records desde control node en cada deploy; (3) monitoring: pausar alerta en Prometheus antes de mantenimiento; (4) notification: mensaje a Slack cuando cada host termina; (5) local generation: template renderiza en localhost, luego se distribuye. Related: connection: local (todo el play corre local), delegate_facts (facts del delegado se atribuyen al original), run_once (una sola ejecucion global). Anti-pattern: hacer curl con delegate_to a APIs sin timeout — puede colgar el play entero. Combinar con timeout: y retries.",
+      "realWorld": "Netflix uso delegate_to para orquestar rolling deploys donde el load balancer (ELB) era un host separado. Amazon documento patterns similar para blue/green con Route53. GitHub Ansible incluye delegate_to para actualizar internal monitoring durante deploys. Common source de bugs: olvidar run_once y terminar ejecutando 100 veces la misma llamada API.",
+      "tags": ["delegate_to", "local_action", "run_once", "rolling"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Delegation" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "iac",
+      "topic": "ansible-lint",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene 50 playbooks legacy. Nadie confia en su calidad. Un colega propone ansible-lint en CI para validar sintaxis, best practices, y anti-patterns.",
+      "question": "Que hace ansible-lint y como integrarlo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ansible-lint es linter oficial de Ansible que revisa: (1) sintaxis YAML valida; (2) uso de best practices (name en cada task, no shell/command sin cause); (3) anti-patterns (yes/no en lugar de true/false, latest instead of pinned version, no become sin need); (4) idempotency (shell sin creates:, changed_when).", "correct": true, "why": "Correcto. ansible-lint reporta issues categorizadas (error, warning) con codigo (yaml, name, no-changed-when, package-latest, risky-shell-pipe). Cataloga reglas configurables via .ansible-lint file." },
+        { "letter": "B", "text": "Integracion en CI: correr ansible-lint en cada PR. Falla el pipeline si detecta errores. Podes hacer --strict para tratar warnings como errores. Combinar con pre-commit hook para catch antes de commit.", "correct": true, "why": "Correcto. GitHub Actions/GitLab CI/Jenkins ejecutan ansible-lint sobre playbooks/roles. pre-commit hook local previene commit de codigo malo. Nivel senior: fallar en cambios nuevos, warn en legacy (migracion gradual)." },
+        { "letter": "C", "text": "Reglas configurables: skip_list, warn_list, enable_list en .ansible-lint. Tags custom en tasks pueden excluirlas (# noqa <rule>). Perfiles: min/basic/moderate/safety/shared/production ajustan strictness.", "correct": true, "why": "Correcto. Configuracion granular permite adopcion incremental. Perfil 'production' es el mas estricto (production-ready code). 'basic' para principiantes. skip_list ignora reglas inaplicables a tu contexto." },
+        { "letter": "D", "text": "ansible-lint reemplaza a testing con Molecule.", "correct": false, "why": "Falso. Complementarios. ansible-lint es static analysis (sintaxis, best practices). Molecule es runtime testing (ejecuta el rol en Docker/Vagrant/EC2 y valida el estado resultante). Ambos en CI." },
+        { "letter": "E", "text": "ansible-lint solo funciona en playbooks, no en roles.", "correct": false, "why": "Falso. Funciona en playbooks, roles, collections, y tasks files. Puede lintar el proyecto entero recursivamente." }
+      ],
+      "explanation": "ansible-lint workflow tipico: (1) instalar (pip install ansible-lint); (2) correr ansible-lint <path>; (3) configurar .ansible-lint con perfil y skip_list; (4) integrar en pre-commit y CI; (5) migrar legacy gradualmente. Reglas notables: name[missing] (tasks sin name), no-changed-when (shell sin idempotency), package-latest (usar version pinned), risky-shell-pipe (pipes en shell), yaml (sintaxis YAML general), fqcn (usar Fully Qualified Collection Names como ansible.builtin.copy). Testing framework complementario: Molecule (test roles en containers), TestInfra/InSpec (assertions sobre el estado resultante). Ecosistema maduro: pre-commit-hooks, GitHub Action oficial ansible/ansible-lint-action.",
+      "realWorld": "Red Hat exige ansible-lint clean en collections publicadas en Automation Hub. Community collections usan ansible-lint en GitHub Actions. Empresas con compliance (SOC2, FedRAMP) usan ansible-lint como evidence de code quality. Molecule + ansible-lint es stack estandar para publicar roles en Galaxy con calidad garantizada. Sin lint, playbooks legacy acumulan tech debt hasta ser inmantenibles.",
+      "tags": ["ansible-lint", "linter", "ci", "molecule", "quality"],
+      "tech": ["Ansible", "ansible-lint", "Molecule"],
+      "references": [{ "title": "ansible-lint Documentation" }, { "title": "Molecule Documentation" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "iac",
+      "topic": "Precedencia de variables",
+      "difficulty": "staff",
+      "scenario": "Tu playbook usa la variable {{ port }}. La defines en: role defaults (80), inventory group_vars (8080), inventory host_vars (9090), playbook vars (7070), y --extra-vars port=6060 al ejecutar. Que valor tiene port en runtime?",
+      "question": "Cual es la precedencia de variables en Ansible (baja a alta)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "De MENOR a MAYOR precedencia (simplificado): role defaults < inventory group_vars all < inventory group_vars < inventory host_vars < play vars < role vars < set_fact/registered < extra-vars (-e). En el escenario: port=6060 (extra-vars gana).", "correct": true, "why": "Correcto. extra-vars (-e o --extra-vars) SIEMPRE gana. role defaults son la base (menor precedencia, overridable por todo). Es critico entender esto porque debugging de 'por que mi variable no tiene el valor que espero' es 30% de los problemas Ansible." },
+        { "letter": "B", "text": "role defaults ganan porque son los ultimos declarados.", "correct": false, "why": "Falso. role defaults son la MAS baja precedencia. Por diseño: son solo 'defaults' overridable por cualquier otra fuente." },
+        { "letter": "C", "text": "playbook vars siempre ganan sobre extra-vars.", "correct": false, "why": "Falso. extra-vars ganan sobre playbook vars. --extra-vars es el 'ultimo recurso' (highest precedence)." },
+        { "letter": "D", "text": "Todas las variables tienen la misma precedencia — usa la ultima declarada.", "correct": false, "why": "Falso. Ansible documenta 22+ niveles de precedencia. Es determinista y complejo." }
+      ],
+      "explanation": "Precedencia completa (aprox, hay 22 niveles): role defaults → group_vars/all → group_vars/parents → group_vars/child → host_vars/inventory → host_vars/playbook_dir → host_vars/relative → play vars → play vars_prompt → play vars_files → role vars → block vars → task vars → include_vars → set_facts/registered → include params → extra-vars. Consecuencia practica: (1) usar role defaults para overridables sensibles al contexto; (2) group_vars para infra-wide; (3) host_vars para especificos; (4) extra-vars para overrides one-off (CI/CD, hotfix). Anti-pattern: usar role vars/ para todo (no permite override). Debugging: ansible-playbook --extra-vars '@vars.json' -vvv muestra resolucion. Comando ansible-inventory --host <host> muestra vars finales resueltos.",
+      "realWorld": "GitHub Ansible playbooks documentan precedencia extensively en internal wiki porque 30% de las horas de debugging son 'por que no override'. Red Hat entrenamiento oficial dedica 2h a precedencia. Common bug: definir var en role/vars/ (alta precedencia) en lugar de role/defaults/ (baja) impide overrides desde group_vars — el diseño intencional pero contra-intuitivo para principiantes. Ansible Tower/AWX proporciona UI que muestra precedencia visualmente.",
+      "tags": ["variables", "precedencia", "vars", "defaults", "extra-vars"],
+      "tech": ["Ansible"],
+      "references": [{ "title": "Ansible Docs — Understanding variable precedence" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "iac",
+      "topic": "Testing con Molecule",
+      "difficulty": "staff",
+      "scenario": "Publicas un role de Galaxy para instalar Postgres en RHEL/Ubuntu/Debian. Necesitas asegurar que funciona en las 3 distros antes de release. Un colega menciona Molecule.",
+      "question": "Como funciona Molecule y para que sirve?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Molecule = framework de testing para roles Ansible. Ciclo: (1) create (levanta container/VM); (2) prepare (setup pre-test); (3) converge (aplica el role); (4) verify (assertions); (5) destroy (cleanup). Drivers: Docker (mas comun), Podman, Vagrant, EC2, GCP.", "correct": true, "why": "Correcto. Molecule automatiza el ciclo test-in-clean-environment. Docker driver es standard: fast, reproducible, aislado. verify usa TestInfra (Python) o Ansible mismo (asserts en playbook) para chequear estado resultante." },
+        { "letter": "B", "text": "Matrix testing: en molecule.yml declaras platforms multiples (Ubuntu22, Ubuntu20, Debian12, RHEL9, CentOS Stream), Molecule los levanta en paralelo y aplica el role a cada uno. Detecta que el role rompa en una distro especifica.", "correct": true, "why": "Correcto. Multi-platform testing es el killer feature. Publicar un role sin test en las N distros que soportas es apuesta ciega. Molecule matrix genera confianza." },
+        { "letter": "C", "text": "Idempotency test: Molecule corre el converge DOS veces y verifica que la segunda corrida no reporta changed=0 (proxy de idempotency). Detecta tasks non-idempotent que un human review no catcha.", "correct": true, "why": "Correcto. molecule test incluye idempotence step automatico. Si tu role tiene shell task sin changed_when, la segunda corrida reporta changed y el test falla. Enforce idempotency en CI." },
+        { "letter": "D", "text": "Molecule solo funciona con Docker.", "correct": false, "why": "Falso. Docker es default pero soporta drivers: Podman, Vagrant, EC2, GCP, Azure, OpenStack, LXC. Docker por simplicidad y velocidad." },
+        { "letter": "E", "text": "Es solo para roles publicados en Galaxy — no aplica a playbooks internos.", "correct": false, "why": "Falso. Aplica a cualquier role, publico o interno. Empresas usan Molecule para roles internos criticos (bootstrapping de infra, security hardening)." }
+      ],
+      "explanation": "Molecule stages: create (Docker up), prepare (opcional, setup), converge (ansible-playbook aplica el role), idempotence (segunda corrida, expected: changed=0), verify (TestInfra/Ansible asserts), destroy (cleanup). Test scenarios: default/, ubuntu22/, rhel9/ — cada scenario tiene su molecule.yml. GitHub Actions integration: molecule/actions permite matrix testing en CI. Best practices para roles serios: (1) test en TODAS las distros soportadas; (2) verify va mas alla de 'converge succeded' — assertions sobre servicios corriendo, ports abiertos, files existiendo, users creados; (3) test edge cases (upgrade path, downgrade); (4) test con diferentes vars (mock user inputs). Sin Molecule, publicar en Galaxy es 'suerte que funcione'.",
+      "realWorld": "Jeff Geerling's roles (geerlingguy.mysql, etc) usan Molecule + GitHub Actions con matrix de 6+ distros. Red Hat certificacion de collections requiere Molecule tests. Empresas fintech usan Molecule para validar security hardening roles antes de aplicar a produccion. Sin testing framework, roles legacy acumulan bugs que solo se descubren en produccion.",
+      "tags": ["molecule", "testing", "idempotency", "matrix"],
+      "tech": ["Ansible", "Molecule", "Docker", "TestInfra"],
+      "references": [{ "title": "Molecule Documentation" }, { "title": "Jeff Geerling — Testing Ansible Roles with Molecule" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "iac",
+      "topic": "Performance a escala",
+      "difficulty": "staff",
+      "scenario": "Tu playbook corre en 500 servidores. Tarda 45 minutos. Necesitas bajarlo a <10 min. Un consultor menciona: forks, strategy: free, fact_caching, pipelining, Mitogen, async.",
+      "question": "Que tecnicas mejoran performance de Ansible a escala?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "forks: aumenta paralelismo (default 5). Con forks=50, Ansible ejecuta simultaneamente en 50 hosts. Trade-off: CPU/memoria del control node, y load en firewalls/LBs. Configurable en ansible.cfg (forks=50) o por linea (-f 50).", "correct": true, "why": "Correcto. Aumentar forks es el fix mas grande para escala. Default 5 es MUY conservador. 50-100 es razonable en control nodes modernos. A 500 forks puedes saturar el control node." },
+        { "letter": "B", "text": "strategy: free: hosts NO se sincronizan entre tasks. Cada host corre TODAS las tasks lo mas rapido posible sin esperar a los demas. vs strategy: linear (default) donde todos esperan a que la task termine en TODOS antes de pasar a la siguiente. free reduce tail latency dramaticamente cuando algunos hosts son lentos.", "correct": true, "why": "Correcto. free es dramatico speedup en flotas heterogeneas. Downside: dificil debug (output entrelazado), no aplicable si hay dependencies inter-host. linear es predecible pero limitado por el host mas lento." },
+        { "letter": "C", "text": "fact_caching: cachea facts entre corridas en redis/jsonfile/memcached. Corridas siguientes leen del cache en lugar de re-gatherar (1-3s por host x N hosts = ahorro grande). Configurable TTL.", "correct": true, "why": "Correcto. Facts gathering es lento en flotas grandes. Cache es speedup facil sin cambios en playbook. Con gather_facts: smart, Ansible salta gathering si tiene cache fresh." },
+        { "letter": "D", "text": "pipelining: reduce round-trips SSH combinando multiples steps en menos conexiones. Requiere requiretty=false en /etc/sudoers del target. Speedup ~2-5x per task.", "correct": true, "why": "Correcto. pipelining=True en ansible.cfg reduce el numero de SSH connections por task. Especialmente notable con muchas tasks pequeñas. Requiere ajuste en sudo config del target." },
+        { "letter": "E", "text": "async + poll para tasks largas: task async: 300 poll: 5 corre background, poll cada 5s hasta 300s. Con poll: 0 es fire-and-forget (fully async, check later con async_status).", "correct": true, "why": "Correcto. async permite tasks largas sin bloquear el fork. Ej: instalar 200 paquetes en cada nodo — fire async y check status en tasks futuras. poll: 0 es dispatch verdadero (util para operaciones que puedan durar horas)." }
+      ],
+      "explanation": "Performance stack: (1) forks alto (50-100); (2) strategy: free para independent hosts; (3) fact_caching (redis para prod); (4) pipelining true; (5) SSH ControlMaster (persist connections); (6) async para tasks largas; (7) Mitogen (plugin de conexion que reduce overhead SSH ~4-7x, deprecated pero aun usado); (8) reducir tasks (menos tasks = menos overhead); (9) gather_subset para minimal facts; (10) delegate_to para consolidar network calls. Anti-patterns: correr shell con curl en un loop de 100 items (usa uri module y loop); usar copy en lugar de synchronize (rsync) para archivos grandes. Diagnostics: --verbose y ANSIBLE_CALLBACK_WHITELIST=profile_tasks muestra tiempo por task. A escala masiva (>5000 nodos), considerar Ansible Tower/AWX con execution nodes.",
+      "realWorld": "Twitter uso Ansible para configurar miles de nodos con custom optimizations (Mitogen, forks 100+). Red Hat OpenShift-Ansible tenia horas de runtime en clusters grandes; optimizacion progresiva bajo a minutos. Facebook (durante uso de Chef, no Ansible) documento problemas similares con pull agents saturando master — Ansible push tiene problema simetrico en el control node. AWX/Tower distribuye ejecucion en execution nodes para escalar horizontalmente.",
+      "tags": ["performance", "forks", "strategy-free", "pipelining", "async", "mitogen"],
+      "tech": ["Ansible", "Mitogen", "Redis"],
+      "references": [{ "title": "Ansible Docs — Performance Tuning" }, { "title": "Mitogen for Ansible" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "iac",
+      "topic": "Ansible vs Terraform vs immutable infra",
+      "difficulty": "staff",
+      "scenario": "Tu CTO pregunta: 'usamos Terraform para infra (VPC, EC2, RDS), y Ansible para config (nginx, users, packages). Un consultor propone eliminar Ansible y usar immutable infra: cada cambio es una nueva AMI construida con Packer + Terraform reemplaza instances. Cual es la decision?'",
+      "question": "Cuando usar Ansible (mutable config mgmt) vs immutable infrastructure?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Terraform + Ansible (modelo tradicional): Terraform crea recursos cloud (VPC, subnets, EC2, RDS), Ansible configura el estado dentro de las instancias (paquetes, configs, users). Bueno para: flotas mixtas, on-prem, cambios frecuentes de config sin recrear instancias.", "correct": true, "why": "Correcto. Sigue siendo pattern valido. Especialmente para on-prem donde no puedes recrear infra facilmente, o para instancias con estado significativo (DBs). Configuration drift es riesgo pero manejable con re-aplicacion regular." },
+        { "letter": "B", "text": "Immutable infrastructure (Packer + Terraform): construyes AMI/imagen con Packer (que puede usar Ansible internamente para configurar la imagen). Terraform reemplaza instancias con nueva AMI en cada cambio. Beneficios: cero drift, rollback trivial (usa AMI vieja), predictable, auditable.", "correct": true, "why": "Correcto. Modelo moderno cloud-native. Cada deploy es nueva instancia con nueva AMI. Rollback = redeploy con AMI vieja. No hay 'in-place changes' que puedan divergir. Popularizado por Netflix (Bakery + Spinnaker)." },
+        { "letter": "C", "text": "Hybrid: Packer + Ansible para bake AMIs (base image), luego Ansible-pull o cloud-init para aplicar cambios de config runtime que no justifican rebuild (feature flags, secrets rotation). Real-world: la mayoria de empresas mezcla ambos.", "correct": true, "why": "Correcto. Puro immutable es teoricamente lindo pero practico limitado: secrets rotation, hotfixes urgentes, config tweaks — no querras rebuild+redeploy para cada minor change. Hybrid balances." },
+        { "letter": "D", "text": "Immutable siempre es mejor.", "correct": false, "why": "Falso. Immutable tiene costos: build time (Packer tarda), storage (AMIs), rollback strategy (blue/green o rolling requiere doble capacidad). Stateful services (DBs) son dificiles de tratar como immutable." },
+        { "letter": "E", "text": "Kubernetes elimina la necesidad de ambos.", "correct": false, "why": "Parcialmente. K8s trata containers como immutable (nunca modificas un pod, lo reemplazas) — reemplaza el use case de Ansible dentro del container. Pero SIGUES necesitando Terraform/Ansible para el CLUSTER K8s subyacente (nodes, control plane, VPC)." }
+      ],
+      "explanation": "Immutable infra principios (Netflix, HashiCorp): (1) infrastructure es un artifact versioned; (2) nunca modificas en-place — reemplazas; (3) cada version es imutable + auditable; (4) rollback = redeploy version anterior. Packer bake AMI con Ansible (mejor de ambos: declarativo build + immutable runtime). Terraform Provisioner con Ansible es anti-pattern (mezcla los mundos y pierde beneficios de ambos). Modelo moderno: (1) Packer + Ansible → AMI; (2) Terraform → provisiona instancias con AMI; (3) sin config drift porque no hay in-place changes; (4) para cambios runtime que no ameritan rebuild → Ansible-pull o config server. K8s es immutable natural para containers, pero el cluster infra debajo aun requiere IaC tradicional. Elegir depende de: velocidad de cambio, statefulness, coste de rebuild, madurez de tooling.",
+      "realWorld": "Netflix pionero immutable con Aminator (deprecated) + Spinnaker: cada deploy es nueva AMI. HashiCorp propone Packer+Terraform+Nomad como stack immutable. Empresas mas tradicionales (banca, telco) siguen con Ansible mutable por infra fisica o legacy. AWS Well-Architected Framework recomienda immutable donde posible. Kubernetes gano por democratizar immutable a nivel container. Anti-pattern comun: Terraform provisioner llamando Ansible que muta la instancia — mezcla peor de ambos mundos.",
+      "tags": ["immutable", "packer", "terraform", "netflix", "kubernetes"],
+      "tech": ["Ansible", "Terraform", "Packer", "AWS AMI", "Kubernetes"],
+      "references": [{ "title": "HashiCorp — Immutable Infrastructure" }, { "title": "Netflix Tech Blog — Aminator" }, { "title": "AWS Well-Architected Framework — Operational Excellence" }]
+    }
+  ]
+}

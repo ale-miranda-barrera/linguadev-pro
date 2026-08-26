@@ -1,0 +1,418 @@
+{
+  "id": "devops-sim-40-cost-optimization-finops",
+  "trackId": "devops",
+  "order": 40,
+  "title": "Simulacro 40 — FinOps y optimización de costos cloud",
+  "focus": "FinOps framework (Inform/Optimize/Operate). Savings Plans vs Reserved Instances vs Spot. Right-sizing con AWS Compute Optimizer / GCP Recommender. Tagging strategy para cost allocation. Showback vs chargeback. Infracost para IaC. Cost anomaly detection. EBS gp3 vs gp2. S3 storage classes. Egress cost surprises (NAT Gateway, cross-AZ, cross-region). Kubernetes resource requests tuning. Unused resources detection. La cloud NO es barata por defecto — hay que operarla.",
+  "areaCoverage": ["reliability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "reliability",
+      "topic": "¿Qué ES FinOps?",
+      "difficulty": "junior",
+      "scenario": "Tu CFO ve la factura de AWS: $180k/mes y creciendo 15% MoM. Pregunta: '¿quién es dueño de esto?'. El equipo de finanzas dice: 'no entendemos el detalle'. Engineering dice: 'no sabemos los costos'. Alguien menciona 'FinOps' como solución.",
+      "question": "¿Qué es FinOps realmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "FinOps (Cloud Financial Operations) es una PRÁCTICA CULTURAL Y OPERATIVA que combina finance, engineering, product para gestionar el gasto cloud como responsabilidad compartida. Se basa en 3 fases iterativas: INFORM (visibilidad — quién gasta qué, tagging, showback), OPTIMIZE (right-size, RIs/Savings Plans, eliminar waste), OPERATE (governance, policies, cost como KPI de ingeniería). No es una herramienta ni un puesto — es una forma de trabajar donde ingenieros ven y son responsables del costo de sus decisiones.", "correct": true, "why": "Correcto. FinOps Foundation (2019, ahora parte de Linux Foundation) publicó el framework. El principio central es responsabilidad DISTRIBUIDA — no un equipo central de 'cloud cops', sino que cada equipo ve su gasto y lo gestiona. Sin cultura, herramientas como Cost Explorer no cambian nada." },
+        { "letter": "B", "text": "FinOps es un puesto de trabajo — el 'FinOps engineer' que optimiza costos.", "correct": false, "why": "Anti-patrón. Como 'DevOps engineer', centralizar FinOps en una persona/equipo recrea el silo. FinOps Foundation explícitamente dice que es responsabilidad compartida — el FinOps team habilita, no ejecuta por otros." },
+        { "letter": "C", "text": "FinOps = comprar Reserved Instances agresivamente.", "correct": false, "why": "Reducción peligrosa. RIs son UNA táctica de OPTIMIZE, pero sin INFORM (visibilidad) puedes comprar RIs para workloads que van a desaparecer — commitment perdido. Sin OPERATE (governance) los ingenieros siguen creando waste." },
+        { "letter": "D", "text": "FinOps es simplemente 'gastar menos'.", "correct": false, "why": "FinOps NO es reducir gasto a toda costa — es MAXIMIZAR VALOR por dólar. A veces la decisión correcta es GASTAR MÁS (más réplicas para SLA, mejor DB para performance). FinOps trae el trade-off cost/value a la mesa con datos." }
+      ],
+      "explanation": "FinOps Foundation define el framework en 3 fases + 6 principios: (1) equipos colaboran; (2) decisiones driven by business value; (3) todos son dueños de su cloud usage; (4) reportes accesibles y timely; (5) team central drives FinOps; (6) aprovechar el variable cost model de la cloud. El error clásico: 'contratamos un FinOps consultant, va a arreglar la factura'. No — la factura la arreglan los INGENIEROS que crearon los recursos, con visibilidad + incentivos + herramientas.",
+      "realWorld": "FinOps Foundation State of FinOps Report 2024: 62% de empresas cloud reportan FinOps como práctica activa. Netflix, Spotify, Adobe, HERE Technologies son casos publicados. Basecamp/37signals hizo el opuesto — cloud exit en 2023-2024 salvando $4M/año (David Heinemeier Hansson escribió extensivamente sobre esto). Corey Quinn (Duckbill Group / 'Last Week in AWS') es la voz más citada de cost analysis pública.",
+      "tags": ["FinOps", "cultura", "framework", "cloud cost"],
+      "tech": [],
+      "references": [{ "title": "FinOps Foundation — Framework" }, { "title": "J.R. Storment, Mike Fuller — Cloud FinOps (O'Reilly)" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "reliability",
+      "topic": "Fases FinOps — Inform, Optimize, Operate",
+      "difficulty": "junior",
+      "scenario": "Tu jefe pregunta: '¿por dónde empezamos con FinOps?'. Un consultor sugiere: 'compremos Spot y RIs ya'. Otro dice: 'primero necesitamos ver qué gastamos'. Un tercero: 'implementemos policies de aprobación'.",
+      "question": "¿Cuál es el orden correcto de las fases FinOps y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "INFORM primero (visibilidad — tagging, cost allocation, showback dashboards para que cada equipo VEA su gasto). Luego OPTIMIZE (right-size, comprar commitments, eliminar waste con datos). Luego OPERATE (automation, policies, cost como KPI continuo). Es ITERATIVO — no lineal. Empezar por Optimize sin Inform = optimizar a ciegas, comprar RIs equivocados.", "correct": true, "why": "Correcto. La secuencia importa porque sin visibilidad las optimizaciones son adivinanzas. Sin governance (Operate) las mejoras se erosionan — el equipo vuelve a crear waste. Iteración: cada ciclo mejora Inform (más granular tagging), Optimize (más categorías), Operate (más automation)." },
+        { "letter": "B", "text": "OPTIMIZE primero — comprar Savings Plans grandes.", "correct": false, "why": "Peligroso. Sin Inform no sabes qué workloads son estables (candidatos a commitments) vs efímeros (candidatos a Spot). Comprometerte a 3 años a un instance type que vas a migrar en 6 meses = commitment perdido." },
+        { "letter": "C", "text": "OPERATE primero — implementar policies restrictivas.", "correct": false, "why": "Sin datos, las policies son arbitrarias y frustran a ingenieros. Además genera rebelión cultural — la gente busca workarounds. Governance sin data = friction." },
+        { "letter": "D", "text": "No hay orden — se hacen en paralelo desde día 1.", "correct": false, "why": "En teoría paralelizable, en práctica caótico. La secuencia Inform → Optimize → Operate refleja madurez: no puedes gobernar lo que no mides, y no puedes optimizar lo que no ves." }
+      ],
+      "explanation": "INFORM (mes 1-3): tagging strategy, activar Cost Explorer / Cost & Usage Reports, dashboards por equipo, cost allocation, alertas básicas de anomalía. OPTIMIZE (mes 3-6): right-sizing con Compute Optimizer, comprar RI/Savings Plans para baseline, migrar workloads elegibles a Spot, S3 lifecycle, EBS gp2→gp3, cleanup de unused. OPERATE (mes 6+): automated policies (Terraform Sentinel, OPA), Infracost en PRs, KPIs de unit economics ($ per user, $ per transaction), FinOps reviews mensuales. Es LOOP — cada iteración descubre más waste y afina más policies.",
+      "realWorld": "Adobe caso público (FinOps Foundation): empezaron con solo Inform (tagging + Cost Explorer) 6 meses, luego Optimize salvando 25%, luego Operate con policies. Spotify tuvo 'Cost Insights' interno como Inform primero. Corey Quinn tiene decenas de análisis de 'compañías que compraron 3-year RIs sin Inform y perdieron $M cuando migraron a Graviton'.",
+      "tags": ["FinOps", "Inform", "Optimize", "Operate", "iteración"],
+      "tech": [],
+      "references": [{ "title": "FinOps Foundation — Phases of FinOps" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "reliability",
+      "topic": "Savings Plans vs Reserved Instances vs On-Demand",
+      "difficulty": "mid",
+      "scenario": "Tu workload principal (web app) corre 24/7 en EC2 m5.xlarge, ~50 instancias baseline. Los picos suben a 80. Estás pagando On-Demand 100%. Tu CFO pregunta cómo reducir sin arriesgar disponibilidad.",
+      "question": "¿Cuál es la estrategia óptima con Savings Plans?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Comprar Compute Savings Plans para cubrir el BASELINE (~50 instancias equivalentes, quizá 45 para margen), commitment 1 año no upfront (~40% descuento). El PICO (30 extras) se paga On-Demand — es más barato que comprometer para picos ocasionales. Compute SP es más flexible que EC2 Instance SP (aplica a EC2/Fargate/Lambda, cualquier region/family). Reevaluar cada 3-6 meses.", "correct": true, "why": "Correcto. Regla FinOps: comprometer solo el BASELINE ESTABLE — la porción del gasto que sabes con >90% confianza estará ahí en 1-3 años. Sobre-comprometer = commitment perdido si escalas menos. Sub-comprometer = pagas On-Demand innecesariamente. Compute SP > EC2 Instance SP porque flexibilidad vale más que el 6% adicional de descuento." },
+        { "letter": "B", "text": "Comprar Standard RIs 3 años all-upfront por 100 instancias.", "correct": false, "why": "Máximo descuento (~72%) pero rigidez máxima. Si migras a Graviton, cambias family, o reduces baseline, pierdes el commitment. Standard RIs 3 años ya casi no se usan — Savings Plans los reemplazaron por flexibilidad." },
+        { "letter": "C", "text": "Comprar Spot Instances 100% para todo.", "correct": false, "why": "Spot puede terminarse con 2 min de aviso. Para un baseline 24/7 crítico, riesgo altísimo. Spot es para workloads tolerantes a interrupción (batch, stateless workers con auto-recovery). Nunca para el baseline crítico completo." },
+        { "letter": "D", "text": "Seguir 100% On-Demand — la flexibilidad vale la pena.", "correct": false, "why": "Deja 30-50% de ahorro en la mesa para un workload conocido y estable. Compute SP 1 año no upfront tiene mínimo riesgo (solo compromete gasto/hora, no instance type específico)." }
+      ],
+      "explanation": "Modelo de precios AWS: On-Demand (100%), Compute Savings Plans (~27-66% descuento, flexible), EC2 Instance SP (~27-72%, más restringido a family/region), Standard RI (~40-72%, family/region fijo), Convertible RI (~40-66%, cambiable), Spot (~70-90% descuento, interrumpible). REGLA DE ORO: baseline estable → SP/RI; carga variable predecible → On-Demand; carga tolerante a interrupción → Spot. Cobertura target típica: 60-80% del gasto compute cubierto por commitments (nunca 100% — deja margen para migración/cambios). Modelo similar en GCP (Committed Use Discounts) y Azure (Reserved VM Instances + Savings Plans).",
+      "realWorld": "Netflix combina RIs + Spot masivamente — la mayoría de batch/encoding en Spot con auto-recovery. Pinterest publicó blog sobre cómo pasaron de 100% On-Demand a ~70% Savings Plans + 20% Spot + 10% On-Demand. Corey Quinn advierte constantemente: '3-year RIs se compran con optimismo y se lloran con Graviton'.",
+      "tags": ["Savings Plans", "Reserved Instances", "Spot", "commitments"],
+      "tech": [],
+      "references": [{ "title": "AWS — Savings Plans documentation" }, { "title": "Corey Quinn — Last Week in AWS blog" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "reliability",
+      "topic": "Spot Instances — cuándo SÍ, cuándo NO",
+      "difficulty": "mid",
+      "scenario": "Tu equipo tiene: (1) DB primaria PostgreSQL 24/7, (2) API serving crítico con SLA 99.9%, (3) batch nocturno de procesamiento de datos, (4) CI runners para builds, (5) ML training jobs de horas.",
+      "question": "¿Qué workloads son buenos candidatos para Spot?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Batch nocturno — tolera reintentos. Si Spot interrumpe, el job se reprograma. Ideal candidato: puede tolerar 2-min warning, chunks re-ejecutables, no urgente.", "correct": true, "why": "Correcto. Workloads batch idempotentes son el caso canónico de Spot. 70-90% ahorro con impacto mínimo." },
+        { "letter": "B", "text": "CI runners — stateless, si un runner se interrumpe se reintenta el job en otro. GitHub Actions self-hosted en Spot es patrón muy común.", "correct": true, "why": "Correcto. CI/CD es efímero por naturaleza — perfecto para Spot. Herramientas como Karpenter (Kubernetes) manejan interrupciones automáticamente." },
+        { "letter": "C", "text": "ML training jobs — con checkpointing cada N minutos, un job puede continuar tras interrupción. Grandes ahorros en GPU costs.", "correct": true, "why": "Correcto. GPU on-demand es carísimo ($4-30/hora). Spot GPUs con checkpointing reducen costo 70%+. AWS SageMaker Managed Spot Training gestiona esto." },
+        { "letter": "D", "text": "DB primaria PostgreSQL 24/7 — Spot da máximo ahorro y siempre hay que aprovechar.", "correct": false, "why": "PELIGROSO. Interrumpir una DB primaria = downtime + posible corrupción/data loss. Stateful crítico NUNCA en Spot. Excepción: DB read replicas efímeras podrían usarlo si el sistema tolera perder replicas." },
+        { "letter": "E", "text": "API serving crítico con SLA 99.9% — perfecto para Spot porque hay auto-scaling.", "correct": false, "why": "Riesgo alto. Auto-scaling no salva de spot interruption masivo (AWS puede reclamar miles a la vez). Para SLA estricto: mix conservador — mayoría On-Demand/SP, quizá 10-20% Spot como buffer. Nunca 100%." }
+      ],
+      "explanation": "Spot es AWS vendiendo capacidad ociosa con precios volátiles (~70-90% descuento). Reglas: (1) workload debe ser INTERRUMPIBLE (2 min warning), (2) STATELESS o con checkpointing, (3) idealmente HORIZONTAL SCALABLE (no una gran instancia). Buenas herramientas: EC2 Spot Fleet (mezcla instance types para reducir riesgo simultáneo), Karpenter en Kubernetes (auto-reemplaza pods spot), AWS Batch (managed spot). Estrategias: mix on-demand base + spot escalado, diversificar entre 5+ instance types para reducir probabilidad de spot outage simultáneo. Similar en GCP (Spot VMs) y Azure (Spot VMs).",
+      "realWorld": "Pinterest corre gran parte de su compute batch en Spot. Netflix Encoding Farm es 90%+ Spot. Duolingo publicó sobre ML training en Spot con checkpointing. Cautionary tale: en 2019 hubo AWS Spot outage regional donde múltiples empresas perdieron capacidad simultáneamente — reforzó importancia de diversificación.",
+      "tags": ["Spot", "batch", "ML", "interruption"],
+      "tech": [],
+      "references": [{ "title": "AWS EC2 Spot best practices" }, { "title": "Karpenter — Spot handling" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "reliability",
+      "topic": "Right-sizing — AWS Compute Optimizer / GCP Recommender",
+      "difficulty": "mid",
+      "scenario": "Miras Cost Explorer y ves que gastas mucho en EC2. Sospechas que muchas instancias están sobredimensionadas (compraste m5.4xlarge 'por si acaso'). ¿Cómo lo verificas y actúas?",
+      "question": "¿Qué es right-sizing y cómo lo automatizas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Right-sizing = ajustar tamaño de instancia al uso REAL basándose en telemetría histórica. AWS Compute Optimizer analiza métricas (CPU, memoria, red) por 14 días y recomienda downsize o cambio de family (ej: m5.4xlarge con 8% CPU promedio → downsize a m5.large). Es GRATIS. Recomendaciones tienen risk rating. Similar: GCP Recommender, Azure Advisor. Aplicar iterativamente porque las cargas cambian.", "correct": true, "why": "Correcto. Compute Optimizer usa ML sobre CloudWatch metrics para recomendar tamaño óptimo. Es fundamental porque el 'overprovisioning por si acaso' es endémico — encuestas FinOps muestran 20-40% de overspend por overprovisioning. GCP Recommender e Azure Advisor son equivalentes con nombres distintos." },
+        { "letter": "B", "text": "Right-sizing = comprar el instance type más caro para tener margen.", "correct": false, "why": "Es el OPUESTO. Right-sizing baja tamaños a lo que realmente se usa." },
+        { "letter": "C", "text": "Right-sizing solo aplica a EC2, no a RDS o ElastiCache.", "correct": false, "why": "Falso. RDS, ElastiCache, EBS, Lambda memory también se right-size. Compute Optimizer cubre EC2, EBS, Lambda, ECS/Fargate. Trusted Advisor y Cost Explorer sugieren RDS." },
+        { "letter": "D", "text": "Right-sizing debe hacerse manualmente sin herramientas.", "correct": false, "why": "Cloud vendors regalan herramientas por buena razón — quieren que la cloud sea sostenible económicamente para ti. Usa Compute Optimizer / Recommender / Advisor." }
+      ],
+      "explanation": "Right-sizing workflow: (1) activar Compute Optimizer / Recommender / Advisor; (2) revisar recomendaciones ordenadas por ahorro potencial; (3) validar que el workload no tenga picos ocultos (Compute Optimizer usa 14-day p99 por default, configurable a más); (4) aplicar en instancia menos crítica primero (canary); (5) monitor CPU/memory/error rate 1-2 semanas; (6) rollout resto. Herramientas third-party: Densify, CloudHealth, Spot.io Ocean. Automatizado: Karpenter en Kubernetes right-size continuamente reemplazando nodes. Gotchas: memory metric requiere CloudWatch Agent instalado (no viene default); Compute Optimizer no ve request/queue latency, solo utilization — puede recomendar downsize que rompe latencia p99.",
+      "realWorld": "AWS reportó en re:Invent 2022 que clientes ahorran promedio 20% con Compute Optimizer. Airbnb blog sobre right-sizing masivo cortando 30%. Corey Quinn tiene análisis recurrentes de compañías con m5.24xlarge al 3% CPU. En LinkedIn se ven engineers presumiendo 'ahorré $200k/año solo con right-sizing' — es la fruta más baja de FinOps.",
+      "tags": ["right-sizing", "Compute Optimizer", "utilization", "waste"],
+      "tech": [],
+      "references": [{ "title": "AWS Compute Optimizer" }, { "title": "GCP Recommender" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "reliability",
+      "topic": "Tagging strategy para cost allocation",
+      "difficulty": "mid",
+      "scenario": "Tu factura AWS es un solo número: $180k/mes. Nadie sabe qué equipo/producto/environment gasta qué. Cuando el CFO pregunta '¿cuánto cuesta el producto X?', la respuesta es 'no sabemos'.",
+      "question": "¿Cómo diseñas una tagging strategy efectiva?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Definir tags MANDATORIOS con nombres consistentes: Environment (prod/staging/dev), CostCenter o Team, Product o Service, Owner (email), ManagedBy (terraform/manual). Documentar en un ADR/wiki. Los tags deben ser lowercase, sin espacios, valores estandarizados (enum, no free text).", "correct": true, "why": "Correcto. Consistencia es TODO — 'team=platform' y 'Team=Platform' y 'team=Platform ' son 3 tags distintos. Enum values evita drift. Nombres compartidos entre AWS/GCP/Azure para reportes cross-cloud." },
+        { "letter": "B", "text": "Enforcement con IaC — Terraform module wrappers que inyectan tags obligatorios. Sin tag correcto, el recurso no se crea. AWS Service Control Policies (SCPs) o Config Rules pueden bloquear/alertar. En GCP labels similar. Retroactivamente: script que audita y flagea recursos sin tags.", "correct": true, "why": "Correcto. Tagging manual siempre falla — la única forma de mantener disciplina es hacerlo imposible-de-olvidar (falla el terraform apply si falta tag). Config Rules puede auto-remediar." },
+        { "letter": "C", "text": "Activar Cost Allocation Tags en AWS Billing (los tags no aparecen en Cost Explorer/CUR hasta activarlos). Similar en GCP labels export a BigQuery. Luego crear vistas/dashboards agrupados por tag: gasto por team, por product, por environment.", "correct": true, "why": "Correcto. Gotcha: los tags EXISTEN en los recursos pero NO se muestran en billing hasta activar 'Cost Allocation Tags' en Billing preferences. Nueva activación toma 24h en aparecer. Es una fuente común de confusión — 'taggeo pero no lo veo en costos'." },
+        { "letter": "D", "text": "Empezar con 50+ tags para máxima granularidad.", "correct": false, "why": "Contraproducente. Empezar con 4-6 tags críticos (Environment, Team, Product, Owner). Más tags = más error de digitación, menos consistencia, cognitive load para ingenieros. Añadir tags específicos por dominio después." },
+        { "letter": "E", "text": "Los tags no importan si tienes cuentas separadas por equipo.", "correct": false, "why": "Multi-account (AWS Organizations, GCP folders) ayuda MUCHO pero no reemplaza tags. Dentro de una cuenta prod puedes tener múltiples productos/equipos, y necesitas tags para descomponer. Best practice: multi-account POR ORG + tags DENTRO." }
+      ],
+      "explanation": "Tagging es la BASE de FinOps porque sin cost allocation no hay showback/chargeback ni ownership. Standard mínimo: Environment, Owner, CostCenter/Team, Product/Service, ManagedBy. Enforcement: (1) IaC modules con tags obligatorios; (2) SCPs que deny recursos sin tags (AWS); (3) Config Rules auto-remediar; (4) alerts en Slack por untagged resources. Gotchas: algunos recursos no soportan todos los tags (ej: EBS snapshots heredan de volume pero pierden histórico si borras volume); tags en resource groups (Azure) vs individual resources; cost allocation tags no aparecen retroactivamente en CUR — solo desde momento de activación.",
+      "realWorld": "Adobe caso público: 20% de gasto era 'untagged' inicialmente, después de campaña de tagging bajó a <2% en 6 meses. HERE Technologies escribió sobre tagging enforcement con Terraform Sentinel. AWS Well-Architected FinOps pillar dedica sección entera a tagging. Herramientas: CloudHealth, Vantage, Kubecost (para K8s) hacen visualization sobre tags.",
+      "tags": ["tagging", "cost allocation", "governance", "showback"],
+      "tech": [],
+      "references": [{ "title": "AWS Tagging Best Practices" }, { "title": "FinOps Foundation — Allocation" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "reliability",
+      "topic": "Showback vs Chargeback",
+      "difficulty": "staff",
+      "scenario": "Tienes cost allocation por equipo. Debate interno: '¿los equipos deben VER su gasto (showback) o debe COBRÁRSELES a su presupuesto interno (chargeback)?'.",
+      "question": "¿Cuál es la diferencia y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SHOWBACK = mostrar a cada equipo su gasto (visibilidad) sin cargarlo al budget. Genera awareness y presión social pero no financial. CHARGEBACK = el gasto se descuenta del budget del equipo, con impacto financiero real. Chargeback tiene más 'diente' pero requiere allocation MUY precisa (equipos discutirán cada dólar). Regla: showback como fase de aprendizaje (6-12 meses), chargeback cuando la allocation es confiable y la organización culturalmente lista.", "correct": true, "why": "Correcto. Showback es 'entrenamiento', chargeback es 'contabilidad real'. Empezar con chargeback en organización inmadura genera resentimiento y gaming (equipos moviendo recursos para evadir allocation). Showback primero baja gasto solo por visibilidad — la 'observer effect' es real." },
+        { "letter": "B", "text": "Chargeback es siempre mejor que showback.", "correct": false, "why": "No. Chargeback prematuro sin allocation robusta = discusiones interminables ('esos $10k no son míos, son shared services'). Puede matar la iniciativa FinOps." },
+        { "letter": "C", "text": "Showback es solo un dashboard sin impacto real.", "correct": false, "why": "Subestima showback. Estudios FinOps muestran que solo visibilidad (sin chargeback) baja gasto 10-20% — engineers ven '$50k/mes en logs' y actúan. La transparencia es palanca poderosa." },
+        { "letter": "D", "text": "Son sinónimos.", "correct": false, "why": "Distintos. La diferencia es si hay IMPACTO FINANCIERO real en el budget del equipo o solo VISIBILIDAD." }
+      ],
+      "explanation": "Progresión típica: (1) NADA — un solo bill, 'gasto de la empresa'; (2) SHOWBACK — cada equipo ve su gasto, discusiones sobre allocation, mejoras naturales; (3) CHARGEBACK PARCIAL — costos directos (EC2 tagged) cargados, shared services (VPC, IAM) prorrateados con fórmula; (4) FULL CHARGEBACK — todo cargado, unit economics ($ per user), incorporado a P&L. Cada nivel requiere más madurez en allocation. Shared services es siempre el problema difícil — RDS compartida entre 3 productos, ¿cómo se prorratea? (por queries, por storage, por CPU, por peso arbitrario). Sin consenso, chargeback fracasa.",
+      "realWorld": "Spotify usó showback varios años antes de moving a chargeback parcial. Adobe reportó que showback bajó gasto 15% solo por visibilidad. Netflix hace showback interno con cost dashboards por 'service' (que suele mapear a equipo). Muchas empresas nunca llegan a full chargeback — showback + accountability meetings es 'good enough'.",
+      "tags": ["showback", "chargeback", "cost allocation", "governance"],
+      "tech": [],
+      "references": [{ "title": "FinOps Foundation — Showback vs Chargeback" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "reliability",
+      "topic": "Infracost — cost estimation en PRs",
+      "difficulty": "staff",
+      "scenario": "Tu equipo escribió Terraform que agrega un RDS db.r6g.16xlarge Multi-AZ + Aurora replica cross-region + 5 NAT Gateways. El PR pasa CI y se aprueba. Nadie miró el impacto de costo hasta que llega la factura del mes siguiente: +$18k/mes inesperado.",
+      "question": "¿Cómo prevenir esto con Infracost?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Infracost es una herramienta open-source que analiza cambios en Terraform/Pulumi/CloudFormation y estima el impacto de costo por hora/mes. Se integra como GitHub Action que POSTA comentario en el PR: 'esta PR aumenta $18k/mes'. Reviewers ven el costo ANTES de aprobar. Se puede configurar policies (ej: PRs con >$1k/mes de aumento requieren aprobación de tech lead). Es INFORM temprano (shift-left).", "correct": true, "why": "Correcto. Infracost trae visibilidad de costo al momento de la decisión de código, no cuando ya está desplegado. Usa AWS/GCP/Azure pricing APIs. Es shift-left para costo — como shift-left security. Similar concepto: Terraform Cloud cost estimation (paid feature)." },
+        { "letter": "B", "text": "Infracost es una herramienta de billing para pagar la factura AWS.", "correct": false, "why": "No. Infracost estima costos, no procesa pagos." },
+        { "letter": "C", "text": "Infracost solo funciona en producción después del deploy.", "correct": false, "why": "Opuesto. El valor de Infracost es PRE-deploy (en PR/plan phase). Post-deploy hay Cost Explorer y CUR." },
+        { "letter": "D", "text": "Infracost reemplaza Cost Explorer.", "correct": false, "why": "Complementario. Infracost = estimación pre-deploy sobre IaC. Cost Explorer = costos reales post-facto." }
+      ],
+      "explanation": "Infracost workflow: (1) `infracost breakdown --path .` local ve estimación; (2) `infracost diff` compara before/after de una PR; (3) GitHub Action posta comentario en PR con diff; (4) Infracost Cloud da policies y dashboards. Limitaciones: (a) estima on-demand pricing por default — no ve tus SP/RIs (puede sobreestimar); (b) no ve traffic/usage-based charges reales (Lambda invocations, S3 requests, egress) — estima con assumptions; (c) requires Terraform plan válido. Alternativas: Terraform Cloud cost estimation, Pulumi Insights, CloudCraft, Vantage. También: OPA policies para bloquear ciertos resource types caros sin approval.",
+      "realWorld": "Infracost fue fundado en 2021, adopción rápida en empresas cloud-native. HashiCorp incorporó cost estimation en Terraform Cloud. Muchas empresas reportan bloqueos de PRs de $50k/mes que hubieran pasado sin revisión. Corey Quinn recomienda Infracost frecuentemente como 'shift-left FinOps'. Alternativas comerciales: CAST AI, Vantage.",
+      "tags": ["Infracost", "IaC", "shift-left", "PR review"],
+      "tech": [],
+      "references": [{ "title": "Infracost documentation" }, { "title": "Cloud FinOps book — Shift Left" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "reliability",
+      "topic": "Cost anomaly detection",
+      "difficulty": "staff",
+      "scenario": "Un ingeniero deja corriendo por error 20 instancias p4d.24xlarge (GPU $32/h cada una) durante un fin de semana. La factura sube $30k antes de que alguien note el lunes. ¿Cómo evitas esto?",
+      "question": "¿Cómo se detectan anomalías de costo antes de que sean desastres?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "AWS Cost Anomaly Detection (gratis) — usa ML para aprender el patrón de gasto y alertar cuando hay desviación significativa. Configuras 'monitors' (por servicio, tag, cost category) y umbrales de alerta ($ absoluto o %). Notificación por email/SNS. Similar en GCP (Recommendations Hub) y Azure (Cost Alerts + Anomaly Detection).", "correct": true, "why": "Correcto. Es literalmente el caso de uso — detección temprana de spike inesperado. Gratis y bien integrado. Latency: usualmente 24h después de que el charge aparece (billing tarda), pero mejor 24h que factura fin de mes." },
+        { "letter": "B", "text": "Budgets con alerts por umbral — ej: '$10k/mes budget en team X, alert al 80% y 100%'. AWS Budgets, GCP Budget alerts, Azure Cost Alerts. Complementa anomaly detection: anomaly detecta spike inesperado, budget detecta crecimiento continuo.", "correct": true, "why": "Correcto. Budget es preventivo por umbral fijo; anomaly detection es reactivo por patrón inusual. Ambos juntos cubren más casos." },
+        { "letter": "C", "text": "Auto-shutdown policies en dev/staging — Lambda scheduled que apaga instancias con tag Environment=dev fuera de horario laboral y sin scaling group activo. Ahorra 65% del gasto dev (nights + weekends).", "correct": true, "why": "Correcto. Prevención en vez de detección. Herramientas: AWS Instance Scheduler, Ansible cron, Terraform + EventBridge rules. Regla clásica: 'dev/staging apagados de noche y fin de semana'." },
+        { "letter": "D", "text": "Guardrails de tamaño — SCPs (AWS Organizations) que deny launch de instance types caros (p4d, x2, m6i.32xlarge) sin approval. Similar en GCP Organization Policy, Azure Policy.", "correct": true, "why": "Correcto. Preventivo hard — el error de 'lanzar p4d por error' se bloquea en API level. Balance con productividad: permitir en cuentas específicas de ML/research." },
+        { "letter": "E", "text": "Revisar factura manualmente cada mes al final es suficiente.", "correct": false, "why": "Insuficiente. Un spike puede acumular decenas de miles antes de que la factura llegue. Detección de real-time (o casi) es esencial." }
+      ],
+      "explanation": "Estrategia layered: (1) PREVENTION — SCPs/policies bloqueando recursos peligrosos, auto-shutdown; (2) EARLY DETECTION — Cost Anomaly Detection (24h delay usualmente), Budget alerts; (3) POST-FACTO — CUR reviews mensuales, unit economics tracking. Herramientas third-party: Vantage, CloudHealth, Kubecost, Densify. Slack/PagerDuty integration para alerts urgentes. Anti-patrón: alerts que nadie mira — configura POCAS alertas pero ACCIONABLES a canales que la gente revisa.",
+      "realWorld": "Historia de Robinhood — reportaje de tech: durante GameStop saga tuvieron spike masivo AWS. Sin anomaly detection propia hubiera sido peor. Empresas reportan constantemente sus 'cost accidents' — GPU olvidados, load tests que corrieron toda la noche, misconfigured autoscaling. Corey Quinn 'Last Week in AWS' tiene sección regular de 'accidental $50k' stories.",
+      "tags": ["anomaly detection", "budgets", "alerts", "prevención"],
+      "tech": [],
+      "references": [{ "title": "AWS Cost Anomaly Detection" }, { "title": "GCP Recommendations Hub" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "reliability",
+      "topic": "EBS gp3 vs gp2 — quick win",
+      "difficulty": "mid",
+      "scenario": "Auditas tu cuenta AWS. Tienes 500 volumes EBS gp2 con total 200 TB. gp3 salió en Dec 2020 y ofrece precio menor + IOPS/throughput independientes. Tu jefe pregunta si vale la migración.",
+      "question": "¿Por qué gp3 es un quick win casi universal?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "gp3 cuesta ~20% menos por GB que gp2 ($0.08 vs $0.10 /GB-mes en US-East). Además incluye 3000 IOPS y 125 MB/s baseline INDEPENDIENTES del tamaño (gp2 escalaba IOPS con tamaño: 3 IOPS por GB, mínimo 100, máximo 16k a 5.3TB). En gp2 mucha gente sobredimensionaba el volume para conseguir IOPS. En gp3 pagas por IOPS/throughput SEPARADO si necesitas más. Migración: `modify-volume` in-place, sin downtime, no snapshot needed. Prácticamente todo gp2 debe migrarse.", "correct": true, "why": "Correcto. Es el quick win más famoso post-2020. Sin cambios de arquitectura, sin downtime, ~20% ahorro directo + capacidad de tunear IOPS separado. AWS lo diseñó para que la migración sea trivial." },
+        { "letter": "B", "text": "gp3 es un tipo de storage más lento pero más barato.", "correct": false, "why": "Falso. gp3 tiene MÁS baseline IOPS/throughput que gp2 mismo tamaño en la mayoría de casos, y puede escalar más." },
+        { "letter": "C", "text": "gp3 solo funciona con instancias nuevas — hay que reemplazar todo.", "correct": false, "why": "Falso. Migración in-place con `aws ec2 modify-volume`, sin detach, sin downtime." },
+        { "letter": "D", "text": "gp3 es igual de caro que gp2.", "correct": false, "why": "gp3 es ~20% más barato en storage price + incluido baseline IOPS/throughput sin costo extra." }
+      ],
+      "explanation": "gp3 vs gp2 detalle: gp3 = $0.08/GB-mes storage + 3000 IOPS + 125 MB/s baseline (gratis) + $0.005 por IOPS adicional (hasta 16000) + $0.04 por MB/s adicional (hasta 1000). gp2 = $0.10/GB-mes con IOPS scaling por tamaño (mínimo 100 IOPS, con burst hasta 3000). Excepción a migrar: volumes >1TB con MENOS de 3000 IOPS necesitados y que aprovechan burst — pero es raro. Herramientas de auto-migración: EBS Volume Modify + Python/Terraform. AWS ofrece guidance en Trusted Advisor. Similar: io2 vs io1 (io2 mismo precio pero mejor durability), gp3 vs io2 para high IOPS.",
+      "realWorld": "AWS anunció gp3 en re:Invent 2020. Miles de empresas migraron ese año siguiente reportando 15-25% ahorro en storage bills. En Reddit r/aws hay múltiples posts 'cambié todos a gp3 en un fin de semana, ahorré $80k/año'. Corey Quinn escribió literalmente 'si aún usas gp2, es tu tarea del mes'.",
+      "tags": ["EBS", "gp3", "gp2", "quick win", "storage"],
+      "tech": [],
+      "references": [{ "title": "AWS — EBS gp3 announcement" }, { "title": "AWS EBS Pricing" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "reliability",
+      "topic": "S3 storage classes — cuándo usar cuál",
+      "difficulty": "staff",
+      "scenario": "Tienes 500 TB en S3 Standard, muchos son logs viejos, backups anuales, imágenes de producto poco accedidas. Estás pagando $23/TB-mes = $11.5k/mes. ¿Cómo optimizas?",
+      "question": "¿Qué storage class de S3 usar según patrón de acceso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "S3 Intelligent-Tiering: para datos con patrón de acceso IMPREDECIBLE. S3 mueve automáticamente entre tiers (Frequent, Infrequent, Archive) según acceso. Cobra fee mínimo por monitoreo ($0.0025/1000 objects) pero ahorra en objects raramente accedidos. Ideal para 'no sé cuánto se accederá'.", "correct": true, "why": "Correcto. Introducido 2018, es el default recomendado para casos donde no conoces el patrón. Sin retrieval fees en Frequent/Infrequent tiers. AWS lo posiciona como 'set and forget'." },
+        { "letter": "B", "text": "S3 Standard-IA (Infrequent Access): para datos conocidos con acceso raro (~1 vez al mes o menos). Precio ~40% menor storage vs Standard ($0.0125/GB vs $0.023) pero cobra retrieval fee y minimum storage duration 30 días. Ideal: backups conocidos, DR data.", "correct": true, "why": "Correcto. Diferencia con Intelligent-Tiering: IA es MANUAL — tú decides que va a IA. Intelligent-Tiering es AUTOMÁTICO. Si conoces el patrón (backup mensual), IA directo es más barato (sin monitoring fee)." },
+        { "letter": "C", "text": "S3 Glacier Instant Retrieval / Flexible Retrieval / Deep Archive: para archivado. Instant = ~$0.004/GB, retrieval en ms; Flexible = ~$0.0036/GB, retrieval en minutos-horas; Deep Archive = ~$0.00099/GB (10x menos que Standard), retrieval en 12h. Ideal: logs de compliance 7 años, raw data que quizá nunca se acceda.", "correct": true, "why": "Correcto. Deep Archive es 24x más barato que Standard — pero con 12h de latencia y minimum 180 días storage. Perfect para 'legal requiere que lo tenga pero probablemente nunca lo mire'." },
+        { "letter": "D", "text": "S3 Lifecycle Policies: reglas automáticas para transitions entre classes según edad. Ej: 'después de 30 días → Standard-IA; después de 90 → Glacier; después de 365 → Deep Archive; después de 7 años → delete'. Se define en bucket policy sin código.", "correct": true, "why": "Correcto. Lifecycle policies son cómo se OPERACIONALIZAN los storage classes. Sin ellas, tienes que mover objects manualmente. Con ellas, es fire-and-forget." },
+        { "letter": "E", "text": "Guardar todo en Standard porque es más simple.", "correct": false, "why": "Deja MUCHO ahorro en la mesa. Standard es $0.023/GB vs Deep Archive $0.00099 — factor 23x. Para logs viejos, es literal quemar dinero." }
+      ],
+      "explanation": "S3 Storage Classes tier map: Standard ($0.023/GB) > Intelligent-Tiering (variable) > Standard-IA ($0.0125) > One Zone-IA ($0.01, un solo AZ) > Glacier Instant Retrieval ($0.004) > Glacier Flexible Retrieval ($0.0036) > Deep Archive ($0.00099). Gotchas: (1) minimum object size 128KB para IA/Glacier — objects más pequeños pagan como si fueran 128KB; (2) minimum storage duration (30 días IA, 90 Glacier FR, 180 Deep Archive) — borrar antes cobra por resto; (3) retrieval fees en Glacier — mover masivo puede costar caro; (4) request pricing distinto — LIST/GET/PUT en IA cuestan más. Lifecycle policies automatizan transitions.",
+      "realWorld": "Netflix guarda petabytes de video encoding source en S3 con lifecycle a Glacier. Airbnb reportó $M ahorrados con Intelligent-Tiering. AWS re:Invent regularmente presenta casos de compañías con 90% ahorro en storage tras migración a tiered. Common cautionary tale: alguien mueve todo a Deep Archive, luego el proyecto requiere retrieval — cobra $50k en retrieval fees + espera 12h.",
+      "tags": ["S3", "storage classes", "Glacier", "Intelligent-Tiering", "lifecycle"],
+      "tech": [],
+      "references": [{ "title": "AWS S3 Storage Classes" }, { "title": "S3 Lifecycle Configuration" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "reliability",
+      "topic": "Egress cost surprises — NAT Gateway",
+      "difficulty": "senior",
+      "scenario": "Tu factura AWS incluye un cargo inesperado: 'NAT Gateway Data Processing' = $8,000/mes. Investigas y ves que tus pods de Kubernetes en subnets privadas hacen millones de requests a S3 (llamando via internet a través de NAT Gateway).",
+      "question": "¿Por qué NAT Gateway es el 'costo silencioso' más famoso de AWS y cómo mitigarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "NAT Gateway cobra $0.045/hora + $0.045 por GB PROCESADO. El GB processed es donde la gente se sorprende: para 100 TB/mes de tráfico via NAT = $4,500/mes SOLO por processing (más el hourly). Mitigación: (1) VPC Endpoints (Interface para servicios, Gateway para S3/DynamoDB GRATIS) — el tráfico va directo por AWS backbone sin pasar por NAT; (2) reducir egress con caching y batching; (3) considerar arquitectura con menos egress cross-AZ.", "correct": true, "why": "Correcto. NAT Gateway data processing es la sorpresa #1 de bills AWS. El $0.045/GB parece bajo pero se acumula rápido con containers/microservicios chatty. VPC Endpoint para S3 es LITERALMENTE GRATIS — ni un cent, y elimina el processing charge para todo tráfico S3." },
+        { "letter": "B", "text": "NAT Gateway solo cobra hourly, no por data.", "correct": false, "why": "Falso — cobra ambos. La componente per-GB es la que sorprende a la gente." },
+        { "letter": "C", "text": "Debes eliminar NAT Gateway y usar Internet Gateway para todo.", "correct": false, "why": "Peligroso security-wise. IGW requiere IP pública en cada instancia. NAT es correcto para outbound de subnets privadas — solo hay que MINIMIZAR el uso con VPC Endpoints." },
+        { "letter": "D", "text": "NAT Gateway es gratis en AWS.", "correct": false, "why": "Falso. Es uno de los servicios más caros silenciosamente." }
+      ],
+      "explanation": "NAT Gateway pricing gotchas: (1) $0.045/h × 730h = $33/mes por NAT (por AZ — Multi-AZ requiere uno por AZ); (2) $0.045/GB processed — cross-AZ ida y vuelta cuenta doble; (3) intra-VPC via NAT también cobra (raro pero pasa). VPC Endpoints: Gateway Endpoint (S3, DynamoDB) = GRATIS. Interface Endpoint (otros servicios) = $0.01/h + $0.01/GB — casi siempre menor que NAT processing pero no gratis. PrivateLink para servicios de terceros. Estrategias Kubernetes: usar VPC CNI que soporte prefix delegation para reducir IPs, S3 Gateway Endpoint OBLIGATORIO. Corey Quinn tiene meme famoso: 'AWS bill is NAT Gateway bill'.",
+      "realWorld": "Google 'AWS NAT Gateway surprise bill' — cientos de blog posts. Historia clásica: Snap Inc. (Snapchat) publicó blog sobre migración a VPC Endpoints para S3 salvando $M/año. Corey Quinn escribió series 'The AWS Bill' donde NAT es siempre top 5 costos ocultos. Empresas nuevas frecuentemente descubren esto solo cuando la factura empieza a crecer.",
+      "tags": ["NAT Gateway", "VPC Endpoint", "egress", "hidden cost"],
+      "tech": [],
+      "references": [{ "title": "AWS NAT Gateway Pricing" }, { "title": "AWS PrivateLink and VPC Endpoints" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "reliability",
+      "topic": "Cross-AZ y cross-region data transfer",
+      "difficulty": "senior",
+      "scenario": "Auditas tu factura y ves 'Data Transfer' = $12,000/mes. Desglosando: $4k cross-AZ (dentro de misma region), $6k cross-region (multi-region setup), $2k out to internet.",
+      "question": "¿Cuál es el mapa de precios de data transfer AWS y cómo optimizar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cross-AZ data transfer: $0.01/GB en cada dirección ($0.02/GB round-trip). Suma rápido con microservicios que hablan entre AZs. Mitigación: (1) usar topology-aware routing (K8s topologyKeys) para preferir mismo-AZ; (2) sticky sessions al AZ; (3) EKS pod topology spread; (4) evaluar single-AZ deploys en dev/staging.", "correct": true, "why": "Correcto. Cross-AZ es sorpresa clásica en microservices. Kubernetes por default schedules pods en cualquier AZ — chatty service mesh cross-AZ suma decenas de $k/mes. Topology-aware hints reducen esto pero pueden reducir resiliencia — trade-off." },
+        { "letter": "B", "text": "Cross-region: $0.02-$0.09/GB según region pairs. Multi-region replication (S3 CRR, RDS cross-region replicas) puede ser muy caro. Mitigación: minimizar replicación a solo lo crítico, comprimir, batching, considerar si multi-region es realmente necesario o si multi-AZ dentro de una region es suficiente para tu SLA.", "correct": true, "why": "Correcto. Multi-region es 'checkbox de arquitectura' que sale caro. Cada byte que sale entre US-East y EU-West cuesta 4-5x más que cross-AZ. Muchas empresas 'necesitan multi-region' que en realidad no necesitan." },
+        { "letter": "C", "text": "Egress a internet (usuarios finales): $0.09/GB primeros 10TB, escalando descendente. Es el más caro para tráfico masivo (video streaming, downloads). Mitigación: CloudFront CDN (más barato por GB + cache local), compresión (gzip/brotli), image optimization, considerar Cloudflare/Fastly.", "correct": true, "why": "Correcto. Video streaming a escala en AWS sin CDN es masacre financiera. CloudFront tiene pricing tier que empieza más caro pero se abarata en volumen + cache local reduce tráfico origen." },
+        { "letter": "D", "text": "Ingress (tráfico entrando a AWS) es también caro.", "correct": false, "why": "Falso. Ingress a AWS es GRATIS. Solo se cobra egress. Esto es intencional — AWS quiere que subas datos fáciles, la trampa es sacarlos ('data gravity')." },
+        { "letter": "E", "text": "Data transfer entre servicios en mismo AZ es siempre gratis.", "correct": false, "why": "Casi siempre gratis pero excepciones: via NAT Gateway (cobra processing), via PrivateLink Interface Endpoint. Directo VPC intra-AZ = gratis." }
+      ],
+      "explanation": "Mapa data transfer AWS: (1) mismo AZ = gratis (excepto NAT/endpoints); (2) cross-AZ mismo region = $0.01/GB cada dirección; (3) cross-region = $0.02-$0.09/GB; (4) a internet = $0.09/GB tier alto, baja con volumen; (5) via CloudFront = precios distintos, típicamente 30-50% menor que direct + cache; (6) VPC Endpoint Interface = $0.01/GB; (7) Direct Connect = fee fijo + $0.02/GB (barato para bulk); (8) ingress = GRATIS. Estrategias: instrumentar VPC Flow Logs para ver dónde va el tráfico, evitar chatty cross-AZ, cache agresivo, comprimir, CloudFront para user-facing egress.",
+      "realWorld": "Basecamp famoso caso: parte de razón para 'cloud exit' fue data transfer costs — Hey.com era ~$400k/año en egress solo. Corey Quinn escribió 'AWS data transfer pricing is deliberately obtuse' — ha publicado calculadora comparativa. Netflix uso Open Connect (su propio CDN peered con ISPs) parcialmente para evitar egress bill masivo. Multi-cloud data transfer entre AWS y GCP también es caro y complica FinOps.",
+      "tags": ["data transfer", "cross-AZ", "cross-region", "egress", "CloudFront"],
+      "tech": [],
+      "references": [{ "title": "AWS Data Transfer Pricing" }, { "title": "Corey Quinn — The AWS Bill" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "reliability",
+      "topic": "Kubernetes resource requests tuning",
+      "difficulty": "senior",
+      "scenario": "Tu cluster EKS tiene 50 nodes m5.4xlarge. Analytics muestran 30% CPU y 25% memoria promedio a nivel node — pero pods están 'llenos' según kube-scheduler. La razón: developers ponen `requests: cpu=2, memory=8Gi` 'por si acaso' pero usan cpu=0.3, memory=2Gi real.",
+      "question": "¿Cómo optimizas resource requests en Kubernetes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Analizar utilización real vs requests con VerticalPodAutoscaler (VPA) en 'recommendation' mode + kubectl-cost/Kubecost para visibilidad de $ por namespace/pod. Reducir requests al P95 histórico + margen de seguridad. Habilitar HPA (horizontal) para picos. Considerar Karpenter que right-sizes nodes según pods realmente scheduled. Meta: aumentar bin-packing efficiency del 30% al 60-70%, reduciendo #nodes proporcionalmente.", "correct": true, "why": "Correcto. La causa raíz es 'requests infladas por costumbre' — devs no saben cuánto usa su app. VPA en recommendation mode genera datos objetivos ('tu app usó P95=0.4 CPU, requests deberían ser 0.5'). Karpenter/Cluster Autoscaler ajusta node counts. Kubecost expone $ por pod para conciencia. En 6 meses una organización puede reducir cluster size 30-50%." },
+        { "letter": "B", "text": "Aumentar los requests aún más para evitar OOMKills.", "correct": false, "why": "Opuesto al problema. Los requests ya están inflados. OOMKill se resuelve subiendo limits (que es diferente) o entendiendo por qué la app usa más memoria de la esperada." },
+        { "letter": "C", "text": "Eliminar requests y limits — dejar que Kubernetes gestione todo.", "correct": false, "why": "Sin requests, kube-scheduler no puede tomar decisiones. Sin limits, un pod puede consumir todo el node (noisy neighbor). Requests+limits son esenciales — el problema es TUNEARLOS correctamente." },
+        { "letter": "D", "text": "Nodes más grandes (m5.24xlarge) son la solución.", "correct": false, "why": "No resuelve la causa (requests infladas) — mismo % de waste, más caro por node. Puede empeorar por blast radius." }
+      ],
+      "explanation": "Kubernetes cost inefficiency comes from: (1) requests infladas (devs no saben usage real); (2) mal bin-packing (nodes underutilized porque pods tienen requests que no llenan); (3) no autoscaling de nodes (cluster estático); (4) sin distinción prod vs dev nodes. Herramientas: Kubecost (dashboards $ por namespace, workload, service — showback interno de K8s); VPA recommendation mode; Goldilocks (UI para VPA); Karpenter (right-sizes nodes en AWS dinámicamente, mucho mejor que Cluster Autoscaler); Spot Instances para batch workloads via Karpenter/Ocean. Regla: bin-packing >60% en prod es objetivo; dev/staging debe apagarse fuera de horas.",
+      "realWorld": "Adevinta (marketplaces europeos) publicó cómo redujeron K8s costs 50% con Kubecost + Karpenter. Pinterest usó VPA agresivamente. Historia común: startup arranca con nodes 'grandes por si acaso', descubre 20% utilization, migra a Karpenter + spot. Corey Quinn escribió 'Kubernetes is like a garage — you fill it with junk if there's space'. FinOps Foundation tiene working group específico de Kubernetes.",
+      "tags": ["Kubernetes", "requests", "VPA", "Kubecost", "Karpenter"],
+      "tech": [],
+      "references": [{ "title": "Kubecost documentation" }, { "title": "Karpenter — right-sizing nodes" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "reliability",
+      "topic": "Unused resources detection",
+      "difficulty": "mid",
+      "scenario": "Audit interno encuentra: 40 EBS volumes 'available' (detached) desde hace meses ($2k/mes), 200 snapshots antiguos ($800/mes), 15 Elastic IPs no asociados ($55/mes), 3 NAT Gateways en cuentas de dev que nadie usa ($100/mes cada uno), 20 load balancers sin targets ($400/mes).",
+      "question": "¿Cómo automatizas la detección y cleanup de recursos huérfanos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar Trusted Advisor (AWS) / Recommender (GCP) / Advisor (Azure) para detecciones nativas (unused EIPs, low-utilization instances, idle load balancers). Complementar con scripts custom (Boto3/gcloud) que corren en cron/Lambda y taggean recursos huérfanos con 'delete-by: DATE'. Después de N días, otro script borra o notifica. Herramientas open-source: aws-nuke, cloud-nuke (para cuentas ephemeral), Steampipe (SQL sobre cloud). Third-party: Vantage, CloudHealth.", "correct": true, "why": "Correcto. Detección + cuarentena (tag warn) + delete es el patrón seguro. Borrar directo puede ser desastre (ese snapshot 'olvidado' podría ser el backup crítico). Approach: (1) detectar; (2) taggear con owner-warn; (3) notificar owner (via tag); (4) si nadie reclama en N días, borrar." },
+        { "letter": "B", "text": "Borrar todos los recursos que parezcan huérfanos inmediatamente.", "correct": false, "why": "Peligroso. Un EBS volume detached puede ser un backup crítico. Un snapshot puede ser un point-in-time importante. Siempre quarantine-and-notify antes de delete." },
+        { "letter": "C", "text": "Ignorar recursos huérfanos — son costo menor.", "correct": false, "why": "'Costo menor' se acumula. En una cuenta madura, waste huérfano puede ser 5-15% del gasto. Además genera clutter para IaC audits y security scans." },
+        { "letter": "D", "text": "Prohibir a devs crear recursos manualmente — solo Terraform.", "correct": false, "why": "Solo IaC ayuda enormemente (fuerza gestión disciplinada) PERO no elimina el problema — Terraform también deja recursos huérfanos cuando: `terraform destroy` falla parcial, cuentas eliminadas de state, migración de módulos. Combina con detection." }
+      ],
+      "explanation": "Tipos comunes de waste huérfano: (1) EBS volumes detached (nadie los borra tras terminar instancia); (2) EBS snapshots viejos (lifecycle expirado pero snapshots quedan); (3) Elastic IPs no asociados ($0.005/h = ~$3.6/mes cada uno — parece poco pero 100 EIPs = $360/mes); (4) NAT Gateways en cuentas dev abandonadas ($33/mes cada uno); (5) Load Balancers sin targets ($18/mes ALB + LCU); (6) RDS snapshots huérfanos; (7) CloudFormation stacks fallidos; (8) old AMIs en marketplaces; (9) Route53 zones no usadas ($0.50/mes cada uno); (10) SecretsManager secrets olvidados ($0.40/mes cada uno). Herramientas: Steampipe queries SQL sobre cloud, AWS Config custom rules, aws-nuke para nuke completo de cuenta.",
+      "realWorld": "Corey Quinn: 'the AWS bill is composed of many small things you forgot'. Casos públicos de cuentas con miles de EBS snapshots de 2015 aún cargando. cloud-nuke es popular en dev accounts (nuke nightly). Empresas suelen encontrar 5-15% de gasto en primeras auditorías. FinOps Foundation lista 'unused resources' como categoría estándar en 'anomalies to detect'.",
+      "tags": ["unused resources", "cleanup", "waste", "orphan resources"],
+      "tech": [],
+      "references": [{ "title": "AWS Trusted Advisor" }, { "title": "Steampipe — cloud SQL queries" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "reliability",
+      "topic": "Serverless cost model — Lambda cost analysis",
+      "difficulty": "senior",
+      "scenario": "Tu equipo migró un servicio a Lambda 'porque es serverless y barato'. Después de 6 meses, la factura Lambda es $15k/mes procesando ~10M invocations/día con avg duration 800ms. Alguien pregunta: '¿esto habría sido más barato en ECS Fargate?'.",
+      "question": "¿Cuándo Lambda es óptimo y cuándo cambia a container/EC2?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lambda cobra por (memoria × duración) + invocation count. Es ÓPTIMO para: (1) tráfico BURSTY o LOW ('paga solo cuando se usa'); (2) event-driven procesamiento; (3) low latency requirements OK con cold start. NO ÓPTIMO para: (1) tráfico SOSTENIDO y ALTO — el 'always on' de Lambda cuesta más que un contenedor con SP; (2) long-running tasks (>15 min); (3) heavy CPU/memory. Regla aproximada: si tienes >1M invocations/día sostenido y duration alta, evalúa ECS Fargate o EC2. Prime Video famoso caso: migró de Lambda a ECS y bajó 90% costo por tráfico sostenido alto.", "correct": true, "why": "Correcto. Lambda es maravilloso a bajo tráfico (pagas centavos) pero se vuelve caro a alto tráfico sostenido. El crossover depende del workload pero típicamente 1-5M invocations/día sostenidos con duration >500ms empieza a ser mejor container. Prime Video 2023 blog post fue viral: migraron pipeline de audio/video monitoring de Step Functions + Lambda a monolito ECS, salvando 90%." },
+        { "letter": "B", "text": "Lambda es siempre más barato que EC2/ECS.", "correct": false, "why": "Falso — a partir de cierto tráfico sostenido, Lambda cobra continuo por millones de invocations mientras que un contenedor 'always on' cuesta lo mismo sea 1M o 100M requests." },
+        { "letter": "C", "text": "Lambda cost solo depende de invocation count.", "correct": false, "why": "Depende de INVOCATIONS × MEMORY × DURATION + free tier. Duration y memory son componentes mayores usualmente." },
+        { "letter": "D", "text": "Migrar todo a Lambda es siempre buena idea 'serverless-first'.", "correct": false, "why": "Modernismo peligroso. Serverless-first ignora unit economics de tráfico sostenido. Prime Video story es la evidencia definitiva contra dogma." }
+      ],
+      "explanation": "Lambda pricing (x86): $0.0000166667 por GB-second + $0.20 por 1M invocations. Ejemplo: 10M invocations/día × 30 días × 1GB × 0.8s = 240M GB-s × $0.0000166667 = $4,000 + 300M invocations × $0.20/M = $60. Total ~$4k/mes solo por compute Lambda. Compara con Fargate: 4 tasks × 1 vCPU/2GB × 730h × $0.04 = $117/mes always on. La diferencia se dispara con tráfico. Cross-over point: aproximadamente cuando invocations sostenidas × duration llenan una task equivalente always-on. Herramientas: AWS Lambda Cost Analyzer, Compute Optimizer para Lambda memory tuning (fundamental — memory infladas cuestan dobles).",
+      "realWorld": "Prime Video Team blog Mayo 2023: 'Scaling up the Prime Video audio/video monitoring service and reducing costs by 90%' — migración de Step Functions + Lambda a monolito ECS. Fue viral porque contradijo 'serverless dogma'. Basecamp también documentó pattern. Corey Quinn escribió múltiples posts sobre 'Lambda price cliff'. Contra-ejemplo: para muchas startups con tráfico bajo, Lambda es barato ($0-100/mes) — el punto es SABER dónde está el crossover.",
+      "tags": ["Lambda", "serverless", "Fargate", "Prime Video", "cost model"],
+      "tech": [],
+      "references": [{ "title": "Prime Video Tech Blog — 90% cost reduction" }, { "title": "AWS Lambda Pricing" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "reliability",
+      "topic": "Cloud exit / repatriation — cuando la cloud NO es óptima",
+      "difficulty": "senior",
+      "scenario": "Tu CFO ve la factura AWS crecer año tras año a $M. Un ejecutivo pregunta: 'Basecamp salió de la cloud y ahorró $4M/año — ¿deberíamos hacer lo mismo?'.",
+      "question": "¿Cuándo tiene sentido cloud repatriation y cuándo NO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Repatriation tiene sentido cuando: (1) workload es PREDECIBLE y ESTABLE (no bursty) — el elastic pricing de cloud no aporta; (2) SCALE grande (millones $/mes) — el TCO on-prem se vuelve competitivo; (3) datos con alta egress (media, backups); (4) equipos con expertise de infra tradicional. NO tiene sentido si: (a) startup con tráfico impredecible; (b) apps que aprovechan managed services (RDS, DynamoDB, S3) — replicarlos on-prem es enorme; (c) equipos sin capacidad de operar hardware; (d) burst / seasonal workloads. La decisión es workload-specific, no all-or-nothing. Hybrid es común.", "correct": true, "why": "Correcto. Basecamp es ejemplo específico: apps SaaS estables (Hey, Basecamp) con carga predecible, expertise interno, y economía de escala. Para startup en crecimiento explosivo, cloud sigue siendo mejor. Corey Quinn resume: 'cloud repatriation es correcta para el workload correcto, no como movimiento religioso'." },
+        { "letter": "B", "text": "Cloud repatriation siempre ahorra dinero.", "correct": false, "why": "Falso. Migrar startup de $50k/mes a on-prem = capex masivo + hiring de infra team + slower iteration. Muchas apps modernas dependen de managed services difíciles de replicar." },
+        { "letter": "C", "text": "Cloud repatriation nunca vale la pena.", "correct": false, "why": "Falso. Basecamp documentó $4M/año de ahorro real. Dropbox migró parcial hacia infra propia. Zoom recibió AWS $$ pero también tiene racks propios. Es workload-specific." },
+        { "letter": "D", "text": "La decisión es puramente técnica, no financiera.", "correct": false, "why": "Es AMBAS. Financial (TCO 3-5 años, capex vs opex, cash flow) + technical (workload characteristics, team capability) + strategic (vendor lock-in, control)." }
+      ],
+      "explanation": "Cloud repatriation criteria: análisis TCO 3-5 años (server hardware amortiza, cloud es opex continuo); workload profile (steady state = on-prem competitivo, bursty = cloud); egress costs si es data-heavy; team expertise (necesitas ops team senior); managed services usage (DynamoDB, Aurora Serverless imposible de replicar económicamente). Alternativas parciales: (1) mover parte a on-prem (data warehouse, video encoding); (2) hybrid con Direct Connect; (3) colocation con Equinix + cloud burst; (4) rent vs own dedicated hosts. Basecamp caso: sus apps Rails son estables, tienen equipo capaz, y la factura AWS estaba en $3M/año con crecimiento — el TCO on-prem 5 años fue significativamente menor.",
+      "realWorld": "David Heinemeier Hansson (Basecamp/37signals) publicó extensamente en 2022-2024: 'We stand to save $7 million over five years'. Migración completó 2024. Dropbox famoso caso 2015-2016: 'Magic Pocket' migración a hardware propio salvó $75M en 2 años. Corey Quinn ha entrevistado múltiples empresas repatriando parcial. Contra-narrativa: Netflix, Airbnb, Pinterest — todos cloud-native y no van a repatriar. La lección: DEPENDE del workload y contexto.",
+      "tags": ["cloud exit", "repatriation", "Basecamp", "TCO", "on-prem"],
+      "tech": [],
+      "references": [{ "title": "37signals — Leaving the cloud" }, { "title": "Dropbox — Scaling to exabytes" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "reliability",
+      "topic": "Unit economics — $ per user, $ per transaction",
+      "difficulty": "senior",
+      "scenario": "Tu producto tiene 1M usuarios activos mensuales, factura cloud $50k/mes. Un board member pregunta: '¿cuánto nos cuesta cada usuario en infra?'. La respuesta es $0.05/usuario/mes. Ahora quieren tracking de esto por producto/feature.",
+      "question": "¿Qué son unit economics en FinOps y por qué importan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Unit economics = costo cloud DIVIDIDO por métrica de negocio (usuario, transacción, request, GB procesado, etc.). Convierte gasto abstracto ($50k/mes) en KPI accionable ($0.05/user, $0.001/API call). Permite: (1) detectar si el crecimiento aporta valor ($/user bajando = estás escalando eficientemente); (2) comparar features/productos objetivamente; (3) alinear engineering con business — un feature que aumenta $/user es problema; (4) benchmarking industria. Es el nivel más maduro de FinOps.", "correct": true, "why": "Correcto. Unit economics es la 'graduación' de FinOps — vas de 'gasto absoluto' a 'gasto por unidad de valor'. En SaaS es fundamental — LTV/CAC ratios dependen de conocer infra cost per user. Empresas maduras trackean esto como KPI de engineering (Netflix, Spotify)." },
+        { "letter": "B", "text": "Unit economics son solo métricas financieras, no técnicas.", "correct": false, "why": "Falso. Son la intersección de finance × engineering × product. Engineers necesitan verlo para tomar decisiones (elegir DB, arquitectura)." },
+        { "letter": "C", "text": "Unit economics no aplican a infraestructura cloud.", "correct": false, "why": "Al contrario — cloud tiene visibility perfecta de gasto que permite unit economics finos. En on-prem es más difícil por capex vs opex mezclado." },
+        { "letter": "D", "text": "El único KPI relevante es factura total.", "correct": false, "why": "Factura total sin denominator engaña. '$1M/mes' es bueno si tienes 10M usuarios ($0.10/user), es catástrofe si tienes 1000 ($1000/user)." }
+      ],
+      "explanation": "Unit economics workflow: (1) definir unidad relevante (user, transaction, request, MB); (2) atribuir costo a esa unidad (via tags, product allocation); (3) trackear over time; (4) descomponer por componente ($/user por servicio: compute, DB, egress, etc.). Meta: $/unit debe BAJAR con scale (economies of scale) o al menos mantenerse — si sube, la arquitectura no escala económicamente. Herramientas: Kubecost (para K8s), Vantage, Cloudability, custom dashboards con CUR + business metrics. En P&L de SaaS: 'gross margin' incluye infra cost — Wall Street lo mira.",
+      "realWorld": "Spotify publicó blog sobre 'cost per stream'. Netflix trackea 'cost per hour streamed'. AWS re:Invent tiene talks recurrentes sobre unit economics de clientes. Pinterest, Twitter, Instacart tienen internal dashboards de $/user. Startups en due diligence de VCs deben mostrar unit economics — un SaaS con gross margin <60% es preocupante. FinOps Foundation lista unit economics como 'advanced FinOps' capability.",
+      "tags": ["unit economics", "$/user", "KPI", "SaaS metrics", "gross margin"],
+      "tech": [],
+      "references": [{ "title": "FinOps Foundation — Unit Economics" }, { "title": "Cloud FinOps book — Chapter Unit Economics" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "reliability",
+      "topic": "Multi-cloud FinOps — complejidad adicional",
+      "difficulty": "senior",
+      "scenario": "Tu empresa usa AWS ($100k/mes), GCP ($30k/mes) y Azure ($20k/mes). Cada uno tiene su cost tool (Cost Explorer, GCP Cost Management, Azure Cost Management). Consolidar reportes es pesadilla. Alguien propone multi-cloud FinOps platform.",
+      "question": "¿Cuáles son los desafíos únicos de multi-cloud FinOps?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Retos: (1) TERMINOLOGÍA distinta (AWS 'Savings Plans', GCP 'Committed Use Discounts', Azure 'Reservations') — hay que normalizar; (2) modelos de PRICING distintos (por-hora, per-second, tiered) — cargar comparaciones apples-to-apples es complejo; (3) TAG semantics distintos (AWS tags vs GCP labels vs Azure tags); (4) DATA transfer entre clouds es CARÍSIMO ($0.08-0.12/GB); (5) commitments no cruzan clouds — sobre-comprometerte en uno mientras subutilizas otro. Soluciones: platforms como Vantage, Cloudability, Flexera, CloudHealth normalizan y consolidan; FOCUS specification (FinOps Foundation) intenta estandarizar billing schemas.", "correct": true, "why": "Correcto. Multi-cloud es 2-3x más complejo para FinOps porque cada cloud tiene su propio idioma financiero. FOCUS (2023, FinOps Foundation) es esfuerzo de estandarizar schema de billing exports para que herramientas puedan procesar cross-cloud. Sin plataforma consolidada, engineering time se va a ETL de billing reports en vez de optimización." },
+        { "letter": "B", "text": "Multi-cloud siempre es más barato que single-cloud.", "correct": false, "why": "Falso. Multi-cloud tiene overhead: cross-cloud egress ($M/año fácilmente), duplicated management, commitments menos aprovechables por dispersion. Justificable por otros motivos (avoid vendor lock, best-of-breed) pero rara vez por cost." },
+        { "letter": "C", "text": "Cada cloud tool nativo es suficiente — no necesitas plataforma.", "correct": false, "why": "Para monocloud sí. Para multi-cloud requiere consolidación — sin ella, no puedes tener showback/chargeback across clouds ni comparaciones." },
+        { "letter": "D", "text": "FinOps aplica solo a AWS.", "correct": false, "why": "Falso. FinOps es cloud-agnostic. FinOps Foundation cubre todos los clouds." }
+      ],
+      "explanation": "Multi-cloud FinOps challenges: (1) billing data ETL — cada cloud exporta CUR/BigQuery/Cost Management API con schemas distintos; (2) tagging inconsistency — mismo servicio taggeado distinto en cada cloud; (3) commitment fragmentation — no puedes usar AWS SP para gasto GCP; (4) cross-cloud egress; (5) multi-cloud dashboards. FOCUS spec (2023) intenta estándar de billing schemas. Herramientas: Vantage (moderna, fácil), Cloudability (Apptio, enterprise), CloudHealth (VMware), Flexera (mature enterprise), Anodot (ML anomaly). CNCF también tiene OpenCost project (basado en Kubecost) para cost visibility multi-cloud K8s.",
+      "realWorld": "Grandes enterprises típicamente son multi-cloud por casualidad (mergers, shadow IT) más que por strategy. Deloitte / Gartner reports muestran que 70%+ de enterprises son multi-cloud. FinOps Foundation surveys: multi-cloud FinOps maturity es significativamente menor que single-cloud. FOCUS spec launched 2023 con adoption AWS/GCP/Azure exportando en formato común — game changer para tooling.",
+      "tags": ["multi-cloud", "FOCUS", "consolidation", "cross-cloud"],
+      "tech": [],
+      "references": [{ "title": "FinOps Foundation — FOCUS specification" }, { "title": "State of FinOps Report 2024" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "reliability",
+      "topic": "FinOps culture — engineering ownership",
+      "difficulty": "senior",
+      "scenario": "Implementaste dashboards de cost per team. Nadie los mira. Los engineers dicen 'no es mi trabajo'. La factura sigue creciendo. Un consultor sugiere: 'necesitan CAMBIO CULTURAL, no más herramientas'.",
+      "question": "¿Cómo se instala cultura FinOps que realmente funcione?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Hacer cost una MÉTRICA EXPLÍCITA de engineering — junto con latencia, uptime, incidents. Aparece en OKRs de equipo. Se revisa en team meetings. No como 'reducir cost' abstracto, sino unit economics ('mantener $/user < $0.10'). Sin esto, cost es 'problema de finanzas' y engineers optimizan otras cosas.", "correct": true, "why": "Correcto. What gets measured gets managed. Si cost no aparece en dashboards de equipo con el mismo peso que otras métricas, se ignora. Netflix tiene 'cost efficiency' en KPIs de equipos. Amazon usa unit metrics." },
+        { "letter": "B", "text": "Compartir historias de éxito e impacto en Slack/blog interno — 'equipo X ahorró $50k/mes con estos cambios'. Genera FOMO positivo y showcases what's possible. Anti-patrón contrario: solo culpar equipos que gastan mucho.", "correct": true, "why": "Correcto. Storytelling funciona. Engineers responden a peer stories mucho más que a mandatos ejecutivos. FinOps Foundation publica case studies con este propósito." },
+        { "letter": "C", "text": "FinOps guild o community — voluntarios de cada equipo que aprenden FinOps y llevan al equipo. No es un equipo central que 'hace FinOps por todos' — es enablement. Comparten aprendizajes, herramientas, patterns.", "correct": true, "why": "Correcto. Guilds/CoP (Community of Practice) es patrón probado. Spotify usa este modelo. Central team enables, guild propaga, teams ejecutan. Escalable." },
+        { "letter": "D", "text": "Gamification — leaderboards, awards ('Team of the Month' por biggest cost reduction). Debe ser bien diseñado — no debe incentivar gaming (borrar backups críticos para 'ahorrar').", "correct": true, "why": "Correcto si se hace bien. Reconocimiento público de cost optimization work genera visibilidad. Peligro: gamification mal diseñada perversifica incentivos (métricas gameables)." },
+        { "letter": "E", "text": "Amenazar a engineers con perder bonus si no reducen costos.", "correct": false, "why": "Contraproducente. Crea miedo, gaming, y engineers arreglando síntomas superficiales en vez de problemas raíz. FinOps es carrot > stick." }
+      ],
+      "explanation": "Cultura FinOps requires: (1) VISIBILITY (dashboards accesibles para todos los engineers, no solo managers); (2) OWNERSHIP (cada team dueño de sus recursos y su bill); (3) ENABLEMENT (herramientas, training, tiempo para optimizar — 'reduce cost' sin sprint capacity = imposible); (4) MEASUREMENT (KPIs de cost/user o cost/txn en team OKRs); (5) SHARING (guilds, case studies, brown bags); (6) INCENTIVES POSITIVOS (recognition, promo criteria include cost work). Anti-patrones: (a) FinOps team central que 'exige'; (b) cost como métrica CFO-only; (c) presión sin herramientas ni tiempo; (d) blame culture. Sin cultura FinOps, herramientas quedan como 'dashboards que nadie mira'.",
+      "realWorld": "Spotify blog sobre 'Cost Insights' interno — priorizaron visibility antes que policies. Adobe caso publicado en FinOps X (conferencia): cambio cultural tomó 2 años pero salvó $$M. Netflix tiene famous engineering culture donde cost efficiency es criterio implícito. Fracasos comunes: empresa contrata consultoría FinOps, entrega dashboards, se van, dashboards mueren. La cultura NO se instala externamente — se construye internamente con años.",
+      "tags": ["cultura FinOps", "engineering ownership", "guild", "KPIs"],
+      "tech": [],
+      "references": [{ "title": "FinOps Foundation — Building FinOps Culture" }, { "title": "Cloud FinOps book — Establishing FinOps Culture" }]
+    }
+  ]
+}

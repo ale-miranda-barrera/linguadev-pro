@@ -1,0 +1,419 @@
+{
+  "id": "devops-sim-14-cloud-fundamentals-and-multi-cloud",
+  "trackId": "devops",
+  "order": 14,
+  "title": "Simulacro 14 — Fundamentos cloud + estrategias multi-cloud",
+  "focus": "Cloud desde primeros principios: IaaS/PaaS/SaaS, VPC design, multi-region, hybrid, lock-in tradeoffs, portable IaC, Kubernetes como abstracción, cloud-native (12-factor), AWS vs GCP vs Azure, cross-cloud networking. Cuándo multi-cloud tiene sentido y cuándo es teatro caro.",
+  "areaCoverage": ["networking", "iac"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "networking",
+      "topic": "IaaS vs PaaS vs SaaS",
+      "difficulty": "junior",
+      "scenario": "Un equipo debate entre AWS EC2 (VMs), AWS Elastic Beanstalk (plataforma que gestiona VMs por ti), y Salesforce (CRM completo). El CTO pregunta: '¿qué categoría es cada uno y qué implica operacionalmente?'.",
+      "question": "¿Cómo se distinguen IaaS, PaaS y SaaS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IaaS (Infrastructure): te dan hardware virtualizado (VMs, disks, red) y tú gestionas OS, runtime, app. Ejemplo: EC2, GCE, Azure VMs. PaaS (Platform): te dan la plataforma para deployar código; el provider gestiona OS y runtime, tú solo aportas app+config. Ejemplo: Beanstalk, App Engine, Heroku. SaaS (Software): app completa lista para usar; no gestionas nada. Ejemplo: Salesforce, Gmail, Slack. La separación es en QUÉ gestiona el provider vs tú.", "correct": true, "why": "Correcto. Modelo NIST 800-145 clásico. La distinción clave es la 'stack ownership': IaaS = más control + más responsabilidad; SaaS = menos control + menos responsabilidad; PaaS = punto intermedio. La elección depende de cuánta ingeniería propia quieres invertir en infra vs producto." },
+        { "letter": "B", "text": "IaaS = servidores físicos; PaaS = servidores virtuales; SaaS = aplicaciones.", "correct": false, "why": "Confuso. IaaS es explícitamente VIRTUALIZADO (VMs, no físico). Servidores físicos on-prem no son IaaS." },
+        { "letter": "C", "text": "IaaS es más caro que PaaS que es más caro que SaaS.", "correct": false, "why": "Falso — depende del uso. SaaS por seat puede ser carísimo a escala; IaaS bien optimizado puede ser barato. No hay orden universal de precio." },
+        { "letter": "D", "text": "Los tres son lo mismo, solo cambia el marketing.", "correct": false, "why": "No — el nivel de gestión que asumes es radicalmente distinto y determina el costo TOTAL (personas + infra), no solo el sticker price." }
+      ],
+      "explanation": "Regla mental: dibuja la stack (Hardware → Virtualization → OS → Runtime → App → Data). En IaaS el provider gestiona hasta Virtualization; tú gestionas OS arriba. En PaaS el provider llega hasta Runtime; tú aportas App+Data. En SaaS el provider gestiona todo; tú solo configuras. Consecuencias: IaaS te da flexibilidad máxima (cualquier OS, cualquier runtime) pero requiere equipo de ops (patching, hardening, updates). PaaS reduce carga operativa pero limita opciones (versiones soportadas, extensiones permitidas). SaaS elimina carga pero atas tu proceso al vendor. Muchas empresas mezclan: IaaS para servicios core custom, PaaS para servicios estándar, SaaS para funciones de soporte (email, CRM, HR).",
+      "realWorld": "Snap Inc reportó en su S-1 (2017) $2B en 5 años a Google Cloud (mix de IaaS + PaaS gestionado) — decisión estratégica de NO construir infraestructura propia para enfocarse en producto. Salesforce (SaaS) domina CRM porque las empresas prefieren no gestionar el sistema. Heroku (PaaS) popularizó el modelo 'git push heroku main' — devs sin ops.",
+      "tags": ["IaaS", "PaaS", "SaaS", "cloud service model"],
+      "tech": ["AWS", "GCP", "Azure"],
+      "references": [{ "title": "NIST SP 800-145 — Cloud Computing Definition" }, { "title": "AWS — Types of Cloud Computing" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "networking",
+      "topic": "VPC — public vs private subnets",
+      "difficulty": "junior",
+      "scenario": "Diseñas la VPC de tu app. Tienes: (1) load balancer que recibe tráfico de Internet, (2) app servers que solo reciben tráfico del LB, (3) base de datos que solo recibe tráfico de los app servers. Un junior propone: 'ponemos todo en una subnet pública para simplificar'.",
+      "question": "¿Cómo se organiza correctamente una VPC con public y private subnets?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Subnet PÚBLICA: recursos que necesitan comunicación bidireccional con Internet — típicamente ALB/NLB, NAT Gateway, bastion hosts. Tienen ruta 0.0.0.0/0 → Internet Gateway (IGW). Subnet PRIVADA: recursos internos (app servers, DBs). No tienen ruta directa a Internet; para acceder outbound usan un NAT Gateway (ubicado en subnet pública) que traduce direcciones y NO permite tráfico inbound desde Internet. Poner DB en subnet pública = superficie de ataque masiva.", "correct": true, "why": "Correcto. Layered defense: exponer solo lo estrictamente necesario. El LB en pública maneja Internet; app servers en privada solo aceptan conexiones del LB; DB en privada solo del app tier. Si un app server necesita descargar deps, sale por NAT — no acepta conexiones entrantes." },
+        { "letter": "B", "text": "Public subnet = IPs públicas; private subnet = IPs privadas. Esa es la única diferencia.", "correct": false, "why": "Incompleto. La diferencia REAL es la tabla de rutas: pública tiene ruta a IGW, privada no. Un recurso en subnet pública sin Elastic IP asignada tampoco tiene IP pública, pero la SUBNET sigue siendo pública por ruta." },
+        { "letter": "C", "text": "Todo en pública para simplificar y usar security groups como firewall.", "correct": false, "why": "Anti-patrón grave. Si SG se configura mal, la DB queda expuesta. Defense in depth requiere MÚLTIPLES capas: NACL + SG + subnet topology. Bases de datos NUNCA en subnet pública en producción." },
+        { "letter": "D", "text": "Public/private subnets son concepto de Azure únicamente.", "correct": false, "why": "Falso — AWS VPC, GCP VPC y Azure VNet todos usan la misma taxonomía (con nombres ligeramente distintos)." }
+      ],
+      "explanation": "Anatomía de VPC AWS típica: (1) VPC con CIDR /16 (ej 10.0.0.0/16); (2) subnets /24 divididas entre 2-3 AZs para HA; (3) por AZ: una subnet pública (con ruta a IGW) y una privada (con ruta a NAT Gateway); (4) el ALB vive en las públicas; app tier en privadas; DB en privadas (o en subnets 'DB' dedicadas con NACLs más estrictos). NAT Gateway es managed (~$32/mes por AZ + data transfer) — muchos equipos lo consolidan en 1 AZ para ahorrar (con riesgo si esa AZ cae). GCP tiene Cloud NAT (regional, no por AZ). Azure NAT Gateway (regional). Para 100% privado sin salida a Internet, usa VPC Endpoints (PrivateLink) — el tráfico a servicios AWS nunca sale al Internet público.",
+      "realWorld": "Capital One breach 2019: SSRF en app en subnet pública permitió al atacante llamar al metadata service EC2 y obtener credenciales IAM que tenían permisos S3 amplios. Lecciones: (1) IMDSv2 obligatorio; (2) least privilege IAM; (3) topología de red que limite blast radius. AWS Well-Architected Framework Pillar 2 (Security) documenta este patrón.",
+      "tags": ["VPC", "subnets", "NAT Gateway", "IGW", "network topology"],
+      "tech": ["AWS", "VPC"],
+      "references": [{ "title": "AWS VPC User Guide — VPC with Public and Private Subnets" }, { "title": "AWS Well-Architected — Security Pillar" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "networking",
+      "topic": "IGW vs NAT Gateway",
+      "difficulty": "mid",
+      "scenario": "Tu app en subnet privada necesita descargar imágenes de Docker Hub (outbound). Un junior pregunta: '¿por qué no le ponemos un IGW y ya?'.",
+      "question": "¿Cuál es la diferencia entre Internet Gateway (IGW) y NAT Gateway?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "IGW: componente 1:1 a la VPC que permite tráfico BIDIRECCIONAL con Internet. Los recursos con Elastic IP y ruta al IGW son directamente alcanzables desde Internet. NAT Gateway: dispositivo managed en subnet PÚBLICA que traduce IPs privadas → una IP pública compartida. Permite outbound (recursos privados → Internet) pero NO inbound (Internet no puede iniciar conexión). Un IGW en subnet privada expondría todo directamente; el NAT preserva la privacidad manteniendo salida.", "correct": true, "why": "Correcto. IGW no es 'un firewall' — es puerta bidireccional. Lo que hace que subnet sea pública o privada es la tabla de rutas y si los recursos tienen IP pública. NAT Gateway es específicamente para el patrón 'quiero salir sin permitir entrada' (típico de servidores internos que descargan dependencias)." },
+        { "letter": "B", "text": "IGW y NAT Gateway son sinónimos.", "correct": false, "why": "Falso — son componentes distintos con roles distintos. NAT depende de IGW (el NAT está en subnet pública que rutea al IGW), pero no son intercambiables." },
+        { "letter": "C", "text": "NAT Gateway hace HTTPS termination.", "correct": false, "why": "No — NAT es capa 3/4 (traducción de direcciones). Terminación TLS la hace un ALB/NLB o el propio server." },
+        { "letter": "D", "text": "IGW cuesta más que NAT Gateway.", "correct": false, "why": "Al revés: IGW es GRATIS (solo pagas data transfer). NAT Gateway cuesta ~$0.045/hora + $0.045/GB procesado, lo que a volumen es significativo." }
+      ],
+      "explanation": "Modelo completo del outbound desde subnet privada: (1) EC2 privada envía paquete a 0.0.0.0/0; (2) tabla de rutas de subnet privada tiene entrada 0.0.0.0/0 → NAT Gateway id; (3) NAT recibe, traduce IP source (10.0.1.5 → IP pública del NAT); (4) NAT reenvía al IGW; (5) IGW envía a Internet. Respuesta viaja en reverso, NAT mantiene tabla de conexiones. Alternativa moderna: VPC Endpoints (Gateway Endpoint gratis para S3/DynamoDB; Interface Endpoint via PrivateLink para el resto, con costo pero tráfico nunca sale). Costos NAT a escala son sorprendentes — muchos equipos descubren facturas de miles por mes de traffic de logs/imágenes de Docker.",
+      "realWorld": "Corey Quinn (Last Week in AWS) documentó múltiples casos de empresas con facturas de $10k+/mes solo en NAT Gateway data processing. Solución típica: (1) VPC Endpoints para S3 (gratis) — cortan gran % del tráfico; (2) proxy caches para artifacts; (3) considerar arquitecturas sin NAT (Lambda/Fargate en subnets sin NAT si usan solo servicios AWS via endpoints).",
+      "tags": ["IGW", "NAT Gateway", "VPC Endpoints", "outbound", "costos"],
+      "tech": ["AWS", "VPC"],
+      "references": [{ "title": "AWS VPC — NAT Gateway" }, { "title": "Last Week in AWS — NAT Gateway costs" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "networking",
+      "topic": "Active/Active vs Active/Passive multi-region",
+      "difficulty": "mid",
+      "scenario": "Diseñas DR para app critical. Opción A: dos regiones ambas sirviendo tráfico. Opción B: una región activa, otra en standby que se activa si falla la primera.",
+      "question": "¿Cuál es la diferencia y cuándo aplica cada estrategia?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Active/Active: ambas regiones sirven tráfico simultáneamente (Route 53 latency o geo routing distribuye users a la más cercana). Beneficios: RTO~0, capacidad extra, tráfico distribuido reduce latencia. Costos: infra 2x, requiere replicación bidireccional o eventual consistency de data (complejo).", "correct": true, "why": "Correcto. Es la estrategia más resiliente y también la más cara y compleja. Requiere que el diseño de datos tolere concurrent writes en regiones — típicamente conflict-free replicated data types, multi-master DBs (Aurora Global Write Forwarding, DynamoDB Global Tables), o particionamiento por región." },
+        { "letter": "B", "text": "Active/Passive (warm standby): región primaria sirve tráfico, secundaria mantiene infra actualizada (data replication async) pero no recibe tráfico. Failover: cambiar DNS/routing. RTO típico 5-30min, RPO minutos.", "correct": true, "why": "Correcto. Balance entre costo (2x infra pero puedes downsizear la standby) y RTO razonable. Requiere DR runbook probado — muchos equipos descubren en el failover real que 'algo' no estaba replicado (secretos, feature flags, DNS records)." },
+        { "letter": "C", "text": "Pilot Light: standby con SOLO datos replicados; infra compute apagada. En failover, se levanta infra (30min-2h). Más barato pero mayor RTO.", "correct": true, "why": "Correcto. Es un tier intermedio entre 'backup only' y warm standby. Adecuado para apps donde RTO de horas es aceptable pero perder datos no. AWS Disaster Recovery Whitepaper lo define como uno de 4 tiers." },
+        { "letter": "D", "text": "Backup-restore: sin infra en otra región, solo backups replicados. Failover requiere provisionar de cero (horas-días). Barato pero RTO alto.", "correct": true, "why": "Correcto. El tier más económico. Solo aceptable para apps no críticas o tolerantes a downtime largo. La mayoría de empresas subestiman cuánto tarda restaurar realmente hasta que lo prueban." },
+        { "letter": "E", "text": "Multi-region siempre significa active/active.", "correct": false, "why": "Falso — la estrategia depende del RTO/RPO objetivo y presupuesto. Muchas empresas usan active/passive o pilot light por costos." }
+      ],
+      "explanation": "AWS Disaster Recovery Whitepaper define 4 tiers: (1) Backup-restore — RTO horas, más barato; (2) Pilot Light — RTO 10s de min, datos replicados; (3) Warm Standby — RTO minutos, infra escalada down; (4) Multi-site active/active — RTO seg, más caro. Consideraciones: replicación de DATA es lo más difícil (async loses recent transactions; sync tiene latencia inter-región de decenas de ms); RPO=0 requiere sync o quorum multi-región (Spanner, CockroachDB); testing es OBLIGATORIO — un DR plan sin gameday es papel mojado; runbook debe estar en otro sistema (si tu wiki está en la región caída, no lo puedes leer).",
+      "realWorld": "Netflix opera active/active en 3 regiones AWS (us-east-1, us-west-2, eu-west-1) — durante failover, todo el tráfico se reroutea a las otras 2 en <7min ('Failover: A Netflix Case Study'). En diciembre 2021 us-east-1 tuvo outage y Netflix mantuvo servicio via las otras. Contrasta: Slack tuvo outage largo cuando su primary region falló (2022) — RTO alto porque la topología no era true active/active para todos los servicios.",
+      "tags": ["multi-region", "DR", "active-active", "active-passive", "RTO", "RPO"],
+      "tech": ["AWS", "Route53", "DynamoDB Global Tables"],
+      "references": [{ "title": "AWS — Disaster Recovery of Workloads on AWS Whitepaper" }, { "title": "Netflix Tech Blog — Failover Case Study" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "networking",
+      "topic": "Cloud lock-in — tradeoffs reales",
+      "difficulty": "mid",
+      "scenario": "Un arquitecto propone usar AWS Lambda, DynamoDB, SNS, SQS, Cognito, Step Functions — servicios profundamente AWS-específicos. Otro dice: 'nos amarra a AWS para siempre, mejor usar solo K8s y Postgres y podemos irnos cuando queramos'.",
+      "question": "¿Cómo evaluar el trade-off de cloud lock-in correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lock-in es un TRADE-OFF con dos ejes: (1) velocidad y menor carga operativa AHORA usando servicios managed profundos (Lambda, DynamoDB) vs (2) portabilidad futura si un día quieres cambiar de cloud. El costo del lock-in es real (migrar es meses/años, precios pueden subir) pero el costo de EVITARLO también es real (reinvertir la rueda: gestionar tu propio K8s, DBs, queues consume equipos enteros). La respuesta correcta depende de: probabilidad de migrar en 5-10 años, tamaño (startup vs enterprise), estrategia de la empresa. Para la mayoría, servicios managed pagan la deuda de lock-in con velocidad.", "correct": true, "why": "Correcto. La visión pragmática. Lock-in absoluto (nada portable) es riesgoso; portabilidad absoluta (todo K8s y evitar servicios cloud) es carísimo y ralentiza. La mayoría de arquitecturas exitosas eligen: managed para servicios estándar (queues, storage, DB) y portable para lo core diferenciador. Netflix, por ejemplo, es all-in AWS y ha estado 15 años sin migrar." },
+        { "letter": "B", "text": "Siempre evitar lock-in — usa solo K8s + Postgres.", "correct": false, "why": "Absolutismo. Reinventar SNS, Cognito, DynamoDB manualmente cuesta más que la 'libertad'. Para startup con equipo pequeño, este approach mata la velocidad." },
+        { "letter": "C", "text": "El lock-in no existe — puedes migrar cuando quieras.", "correct": false, "why": "Falso. Empresas grandes tardan AÑOS en migrar (Dropbox reportó ~2.5 años; Snap negoció con GCP durante meses). Los costos reales incluyen re-arquitectura, re-entrenamiento, reescritura de IaC." },
+        { "letter": "D", "text": "Multi-cloud desde día 1 elimina el lock-in.", "correct": false, "why": "Anti-patrón caro. Multi-cloud desde día 1 = usar el mínimo común denominador (perdiendo la ventaja de cada cloud) + duplicar esfuerzo de skills/tooling. Muchas empresas fracasan intentando esto." }
+      ],
+      "explanation": "Framework de decisión: (1) ¿Qué probabilidad de cambiar de cloud en 5 años? Si <10%, optimiza por velocidad hoy (managed). (2) ¿El servicio es diferenciador o commodity? Storage/queues/compute son commodity — usar managed. Business logic core es diferenciador — no atarlo a un vendor específico. (3) ¿Qué tan reversible es la decisión? SQS puede reemplazarse por Kafka en meses; migrar de DynamoDB a otra DB puede tomar años si el schema es muy AWS-específico. Regla: abstracciones ligeras (repository pattern, dispatcher) hacen algunos servicios menos pegajosos. Pero abstracción excesiva ('DB-agnostic layer') suele costar más que el lock-in que evita.",
+      "realWorld": "Dropbox migró OUT de AWS 2016-2017 (Magic Pocket) — ahorró $75M en 2 años según S-1. Era viable porque su carga (blob storage) era muy específica y podían construir hardware custom. Snap Inc quedó atrapado en GCP con compromiso $2B — para renegociar consideraron AWS pero el costo de migrar era mayor. Basecamp (37signals) salió de AWS/on-prem 2023 reportando ahorros $7M en 5 años — su carga era predictible. Lección: exit-de-cloud tiene sentido cuando (a) tu carga es enorme y estable, (b) tienes equipo de infra fuerte, (c) usas primitivas básicas (compute, storage) no servicios cloud-específicos.",
+      "tags": ["lock-in", "vendor risk", "trade-off", "portability"],
+      "tech": ["AWS", "Lambda", "DynamoDB"],
+      "references": [{ "title": "Dropbox — The Epic Story of Dropbox's Exodus from Amazon" }, { "title": "37signals — Why we're leaving the cloud" }, { "title": "Snap Inc S-1 filing 2017" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "iac",
+      "topic": "Terraform providers — portabilidad real",
+      "difficulty": "mid",
+      "scenario": "Un arquitecto dice: 'usando Terraform somos portables entre AWS, GCP y Azure — solo cambiamos el provider'. ¿Es cierto?",
+      "question": "¿Qué tan portable es Terraform realmente entre clouds?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Terraform es portable en el LENGUAJE (HCL) y flujo de trabajo (plan/apply/state), no en los RECURSOS. Cada provider (aws, google, azurerm) expone su cloud específico — resource 'aws_instance' no existe en GCP; 'google_compute_instance' no existe en AWS. Cambiar de cloud requiere REESCRIBIR los recursos. Terraform da portabilidad de HERRAMIENTA (una skill, un CLI, un state format) pero no de código. Para verdadera portabilidad de código: (a) Kubernetes manifests (mismo yaml corre en EKS/GKE/AKS), (b) módulos de nivel superior tipo Crossplane, (c) abstracciones propias.", "correct": true, "why": "Correcto. Un mito común es 'Terraform = multi-cloud'. En realidad Terraform es multi-provider (puedes gestionar múltiples clouds con el mismo tool) pero el código es cloud-específico. La ventaja real es que tus devs aprenden UNA herramienta y pueden aplicarla en cualquier cloud, no que el código se reutilice." },
+        { "letter": "B", "text": "Sí, el mismo código Terraform corre en cualquier cloud cambiando el provider.", "correct": false, "why": "Falso — aws_s3_bucket no funciona con google provider. Cada provider tiene su propio schema de recursos." },
+        { "letter": "C", "text": "Terraform es propietario de AWS.", "correct": false, "why": "Falso — Terraform fue creado por HashiCorp (2014). Es agnóstico. AWS tiene CloudFormation como opción propia; Google tiene Deployment Manager; Azure tiene ARM/Bicep." },
+        { "letter": "D", "text": "Solo funciona con cloud público, no con on-prem.", "correct": false, "why": "Falso — hay providers para vSphere, Nutanix, OpenStack, Kubernetes, Datadog, GitHub, etc. Es muy amplio." }
+      ],
+      "explanation": "Realidad de portabilidad IaC: (1) CloudFormation — 100% lock-in AWS; (2) Terraform — herramienta portable, código no; (3) Pulumi — igual que Terraform pero con lenguajes de programación reales; (4) Crossplane — abstracción real: define 'Database' como CRD, backend implementación es AWS RDS o GCP CloudSQL; (5) Kubernetes manifests — el pod/service/deployment son portables si evitas primitivas cloud-específicas (EBS storage classes, cloud-specific LoadBalancer annotations). Consejo práctico: si tu objetivo es 'no atarme a AWS', Terraform NO es suficiente por sí solo — necesitas también evitar servicios cloud-específicos en el código de la app. Terraform sí ayuda a que tu team pueda aprender un tool y aplicarlo en cualquier cloud (skill portability).",
+      "realWorld": "HashiCorp cambió Terraform a BSL license (2023) causando fork OpenTofu (Linux Foundation) — la comunidad valoraba la portabilidad de TOOL y quería mantenerla open. Empresas como Adobe, Uber tienen módulos Terraform reusables pero SIEMPRE por cloud (aws-modules, gcp-modules). GitLab publicó su approach: usan Terraform + Kubernetes + Crossplane para lograr mayor portabilidad real cuando lo necesitan.",
+      "tags": ["Terraform", "IaC", "portability", "providers"],
+      "tech": ["Terraform", "OpenTofu", "Crossplane"],
+      "references": [{ "title": "Terraform docs — Providers" }, { "title": "OpenTofu — fork announcement" }, { "title": "Crossplane docs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "networking",
+      "topic": "Kubernetes como capa de portabilidad",
+      "difficulty": "mid",
+      "scenario": "Un equipo quiere reducir el riesgo de lock-in. Un arquitecto propone: 'movámoslo todo a Kubernetes y ya no importa qué cloud usemos'.",
+      "question": "¿Es Kubernetes una verdadera capa de portabilidad entre clouds?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PARCIALMENTE. Kubernetes estandariza el runtime de aplicaciones (pods, services, deployments) y hace portable ese layer — el mismo YAML corre en EKS, GKE, AKS. Pero: (1) muchos manifests dependen de storage classes cloud-específicas (gp3 en AWS, pd-ssd en GCP); (2) LoadBalancer services usan cloud LB cada uno con annotations distintas; (3) IngressController varía; (4) IAM/RBAC integration (IRSA en AWS, Workload Identity en GCP) no es portable; (5) los add-ons (secrets manager, log shipping) son cloud-específicos. Kubernetes reduce el lock-in, no lo elimina.", "correct": true, "why": "Correcto. K8s es la mejor capa de portabilidad que tenemos, pero no es 100%. Un equipo experimentado puede migrar entre clouds en meses (no años) si usa K8s bien; el que abusa de annotations y servicios cloud pierde la mayoría de la ventaja." },
+        { "letter": "B", "text": "SÍ, 100% portable — el mismo yaml corre en cualquier cloud sin cambios.", "correct": false, "why": "Optimismo excesivo. En apps triviales sí; en apps reales con storage, LB, secretos, monitoring, hay ajustes por cloud." },
+        { "letter": "C", "text": "NO — K8s es solo tecnología AWS.", "correct": false, "why": "Falso — K8s es proyecto CNCF originado en Google (Borg), donado a la comunidad. Todos los clouds lo soportan." },
+        { "letter": "D", "text": "K8s es más lock-in que servicios managed porque es complejo.", "correct": false, "why": "K8s complejidad es real, pero es lock-in a un ESTÁNDAR abierto, no a un vendor. Diferente." }
+      ],
+      "explanation": "Buenas prácticas para maximizar portabilidad con K8s: (1) usar Helm charts con values por cloud; (2) usar External Secrets Operator (abstrae AWS Secrets Manager, GCP Secret Manager, Vault); (3) usar Cluster API para provisioning multi-cloud; (4) evitar annotations cloud-específicas en yaml de app (moverlas a manifests de infra); (5) usar Istio/Linkerd para networking abstraction en vez de cloud LB features; (6) OpenTelemetry para observability (no CloudWatch/Stackdriver directo). Esto se llama 'cloud-native' vs 'cloud-specific'. CNCF landscape es la referencia para stack portable. Costo: complejidad extra que solo tiene sentido si REALMENTE quieres opcionalidad multi-cloud.",
+      "realWorld": "Spotify corre en GCP con K8s pero mantiene arquitectura portable — evalúan Azure y AWS periódicamente como leverage negociador. Airbnb corre K8s multi-región AWS. Booking.com corre K8s en on-prem + AWS. Lyft usa K8s como capa de portabilidad on-prem/cloud (movió gran parte de AWS a on-prem 2020 reduciendo cloud spend). Contrast: Netflix usa AWS profundamente sin K8s (Titus, propietario) — decisión consciente de lock-in a cambio de features específicas.",
+      "tags": ["Kubernetes", "portability", "cloud-native", "abstraction"],
+      "tech": ["Kubernetes", "EKS", "GKE", "AKS"],
+      "references": [{ "title": "CNCF — Kubernetes docs" }, { "title": "Cloud Native Landscape (CNCF)" }, { "title": "Spotify — Backstage & platform engineering" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "iac",
+      "topic": "12-factor app — principios cloud-native",
+      "difficulty": "mid",
+      "scenario": "Tu app hardcodea credenciales de DB en config.yaml, escribe logs a un archivo local, y guarda sesiones en memoria del proceso. Un arquitecto dice: 'no es cloud-native, viola 12-factor'.",
+      "question": "¿Qué principios de 12-factor viola esta app y por qué importan en cloud?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Factor III (Config): config debe venir de ENV vars, no de archivos hardcodeados. Razón: mismo binario/imagen debe correr en dev/staging/prod sin recompilar. Credenciales de DB en archivo = git leak potential y rebuild por cada env.", "correct": true, "why": "Correcto. Config en ENV permite que el mismo container image se despliegue en cualquier env con configuración inyectada. Docker/K8s asumen esto. Anti-patrón: rebuild image por env." },
+        { "letter": "B", "text": "Factor XI (Logs): logs deben ir a stdout como stream de eventos, no a archivo local. El entorno de ejecución los rutea. Escribir a archivo local en cloud = perderlos cuando el container muere.", "correct": true, "why": "Correcto. Containers son efímeros; disk local se pierde con el pod. Sistemas modernos (Fluent Bit → CloudWatch/Loki/Elasticsearch) leen stdout. Rotación de logs manual es anti-patrón." },
+        { "letter": "C", "text": "Factor VI (Processes): procesos deben ser STATELESS. Sesiones en memoria del proceso = si el pod se escala/reinicia/muere, se pierden. Cloud requiere que scale horizontal sea trivial, que exige que el estado viva en storage externo (Redis, DB).", "correct": true, "why": "Correcto. En cloud los procesos van y vienen. Auto-scaling, health-checks, spot instance interruption todos matan procesos. Sesión en memoria = usuario deslogueado sin razón aparente. Redis/DynamoDB para session store." },
+        { "letter": "D", "text": "Factor IV (Backing Services): recursos (DB, cache, queue) deben ser attachable via URL/config, tratados como recursos reemplazables. La app no debería asumir 'esta DB específica corre en localhost'.", "correct": true, "why": "Correcto. Habilita swap de DB dev→staging→prod, o migrar de RDS a Aurora sin cambios de código. Solo cambia la URL en config. Fundamento de portabilidad y testing." },
+        { "letter": "E", "text": "Factor XII (Admin Processes): tareas admin (migrations, backups) deben correr como procesos separados con el mismo release, no vía SSH manual.", "correct": true, "why": "Correcto. En cloud SSH-to-server es imposible o desaconsejado. Migrations vía kubectl job, backups vía CronJob, con misma imagen y variables. Repetible y auditable." }
+      ],
+      "explanation": "12-Factor App (Heroku, Adam Wiggins, 2011) es la biblia de cloud-native design. Los 12: (I) Codebase único con múltiples deploys; (II) Dependencies explícitas (package.json/requirements.txt); (III) Config en ENV; (IV) Backing services attachables; (V) Build/release/run separados; (VI) Procesos stateless; (VII) Port binding (app expone puerto, no depende de webserver externo); (VIII) Concurrency vía process model; (IX) Disposability (start rápido, shutdown graceful); (X) Dev/prod parity; (XI) Logs como streams; (XII) Admin processes. Los que violan más impactan en cloud: III (config), VI (stateless), IX (disposability para spot/auto-scaling), XI (logs). Extensions modernas para K8s: readiness/liveness probes, resource requests/limits, graceful shutdown con SIGTERM handling.",
+      "realWorld": "Heroku popularizó 12-factor como PaaS opinionado. Kubernetes lo asume implícitamente: pods son efímeros (VI, IX), config via ConfigMap/Secret (III), backing services via Service DNS (IV). Apps monolíticas legacy (Java WAR con estado en sesión, WebSphere) violan casi todos — por eso migrarlas a cloud es tan doloroso. 'Refactor first, migrate second' es la lección clásica.",
+      "tags": ["12-factor", "cloud-native", "stateless", "config"],
+      "tech": ["Heroku", "Kubernetes"],
+      "references": [{ "title": "12factor.net (Adam Wiggins)" }, { "title": "Kubernetes docs — Configuring a Pod" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "networking",
+      "topic": "AWS vs GCP vs Azure — fortalezas",
+      "difficulty": "mid",
+      "scenario": "Tu CTO evalúa clouds para nueva empresa. Pregunta: '¿qué diferencia hay entre AWS, GCP y Azure más allá del logo?'.",
+      "question": "¿Cuáles son las fortalezas relativas de los 3 grandes clouds?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "AWS: mayor breadth de servicios (~200+), mayor cuota de mercado (~33%), tooling maduro (IAM complejo pero granular), ecosistema de partners más grande. Mejor para: apps que necesiten servicios diversos y ecosistema maduro.", "correct": true, "why": "Correcto. AWS fue pionero (2006 S3, EC2) y tiene la ventaja del incumbente. Su breadth es su fortaleza y también su curva de aprendizaje empinada (por ejemplo IAM tiene decenas de conceptos)." },
+        { "letter": "B", "text": "GCP: fortaleza en data/ML (BigQuery, Vertex AI, TPUs) y Kubernetes (creador). Networking premium (Google backbone). Cuota de mercado menor (~10-11%) pero crece. Mejor para: workloads de data engineering, ML, K8s.", "correct": true, "why": "Correcto. Google construyó BigQuery, Spanner, TPUs, Kubernetes (Borg) internamente antes de ofrecerlos. Su ventaja técnica en data es real. Contra: menos servicios en breadth, historia de descontinuación de productos (Google Reader, Domains) genera desconfianza enterprise." },
+        { "letter": "C", "text": "Azure: fortaleza en integración con Microsoft ecosystem (AD, Windows Server, Office 365, .NET), enterprise sales muy fuerte, contratos que las empresas grandes ya tenían con Microsoft. Cuota ~24%. Mejor para: enterprises Microsoft-heavy, workloads Windows, hybrid con on-prem AD.", "correct": true, "why": "Correcto. Azure gana enterprises que ya tienen Enterprise Agreement con Microsoft — el cross-sell es su superpoder. Azure AD (Entra ID) es de facto en enterprises. Workloads .NET y SQL Server son first-class." },
+        { "letter": "D", "text": "Los 3 son idénticos en features y precio.", "correct": false, "why": "Falso — cada uno tiene servicios flagship distintos y modelos de pricing diferentes. Ejemplo: BigQuery pricing por bytes escaneados vs Redshift por instance-hour son modelos radicalmente distintos." },
+        { "letter": "E", "text": "GCP es siempre el más barato.", "correct": false, "why": "Depende del workload. GCP tiene sustained-use discounts automáticos que pueden ser buenos, pero AWS con Savings Plans también. Comparar precios REALES requiere modelar tu carga específica." }
+      ],
+      "explanation": "Cuota de mercado 2024 aprox: AWS ~33%, Azure ~24%, GCP ~11% (Synergy Research). Servicios únicos flagship: AWS — Lambda (pionera serverless), DynamoDB, S3 (referencia); GCP — BigQuery (serverless data warehouse), Spanner (global consistent DB), Vertex AI, GKE (K8s más maduro); Azure — Azure AD/Entra, Cognitive Services, Synapse Analytics. Precios varían por servicio y patrón de uso. Además de los 3 grandes: Oracle Cloud (fuerte en Oracle DB workloads), IBM Cloud, Alibaba Cloud (dominante en China). Regla práctica: elige el cloud donde tu equipo tenga skills o donde tus servicios core (data/ML/enterprise) tengan mejor oferta.",
+      "realWorld": "Snap eligió GCP explícitamente por (a) BigQuery para analytics, (b) descuentos agresivos en momento crítico ($2B/5 años). Netflix all-in AWS históricamente. Walmart usa Azure y GCP (evita AWS por competencia directa con Amazon retail). JP Morgan multi-cloud (Azure + AWS). Twitter/X migró desde on-prem a GCP en 2018 para BigQuery/Spanner específicamente.",
+      "tags": ["AWS", "GCP", "Azure", "comparison"],
+      "tech": ["AWS", "GCP", "Azure"],
+      "references": [{ "title": "Synergy Research — Cloud market share reports" }, { "title": "Snap Inc — S-1 GCP commitment" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "networking",
+      "topic": "Hybrid cloud",
+      "difficulty": "mid",
+      "scenario": "Un banco tiene mainframes y bases de datos on-prem que no pueden mover (regulación, latencia, sunk cost). Quieren usar cloud para nuevos servicios pero manteniendo conexión con sistemas legacy.",
+      "question": "¿Qué es hybrid cloud y cuáles son sus componentes clave?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Hybrid cloud = combinación de infraestructura on-prem/private cloud + public cloud, con conectividad low-latency y gestión unificada. Componentes: (1) conectividad dedicada (Direct Connect en AWS, ExpressRoute en Azure, Cloud Interconnect en GCP) — no via Internet público; (2) identity federation (SSO entre on-prem AD y cloud); (3) network extension (VPN o Direct Connect + BGP para rutas anunciadas); (4) tooling de gestión híbrido (Anthos, Azure Arc, EKS Anywhere). Objetivo: mantener workloads sensibles on-prem y aprovechar cloud para elasticidad/servicios nuevos.", "correct": true, "why": "Correcto. Hybrid es la realidad de la mayoría de enterprises grandes — no all-in cloud ni all-in on-prem. La clave es que la conectividad sea de calidad (Direct Connect ofrece <10ms lat, ancho de banda dedicado, más barato que Internet a alto volumen)." },
+        { "letter": "B", "text": "Hybrid cloud = usar dos providers públicos (AWS + GCP).", "correct": false, "why": "Eso es multi-cloud, no hybrid. Hybrid específicamente mezcla on-prem con cloud público." },
+        { "letter": "C", "text": "Hybrid cloud es solo VPN a AWS.", "correct": false, "why": "VPN es una forma de conectividad hybrid pero no define el modelo. Hybrid es la topología completa: workloads distribuidos, gestión, identity." },
+        { "letter": "D", "text": "Hybrid cloud está obsoleto — todos van a all-in cloud.", "correct": false, "why": "Falso — bancos, healthcare, gobierno, industria pesada tienen hybrid por regulación, data gravity y sistemas legacy. Es la realidad enterprise." }
+      ],
+      "explanation": "Servicios de conectividad hybrid: AWS Direct Connect (private fiber, 1-100 Gbps, ~$0.30/GB) — puedes tener múltiples VIFs (private VIF a VPC, public VIF a servicios AWS, transit VIF a Transit Gateway). Azure ExpressRoute similar (1 Gbps-100 Gbps). GCP Cloud Interconnect (Dedicated o Partner). VPN over Internet es alternativa low-cost pero mayor latencia y menor ancho de banda. Redundancia crítica: al menos 2 conexiones a AZs distintas. Tooling hybrid: (1) Azure Arc — extiende Azure control plane a on-prem/otros clouds; (2) Google Anthos — GKE gestionado en on-prem/AWS/Azure; (3) AWS Outposts — hardware AWS on-prem; (4) EKS Anywhere — K8s on-prem gestionable desde AWS console. Data gravity: mover TB de datos es caro y lento — arquitecturas hybrid a menudo dejan la data on-prem y llevan el compute cerca (edge computing invertido).",
+      "realWorld": "JP Morgan mantiene core banking on-prem y usa cloud para analytics y customer-facing apps con hybrid vía Direct Connect. Bundesbank alemán usa hybrid similar. HSBC AWS + Azure hybrid. Muchos hospitales usan Epic on-prem + Azure para AI/reporting. Costco declined AWS para retail workloads (competencia con Amazon) — usa hybrid Oracle + Azure.",
+      "tags": ["hybrid cloud", "Direct Connect", "on-prem", "connectivity"],
+      "tech": ["AWS Direct Connect", "Azure ExpressRoute", "Google Cloud Interconnect"],
+      "references": [{ "title": "AWS Direct Connect docs" }, { "title": "Azure ExpressRoute docs" }, { "title": "Google Cloud Interconnect docs" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "networking",
+      "topic": "Cross-cloud networking",
+      "difficulty": "senior",
+      "scenario": "Tienes servicios en AWS y GCP que necesitan comunicarse con baja latencia y sin exposición pública. Considera opciones.",
+      "question": "¿Cómo se conecta VPC de AWS con VPC de GCP de forma privada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Opciones (en orden creciente de complejidad/costo): (1) Site-to-Site VPN entre ambas VPCs — más simple, cifrado IPsec, latencia por Internet (~30-100ms transatlántico). (2) Partner interconnect — usar un partner colocation (Equinix, Megaport) que tenga presencia en ambos clouds; se establecen circuitos privados dedicados. (3) Cloud-to-cloud via SD-WAN (Aviatrix, Alkira) — abstrae la complejidad, ofrece routing/policy unificado. (4) Dedicated fiber (raro) — para enterprises con presencia física en data centers específicos. NO existe conexión 'nativa' directa AWS↔GCP; siempre pasa por un tercero (partner, VPN, o Internet).", "correct": true, "why": "Correcto. Los clouds compiten y no ofrecen interconexión nativa. Los partners de colocation son el patrón enterprise. Aviatrix y similares abstraen las mecánicas y añaden features (encryption on-the-wire, policy). Latencia física es la que es — Amsterdam AWS ↔ Amsterdam GCP puede ser <5ms via partner en Equinix." },
+        { "letter": "B", "text": "AWS y GCP tienen peering directo nativo (VPC Peering entre clouds).", "correct": false, "why": "Falso — VPC Peering es INTRA-cloud (AWS VPC ↔ AWS VPC, GCP VPC ↔ GCP VPC). No cross-cloud." },
+        { "letter": "C", "text": "Deben pasar siempre por Internet público — no hay privado.", "correct": false, "why": "Falso — partners de colocation ofrecen interconexión privada. Muchas empresas la usan por seguridad y performance." },
+        { "letter": "D", "text": "Un solo Direct Connect resuelve todo (conecta a AWS y GCP).", "correct": false, "why": "Falso — Direct Connect es AWS-specific. Necesitas circuito separado o partner que ambos accepten." }
+      ],
+      "explanation": "Patrones prácticos cross-cloud: (1) Colocation Meet-Me Room: rentas un rack en Equinix DC, tiraas cable a Direct Connect en un puerto y a Cloud Interconnect en otro — costos ~$1-3k/mes por circuito. (2) Megaport ECX Fabric: portal SaaS que te vende cross-connects virtuales entre clouds — más fácil, similar precio. (3) Transit Gateway (AWS) + Cloud Router (GCP): pueden peer via partner para topología hub-and-spoke. (4) SD-WAN vendors (Aviatrix, Alkira, Prosimo): abstracción software que añade encryption, policies, observability. Consideración crítica: costos de EGRESS son altos ($0.02-0.12/GB dependiendo de destino) — arquitecturas cross-cloud a alto volumen pueden costar más en transferencia que en compute. Regla: mover DATOS entre clouds es caro; mover CONTROL PLANE o small API calls es barato.",
+      "realWorld": "Snowflake corre en AWS, GCP y Azure — usa VPC endpoints e interconnect privado para clientes. Datadog corre multi-cloud, usa Megaport/Equinix para peering. Aviatrix (empresa) reporta crecimiento sostenido — indicador de que multi-cloud enterprise está creciendo. Costos: Corey Quinn reporta enterprises pagando $100k+/mes solo en egress entre clouds.",
+      "tags": ["cross-cloud", "networking", "Equinix", "Megaport", "SD-WAN"],
+      "tech": ["Aviatrix", "Equinix", "Megaport"],
+      "references": [{ "title": "Equinix Fabric docs" }, { "title": "Aviatrix Multi-Cloud Networking" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "networking",
+      "topic": "Multi-cloud — cuándo tiene sentido",
+      "difficulty": "senior",
+      "scenario": "Un ejecutivo dice: 'todos van multi-cloud, deberíamos también'. Otro pregunta: '¿qué GANAMOS realmente y a qué COSTO?'.",
+      "question": "¿Cuándo multi-cloud tiene sentido económico y cuándo es teatro caro?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TIENE SENTIDO: (1) Requerimiento regulatorio explícito (algunos países exigen data sovereignty en cloud local + backup en otro); (2) Servicios flagship distintos (BigQuery en GCP para analytics + Cognitive Services en Azure) — usar cada cloud por lo que hace mejor; (3) Palanca negociadora (empresas grandes negocian mejor si el vendor sabe que hay alternativa); (4) M&A resultante — la empresa adquirida usa otro cloud; (5) Sovereign clouds gubernamentales.", "correct": true, "why": "Correcto. Multi-cloud POR RAZONES ESPECÍFICAS es defensible. Regulación y M&A son razones frecuentes y legítimas. Usar servicios best-of-breed también, siempre que el egress no coma el ahorro." },
+        { "letter": "B", "text": "ES TEATRO: (1) 'No queremos lock-in' sin plan concreto de migrar — genera 2x complejidad sin beneficio claro; (2) Usar mínimo común denominador (solo compute + storage básicos) — perdiendo la ventaja de cada cloud; (3) Doble skill/tooling/on-call/security — costos operacionales grandes; (4) HA cross-cloud rara vez es la razón real — AWS multi-región es más barato y suficiente para 99.99%.", "correct": true, "why": "Correcto. Multi-cloud 'por si acaso' es una de las decisiones más caras que un CTO puede tomar sin plan. Duplicas todo: pipelines, secretos, red, monitoring, IAM. Los beneficios son marginales, los costos son continuos." },
+        { "letter": "C", "text": "COSTOS OCULTOS: egress inter-cloud ($0.02-0.12/GB); duplicación de compliance audits; equipos especializados por cloud; complejidad de identity federation; observability cross-cloud requiere tooling específico; testing en múltiples clouds duplica CI/CD tiempo.", "correct": true, "why": "Correcto. Estos costos rara vez se contabilizan en la decisión inicial. A los 2 años, empresas se dan cuenta que multi-cloud cuesta 2-3x lo previsto." },
+        { "letter": "D", "text": "PATRÓN PRÁCTICO: 'Primary + Escape hatch'. Elige UN cloud primary donde vives 95% del tiempo y usa servicios profundamente. Mantén portable la lógica core (12-factor + K8s) para poder migrar en meses si es necesario. Multi-cloud verdadero solo para casos específicos.", "correct": true, "why": "Correcto. Es el consenso pragmático. La ventaja de multi-cloud verdadero rara vez supera su costo. La opcionalidad futura se obtiene con buen diseño, no con infra dual desde día 1." },
+        { "letter": "E", "text": "Multi-cloud siempre es mejor porque diversificas riesgo.", "correct": false, "why": "Simplificación peligrosa. El riesgo agregado (complejidad, superficie de ataque más grande, más gente que necesita saber) puede ser MAYOR que el riesgo del que te proteges (outage del primary)." }
+      ],
+      "explanation": "Encuesta 451 Research/HashiCorp 2023: 76% enterprises reportan 'multi-cloud' pero solo ~25% tienen carga sustancial en más de un cloud. La mayoría es: cloud principal + SaaS + un servicio en otro cloud. Verdadero multi-cloud (workloads en ambos, con failover) es raro. Casos de éxito real: (1) Snowflake ofrece producto en 3 clouds — su modelo requiere estar donde el cliente esté; (2) Datadog similar; (3) HashiCorp Cloud Platform también. Casos donde falló: proyectos multi-cloud enterprise que terminaron en un cloud dominante después de 2-3 años por complejidad excesiva. La regla del pulgar: 'estás listo para multi-cloud cuando eres tan grande que la complejidad extra es marginal y el beneficio negociador es enorme'.",
+      "realWorld": "HashiCorp Nomad+Consul+Vault son diseñados para portabilidad multi-cloud — la propia HashiCorp los usa multi-cloud (AWS + Azure). JP Morgan multi-cloud consciente (leverage y regulación). Contra: Adidas intentó multi-cloud, terminó consolidando en AWS después. Uber multi-cloud transitorio durante M&A, consolidó en GCP.",
+      "tags": ["multi-cloud", "strategy", "trade-off", "vendor management"],
+      "tech": ["AWS", "GCP", "Azure"],
+      "references": [{ "title": "HashiCorp State of Cloud Strategy Survey" }, { "title": "Corey Quinn — The AWS Multicloud Question" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "networking",
+      "topic": "VPC Peering vs Transit Gateway",
+      "difficulty": "mid",
+      "scenario": "Tienes 15 VPCs en AWS (una por servicio) que necesitan comunicarse entre sí. Un junior propone: 'creo un peering entre cada par de VPCs'.",
+      "question": "¿Cuál es la diferencia entre VPC Peering y Transit Gateway y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "VPC Peering: conexión 1-a-1 entre 2 VPCs. NO transitiva (si A↔B y B↔C, A no habla con C automáticamente). Escala N*(N-1)/2 — para 15 VPCs son 105 peerings. Barato ($0 por peering, solo pagas transferencia). Transit Gateway (TGW): hub central al que se conectan las VPCs, permite ruteo transitivo. Para 15 VPCs, 15 attachments. Costos: $0.05/hora por attachment + $0.02/GB transferencia. TGW es la solución escalable; peering para casos simples 2-3 VPCs.", "correct": true, "why": "Correcto. Full mesh peering es anti-patrón conocido — la administración de rutas y security groups se vuelve inmanejable. TGW resuelve con hub-and-spoke. Muchas empresas AWS mueven de mesh peering a TGW cuando pasan de 5-6 VPCs." },
+        { "letter": "B", "text": "Peering y TGW son sinónimos.", "correct": false, "why": "Falso — arquitecturas y costos distintos. Peering es punto-a-punto, TGW es hub-and-spoke." },
+        { "letter": "C", "text": "TGW es solo para conexiones a on-prem.", "correct": false, "why": "TGW conecta VPCs, VPNs, Direct Connect, otras cuentas — es hub multi-propósito." },
+        { "letter": "D", "text": "Peering es transitivo por defecto.", "correct": false, "why": "Falso — VPC Peering explícitamente NO es transitivo. Es una decisión de diseño de AWS." }
+      ],
+      "explanation": "VPC Peering: crear el peering + aceptar en la otra VPC + actualizar route tables en ambos lados + security groups para permitir tráfico. Overlapping CIDR no permitido. TGW: crear TGW + crear attachments desde cada VPC + configurar route table de TGW + rutas en VPCs apuntando a TGW. Permite ruteo transitivo, políticas centralizadas de segmentación (multiple route tables en TGW para separar prod/dev), inspección centralizada (spoke pasa por VPC de firewall). Alternativas: (1) VPC Lattice — service mesh managed AWS, orientado a servicios más que a networking; (2) PrivateLink — para exponer un servicio específico entre VPCs sin abrir toda la red; (3) Cloud WAN — abstracción más alta para redes globales. GCP equivalent: Shared VPC + VPC Network Peering. Azure: VNet Peering + Virtual WAN.",
+      "realWorld": "Airbnb documentó migración de peering full-mesh a TGW cuando llegaron a ~10+ VPCs — reducción dramática de complejidad de rutas. Netflix usa múltiples TGWs regionales conectados. HashiCorp Consul usado sobre TGW/Peering para service discovery cross-VPC.",
+      "tags": ["VPC Peering", "Transit Gateway", "network topology", "AWS"],
+      "tech": ["AWS", "Transit Gateway", "VPC"],
+      "references": [{ "title": "AWS Transit Gateway docs" }, { "title": "AWS Well-Architected — VPC design" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "iac",
+      "topic": "Prime Video Lambda → ECS",
+      "difficulty": "senior",
+      "scenario": "Amazon Prime Video publicó en 2023 que migraron un servicio de monitoreo audio/video de arquitectura serverless (Lambda + Step Functions) a monolito en ECS, reportando 90% reducción de costos. Titulares gritaron '¡el serverless muere!'.",
+      "question": "¿Qué lección REAL enseña el caso Prime Video?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Que el servicio ESPECÍFICO (procesamiento de video con muchos pasos y transferencia de datos grandes entre pasos) NO encajaba con serverless: (1) Step Functions con muchos states cuesta por state transition; (2) Lambda + Lambda tiene que serializar/deserializar y pasar via S3 o payload — costoso en I/O; (3) el workload era steady-state y high-volume, no bursty. Un monolito en ECS Fargate con procesamiento en-memoria fue más eficiente. NO significa 'serverless es malo' — significa 'usa la herramienta adecuada al workload'.", "correct": true, "why": "Correcto. La lectura correcta del caso. Marc Brooker (AWS Serverless VP) y muchos ingenieros clarificaron: NO era una crítica al serverless en general — era el resultado de refactorizar un servicio específico cuyo perfil no era bursty. Serverless brilla en cargas bursty, event-driven, con orquestación simple. Falla en high-volume steady-state con muchos pasos y datos grandes." },
+        { "letter": "B", "text": "Que serverless siempre es peor y hay que evitarlo.", "correct": false, "why": "Sobregeneralización peligrosa. Lambda sigue siendo usado ampliamente en Amazon (millones de invocaciones/seg globalmente). El caso fue de UN servicio específico." },
+        { "letter": "C", "text": "Que Prime Video abandonó AWS.", "correct": false, "why": "Falso — migraron de un servicio AWS (Lambda + Step Functions) a otro servicio AWS (ECS Fargate). Sigue siendo 100% AWS." },
+        { "letter": "D", "text": "Que Prime Video no sabe usar AWS.", "correct": false, "why": "Falso — la publicación fue elogiada por su honestidad. Muchas empresas prueban primero con serverless para velocidad y refactorizan a compute continuous cuando el patrón lo justifica." }
+      ],
+      "explanation": "Lecciones extraíbles: (1) 'Right tool for the right job' — no hay arquitectura universal; (2) Costos serverless a escala con muchos states/transitions pueden superar los de compute reservado; (3) Serverless es óptimo para bursty (99% del tiempo idle) y para prototipos; (4) Cuando validas producto-mercado y el patrón se vuelve steady-state, refactorizar a compute más eficiente es común y saludable; (5) La palabra 'monolito' fue provocativa pero preciso: consolidar N funciones que hablan entre sí en 1 proceso simplifica y reduce I/O. Trade-offs de vuelta: perder auto-scaling automático (ahora escalas ECS tasks manualmente o con auto-scaling), perder pay-per-use (pagas por task hours). El artículo debería llamarse 'evolucionamos nuestra arquitectura al madurar el workload' — el titular 'monolith wins' fue clickbait.",
+      "realWorld": "Prime Video Tech Blog May 2023: 'Scaling up the Prime Video audio/video monitoring service and reducing costs by 90%'. Reacciones: DHH (Basecamp) celebró como confirmación de anti-microservicios; Adrian Cockcroft (ex-Netflix) mostró match nuance del caso; Kelsey Hightower comentó 'right tool right job'. El caso se usa AHORA como ejemplo canónico de 'no seas dogmático con arquitecturas'.",
+      "tags": ["serverless", "monolith", "Prime Video", "AWS", "arquitectura"],
+      "tech": ["AWS", "Lambda", "ECS", "Step Functions"],
+      "references": [{ "title": "Prime Video Tech Blog — Scaling up and reducing costs by 90%" }, { "title": "Adrian Cockcroft — Analysis of Prime Video case" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "networking",
+      "topic": "Cloud regions vs AZs",
+      "difficulty": "junior",
+      "scenario": "Un junior dice: 'nuestro servicio corre en us-east-1, es multi-AZ'. Otro pregunta: '¿pero está en múltiples regiones también?'.",
+      "question": "¿Cuál es la diferencia entre región (region) y availability zone (AZ)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Región: área geográfica (us-east-1 = N. Virginia, eu-west-1 = Irlanda). Independiente eléctrica, de red y de fallo respecto a otras regiones. AZ (Availability Zone): data center (o cluster) dentro de una región, con energía/refrigeración/networking independiente pero conexión low-latency (<2ms) a otras AZs de la misma región. Multi-AZ = protección contra fallo de UN data center (típico: rack de fibra cortado, generador falla). Multi-región = protección contra fallo de TODA una región (raro pero pasa: incendios, huracanes, apagones eléctricos regionales). Costos y complejidad: multi-AZ es barato y estándar; multi-región es caro y complejo.", "correct": true, "why": "Correcto. Multi-AZ es best practice básico (Auto Scaling Groups, RDS Multi-AZ, ALB across AZs). Multi-región es para tier alto de disponibilidad y DR real. La independencia física de las AZs varía por región — algunas AZs comparten metro area, otras están a decenas de km." },
+        { "letter": "B", "text": "Región y AZ son sinónimos.", "correct": false, "why": "Falso — jerárquicamente distintos. Una región contiene múltiples AZs." },
+        { "letter": "C", "text": "AZ es sinónimo de rack.", "correct": false, "why": "Falso — una AZ típicamente contiene múltiples data centers o un data center grande con múltiples racks. Rack es unidad menor." },
+        { "letter": "D", "text": "Regiones siempre están en países distintos.", "correct": false, "why": "Falso — hay múltiples regiones en USA (us-east-1, us-east-2, us-west-1, us-west-2). El propósito es distancia geográfica y fault isolation, no siempre países." }
+      ],
+      "explanation": "AWS: 30+ regiones, ~100 AZs. GCP: ~40 regiones, cada una con 3+ zonas. Azure: ~60 regiones con 'Availability Zones'. Diferencias importantes: (1) us-east-1 (Virginia) es la más grande, más servicios lanzados aquí primero, también más outages históricos por scale; (2) GCP zonas dentro de región están más geográficamente cercanas (mismo metro típicamente); (3) Azure introdujo AZs relativamente tarde (2018+), no todas las regiones tienen 3 AZs. Data residency: workloads regulados por GDPR deben quedarse en regiones EU. GovCloud regiones son físicamente aisladas para US Gov compliance. Selección de región: (a) latencia a users; (b) servicios disponibles (no todos en todas); (c) precios (varían por región); (d) compliance/data residency; (e) resiliencia (AZs disponibles).",
+      "realWorld": "us-east-1 tuvo outage grande diciembre 2021 (afectó S3, EC2, Lambda) — muchas empresas descubrieron que su 'multi-AZ' NO les protegía porque el control plane estaba en us-east-1. AWS lección: separar control plane. Facebook (Meta) tiene su propia infra en múltiples regiones. Netflix documentó su approach multi-región AWS. Slack outage 2022 no fue multi-región efectivo, dolor prolongado.",
+      "tags": ["region", "AZ", "availability", "geography"],
+      "tech": ["AWS", "GCP", "Azure"],
+      "references": [{ "title": "AWS Global Infrastructure" }, { "title": "AWS Post-Event Summary us-east-1 December 2021" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "iac",
+      "topic": "Cloud-native design",
+      "difficulty": "senior",
+      "scenario": "Un arquitecto está diseñando app para deploy en cloud. Lista principios que debe seguir para ser 'cloud-native'.",
+      "question": "¿Qué principios definen una arquitectura cloud-native?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Diseño para FALLO: cualquier componente puede fallar en cualquier momento — retries con backoff, circuit breakers, graceful degradation, timeouts. La app asume que dependencias fallarán, no que estarán perfectas.", "correct": true, "why": "Correcto. Cloud infra es más elástica pero también más volátil (spot instances mueren, AZs fallan, transient errors). El fallo es NORMAL, no excepcional. Netflix Chaos Monkey ejemplifica esto — practicar fallar en producción." },
+        { "letter": "B", "text": "Statelessness: procesos no guardan estado local — todo el estado va a servicios externos (DB, cache, object storage). Habilita horizontal scaling, disposability, y roll updates sin downtime.", "correct": true, "why": "Correcto. Es el fundamento de la elasticidad. Auto-scaling suma/quita instancias arbitrariamente; ninguna instancia debería ser 'especial'. Ganado (cattle) no mascotas (pets)." },
+        { "letter": "C", "text": "Observability first-class: métricas, logs estructurados, distributed tracing desde día 1 — no un afterthought. Cada request trazable a través de servicios. RED/USE method para métricas.", "correct": true, "why": "Correcto. En sistemas distribuidos, sin observability no puedes debuggear producción. OpenTelemetry como estándar para instrumentación. Prometheus + Grafana + Jaeger/Tempo stack común. Sin esto, un problema en microservicios es imposible." },
+        { "letter": "D", "text": "Automation-first: infra como código, deployment automatizado, self-healing (K8s replicas). No 'clicks manuales' en consola cloud en producción. Runbooks son código.", "correct": true, "why": "Correcto. Manual = irrepetible + inauditable. Terraform/Pulumi/CloudFormation para infra, ArgoCD/Flux para K8s. La consola es solo lectura en prod (idealmente)." },
+        { "letter": "E", "text": "Cloud-native = solo usar servicios cloud AWS-específicos.", "correct": false, "why": "Confusión de términos. 'Cloud-native' se refiere a DISEÑO para cloud (12-factor, stateless, resilient), no a usar exclusivamente servicios de un vendor específico. Una app cloud-native puede correr on-prem con K8s." }
+      ],
+      "explanation": "CNCF define cloud-native: 'aplicaciones escalables en entornos modernos y dinámicos... containers, service meshes, microservicios, infraestructura inmutable, APIs declarativas'. Principios adicionales: (1) Loose coupling — servicios independientes, comunicación via APIs; (2) Idempotency — operaciones repetibles sin efecto secundario (retries seguros); (3) Backward compatibility — cambios no rompen consumidores; (4) Immutable infrastructure — servers no se modifican, se reemplazan; (5) Declarative — describes qué quieres, el sistema logra el estado. Anti-patrones: snowflake servers (cada uno único), config drift (prod ≠ staging), pet infrastructure (nombres cariñosos y miedo a tocar).",
+      "realWorld": "Netflix escribió 'Chaos Engineering: System Resiliency in Practice' — libro seminal sobre diseño para fallo. Google SRE Book Ch. 22 'Addressing Cascading Failures' es referencia obligada. Amazon builders' library documenta patterns de resiliencia. Cloud-native adoption growing: CNCF Survey 2023 reporta ~7M developers usando cloud-native tech.",
+      "tags": ["cloud-native", "resilience", "observability", "12-factor"],
+      "tech": ["Kubernetes", "OpenTelemetry", "Prometheus"],
+      "references": [{ "title": "CNCF Cloud Native Definition" }, { "title": "Netflix — Chaos Engineering" }, { "title": "Google SRE Book" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "iac",
+      "topic": "HashiCorp — herramientas portables",
+      "difficulty": "senior",
+      "scenario": "Un CTO evalúa el stack HashiCorp: Terraform, Vault, Consul, Nomad, Packer. Un junior pregunta: '¿por qué HashiCorp y no herramientas nativas del cloud?'.",
+      "question": "¿Qué valor específico ofrece el stack HashiCorp comparado con servicios cloud nativos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Portabilidad multi-cloud y hybrid: (1) Terraform vs CloudFormation — cross-provider; (2) Vault vs AWS Secrets Manager/GCP Secret Manager — un secreto store para todos los entornos, on-prem+cloud+K8s; (3) Consul vs cloud service discovery — funciona en cualquier entorno, incluye service mesh; (4) Nomad vs ECS/GKE-only — orquestador que corre containers, VMs, binaries en cualquier lugar; (5) Packer vs cloud-specific image builders — construye AMIs, GCE images, Docker desde una definición. Trade-off: menos deep integration con features cloud-específicas pero más flexibility. Ideal para: enterprises multi-cloud o hybrid grandes.", "correct": true, "why": "Correcto. HashiCorp construyó su reputación como 'cloud agnostic' — atractivo para empresas grandes con estrategia hybrid/multi. Su valor es real donde ese requerimiento existe. En startup cloud-único, servicios nativos son usualmente más simples." },
+        { "letter": "B", "text": "HashiCorp es más barato siempre.", "correct": false, "why": "Falso — Vault Enterprise, Terraform Cloud, HCP tienen costos significativos. Depende del uso — HashiCorp puede ser más barato a escala si evita duplicación multi-cloud." },
+        { "letter": "C", "text": "HashiCorp es propietario de AWS.", "correct": false, "why": "Falso — HashiCorp es empresa independiente (IBM adquirió 2024 pero mantiene independencia)." },
+        { "letter": "D", "text": "HashiCorp reemplaza Kubernetes.", "correct": false, "why": "Parcialmente falso — Nomad es alternativa a K8s, pero Terraform/Vault/Consul son complementarios. Muchas empresas usan Vault+Consul CON K8s." }
+      ],
+      "explanation": "Casos de uso HashiCorp por producto: (1) Terraform — IaC para todo (incluso GitHub, PagerDuty, Datadog); (2) Vault — secrets management, PKI, encryption as service, dynamic credentials (rota keys automáticamente); (3) Consul — service discovery + KV store + service mesh (Consul Connect); (4) Nomad — orchestrator más simple que K8s, gestiona containers/VMs/binaries; (5) Packer — imágenes reproducibles multi-cloud; (6) Boundary — zero-trust access a infra; (7) Waypoint — deployment app to any target. Modelo comercial: open-source core + Enterprise features (RBAC, HSM, replication) + cloud managed (HCP). Cambio a BSL license (2023) causó fork OpenTofu (Terraform). IBM adquirió HashiCorp 2024 ($6.4B).",
+      "realWorld": "Adobe usa Vault a escala global — millones de secretos rotados dinámicamente. GitLab usa Terraform en runners para IaC del propio SaaS. Roblox usa Nomad + Consul en su edge. Bloomberg usa Vault para PKI. HashiCorp State of Cloud Survey 2023: ~85% enterprises usan Terraform en algún form. Riesgo: acquisición IBM podría cambiar dinámica (algunos temen enterprise-ización).",
+      "tags": ["HashiCorp", "Terraform", "Vault", "Consul", "portable"],
+      "tech": ["Terraform", "Vault", "Consul", "Nomad"],
+      "references": [{ "title": "HashiCorp product docs" }, { "title": "State of Cloud Strategy Survey" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "networking",
+      "topic": "Egress costs",
+      "difficulty": "senior",
+      "scenario": "Tu factura AWS creció $50k en un mes sin cambios de arquitectura obvios. Al investigar, ves que $30k son 'Data Transfer'. Un compañero dice: 'creo que estamos moviendo datos entre AZs y regions sin darnos cuenta'.",
+      "question": "¿Cuáles son los patrones típicos de egress costs sorpresa y cómo mitigarlos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cross-AZ traffic: $0.01/GB en ambos sentidos (IN y OUT) — muchos servicios AWS cobran ambos lados. Un pod K8s en AZ-a hablando con otro en AZ-b paga por ambos GB transferidos. Mitigación: topology-aware routing (K8s topology hints, service mesh locality), consolidar chatty services en misma AZ (con trade-off de HA).", "correct": true, "why": "Correcto. Costo escondido significativo. Un microservicio chatty (RPC-heavy) cross-AZ puede costar cientos por mes. K8s desde 1.21 tiene topology-aware hints; Istio/Linkerd tienen locality-aware routing." },
+        { "letter": "B", "text": "Cross-region traffic: $0.02/GB entre regiones (más caro que cross-AZ). Replicación de S3 cross-region, DynamoDB Global Tables, RDS read replicas cross-region. Mitigación: entender qué se replica y por qué; comprimir; usar S3 Same-Region Replication cuando aplique.", "correct": true, "why": "Correcto. Multi-región típicamente añade zeros a la factura. Muchas empresas replican por default sin necesitar realmente cross-region." },
+        { "letter": "C", "text": "Egress a Internet: $0.09/GB para primeros 10TB (con reducciones a volumen). Serving imágenes/videos directo desde EC2/S3 a users es caro. Mitigación: CloudFront (CDN) — data egress via CloudFront es MÁS BARATO y con free tier (1TB/mes con Free Tier plan CloudFront). Cache reduce llamadas al origin.", "correct": true, "why": "Correcto. Egress a Internet es el más caro. Serving 100TB directamente desde S3 = $9k; via CloudFront = mucho menos con caché. CDNs no son solo performance — son cost control." },
+        { "letter": "D", "text": "NAT Gateway data processing: $0.045/GB. Todo el tráfico outbound de subnet privada pasa por NAT — descargas de container images, updates apt/yum, pulls de secretos. Mitigación: VPC Gateway Endpoints (S3, DynamoDB gratis, no van via NAT), VPC Interface Endpoints (PrivateLink, con costo pero mejor que NAT), image caches (ECR pull-through, Harbor).", "correct": true, "why": "Correcto. NAT ha causado sorpresas de facturas de miles/mes. Los Gateway Endpoints para S3 (gratis) son low-hanging fruit — cualquier lectura de S3 desde privada debería ir por endpoint." },
+        { "letter": "E", "text": "Todo el tráfico dentro de AWS es gratis.", "correct": false, "why": "Falso peligroso. Cross-AZ, cross-region y NAT tienen costos. Solo tráfico intra-AZ (misma AZ) es gratis. Y CloudFront egress a Internet tiene costo también (aunque menor que EC2/S3 directo)." }
+      ],
+      "explanation": "Modelo mental de data transfer costs AWS: (1) Intra-AZ (misma AZ, private IP): gratis; (2) Cross-AZ: $0.01/GB cada lado ($0.02/GB total); (3) Cross-region: $0.02/GB (intra USA) hasta $0.09/GB según ruta; (4) Egress Internet: $0.09/GB (primeros 10TB, escalonado a menos con volumen); (5) NAT processing: $0.045/GB; (6) VPC Endpoint (Interface): $0.01/GB; (7) VPC Endpoint (Gateway para S3/DynamoDB): gratis. GCP y Azure tienen modelos similares pero con precios distintos y algunas nuances (GCP tiene free tier de egress, Azure tiene bandwidth transferido gratis primeros GB por mes). Herramientas de análisis: Cost Explorer, AWS Cost and Usage Report (CUR) con Athena, Kubecost para K8s.",
+      "realWorld": "Corey Quinn (Last Week in AWS) documenta múltiples 'six-figure egress bill' stories. Cloudflare compite en este espacio con R2 (S3-compatible, ZERO egress fees). Netflix construyó Open Connect (CDN propia) por costos de bandwidth. Zoom pagó ~$3B a AWS pero también invirtió en co-location por egress.",
+      "tags": ["egress", "data transfer", "costs", "FinOps"],
+      "tech": ["AWS", "CloudFront", "VPC Endpoints"],
+      "references": [{ "title": "AWS — EC2 Pricing (Data Transfer)" }, { "title": "Corey Quinn — Last Week in AWS blog" }, { "title": "Cloudflare R2 — Zero Egress" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "networking",
+      "topic": "Basecamp exit cloud",
+      "difficulty": "senior",
+      "scenario": "37signals (Basecamp, HEY email) anunció 2022-2023 salida del cloud AWS a on-prem, reportando $7M ahorro en 5 años proyectado. DHH escribió 'Why we're leaving the cloud'.",
+      "question": "¿Qué condiciones hacen viable un exit-de-cloud y cuáles son las lecciones generales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Viable cuando: (1) Carga PREDECIBLE y estable (no bursty) — el hardware puede dimensionarse sin ineficiencia; (2) Equipo de infra fuerte capaz de operar hardware, redes, DBs; (3) Uso de PRIMITIVAS básicas (compute, storage, DB) — no servicios cloud-específicos (Lambda, Cognito, SQS); (4) Presencia en co-location facility (Deft, Equinix) que aporte networking, hands, DC ops; (5) Escala grande — costos fijos de hardware amortizan mejor. Lecciones: cloud es óptimo para elasticidad (bursty, growth incierto, servicios diferenciados). Cuando el workload madura y se estabiliza, on-prem/co-lo puede ser más barato — pero requiere skills que no todas las empresas tienen.", "correct": true, "why": "Correcto. Los casos exitosos de exit-cloud (Dropbox Magic Pocket, Basecamp, StackOverflow que nunca fue cloud) todos comparten estas características. NO significa 'cloud fue error' — significa 'cloud fue apropiado hasta que dejó de serlo'. Es evolución racional." },
+        { "letter": "B", "text": "Exit cloud siempre es mejor.", "correct": false, "why": "Falso — depende del workload, escala, equipo, mercado. Para startup pre-PMF, cloud es correcto por elasticidad y velocidad. Para empresa madura estable, on-prem puede ser mejor." },
+        { "letter": "C", "text": "Exit cloud solo requiere comprar servidores.", "correct": false, "why": "Simplificación. Necesitas: DC space, redes, seguridad física, operaciones 24/7, hardware refresh cycle, spare parts, DR, staff especializado. La gestión operativa es sustancial." },
+        { "letter": "D", "text": "Cloud siempre es más barato que on-prem.", "correct": false, "why": "Marketing tradicional pero no verdad universal. TCO depende de utilización — cloud a 100% utilización 24/7 puede ser 2-3x más caro que on-prem equivalente. Cloud a 10% utilización con burst ocasional es más barato que on-prem." }
+      ],
+      "explanation": "TCO framework: cloud costs = compute + storage + network + management overhead (personas gestionando cloud tools también cuestan). On-prem costs = hardware (amortized 3-5 años) + power + cooling + DC space + network + hands + software licensing + staff. Puntos clave: (1) cloud gana con carga variable/bursty; (2) on-prem gana con carga estable a alta utilización; (3) skills matter — sin equipo de infra, on-prem cuesta más por outsourcing/consultants; (4) M&A, expansion internacional, compliance (data residency) pueden favorecer cloud; (5) latency-sensitive workloads (HFT trading, edge) favorecen on-prem cerca del user. Modelo emergente: hybrid crece — cargas predecibles on-prem, elasticidad en cloud. Ejemplo Basecamp: HEY email y Basecamp son cargas conocidas y estables — perfecto para on-prem.",
+      "realWorld": "DHH publicó 'Why we're leaving the cloud' (Oct 2022), 'We have left the cloud' (June 2024) — Basecamp migró a Deft co-location. Dropbox Magic Pocket 2016-2017 exit reported $75M savings 2 años. Stack Overflow siempre fue on-prem, escaló a millones de usuarios/día con ~9 servidores en un DC. Contra: Snap con GCP commitment $2B, Netflix all-in AWS. Twitter/X reportado migrando algo de GCP a on-prem 2023 post-Musk. Contraejemplo Airbnb: reportó ahorros importantes optimizando cloud vs exit.",
+      "tags": ["exit cloud", "on-prem", "TCO", "Basecamp"],
+      "tech": ["AWS"],
+      "references": [{ "title": "DHH — Why we're leaving the cloud" }, { "title": "DHH — We have left the cloud (2024)" }, { "title": "Dropbox — Magic Pocket" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "networking",
+      "topic": "Cloud vendor negociación",
+      "difficulty": "senior",
+      "scenario": "Tu factura cloud llegó a $500k/mes. El vendedor de tu cloud te ofrece 'Enterprise Discount Program' (EDP) con descuentos si te comprometes a spending mínimo por 3 años.",
+      "question": "¿Cómo evaluar y negociar contratos enterprise con cloud vendors?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Entender los VEHÍCULOS: (1) EDP/PPA (AWS Private Pricing) — descuento % en toda la cuenta comprometiéndote a $X/año; (2) Savings Plans — descuento en compute reservando por 1-3 años (25-72%); (3) Reserved Instances — legacy, más rígido que Savings Plans; (4) Committed Use Discounts (GCP) — similares. Cada uno tiene trade-offs distintos entre flexibilidad y descuento máximo.", "correct": true, "why": "Correcto. Los vendors ofrecen múltiples herramientas para reducir tu factura. Entenderlas es palanca clave. Un CFO que solo mira 'sticker price' pierde 30-50% de descuentos disponibles." },
+        { "letter": "B", "text": "COMPARE competencia: pedir cotización a AWS Y GCP Y Azure — el vendor actual mejora oferta si sabe que evalúas seriamente. Snap negoció con GCP explícitamente contra AWS. Este 'multi-cloud negociador' es una razón legítima para tener presencia en otro cloud aunque sea pequeña.", "correct": true, "why": "Correcto. Los cloud vendors DAN descuentos más agresivos cuando saben que hay competencia real. Salespeople tienen quotas y flexibilidad. Enterprises grandes rutinariamente logran 30-50% off list price." },
+        { "letter": "C", "text": "TIMING importa: el fiscal quarter/year end de vendors es cuando salespeople son más flexibles. Q4 AWS es octubre-diciembre; Q4 fiscal Microsoft/GCP varía. Negociar entonces = mejor descuento.", "correct": true, "why": "Correcto. Salespeople tienen presión de cerrar. Este patrón es real en enterprise sales de cualquier tipo. Analistas Gartner/Forrester documentan este timing effect." },
+        { "letter": "D", "text": "FINOPS antes de comprometer: entender bien la BASE de tu gasto antes de firmar 3-year commit. Muchos han firmado EDP y luego optimizado costos, quedando comprometidos por encima de su uso real. Right-sizing, spot, reserved para carga estable — reducir 20-40% antes de committing.", "correct": true, "why": "Correcto. Los vendors quieren que firmes rápido; tú quieres firmar informado. Herramientas: FinOps Foundation, Vantage, CloudHealth, Kubecost. FinOps role en enterprises grew significantly últimos años." },
+        { "letter": "E", "text": "Aceptar la primera oferta del salesperson siempre es óptimo.", "correct": false, "why": "Anti-pattern. La primera oferta rara vez es la mejor. Negociación es esperada en enterprise. Preparación (data de uso, cotizaciones alternativas, timing) da leverage." }
+      ],
+      "explanation": "FinOps es la disciplina emergente para cloud cost management. Framework FinOps Foundation: (1) Inform — visibility, allocation, showback; (2) Optimize — right-sizing, RIs/SPs, storage tiers; (3) Operate — governance, policies. Contratos enterprise típicos: mínimo commit anual, descuento escalonado con volumen, overage pricing (list price sobre commit), Private Pricing Addendum (PPA) para descuentos custom. Riesgos: over-commit (comprometerse por más de lo que usarás — pagas pero no aprovechas); vendor lock por commitment (si commit $10M/año con AWS, no puedes fácilmente mover carga a GCP). Best practice: commit al 70-80% del uso proyectado conservador, no al 100%. Enterprise deals grandes pueden tener perks: dedicated TAM, roadmap access, custom features.",
+      "realWorld": "Corey Quinn hace consulting específicamente en este dominio — reduce facturas AWS enterprise 20-40% típicamente. FinOps Foundation growing member base — Fortune 500 tienen equipos FinOps dedicados. Snap $2B GCP commitment ejemplo público de mega-deal. Netflix reportedly renegocia AWS terms periódicamente. Empresa como Vantage, CloudHealth (VMware), Apptio Cloudability construyen SaaS específico para este trabajo.",
+      "tags": ["FinOps", "negotiation", "EDP", "Savings Plans"],
+      "tech": ["AWS", "GCP", "Azure"],
+      "references": [{ "title": "FinOps Foundation Framework" }, { "title": "Corey Quinn — Duckbill Group AWS cost consulting" }, { "title": "AWS Savings Plans docs" }]
+    }
+  ]
+}

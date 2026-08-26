@@ -4,14 +4,14 @@ import { usePacksStore } from '../../stores/packs.js';
 import { useProfileStore } from '../../stores/profile.js';
 import { EmptyState, LoadingState } from '../../components/UiStates.js';
 import {
+  ensureMicPermission,
   hasSpeechRecognition,
   hasTts,
   humanizeSpeechError,
+  isSecureContextForMic,
   recognizeOnce,
   speak,
-  startMicMeter,
   stopSpeaking,
-  type MicMeter,
   type RecordHandle,
 } from '../../lib/speech.js';
 import { wordMatchStats } from '@linguadev/shared';
@@ -33,11 +33,14 @@ export function Speaking() {
   const [idx, setIdx] = useState(0);
   const [transcript, setTranscript] = useState('');
   const [partial, setPartial] = useState('');
-  const [listening, setListening] = useState(false);
-  const [level, setLevel] = useState(0);
+  // 'idle' → 'requesting-mic' → 'starting' → 'listening' (audio activo) → done
+  const [status, setStatus] = useState<'idle' | 'requesting-mic' | 'starting' | 'listening'>('idle');
+  const listening = status !== 'idle';
   const [error, setError] = useState<string | null>(null);
   const recogRef = useRef<RecordHandle | null>(null);
-  const meterRef = useRef<MicMeter | null>(null);
+  const safetyTimerRef = useRef<number | null>(null);
+  // Pulse animation basado en llegada de texto parcial (proxy visual sin conflicto con SR mic).
+  const [pulseKick, setPulseKick] = useState(0);
 
   const items = useMemo<SpeakItem[]>(() => {
     const out: SpeakItem[] = [];
@@ -58,10 +61,35 @@ export function Speaking() {
   useEffect(() => {
     return () => {
       recogRef.current?.stop();
-      meterRef.current?.stop();
+      if (safetyTimerRef.current) window.clearTimeout(safetyTimerRef.current);
       stopSpeaking();
     };
   }, []);
+
+  // Reset del safety timer cada vez que cambia de estado
+  useEffect(() => {
+    if (safetyTimerRef.current) window.clearTimeout(safetyTimerRef.current);
+    if (status === 'requesting-mic' || status === 'starting') {
+      // 8 segundos para el prompt de permiso — si el usuario no responde o el browser bloquea, salir
+      safetyTimerRef.current = window.setTimeout(() => {
+        if (status === 'requesting-mic' || status === 'starting') {
+          setError('Tiempo agotado esperando el micrófono. Intenta de nuevo o salta esta frase.');
+          recogRef.current?.stop();
+          setStatus('idle');
+        }
+      }, 8000);
+    } else if (status === 'listening') {
+      // 20 segundos máximo escuchando — si SR no dispara final (silencio o browser cuelga), forzar cierre
+      safetyTimerRef.current = window.setTimeout(() => {
+        recogRef.current?.stop();
+        setStatus('idle');
+      }, 20000);
+    }
+    return () => {
+      if (safetyTimerRef.current) window.clearTimeout(safetyTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   if (!loaded || srSupported === null || ttsSupported === null) return <LoadingState />;
 
@@ -71,53 +99,55 @@ export function Speaking() {
   const stats = transcript ? wordMatchStats(current.target, transcript) : null;
   const score = stats && stats.total > 0 ? Math.round((stats.matched / stats.total) * 100) : 0;
 
-  // Arranca reconocimiento PRIMERO (evita conflicto con el meter por getUserMedia).
-  // El meter es puramente visual: si falla, seguimos igual con la grabación.
-  function start() {
+  // Flujo mejorado: (1) pedir permiso de mic PRIMERO — muestra prompt al usuario;
+  // (2) iniciar reconocimiento con eventos onStart/onSpeechStart para feedback real;
+  // (3) NO abrir mic meter en paralelo — su getUserMedia roba audio a SpeechRecognition en Chrome.
+  async function start() {
     if (!current || listening) return;
     setError(null);
     setTranscript('');
     setPartial('');
-    setListening(true);
 
+    if (!isSecureContextForMic()) {
+      setError('El navegador requiere HTTPS (o localhost) para acceder al micrófono. Abre la app por https:// o http://localhost.');
+      return;
+    }
+
+    setStatus('requesting-mic');
+    const granted = await ensureMicPermission();
+    if (!granted) {
+      setError('Permiso de micrófono denegado. Activalo en el candado 🔒 de la barra de dirección y recarga.');
+      setStatus('idle');
+      return;
+    }
+
+    setStatus('starting');
     recogRef.current = recognizeOnce({
-      onPartial: (t) => setPartial(t),
+      onStart: () => setStatus('listening'),
+      onSpeechStart: () => setPulseKick((k) => k + 1),
+      onPartial: (t) => {
+        setPartial(t);
+        setPulseKick((k) => k + 1);
+      },
       onFinal: (text) => {
         setTranscript(text);
-        setListening(false);
-        meterRef.current?.stop();
-        meterRef.current = null;
+        setStatus('idle');
         void markStudiedToday();
       },
       onError: (err) => {
         setError(humanizeSpeechError(err.message));
-        setListening(false);
-        meterRef.current?.stop();
-        meterRef.current = null;
+        setStatus('idle');
       },
       onEnd: () => {
-        setListening(false);
-        meterRef.current?.stop();
-        meterRef.current = null;
+        setStatus('idle');
       },
     });
-
-    // Intenta añadir medidor de nivel; si falla, no bloquea la grabación.
-    startMicMeter(setLevel)
-      .then((m) => {
-        meterRef.current = m;
-      })
-      .catch(() => {
-        // Sin meter no importa — SR sigue capturando audio por su cuenta.
-      });
   }
 
   function stop() {
     recogRef.current?.stop();
     recogRef.current = null;
-    meterRef.current?.stop();
-    meterRef.current = null;
-    setListening(false);
+    setStatus('idle');
   }
 
   function next() {
@@ -184,28 +214,33 @@ export function Speaking() {
 
       {srSupported ? (
         <div className="flex flex-col items-center gap-3">
-          {/* Botón grande con onda alrededor cuando graba */}
+          {/* Botón grande con feedback visual según status real */}
           <div className="relative">
-            {listening ? (
+            {status === 'listening' ? (
               <>
                 <span
-                  className="absolute inset-0 -m-2 rounded-full bg-pink-500/25"
-                  style={{ transform: `scale(${1 + level * 0.6})`, transition: 'transform 80ms' }}
+                  key={pulseKick}
+                  className="absolute inset-0 -m-2 animate-ping rounded-full bg-pink-500/30"
                 />
-                <span className="absolute inset-0 -m-6 animate-ping rounded-full bg-pink-500/20" />
+                <span className="absolute inset-0 -m-6 animate-pulse rounded-full bg-pink-500/20" />
               </>
             ) : null}
             <button
-              onClick={() => (listening ? stop() : start())}
+              onClick={() => (listening ? stop() : void start())}
+              disabled={status === 'requesting-mic' || status === 'starting'}
               className={`relative grid h-24 w-24 place-items-center rounded-full text-white shadow-pop transition ${
-                listening
+                status === 'listening'
                   ? 'bg-gradient-to-br from-pink-500 to-flame-500'
+                  : status === 'requesting-mic' || status === 'starting'
+                  ? 'bg-gradient-to-br from-slate-400 to-slate-500'
                   : 'bg-gradient-to-br from-brand-500 to-pink-500 hover:scale-105 active:scale-95'
               }`}
               aria-label={listening ? 'Detener grabación' : 'Iniciar grabación'}
             >
-              {listening ? (
+              {status === 'listening' ? (
                 <span className="text-2xl font-black">■</span>
+              ) : status === 'requesting-mic' || status === 'starting' ? (
+                <span className="animate-spin text-2xl">◌</span>
               ) : (
                 <IconMic size={36} />
               )}
@@ -213,12 +248,23 @@ export function Speaking() {
           </div>
 
           <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-            {listening ? 'Escuchando… habla ahora' : 'Toca para grabar'}
+            {status === 'requesting-mic'
+              ? 'Pidiendo permiso de micrófono…'
+              : status === 'starting'
+              ? 'Iniciando reconocimiento…'
+              : status === 'listening'
+              ? '🎙️ Grabando · habla ahora'
+              : 'Toca para grabar'}
           </p>
 
-          {/* Transcripción parcial en vivo, siempre visible mientras escucha */}
+          {/* Transcripción parcial en vivo */}
           <div className="min-h-[3rem] w-full rounded-2xl border border-dashed border-slate-300/70 bg-white/40 p-3 text-center text-sm italic text-slate-500 dark:border-white/10 dark:bg-white/5">
-            {partial || (listening ? 'Esperando tu voz…' : 'Aquí verás lo que grabes')}
+            {partial ||
+              (status === 'listening'
+                ? 'Esperando tu voz…'
+                : status === 'idle'
+                ? 'Aquí verás lo que grabes'
+                : '…')}
           </div>
         </div>
       ) : null}
@@ -277,14 +323,23 @@ export function Speaking() {
         ) : null}
       </AnimatePresence>
 
-      {!transcript && !listening ? (
+      {/* Botón Saltar SIEMPRE visible — nunca dejar al usuario atrapado */}
+      <div className="flex gap-2">
         <button
           onClick={next}
-          className="w-full rounded-xl border border-slate-300/70 py-2 text-sm text-slate-500 hover:bg-slate-100/50 dark:border-slate-700"
+          className="flex-1 rounded-xl border border-slate-300/70 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100/50 dark:border-slate-700 dark:text-slate-400"
         >
-          Saltar esta frase
+          ⏭️ Saltar esta frase
         </button>
-      ) : null}
+        {listening ? (
+          <button
+            onClick={stop}
+            className="rounded-xl border border-danger-500/50 bg-danger-500/10 px-4 py-2 text-sm font-bold text-danger-600 hover:bg-danger-500/20"
+          >
+            Cancelar
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

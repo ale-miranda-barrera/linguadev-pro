@@ -1,0 +1,420 @@
+{
+  "id": "devops-sim-31-network-security-mtls-zero-trust",
+  "trackId": "devops",
+  "order": 31,
+  "title": "Simulacro 31 — mTLS, Zero Trust y seguridad de red",
+  "focus": "mTLS everywhere, Zero Trust Architecture NIST 800-207, BeyondCorp Google, VPN vs Zero Trust modernos, cert-manager, SPIFFE/SPIRE identity, Tailscale/WireGuard, private connectivity.",
+  "areaCoverage": ["networking", "security"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "security",
+      "topic": "¿Qué es mTLS?",
+      "difficulty": "junior",
+      "scenario": "Un compañero te dice: 'usamos HTTPS entre nuestros microservicios, entonces ya tenemos mTLS'. Otro dice: 'mTLS es solo TLS pero el cliente también presenta certificado'.",
+      "question": "¿Qué es mTLS (Mutual TLS) y cómo difiere del TLS clásico?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "mTLS = TLS bidireccional: NO SOLO el servidor presenta certificado (como HTTPS normal) sino que el CLIENTE también presenta el suyo y el servidor lo valida contra una CA de confianza. Ambos lados se autentican mutuamente por criptografía antes de cifrar el canal. Es la base técnica de service-to-service auth en service meshes (Istio, Linkerd) y de Zero Trust intra-cluster.", "correct": true, "why": "Correcto. En TLS 1.2/1.3 estándar (HTTPS público) solo se valida al servidor — el cliente se autentica DESPUÉS con password, cookie o token. En mTLS los dos lados se prueban criptográficamente en el handshake." },
+        { "letter": "B", "text": "mTLS es HTTPS con TLS 1.3 forzado.", "correct": false, "why": "Confunde versión de protocolo con autenticación mutua. mTLS puede correr sobre TLS 1.2 o 1.3; lo distintivo es la validación del client cert." },
+        { "letter": "C", "text": "mTLS es un protocolo de Meta/Facebook.", "correct": false, "why": "Invención. mTLS es parte del estándar TLS (RFC 5246, RFC 8446) desde hace décadas." },
+        { "letter": "D", "text": "mTLS solo se usa en la banca.", "correct": false, "why": "Aunque banca fue pionera, hoy service meshes lo usan para todo tráfico intra-cluster en cualquier industria." }
+      ],
+      "explanation": "El handshake mTLS: (1) ClientHello, (2) ServerHello + server cert + CertificateRequest, (3) el cliente envía SU cert + prueba de posesión de la private key (CertificateVerify), (4) el servidor valida la cadena del cliente contra su trust bundle. Si algo falla, la conexión se corta ANTES de cualquier byte de aplicación. Ventaja frente a bearer tokens: no hay 'secreto robable' — hay que robar la private key del cert, que puede vivir en TPM/HSM.",
+      "realWorld": "Istio y Linkerd habilitan mTLS automático entre pods vía sidecar (Envoy). Google internamente usa ALTS (equivalente propietario a mTLS) para todo el tráfico RPC entre servicios desde hace >15 años. HashiCorp Consul Connect hace mTLS entre servicios sin service mesh completo.",
+      "tags": ["mTLS", "TLS", "autenticacion mutua", "handshake"],
+      "tech": ["TLS", "Istio", "Envoy"],
+      "references": [{ "title": "RFC 8446 — TLS 1.3" }, { "title": "Istio — Mutual TLS Authentication" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "security",
+      "topic": "TLS vs mTLS diferencias operativas",
+      "difficulty": "junior",
+      "scenario": "Estás diseñando la comunicación entre tu API pública (que usan browsers) y tu servicio interno de pagos (que solo llaman otros servicios).",
+      "question": "¿Dónde encaja TLS y dónde mTLS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "API pública ↔ browsers: TLS estándar (el browser confía en el server cert firmado por CA pública tipo Let's Encrypt; el usuario se auth con cookie/JWT). Servicio interno de pagos ↔ otros servicios: mTLS (ambos con cert emitido por CA interna; no dependen de tokens que otro servicio pueda 'reproducir').", "correct": true, "why": "Correcto. mTLS es incómodo para browsers (distribuir client certs a millones de usuarios es un lío), pero perfecto para infra donde cada servicio tiene identidad estable emitida por una PKI interna." },
+        { "letter": "B", "text": "Ambos casos con mTLS y client certs distribuidos a usuarios finales.", "correct": false, "why": "Se intentó a inicios de 2000 y fracasó por UX: gestionar certs en cada dispositivo es infernal. Por eso el web usa cookies/OAuth para auth de humanos." },
+        { "letter": "C", "text": "Ambos con TLS estándar; la auth siempre por token es suficiente.", "correct": false, "why": "Ignora que un token robado (SSRF, log leak) permite impersonar al servicio. Con mTLS necesitarías robar además la private key, que puede estar en HSM/TPM." },
+        { "letter": "D", "text": "TLS solo para tráfico interno, mTLS solo para tráfico externo.", "correct": false, "why": "Invertido. mTLS es DIFÍCIL de operar hacia el exterior (usuarios humanos) y NATURAL en interno (identidades estables de servicios)." }
+      ],
+      "explanation": "Regla de dedo: (1) HUMANOS al frente → TLS + auth por identidad de usuario (OIDC/OAuth). (2) SERVICIOS entre sí en tu infra → mTLS + identidad por cert (SPIFFE ID, subject del cert). (3) API B2B con partners → mTLS es común (los partners son 'servicios', no humanos). El error clásico es depender solo de JWTs internos: si un servicio comprometido puede llamar a otro con un JWT válido copiado, no hay defensa. Con mTLS + policy 'servicio A puede llamar a B pero no a C', el blast radius se contiene.",
+      "realWorld": "Cloudflare Access hace mTLS opcional para API-to-API B2B. Stripe requiere mTLS para ciertos endpoints webhook. Netflix usa mTLS entre todos los microservicios via Metatron (su PKI interno).",
+      "tags": ["TLS", "mTLS", "PKI", "auth"],
+      "tech": ["Let's Encrypt", "OIDC"],
+      "references": [{ "title": "Cloudflare — What is mTLS?" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "security",
+      "topic": "Cert lifecycle (CSR → CA → cert)",
+      "difficulty": "mid",
+      "scenario": "Necesitas emitir un cert para tu servicio api-payments.internal. ¿Qué pasos ocurren?",
+      "question": "¿Cuál es el flujo correcto del ciclo de vida de un cert X.509?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) El servicio genera un keypair (private + public); (2) crea un CSR (Certificate Signing Request) con la public key + subject/SAN + prueba de posesión firmada con la private key; (3) envía el CSR a la CA; (4) la CA valida identidad del solicitante (ACME challenge, admisión K8s, etc.) y firma el CSR emitiendo un cert X.509 con validez limitada; (5) el servicio instala el cert + private key; (6) antes de expirar, renueva (nuevo CSR o rotación). La private key JAMÁS sale del solicitante.", "correct": true, "why": "Correcto. Este flujo garantiza que la CA nunca ve la private key. La única prueba criptográfica que da la CA es 'este cert corresponde a este subject y esta public key', firmado por su root/intermediate." },
+        { "letter": "B", "text": "La CA genera todo (keypair + cert) y se lo envía al servicio.", "correct": false, "why": "Rompe el principio fundamental de PKI: la private key JAMÁS debe viajar. Si la CA la genera, hay que transmitirla — riesgo enorme. Solo hay excepciones muy justificadas (algunos escenarios de smartcards)." },
+        { "letter": "C", "text": "El servicio manda su private key a la CA para que la firme.", "correct": false, "why": "Contradicción total. Nunca se firma una private key — se firma un CSR que contiene la PUBLIC key. Y la private key no debe salir del sistema donde vive." },
+        { "letter": "D", "text": "Los certs son eternos, no hay renovación.", "correct": false, "why": "Todo cert X.509 tiene notBefore/notAfter. El límite (90 días para Let's Encrypt, 1 año para muchas CAs comerciales) existe para limitar impacto si la key se compromete." }
+      ],
+      "explanation": "Piezas clave del ecosistema PKI: ROOT CA (offline, superprotegida, firma solo intermediates), INTERMEDIATE CA (online, firma los certs de leaf), LEAF CERT (el que instala tu servicio). Formato: X.509 v3, con extensiones críticas — Subject Alternative Name (SANs) para múltiples hostnames, Key Usage (digital signature, key encipherment), Extended Key Usage (serverAuth, clientAuth). El estándar CSR es PKCS#10. En K8s, el CertificateSigningRequest object automatiza esto.",
+      "realWorld": "Web PKI: root CAs (DigiCert, Sectigo, ISRG/Let's Encrypt) preinstaladas en browsers. Internal PKI: HashiCorp Vault PKI engine, Smallstep step-ca, AWS Private CA. cert-manager en K8s hace todo el flujo automáticamente.",
+      "tags": ["X509", "CSR", "PKI", "CA", "certificado"],
+      "tech": ["Vault", "step-ca"],
+      "references": [{ "title": "RFC 5280 — Internet X.509 PKI Certificate Profile" }, { "title": "RFC 2986 — PKCS #10 CSR" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "security",
+      "topic": "cert-manager en Kubernetes",
+      "difficulty": "mid",
+      "scenario": "Tu cluster K8s tiene 30 Ingresses con hostnames públicos. Renovar certs a mano no escala. Alguien propone instalar cert-manager.",
+      "question": "¿Qué hace cert-manager y cómo se integra?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Es un controller Kubernetes que introduce CRDs (Certificate, Issuer, ClusterIssuer) y automatiza emisión + renovación de certs contra CAs (Let's Encrypt vía ACME, Vault, Venafi, CA interna, self-signed).", "correct": true, "why": "Correcto. Es la solución de facto en K8s. Instalado por Helm, corre 3 componentes (cainjector, webhook, controller) y observa recursos Certificate para reconciliar el estado deseado." },
+        { "letter": "B", "text": "Se integra con Ingress: puedes anotar el Ingress con cert-manager.io/cluster-issuer y cert-manager crea automáticamente el Certificate + Secret con el TLS cert.", "correct": true, "why": "Correcto. La 'magia' es que solo declaras el hostname + issuer y cert-manager hace CSR, ACME challenge (HTTP-01 o DNS-01), stores cert como Secret que el Ingress consume." },
+        { "letter": "C", "text": "Renueva certs automáticamente antes de expirar (por defecto ~30 días antes del notAfter) sin downtime.", "correct": true, "why": "Correcto. Emite un nuevo cert, actualiza el Secret, y el Ingress controller lo recarga. Con Let's Encrypt (90 días de validez) esto es OBLIGATORIO — no hay operación manual viable." },
+        { "letter": "D", "text": "Solo funciona con Let's Encrypt.", "correct": false, "why": "Falso. Soporta múltiples issuers: ACME (Let's Encrypt, ZeroSSL), HashiCorp Vault, Venafi, AWS Private CA, Google Cloud CA, self-signed, CA interna." },
+        { "letter": "E", "text": "Reemplaza al Ingress controller.", "correct": false, "why": "No. Se COMPLEMENTA con Ingress (nginx, Traefik, Istio Gateway). cert-manager solo gestiona certs; el Ingress hace routing." }
+      ],
+      "explanation": "cert-manager es un proyecto CNCF graduated. Flujo típico: (1) instalas ClusterIssuer para Let's Encrypt Prod con tu email + ACME solver (HTTP-01 vía Ingress o DNS-01 vía Route53/Cloud DNS); (2) el Ingress lleva anotación cert-manager.io/cluster-issuer=letsencrypt-prod y un tls: block con secretName; (3) cert-manager crea Certificate, resuelve el challenge ACME, guarda cert en el Secret; (4) 30 días antes de expirar, renueva. Errores comunes: rate limits de LE (50 certs/dominio/semana), fallar HTTP-01 por firewall, DNS-01 sin permisos correctos.",
+      "realWorld": "cert-manager es standard en clusters de producción — GitLab, Shopify, Adobe lo usan. Alternativa emergente: gateway-api con anotaciones nativas. Antes de cert-manager la gente usaba scripts cron con certbot, pesadilla operativa.",
+      "tags": ["cert-manager", "K8s", "ACME", "TLS", "Ingress"],
+      "tech": ["Kubernetes", "cert-manager", "Let's Encrypt"],
+      "references": [{ "title": "cert-manager.io — Concepts" }, { "title": "CNCF — cert-manager Graduated Project" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "security",
+      "topic": "Let's Encrypt y ACME automation",
+      "difficulty": "mid",
+      "scenario": "Un colega dice: 'Let's Encrypt es gratis, pero no vale para producción'. Otro dice: 'los certs de 90 días son un problema'.",
+      "question": "¿Cuál es la realidad sobre Let's Encrypt y validez corta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Let's Encrypt (ISRG, 2016) es una CA pública TOTALMENTE VÁLIDA para producción — es la CA #1 del web por volumen, con root confiado por todos los browsers. Los 90 días de validez son una DECISIÓN DE DISEÑO: fuerzan a automatizar la renovación (vía ACME), reducen ventana de compromiso, y hacen que la revocación importe menos. Requerir automatización elimina el 'olvidé renovar el cert' que causaba outages masivos.", "correct": true, "why": "Correcto. Cloudflare, GitHub Pages, Netlify, Vercel usan LE en gran escala. El movimiento de la industria va a certs cada vez MÁS cortos (Google propone 90 días para toda la web PKI, y los certs OV/EV comerciales están perdiendo relevancia)." },
+        { "letter": "B", "text": "Let's Encrypt no es válido para producción porque es gratis.", "correct": false, "why": "'Gratis' no significa 'inferior'. LE fue creada por Mozilla, Cisco, EFF, Akamai para democratizar HTTPS. Cryptographically es idéntica a certs pagados." },
+        { "letter": "C", "text": "Los certs de 1 año son más seguros que los de 90 días.", "correct": false, "why": "Inverso. Mientras más largo el cert, más ventana de exposición si la key se filtra. Y la revocación de certs en web PKI es notoriamente rota (CRL/OCSP no llegan a los clientes)." },
+        { "letter": "D", "text": "ACME es un protocolo propietario de Let's Encrypt.", "correct": false, "why": "ACME está estandarizado en RFC 8555 — otras CAs (ZeroSSL, BuyPass, Google Trust Services) lo implementan también." }
+      ],
+      "explanation": "ACME (Automated Certificate Management Environment) automatiza: (1) creación de cuenta, (2) demostración de control del dominio (HTTP-01 — servir archivo en /.well-known/acme-challenge/; DNS-01 — publicar TXT record; TLS-ALPN-01 — responder handshake especial), (3) emisión del cert, (4) revocación si es necesario. Clientes: certbot, acme.sh, cert-manager, Caddy (built-in), Traefik (built-in). Cliff a evitar: rate limits (50 certs/dominio registrado/semana en Prod). Tip: usar staging environment de LE para tests.",
+      "realWorld": "Let's Encrypt emite ~5 millones de certs por día. Caddy web server hace HTTPS-by-default con ACME — solo configuras el hostname y él se encarga. Ejemplo de outage por certs largos: Microsoft Teams caído en Feb 2020 por cert expirado.",
+      "tags": ["Let's Encrypt", "ACME", "automation", "TLS"],
+      "tech": ["Let's Encrypt", "certbot", "Caddy"],
+      "references": [{ "title": "RFC 8555 — ACME Protocol" }, { "title": "Let's Encrypt — Documentation" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "security",
+      "topic": "Cert rotation strategy sin downtime",
+      "difficulty": "staff",
+      "scenario": "Tu servicio serving-payments corre con mTLS. El cert expira en 5 días. Necesitas rotarlo sin downtime y sin invalidar sesiones actuales.",
+      "question": "¿Cuál es la estrategia correcta de rotación de certs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Renueva ANTES de expirar (típicamente al 2/3 de la vida útil — para LE de 90d, al día 60). Emite nuevo cert, distribuye a los pods (Secret updated), y el servicio lo recarga (SIGHUP en nginx/envoy, hot reload). Las conexiones existentes siguen con el cert viejo hasta cierre natural; nuevas conexiones usan el nuevo.", "correct": true, "why": "Correcto. Es el patrón estándar: el TLS handshake es por conexión — sesiones activas no se rompen al cambiar el cert del disco. Solo hay que asegurar que el proceso lea el cert nuevo (algunos runtimes lo hacen automático, otros necesitan SIGHUP)." },
+        { "letter": "B", "text": "Rota también el TRUST BUNDLE (los certs de las CAs en las que confía tu servicio) con un periodo de overlap: durante N días, tu bundle acepta la CA vieja Y la nueva. Solo después de que todos migren a la nueva CA, remueves la vieja del bundle.", "correct": true, "why": "Correcto. Este es el paso que la gente OLVIDA y causa outages. Si rotas la CA raíz sin overlap, servicios con el trust bundle viejo rechazan certs firmados por la nueva CA. Overlap = zero downtime." },
+        { "letter": "C", "text": "Usa validez CORTA (días u horas, no meses) para forzar automatización robusta. Con SPIFFE/SPIRE, certs de 1 hora son normales. La renovación cada N horas obliga a que el pipeline de emisión sea sólido — si falla, te enteras rápido.", "correct": true, "why": "Correcto. Enfoque 'short-lived credentials' popularizado por Netflix Bless, HashiCorp Vault, SPIFFE. Certs de larga vida invitan a olvidarse; certos de vida corta obligan a que la automatización funcione siempre." },
+        { "letter": "D", "text": "Espera al día de la expiración para renovar, para maximizar la vida útil.", "correct": false, "why": "Anti-patrón peligroso. Si la renovación falla el último día (rate limit, DNS caído, ACME issue), tienes outage. La renovación se hace CON margen (30+ días para LE)." },
+        { "letter": "E", "text": "Deja que el cert expire y renueva después.", "correct": false, "why": "Es lo peor. Cert expirado = outage completo. Todos los clientes rechazan el handshake. Ver Microsoft Teams 2020, Cisco WebEx 2020, Ericsson 2018 (paró redes 4G de O2 UK)." }
+      ],
+      "explanation": "Rotación segura tiene 3 dimensiones: (1) LEAF CERTS — renueva antes de expirar, sin downtime, hot reload; (2) INTERMEDIATE CAs — más raro pero puede pasar, requiere overlap en el trust bundle; (3) ROOT CA — evento generacional, planificado a años, con múltiples fases de overlap. Herramientas modernas (cert-manager, SPIRE, Vault) automatizan las 3. Métrica clave: 'cert expiry' alerts — Prometheus + node_exporter's textfile o blackbox_exporter con probes SSL.",
+      "realWorld": "Ericsson 2018 tumbó la red móvil de O2 UK y SoftBank Japón por certs expirados: 32 millones de usuarios sin servicio. Netflix Bless emite SSH certs de vida MUY corta. Google Cloud IAP hace lo mismo para acceso a VMs.",
+      "tags": ["cert rotation", "renovacion", "trust bundle", "short-lived"],
+      "tech": ["SPIRE", "Vault", "cert-manager"],
+      "references": [{ "title": "Netflix Tech Blog — Bless" }, { "title": "The Register — O2 UK outage 2018" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "security",
+      "topic": "SPIFFE identity framework",
+      "difficulty": "senior",
+      "scenario": "En un cluster multi-cloud (AWS + GCP + on-prem) necesitas que cada workload tenga una identidad criptográfica portable, sin depender de IP, hostname o cloud-específico.",
+      "question": "¿Qué es SPIFFE y qué problema resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SPIFFE (Secure Production Identity Framework For Everyone) es un ESTÁNDAR CNCF que define un formato universal de identidad de workload: el SPIFFE ID (URI tipo spiffe://prod.example.com/ns/payments/sa/api). Esa identidad se encarna en dos formatos criptográficos: (1) X.509-SVID (un cert X.509 con el SPIFFE ID en la SAN URI), (2) JWT-SVID (un JWT firmado). Es agnóstico de plataforma — funciona en K8s, VMs, Nomad, bare metal, multi-cloud.", "correct": true, "why": "Correcto. SPIFFE resuelve 'cómo identificar workloads' de forma portable. Antes: cada plataforma usaba su propio mecanismo (IAM roles en AWS, service accounts en GCP, etc.), difícil interoperar." },
+        { "letter": "B", "text": "SPIFFE es un producto comercial de HashiCorp.", "correct": false, "why": "Falso. SPIFFE es un ESTÁNDAR abierto CNCF (incubating→graduated), sin dueño único. La implementación de referencia es SPIRE, también CNCF." },
+        { "letter": "C", "text": "SPIFFE es un protocolo TLS distinto.", "correct": false, "why": "No. SPIFFE usa el mismo TLS/mTLS estándar; solo define QUÉ va en el cert (formato del SPIFFE ID en la SAN URI extension)." },
+        { "letter": "D", "text": "SPIFFE reemplaza IAM.", "correct": false, "why": "Complementa IAM. IAM sigue autorizando acceso a APIs de cloud; SPIFFE identifica al workload en el tráfico de red. De hecho, hay federation SPIFFE ↔ IAM (workload identity federation en GCP, IAM Roles Anywhere en AWS)." }
+      ],
+      "explanation": "Anatomía de un SPIFFE ID: spiffe://TRUST_DOMAIN/PATH. Trust domain identifica la 'organización' (una empresa suele tener uno o pocos); path identifica el workload. Ejemplo: spiffe://acme.com/ns/prod/sa/checkout. Este URI va en la extensión SAN del cert X.509 — cualquier verificador que valide el cert también valida la identidad SPIFFE. Ventaja frente a 'CN=api-payments': el SAN URI es un formato acordado, parseable, con semántica clara. La spec está en github.com/spiffe/spiffe.",
+      "realWorld": "Uber, Bloomberg, Pinterest, Square usan SPIFFE/SPIRE para identidad de servicios. Istio 1.x adoptó el formato SPIFFE ID en sus certs. HashiCorp Consul integra SPIFFE. AWS App Mesh y Kuma también.",
+      "tags": ["SPIFFE", "SVID", "identidad workload", "CNCF"],
+      "tech": ["SPIFFE", "SPIRE"],
+      "references": [{ "title": "SPIFFE — Specification" }, { "title": "CNCF — SPIFFE Project" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "security",
+      "topic": "SPIRE server y agent",
+      "difficulty": "senior",
+      "scenario": "Instalas SPIRE en tu infraestructura. Hay un SPIRE Server y un SPIRE Agent en cada nodo. ¿Cómo funciona la emisión?",
+      "question": "¿Cómo emite SPIRE identidades a workloads?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SPIRE Server es la CA central (o intermediate) que firma SVIDs. Mantiene un registro de 'registration entries' que dicen 'un workload que cumple X selector recibe SPIFFE ID Y'.", "correct": true, "why": "Correcto. El Server es el cerebro: contiene la policy 'qué identidad da a qué workload', mantiene la CA, y firma los SVIDs pedidos por los Agents." },
+        { "letter": "B", "text": "SPIRE Agent corre por nodo, se atiesta contra el Server (node attestation vía tokens de AWS/GCP/K8s), y luego atiesta a los workloads locales (workload attestation vía selectors: UID de proceso, service account de K8s, labels del pod, etc.).", "correct": true, "why": "Correcto. Doble atestación: primero el nodo prueba quién es (usando la 'natural identity' del cloud), luego cada workload prueba quién es al Agent (usando selectors locales), y el Agent le entrega su SVID." },
+        { "letter": "C", "text": "La API 'Workload API' es un UDS (Unix Domain Socket) que expone el Agent. El workload hace un llamado gRPC al socket y recibe su SVID (cert X.509 + private key + trust bundle) SIN nunca tener credenciales pre-configuradas — el 'trust anchor' es que el proceso corre en el nodo autenticado.", "correct": true, "why": "Correcto. Este es el genio de SPIFFE: 'zero-touch' bootstrap. El workload no lleva secretos preconfigurados. Su identidad emerge de propiedades observables por el Agent (UID, namespace K8s, service account)." },
+        { "letter": "D", "text": "SPIRE requiere que cada workload tenga un cert manualmente configurado.", "correct": false, "why": "Es lo opuesto — SPIRE elimina la config manual. La emisión es automática basada en selectors." },
+        { "letter": "E", "text": "SPIRE es un fork de cert-manager.", "correct": false, "why": "No relación. cert-manager gestiona certs X.509 clásicos vía CRDs K8s; SPIRE es un runtime completo de identidad SPIFFE agnóstico de plataforma." }
+      ],
+      "explanation": "Flujo canónico: (1) SPIRE Server bootstrap con root CA propia o intermediate de una CA superior (Vault, ACM PCA); (2) SPIRE Agent inicia en nodo, hace node attestation (para K8s: envía el token del service account del nodo; para AWS: usa Instance Identity Document firmado por AWS; para GCP: usa instance metadata); (3) Server valida, emite SVID al Agent; (4) el workload llama al Workload API socket local; (5) Agent inspecciona el proceso (namespace, UID, pod labels), matches contra registration entries, pide SVID al Server, se lo entrega al workload; (6) Agent auto-rota SVIDs antes de expirar. Los SVIDs viven horas, no días.",
+      "realWorld": "Pinterest publicó cómo migraron a SPIRE. Uber usa SPIFFE en su mesh interno. HashiCorp Consul puede consumir identidades SPIFFE. Istio adoptó formato SPIFFE ID (aunque su emisión interna no es SPIRE).",
+      "tags": ["SPIRE", "SVID", "workload API", "attestation"],
+      "tech": ["SPIRE", "SPIFFE"],
+      "references": [{ "title": "SPIRE — Documentation" }, { "title": "Pinterest Engineering — SPIRE at Pinterest" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "security",
+      "topic": "Zero Trust principios core",
+      "difficulty": "mid",
+      "scenario": "Tu CTO leyó un artículo y dice 'vamos a hacer Zero Trust'. El equipo de seguridad debe explicar los principios.",
+      "question": "¿Cuáles son los principios fundamentales de Zero Trust?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Never trust, always verify: NO hay red 'interna' de confianza implícita — todo request se autentica y autoriza, venga de donde venga (LAN corporativa, VPN, café).", "correct": true, "why": "Correcto. Es el eslogan que da nombre al enfoque. Sustituye el modelo 'castillo y foso' (confía en todo dentro del perímetro) por 'cero confianza por default'." },
+        { "letter": "B", "text": "Least privilege access: cada identidad accede SOLO a los recursos que necesita, por tiempo limitado. No hay 'admin general que puede tocar todo'.", "correct": true, "why": "Correcto. Menos permisos → menos blast radius si una identidad se compromete. Fundamental." },
+        { "letter": "C", "text": "Assume breach: diseña asumiendo que el atacante YA está dentro (algún endpoint infectado, alguna credencial filtrada). Todo control debe seguir funcionando bajo esa premisa.", "correct": true, "why": "Correcto. Cambia mindset de 'evitar breach' (imposible) a 'contener breach' (posible). Force microsegmentation, logging exhaustivo, MFA everywhere." },
+        { "letter": "D", "text": "Verify explicitly: cada decisión de autz considera múltiples señales — identidad del usuario, salud del device (compliant?), ubicación, hora, comportamiento anómalo. No es 'sí/no' binario.", "correct": true, "why": "Correcto. Es risk-based access. NIST 800-207 y Microsoft Zero Trust papers lo detallan." },
+        { "letter": "E", "text": "Confiar en la red LAN corporativa por defecto porque está tras firewall.", "correct": false, "why": "Es EXACTAMENTE lo que Zero Trust rechaza. El modelo LAN-confiable es lo que Aurora attack y muchos otros comprometieron: una vez dentro, movimiento lateral libre." }
+      ],
+      "explanation": "Zero Trust NO es un producto — es una ARQUITECTURA + FILOSOFÍA. Los pilares canónicos (NIST SP 800-207): (1) todas las fuentes de datos y servicios son 'resources' — no hay recursos 'internos' priveligiados; (2) toda comunicación se securiza sin importar la ubicación de red; (3) el acceso a recursos individuales se decide por sesión; (4) el acceso lo determina policy dinámica basada en identidad + estado del client + otros attributes; (5) la organización monitorea la integridad de los assets; (6) autenticación y autorización son estrictas Y dinámicas antes de permitir acceso; (7) se recolecta información sobre estado actual de assets, infra y comms para mejorar postura de seguridad.",
+      "realWorld": "Post-Aurora attack (2010), Google inició BeyondCorp — su implementación de Zero Trust interno. Post-SolarWinds (2020), la orden ejecutiva 14028 del gobierno US MANDÓ Zero Trust para agencias federales. Microsoft, AWS, Cloudflare todos publican guías Zero Trust.",
+      "tags": ["Zero Trust", "principios", "NIST", "assume breach"],
+      "tech": [],
+      "references": [{ "title": "NIST SP 800-207 — Zero Trust Architecture" }, { "title": "Microsoft — Zero Trust Guidance Center" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "security",
+      "topic": "Never trust always verify - qué implica en la práctica",
+      "difficulty": "senior",
+      "scenario": "Aplicas Zero Trust a un backend interno que antes solo escuchaba en la LAN corporativa asumiendo que los clientes eran internos.",
+      "question": "¿Qué cambia técnicamente al pasar de 'red interna confiable' a Zero Trust?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El backend deja de asumir confianza por ubicación de IP. Ahora cada request lleva credencial fuerte (mTLS cert, OIDC token, o ambos), se autentica CADA vez, y se autoriza contra policy que evalúa identidad + contexto (device posture, MFA, ubicación, comportamiento). Firewalls de perímetro siguen existiendo pero NO son la única defensa — son 'defense in depth'.", "correct": true, "why": "Correcto. El cambio es en el modelo de seguridad, no en tirar firewalls. El backend ahora es tan estricto con un request 'de la LAN' como con uno 'de Internet' — porque asume que la LAN puede tener comprometidos." },
+        { "letter": "B", "text": "Se elimina TODO el firewall — Zero Trust dice que no hacen falta.", "correct": false, "why": "Malentendido común. Zero Trust dice 'no confíes SOLO en el perímetro'; firewalls siguen siendo defense-in-depth útil. La diferencia es que ya no son la ÚNICA capa." },
+        { "letter": "C", "text": "Todos los usuarios acceden por VPN clásica que da IP interna.", "correct": false, "why": "VPN clásica es exactamente lo que Zero Trust rechaza: una vez dentro de la VPN, se asume confianza. ZTNA (Zero Trust Network Access) reemplaza VPNs con acceso por-aplicación autenticado por request." },
+        { "letter": "D", "text": "El backend se vuelve accesible sin autenticación desde cualquier red.", "correct": false, "why": "Opuesto total. Zero Trust NO significa 'sin auth'; significa 'auth SIEMPRE, incluso para requests internos'." }
+      ],
+      "explanation": "Implementación práctica de Zero Trust en un backend: (1) mTLS obligatorio para service-to-service; (2) OIDC/OAuth para usuario→app con MFA; (3) Policy Decision Point (PDP) que evalúa reglas (OPA, Cedar, Cloud IAM); (4) Policy Enforcement Point (PEP) que hace cumplir (proxy Envoy, sidecar, gateway); (5) logging exhaustivo de cada decisión de acceso; (6) monitoreo de anomalías (UEBA — User Entity Behavior Analytics); (7) short-lived credentials (SPIFFE, IAM temp tokens); (8) device posture check (¿el laptop tiene disk encryption? ¿OS actualizado? ¿EDR corriendo?).",
+      "realWorld": "Google BeyondCorp: acceso a apps internas SIN VPN, autenticado por identidad+dispositivo+contexto. Cloudflare Access, Zscaler ZTNA, Palo Alto Prisma Access implementan lo mismo comercialmente. Un empleado en un café con Cloudflare Access accede a apps internas igual que en la oficina — la oficina no da privilegio extra.",
+      "tags": ["Zero Trust", "ZTNA", "policy", "mTLS", "OIDC"],
+      "tech": ["OPA", "Cloudflare Access"],
+      "references": [{ "title": "NIST SP 800-207" }, { "title": "Cloudflare — Zero Trust Learning Path" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "security",
+      "topic": "BeyondCorp Google origin",
+      "difficulty": "senior",
+      "scenario": "En una entrevista te preguntan sobre el origen de Zero Trust en la industria.",
+      "question": "¿Qué es BeyondCorp y por qué lo inició Google?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "BeyondCorp es la implementación interna de Zero Trust de Google, iniciada tras el ataque 'Operation Aurora' (diciembre 2009 / revelado 2010), donde atacantes patrocinados por Estado (asociados a APT10/China) penetraron la red corporativa de Google y otras 20+ empresas explotando IE. Aurora demostró que el modelo 'castillo y foso' fallaba: una vez dentro de la LAN, el atacante se movió lateralmente con casi cero fricción. Google decidió: 'la LAN corporativa es untrusted como Internet; auth por identidad de usuario + dispositivo autorizado, no por ubicación de red'. Publicaron el modelo en papers 2014-2018.", "correct": true, "why": "Correcto. BeyondCorp es el caso público de referencia y motivó a la industria a repensar el perímetro. Aurora fue el 'wake up call'." },
+        { "letter": "B", "text": "BeyondCorp es un producto de Cisco vendido a Google.", "correct": false, "why": "Invención. BeyondCorp es de Google, construido internamente durante ~7 años y luego publicado como serie de papers en ;login: y USENIX." },
+        { "letter": "C", "text": "BeyondCorp es una VPN.", "correct": false, "why": "Es EXACTAMENTE lo opuesto — BeyondCorp reemplaza la necesidad de VPN. Los empleados de Google acceden a apps internas desde cualquier red sin VPN, autenticados por identidad+dispositivo." },
+        { "letter": "D", "text": "BeyondCorp se inició por regulación europea (GDPR).", "correct": false, "why": "Anacronismo. BeyondCorp arrancó 2011, GDPR entró en vigor 2018. Fue motivado por Aurora, no regulación." }
+      ],
+      "explanation": "Componentes canónicos de BeyondCorp: (1) DEVICE INVENTORY — todos los devices corporativos catalogados con certs; (2) USER + DEVICE INVENTORY DATABASE (Meta-inventory); (3) TRUST INFERENCE ENGINE — calcula 'trust score' dinámico por device (patches, EDR, network); (4) ACCESS CONTROL ENGINE — decide por request; (5) ACCESS PROXY — enforcement point delante de cada app interna. Los empleados usan un browser normal, autenticado con SSO Google + client cert del device — el proxy decide si permitir el request. Result: no hay 'red interna privilegiada'.",
+      "realWorld": "Google publicó 6 papers de BeyondCorp entre 2014-2018 en ;login: (USENIX). Cloudflare Access, Zscaler Private Access, Google BeyondCorp Enterprise (producto comercial), Palo Alto Prisma implementan el mismo modelo. Es la base de la industria ZTNA.",
+      "tags": ["BeyondCorp", "Google", "Aurora attack", "historia"],
+      "tech": ["BeyondCorp"],
+      "references": [{ "title": "Rory Ward, Betsy Beyer — BeyondCorp: A New Approach to Enterprise Security" }, { "title": "Operation Aurora — Wikipedia" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "security",
+      "topic": "NIST SP 800-207 componentes",
+      "difficulty": "staff",
+      "scenario": "Redactas un documento de arquitectura Zero Trust basado en NIST SP 800-207. Debes identificar los componentes lógicos.",
+      "question": "¿Cuáles son los componentes lógicos centrales de una Zero Trust Architecture según NIST 800-207?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Policy Engine (PE): motor que decide grant/deny según policies, identidad, señales (SIEM, threat intel, device posture). El 'cerebro' de la decisión.", "correct": true, "why": "Correcto. El PE es la máquina que evalúa la policy — puede ser OPA, Cedar, IAM policy engine, o motor propio." },
+        { "letter": "B", "text": "Policy Administrator (PA): ejecuta la decisión del PE — abre/cierra sesión, provisiona credenciales de corta vida, instruye al PEP.", "correct": true, "why": "Correcto. Es la separación entre 'decidir' (PE) y 'orquestar el cumplimiento' (PA). En productos comerciales suelen estar juntos." },
+        { "letter": "C", "text": "Policy Enforcement Point (PEP): componente en el camino de datos (proxy, gateway, sidecar Envoy) que hace CUMPLIR la decisión — enruta, corta, exige mTLS.", "correct": true, "why": "Correcto. El PEP es lo que 've' el tráfico y actúa. Puede ser Envoy, nginx con módulo, API gateway, o proxy ZTNA (Cloudflare, Zscaler)." },
+        { "letter": "D", "text": "Data sources: CDM (Continuous Diagnostics and Mitigation), threat intel, activity logs, PKI, ID management, SIEM. Alimentan al PE con señales.", "correct": true, "why": "Correcto. La decisión es RICH (basada en múltiples señales) — no solo 'usuario X presenta password'. Incluye device posture, ubicación, hora, comportamiento." },
+        { "letter": "E", "text": "Firewall perimetral tradicional como único enforcement point.", "correct": false, "why": "Es el modelo que NIST 800-207 desplaza. El firewall perimetral puede seguir existiendo pero NO es el core del modelo Zero Trust." }
+      ],
+      "explanation": "NIST SP 800-207 (agosto 2020, autoría de Scott Rose et al.) es el documento normativo de referencia. Define ZTA en 3 acercamientos de implementación: (1) enhanced identity governance (identity-driven), (2) micro-segmentation, (3) network infrastructure and software-defined perimeters (SDP). Muchos productos combinan los 3. La orden ejecutiva 14028 del gobierno US (mayo 2021) requiere que agencias federales adopten Zero Trust siguiendo 800-207.",
+      "realWorld": "Todas las agencias federales US tienen mandato Zero Trust por EO 14028 (post-SolarWinds). CISA publica Zero Trust Maturity Model. DoD publica Zero Trust Reference Architecture. Herramientas comerciales anuncian compliance con 800-207 (Cisco, Palo Alto, Microsoft, Cloudflare).",
+      "tags": ["NIST 800-207", "PE", "PA", "PEP", "arquitectura"],
+      "tech": [],
+      "references": [{ "title": "NIST SP 800-207 — Zero Trust Architecture (Aug 2020)" }, { "title": "US Executive Order 14028 (2021)" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "networking",
+      "topic": "Traditional VPN limitations",
+      "difficulty": "senior",
+      "scenario": "Tu empresa usa una VPN corporativa clásica (OpenVPN, Cisco AnyConnect): usuario se conecta con user/pass, recibe IP interna, y accede a toda la LAN corporativa.",
+      "question": "¿Cuáles son las limitaciones fundamentales de este modelo VPN clásico?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Confianza binaria por conexión: una vez conectado a la VPN, el usuario tiene acceso EN LA CAPA DE RED a todo lo que la LAN alcance. Si su laptop está infectado, el malware también entra. Movimiento lateral es libre.", "correct": true, "why": "Correcto. VPN clásica extiende la LAN al endpoint — todo lo malo del modelo 'castillo y foso' aplica. Ver Aurora attack, muchos ransomware entrando por VPN comprometida." },
+        { "letter": "B", "text": "Escalabilidad: los concentradores VPN son bottlenecks (todo el tráfico corporativo pasa por ellos), con latencia extra por el detour. En pandemia 2020 muchas empresas colapsaron sus VPNs.", "correct": true, "why": "Correcto. VPN centralizada = hairpin routing. Un empleado en Bogotá conectándose a un SaaS en AWS us-east-1 pasa por concentrador VPN en Madrid = latencia absurda." },
+        { "letter": "C", "text": "Onboarding/offboarding pesado: revocar acceso VPN suele significar deshabilitar cuenta en el AD/LDAP, pero las sesiones activas pueden persistir. Ex-empleados con credenciales VPN válidas son riesgo común.", "correct": true, "why": "Correcto. Documented por Verizon DBIR año tras año: credenciales VPN filtradas/reutilizadas son vector top de brechas." },
+        { "letter": "D", "text": "VPN clásica es incompatible con SaaS moderno: si Slack, Salesforce, Google Workspace están en Internet, no se benefician de la VPN — y la VPN no ayuda a securizarlos.", "correct": true, "why": "Correcto. Realidad moderna: la mayoría del tráfico corporativo va a SaaS externo, no a apps internas. VPN no tiene visibilidad ni control ahí." },
+        { "letter": "E", "text": "Las VPNs son inmunes a robo de credenciales.", "correct": false, "why": "Falso. Credenciales VPN son de los targets más apetecidos. Con user+pass sin MFA, phishing te da acceso completo a la red interna. Ver Colonial Pipeline 2021 (single leaked VPN password = ransomware nacional)." }
+      ],
+      "explanation": "VPN sigue teniendo lugar (site-to-site entre datacenters, admin remoto puntual), pero como método principal de acceso corporativo remoto es un anti-patrón moderno. ZTNA (Zero Trust Network Access) sustituye VPN: en vez de dar acceso a la RED, das acceso a la APLICACIÓN, autenticado por request, con policy dinámica y sin exponer nada más. Ejemplo: Cloudflare Access → el usuario navega a app.corp.example.com, es redirigido a IdP (Okta, Google), autenticado, y Cloudflare proxifica el request a la app interna vía tunnel — sin exponer la app a Internet, sin VPN.",
+      "realWorld": "Colonial Pipeline 2021: ataque de ransomware que paró los pipelines de EE.UU. — vector inicial fue una contraseña VPN filtrada sin MFA. Post-COVID, Gartner reporta boom de ZTNA y decline de VPN corporativa. Cloudflare, Zscaler, Netskope líderes del mercado ZTNA.",
+      "tags": ["VPN", "limitaciones", "ZTNA", "lateral movement"],
+      "tech": ["OpenVPN"],
+      "references": [{ "title": "Gartner — Market Guide for ZTNA" }, { "title": "Verizon DBIR — annual" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "networking",
+      "topic": "Tailscale vs WireGuard vs OpenVPN",
+      "difficulty": "mid",
+      "scenario": "Un equipo pequeño quiere conectar 20 devices (laptops, servidores en 3 clouds distintos, VMs de dev) en una red privada.",
+      "question": "¿Qué distingue Tailscale, WireGuard y OpenVPN?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenVPN: VPN clásico basado en TLS/SSL, arquitectura hub-and-spoke (client → server VPN → recursos), configuración compleja, buen soporte histórico, latencia alta por hairpin. WireGuard: protocolo VPN moderno (Jason Donenfeld, 2019), simple (~4000 LOC en kernel Linux), rápido, criptografía moderna (Curve25519, ChaCha20-Poly1305), pero requiere configurar peers manualmente. Tailscale: capa de gestión SOBRE WireGuard que resuelve la parte incómoda — descubrimiento automático de peers, NAT traversal, integración con IdP (Google, GitHub, Okta), ACLs por identidad, mesh network real (peer-to-peer, no hub-and-spoke). Fundada 2019 por ex-Googlers.", "correct": true, "why": "Correcto. Tailscale = WireGuard + control plane + identity + NAT traversal. Es como pasar de git plumbing a GitHub." },
+        { "letter": "B", "text": "Los 3 son idénticos, solo cambia el vendor.", "correct": false, "why": "Diferencias grandes en protocolo (OpenVPN uses TLS; WireGuard uses Noise/Curve25519), arquitectura (hub-and-spoke vs mesh), y experiencia (manual vs automática)." },
+        { "letter": "C", "text": "Tailscale requiere data-plane centralizado — todo tráfico pasa por sus servers.", "correct": false, "why": "Falso. Tailscale es peer-to-peer en el data plane (WireGuard directo entre nodos); solo el control plane pasa por sus coordination servers (DERP relays son fallback si NAT traversal falla)." },
+        { "letter": "D", "text": "WireGuard reemplaza HTTPS.", "correct": false, "why": "Confunde capas. WireGuard es un VPN (capa 3, IP encapsulado); HTTPS es una app protocol sobre TLS. Coexisten." }
+      ],
+      "explanation": "WireGuard es un game-changer técnico: código pequeño (auditable), en kernel Linux mainline desde 5.6, muy rápido (>1 Gbps sin problema), sin negociación compleja (una static key por peer). Tailscale abstrae la parte pesada: NAT traversal (STUN, ICE, DERP fallback), key rotation, coordinación de peers, MagicDNS (DNS interno por nombre corto), Access Controls por identidad de usuario. Alternativas: Headscale (self-hosted del coordination server, open source), Netmaker, ZeroTier (protocolo distinto, similar UX). Para pequeñas/medianas empresas y developers, Tailscale es hoy el default moderno.",
+      "realWorld": "Tailscale usado por Instacart, Duolingo, Docker, PagerDuty. WireGuard adoptado por Mullvad, ProtonVPN, Cloudflare WARP. OpenVPN sigue vigente en muchos entornos legacy y aún tiene el edge en compatibilidad muy amplia.",
+      "tags": ["Tailscale", "WireGuard", "OpenVPN", "VPN moderna", "mesh"],
+      "tech": ["Tailscale", "WireGuard", "OpenVPN"],
+      "references": [{ "title": "WireGuard — whitepaper" }, { "title": "Tailscale — How it works" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "networking",
+      "topic": "ZeroTier y mesh networks",
+      "difficulty": "mid",
+      "scenario": "Necesitas conectar máquinas en 4 clouds distintos (AWS, GCP, Hetzner, on-prem) más laptops de developers como si estuvieran en la misma LAN virtual.",
+      "question": "¿Qué es una mesh network y qué opciones existen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Una mesh network conecta cada nodo con cada otro directamente (idealmente peer-to-peer), formando una red virtual overlay sobre Internet. Opciones: Tailscale (WireGuard-based, coordination SaaS), ZeroTier (protocolo propio, root servers ZeroTier o autohospedados con moons), Nebula (de Slack, open source, similar a Tailscale sin control plane comercial), Headscale (Tailscale coordination server open source). Todas dan LAN virtual estable, direccionamiento IP dedicado, ACLs por identidad.", "correct": true, "why": "Correcto. Cada una con trade-offs distintos en modelo de negocio (SaaS vs self-hosted), protocolo (WireGuard vs propio), UX, y features (MagicDNS, subnet routers, exit nodes)." },
+        { "letter": "B", "text": "Mesh networks solo funcionan si todos los nodos tienen IP pública.", "correct": false, "why": "Falso. La gracia es que hacen NAT traversal (STUN, hole punching, DERP relays de fallback). Nodos detrás de NAT corporativo funcionan igual." },
+        { "letter": "C", "text": "Mesh networks son equivalentes a un site-to-site IPSec VPN clásico.", "correct": false, "why": "IPSec site-to-site conecta dos SITIOS (cada uno es una LAN), no peers individuales. Mesh moderna conecta CADA nodo (incluidos laptops individuales) directamente." },
+        { "letter": "D", "text": "Solo funcionan en Linux.", "correct": false, "why": "Todas tienen clientes para Windows, macOS, Linux, iOS, Android, y muchas para BSD/Synology/routers." }
+      ],
+      "explanation": "Mesh networks resuelven el problema del multi-cloud/hybrid moderno: no quieres site-to-site VPNs manuales entre 4 clouds. Un overlay P2P (WireGuard-basado normalmente) te da direccionamiento consistente + ACLs por identidad. ZeroTier introdujo el modelo comercial ~2013 (protocolo propio); Tailscale 2019 (WireGuard); Nebula 2019 (Slack, protocolo propio). Modelo de threat: coordination server compromise podría emitir keys falsas — mitiga con audit y self-hosted (Headscale, Nebula sin lighthouse externo).",
+      "realWorld": "Slack usa Nebula internamente. Robinhood publicó su uso de Tailscale para acceso a bases de datos internas. Muchos homelabs y startups usan Tailscale como VPN interno primario.",
+      "tags": ["mesh", "ZeroTier", "Nebula", "Tailscale", "overlay"],
+      "tech": ["ZeroTier", "Nebula", "Headscale"],
+      "references": [{ "title": "Slack Engineering — Introducing Nebula" }, { "title": "ZeroTier — Manual" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "networking",
+      "topic": "VPC endpoints AWS PrivateLink",
+      "difficulty": "senior",
+      "scenario": "Tu servicio en VPC AWS necesita hablar con S3, DynamoDB, Secrets Manager. Actualmente sale por NAT Gateway a Internet y vuelve por el endpoint público de AWS.",
+      "question": "¿Por qué usar VPC Endpoints / PrivateLink en lugar de tráfico por Internet?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "PRIVACIDAD: el tráfico nunca sale a Internet — va por la red de AWS internamente. No hay riesgo de MITM en Internet, no aparece en logs de perímetro como 'tráfico saliente'.", "correct": true, "why": "Correcto. Requisito de compliance en muchas industrias (financiera, salud). PCI-DSS y HIPAA suelen requerir que los datos no crucen redes públicas cuando pueden evitarse." },
+        { "letter": "B", "text": "COSTO: sin PrivateLink, tráfico saliente por NAT Gateway paga por NAT ($0.045/GB) + egress a Internet. Con Gateway Endpoint (S3, DynamoDB), es GRATIS. Con Interface Endpoint (PrivateLink hacia otros servicios AWS), ahorras el NAT.", "correct": true, "why": "Correcto. En volúmenes grandes (backups a S3, telemetría) puede ser miles de dólares/mes de ahorro. Muy cited en cost optimization." },
+        { "letter": "C", "text": "SEGURIDAD: puedes tener un VPC totalmente sin acceso a Internet (no NAT, no IGW) y aún usar servicios AWS vía endpoints. Reduce superficie de ataque drasticamente.", "correct": true, "why": "Correcto. Patrón 'private VPC' — común en cargas sensibles. Sin IGW, la única forma de exfil sería vía el endpoint AWS (y ahí puedes restringir con endpoint policies)." },
+        { "letter": "D", "text": "PRIVATELINK (para tus propios servicios o SaaS de terceros) permite exponer un servicio como si fuera 'un endpoint AWS más' en la VPC del consumidor, sin necesidad de VPC peering ni IPs públicas. Snowflake, MongoDB Atlas, Datadog lo usan.", "correct": true, "why": "Correcto. Es la forma moderna de conectar B2B en AWS — el proveedor expone un NLB, el consumidor crea Interface Endpoint hacia él. Sin exposición pública, sin overlapping IPs." },
+        { "letter": "E", "text": "Los VPC Endpoints solo funcionan si tu VPC está peered con la VPC de AWS.", "correct": false, "why": "Confusión. VPC Endpoints son un mecanismo distinto de VPC peering. Un Interface Endpoint crea ENIs (network interfaces) en tu VPC que hablan directamente con el servicio AWS sin peering." }
+      ],
+      "explanation": "AWS distingue dos tipos: (1) GATEWAY ENDPOINTS — solo para S3 y DynamoDB, gratis, se añaden a la route table; (2) INTERFACE ENDPOINTS — para el resto (Secrets Manager, KMS, SNS, SQS, Lambda invoke, PrivateLink a servicios de terceros), crean ENIs con IPs privadas, cuestan ~$0.01/hora + $0.01/GB pero mucho menos que NAT + egress a Internet. Endpoint policies permiten limitar qué acciones se permiten via el endpoint (útil para prevenir uso de S3 desde credenciales robadas para exfiltrar datos a otros buckets).",
+      "realWorld": "Snowflake ofrece PrivateLink para todos sus tiers empresariales. Datadog, MongoDB Atlas, Confluent Cloud, GitHub (Enterprise), Databricks también. Muchos bancos requieren PrivateLink para cualquier SaaS que consuman en cloud. Equivalentes: GCP Private Service Connect, Azure Private Link.",
+      "tags": ["PrivateLink", "VPC Endpoint", "AWS", "private connectivity"],
+      "tech": ["AWS", "PrivateLink", "VPC"],
+      "references": [{ "title": "AWS — VPC Endpoints and PrivateLink" }, { "title": "AWS re:Invent — Deep Dive PrivateLink" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "networking",
+      "topic": "Direct Connect vs VPN",
+      "difficulty": "senior",
+      "scenario": "Tu banco tiene 3 datacenters propios y necesita conectividad estable, low-latency y con SLA hacia AWS us-east-1 y us-west-2.",
+      "question": "¿Cuándo usar AWS Direct Connect vs IPsec Site-to-Site VPN?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Direct Connect: fibra dedicada (o hosted connection vía partner) entre tu datacenter/colo y una AWS Direct Connect location. Latencia estable, ancho de banda dedicado (1/10/100 Gbps), NO va por Internet. SLA fuerte. Recomendado para bulk data transfer, workloads con latencia crítica (trading), compliance que exige no-Internet. VPN IPsec: túnel cifrado sobre Internet — barato, rápido de setup, pero calidad depende de la Internet pública (jitter, latencia variable), y ancho de banda máx ~1.25 Gbps por túnel (por límites AWS). Se pueden combinar: DX como primary + VPN como backup, o VPN sobre DX para cifrado adicional.", "correct": true, "why": "Correcto. La regla: alto volumen sostenido + latencia crítica + compliance → Direct Connect. Onboarding rápido + volumen menor + tolerancia a Internet → VPN. Producción seria = ambos (DX activa, VPN backup)." },
+        { "letter": "B", "text": "VPN IPsec siempre es mejor por ser cifrada.", "correct": false, "why": "Direct Connect no viene cifrada por defecto (es un enlace privado, no Internet), pero puedes correr MACsec sobre DX o VPN sobre DX si quieres cifrado. La 'seguridad' de DX es que NO cruza Internet." },
+        { "letter": "C", "text": "Direct Connect es siempre más barato que VPN.", "correct": false, "why": "Falso. DX tiene setup significativo (cross-connect en colo, contratos con partners) y port hours + egress. Para volúmenes bajos, VPN es más barato. DX gana en costo cuando el egress es masivo." },
+        { "letter": "D", "text": "AWS solo ofrece VPN, no hay Direct Connect.", "correct": false, "why": "Direct Connect existe desde 2011. Equivalentes: Azure ExpressRoute, Google Cloud Interconnect (Dedicated y Partner)." }
+      ],
+      "explanation": "Arquitectura típica enterprise: (1) Direct Connect primario, con LAG (Link Aggregation Group) redundante en 2 locations distintas; (2) VPN IPsec como backup automático (BGP falla al VPN si DX cae); (3) Transit Gateway como hub central para multi-VPC; (4) Direct Connect Gateway para conectar el DX a múltiples regiones AWS. Latencias típicas: DX (mismo continente) 10-30ms; VPN por Internet 40-100ms con más jitter. Coste DX: puertos 1G ~$0.30/hora, 10G ~$2.25/hora + egress ($0.02/GB — mucho menos que Internet egress $0.09/GB).",
+      "realWorld": "Netflix migró a DX para el peering masivo con AWS. Bancos y aseguradoras casi siempre usan DX (u ExpressRoute) por compliance. Startups suelen empezar con VPN y migrar a DX cuando el volumen justifica el capex. En pandemia, Zoom aumentó capacidad DX por la explosión de tráfico.",
+      "tags": ["Direct Connect", "VPN", "IPsec", "connectivity"],
+      "tech": ["AWS Direct Connect", "IPsec"],
+      "references": [{ "title": "AWS — Direct Connect FAQ" }, { "title": "AWS Well-Architected — Hybrid Networking Lens" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "networking",
+      "topic": "Microsegmentation",
+      "difficulty": "staff",
+      "scenario": "Tu cluster K8s tiene 50 servicios. Por defecto, cualquier pod puede hablar con cualquier pod (allow all intra-cluster). Compliance te pide 'microsegmentation'.",
+      "question": "¿Qué es microsegmentation y cómo se implementa?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Microsegmentation = dividir la red en segmentos MUY finos y aplicar policy explícita entre ellos (allow-list, no default-allow). En K8s: NetworkPolicies que declaran 'pods con label X pueden hablar con pods con label Y en puerto Z, todo lo demás DENY'.", "correct": true, "why": "Correcto. Rompe el modelo 'flat network' que permite movimiento lateral. Es una implementación práctica del principio Zero Trust 'assume breach'." },
+        { "letter": "B", "text": "Con service mesh (Istio, Linkerd) puedes hacer microsegmentation por IDENTIDAD (no por IP) — la policy dice 'ServiceAccount payments-api puede llamar a checkout-api en /api/pay', y se hace cumplir en L7 con mTLS.", "correct": true, "why": "Correcto. Ventaja sobre NetworkPolicies puras: identidad estable (cert SPIFFE) en vez de IP volátil, y granularidad L7 (path, método, header) no solo L4." },
+        { "letter": "C", "text": "En clouds: security groups estrictos (solo abrir puertos necesarios entre grupos), VPC subnets segmentadas por función, PrivateLink para servicios externos, y policies IAM que reflejen la segmentación (payments-role no puede leer buckets de HR).", "correct": true, "why": "Correcto. Microsegmentation no es solo K8s — aplica a IaaS y a redes tradicionales (SDN, Nutanix Flow, VMware NSX)." },
+        { "letter": "D", "text": "Microsegmentation contradice Zero Trust.", "correct": false, "why": "Al contrario, es uno de los pilares Zero Trust — 'assume breach' + 'least privilege' aplicados a red." },
+        { "letter": "E", "text": "Solo funciona si se hace default-allow y bloqueas explícitamente lo malo.", "correct": false, "why": "Es el OPUESTO. Microsegmentation exige default-deny (allow-list). Default-allow con blacklist es el modelo tradicional que fracasó." }
+      ],
+      "explanation": "Herramientas clave: (1) K8s NetworkPolicies (implementadas por Calico, Cilium, WeaveNet); (2) Cilium con eBPF hace NetworkPolicies + L7 filtering + mTLS transparente; (3) Istio AuthorizationPolicy con mTLS; (4) VMware NSX en on-prem; (5) Cloud native (AWS Security Groups, GCP Firewall Rules VPC-scoped). Modelo de policy: define groups → define allowed flows entre groups → todo lo demás DENY. Testing: chaos experiments 'puede pod A llegar a pod B?' para verificar que la policy hace lo esperado.",
+      "realWorld": "Cilium (creada por Isovalent, ahora parte de Cisco) es el CNI más usado para microsegmentation en K8s enterprise. Adobe, Bell, Trip.com, Yahoo usan Cilium en producción a escala. Illumio es referente commercial en microsegmentation de datacenter clásico.",
+      "tags": ["microsegmentation", "NetworkPolicy", "Cilium", "least privilege"],
+      "tech": ["Cilium", "Calico", "Istio"],
+      "references": [{ "title": "Cilium — Network Policy" }, { "title": "NIST — Application Container Security Guide" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "security",
+      "topic": "Identity-based network policies",
+      "difficulty": "senior",
+      "scenario": "Un compañero propone: 'Segmentamos con NetworkPolicies por IP CIDR — los pods de payments están en un CIDR, los de checkout en otro'.",
+      "question": "¿Por qué policies por IDENTIDAD son superiores a policies por IP en entornos dinámicos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En K8s las IPs de pods son EFÍMERAS — cambian en cada reschedule. Amarrar policies a IP es frágil (rules quedan obsoletas), no escala (miles de rules por servicio), y no captura la SEMÁNTICA (¿por qué esta IP tiene permiso? nadie recuerda). Con identidad (label, ServiceAccount, cert SPIFFE), la policy declara 'app=payments puede llamar a app=checkout' — sobrevive reschedules, migraciones, escalados. Y es auditable: el POR QUÉ está en la propia policy.", "correct": true, "why": "Correcto. Es la razón por la que K8s NetworkPolicies usan podSelector por label (no por IP), y por la que service mesh usa cert-based identity (SPIFFE). Identity-based = declarativo y estable; IP-based = imperativo y frágil." },
+        { "letter": "B", "text": "IP-based es mejor porque las IPs son más rápidas de matchear.", "correct": false, "why": "En stack modernos (Cilium con eBPF, Envoy con RBAC L7), identity-based matching es equivalente en performance y muy superior en gestión." },
+        { "letter": "C", "text": "Solo importa la IP porque es lo único que ven los firewalls tradicionales.", "correct": false, "why": "En Zero Trust moderno, el enforcement point NO es un firewall L3/L4 tradicional — es un proxy L7 (Envoy sidecar, ingress controller) que sí ve identidad de cert/JWT." },
+        { "letter": "D", "text": "Kubernetes no soporta identity-based policies.", "correct": false, "why": "Sí las soporta desde el inicio via podSelector/namespaceSelector. Service mesh (Istio, Linkerd) añaden identity-based auth L7." }
+      ],
+      "explanation": "Identidad puede venir de varios sitios: (1) labels K8s en pods (mecanismo básico NetworkPolicy); (2) ServiceAccount K8s (más estable); (3) SPIFFE ID en cert mTLS (portable, cross-platform); (4) JWT con claim específico (para RBAC L7); (5) IAM role de AWS (para acceso a APIs cloud). Idealmente TODO refleja la misma noción de 'quién es este workload': un servicio 'checkout' tiene ServiceAccount checkout, SPIFFE ID spiffe://.../checkout, IAM role checkout-role, todos alineados. Cambios de infraestructura no rompen policies.",
+      "realWorld": "Netflix Metatron emite identidades a servicios en AWS y las policies IAM+network se articulan sobre esa identidad. HashiCorp Consul Connect hace lo mismo con SPIFFE. Google usa BeyondProd internamente (Zero Trust para servicios, cross-container).",
+      "tags": ["identity-based", "IP-based", "NetworkPolicy", "SPIFFE"],
+      "tech": ["SPIFFE", "Istio", "Cilium"],
+      "references": [{ "title": "Google — BeyondProd (2019)" }, { "title": "SPIFFE — Concepts" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "security",
+      "topic": "Zero Trust migration strategy",
+      "difficulty": "staff",
+      "scenario": "Eres Staff Engineer en una empresa de 3000 personas con 15 años de deuda técnica: VPN corporativa para todo, LAN plana, AD/LDAP, muchas apps on-prem, algunos SaaS. El CTO quiere Zero Trust en 3 años. Presentas un plan.",
+      "question": "¿Cuál es una estrategia SENSATA de migración a Zero Trust?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Migración incremental por FASES, no big-bang. Fase 1 (año 1): fundamentos — SSO+MFA obligatorio a TODAS las apps (federar via SAML/OIDC), device inventory con posture check, catálogo de apps y clasificación por criticidad, PKI interna madura. Fase 2 (año 2): reemplazar acceso a apps de bajo riesgo por ZTNA (Cloudflare Access, Zscaler, o similar) mientras se mantiene la VPN para apps aún no migradas; introducir mTLS entre nuevos servicios; empezar segmentación de red por función. Fase 3 (año 3): migrar apps críticas restantes, apagar VPN corporativa, microsegmentation full, monitoring + SIEM con reglas Zero Trust, drills de 'assume breach'. Éxito medido por: % apps detrás de ZTNA, % tráfico intra-servicio con mTLS, MTTD/MTTR incidentes, resultados de red team.", "correct": true, "why": "Correcto. Zero Trust NO es un proyecto de 3 meses — es un cambio arquitectónico y cultural. Big-bang causa outages y resistencia. Migración por fases con quick wins (SSO+MFA universal es alto ROI, bajo costo) construye momentum y confianza." },
+        { "letter": "B", "text": "Comprar 'la solución Zero Trust' de un vendor y aplicarla mañana a toda la empresa.", "correct": false, "why": "No existe. Zero Trust es arquitectura + procesos, no un producto. Comprar sin transformar cultura, PKI, IdP, catálogo de apps → 'ZT theater' fracaso caro." },
+        { "letter": "C", "text": "Apagar la VPN inmediatamente y forzar a todos a acceder por Internet.", "correct": false, "why": "Sin ZTNA de reemplazo ya operativo, sin device posture, sin apps federadas → outage total el día 1, boicot de empleados, atacantes felices." },
+        { "letter": "D", "text": "Empezar por replicar el mismo modelo perímetro pero con hardware más caro.", "correct": false, "why": "Es 'mejor firewall', no Zero Trust. No cambia el modelo de confianza, no reduce blast radius, no aborda credenciales robadas." }
+      ],
+      "explanation": "Insights staff-level de migraciones reales: (1) el ORDEN importa — sin IdP moderno + MFA universal, nada más funciona; (2) el DEVICE INVENTORY es prerequisito ignorado — sin saber qué dispositivos son 'trusted' no puedes hacer policy basada en dispositivo; (3) la MIGRACIÓN es cultural — training, portales de self-service, documentación de por qué se hace; (4) MIDES lo correcto — no 'cajas compradas' sino '% apps con SSO', '% tráfico mTLS', 'MTTD phishing'; (5) HABILITAS a los equipos — provee 'golden paths' donde hacer lo correcto (mTLS, ZTNA) es más fácil que lo incorrecto; (6) el CTO+CISO+CIO+líderes de producto deben estar alineados — es multi-año y transversal; (7) TABLETOP EXERCISES regulares — 'un laptop se compromete, ¿qué pasa?' — miden postura real.",
+      "realWorld": "Google BeyondCorp tardó ~7 años (2011-2017) en madurar. Adobe publicó su journey a Zero Trust en múltiples posts a lo largo de varios años. Microsoft internamente migró a Zero Trust y publica los stages. Sin excepción, todas las empresas que reportan éxito lo hicieron en años y por fases.",
+      "tags": ["Zero Trust migration", "estrategia", "staff", "roadmap"],
+      "tech": ["Cloudflare Access", "Okta"],
+      "references": [{ "title": "Google BeyondCorp — Migrating to BeyondCorp" }, { "title": "Adobe — Zero Trust Journey" }, { "title": "NIST 800-207 — Migration Guidance" }]
+    }
+  ]
+}

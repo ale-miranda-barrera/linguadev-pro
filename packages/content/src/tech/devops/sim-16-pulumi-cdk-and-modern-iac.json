@@ -1,0 +1,423 @@
+{
+  "id": "devops-sim-16-pulumi-cdk-and-modern-iac",
+  "trackId": "devops",
+  "order": 16,
+  "title": "Simulacro 16 — Pulumi, CDK y IaC moderno",
+  "focus": "IaC más allá de Terraform: Pulumi (TypeScript/Python/Go), AWS CDK (constructs L1/L2/L3), Crossplane (K8s-native), cdk8s, tradeoffs DSL vs código real, testing (unit/integration/snapshot), policy as code (OPA/Rego, Sentinel, CDK Aspects), state comparativo y backend management.",
+  "areaCoverage": ["iac"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "iac",
+      "topic": "IaC en lenguajes reales vs DSL",
+      "difficulty": "junior",
+      "scenario": "Tu equipo evalúa migrar de Terraform (HCL) a Pulumi (TypeScript). Un senior dice: 'HCL es limitado, no tiene loops decentes ni tests reales'. Otro responde: 'HCL es simple y declarativo, es su virtud'.",
+      "question": "¿Cuál es el tradeoff fundamental entre DSL (HCL) y lenguaje real (TS/Python/Go)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DSL (HCL) fuerza declaratividad y baja curva de aprendizaje pero limita abstracciones (for_each y dynamic blocks son workarounds); lenguaje real (TS/Python/Go) da loops, condicionales, clases, testing con Jest/pytest, IDE con autocompletado real e import de packages npm/pip — pero abre puerta a código imperativo mal escrito (side effects durante synth, spaghetti). El tradeoff es EXPRESIVIDAD vs DISCIPLINA.", "correct": true, "why": "Correcto. HashiCorp diseñó HCL para forzar declaratividad y simplicidad; Pulumi/CDK apuestan a que developers ya conocen TS/Python y quieren reutilizar habilidades. Ninguna es 'mejor' — depende del equipo y madurez. HCL escala mal en abstracciones complejas; código real escala mal cuando el equipo no tiene disciplina para tratarlo como IaC declarativo." },
+        { "letter": "B", "text": "HCL es siempre mejor porque es declarativo.", "correct": false, "why": "Simplista. HCL tiene limitaciones reales: no puedes escribir una función helper reutilizable con lógica compleja, testing es limitado (terratest ejecuta apply real), y modules tienen versionado awkward." },
+        { "letter": "C", "text": "Pulumi es siempre mejor porque usa lenguajes reales.", "correct": false, "why": "También simplista. Pulumi permite bugs sutiles (side effects durante construcción del graph, mutabilidad accidental) que HCL previene por diseño." },
+        { "letter": "D", "text": "No hay diferencia — ambos generan el mismo resultado.", "correct": false, "why": "Falso. La diferencia en developer experience, testing, y abstracciones es enorme. Un abstracción de 500 líneas de HCL puede ser 50 líneas de TypeScript, y viceversa para casos simples." }
+      ],
+      "explanation": "HCL vs lenguajes reales es debate filosófico. HashiCorp defiende HCL: (1) declarativo por diseño (no puedes 'ejecutar' código imperativo); (2) legible por no-programadores (ops folks); (3) diff/plan predecible; (4) sin dependencias de runtime. Pulumi/CDK responden: (1) reutilizas skills existentes (equipos ya saben TS/Python); (2) testing real con frameworks maduros; (3) abstracciones potentes (classes, generics); (4) IDE real (autocomplete, refactor, go-to-definition). En la práctica: HCL brilla en equipos ops-heavy con recursos simples; TS/Python brillan en equipos platform con abstracciones complejas (multi-tenant, multi-region reutilizables).",
+      "realWorld": "HashiCorp Terraform mantiene posición dominante en market share (~70% según surveys). Pulumi ganó tracción en empresas dev-heavy (Snowflake, Mercedes-Benz, Panasonic). AWS CDK explotó dentro del ecosistema AWS (>1M downloads/semana). Netflix usa Spinnaker + Terraform. Airbnb migró partes de Terraform a Pulumi para abstracciones complejas.",
+      "tags": ["IaC", "HCL", "Pulumi", "DSL", "tradeoffs"],
+      "tech": ["terraform", "pulumi", "aws-cdk"],
+      "references": [{ "title": "Pulumi vs Terraform comparison" }, { "title": "HashiCorp — Why HCL?" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "iac",
+      "topic": "Pulumi — modelo de ejecución",
+      "difficulty": "junior",
+      "scenario": "Escribes en Pulumi TypeScript: `const bucket = new aws.s3.Bucket('my-bucket'); console.log(bucket.arn);`. Cuando corres `pulumi up`, el console.log imprime `Calling [Function: get] on an [Output<T>]`, no un ARN.",
+      "question": "¿Por qué el ARN no está disponible como string y qué es Output<T>?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pulumi construye un GRAPH de recursos antes de aplicarlos. Durante synth, los valores como ARN aún NO existen (el bucket todavía no se creó). `Output<T>` es un wrapper async parecido a Promise que representa 'un valor que existirá después del deploy'. Para usarlo, usas `bucket.arn.apply(arn => ...)` o interpolación `pulumi.interpolate\\`arn is ${bucket.arn}\\``. Es análogo a async/await pero para el ciclo de vida de infra.", "correct": true, "why": "Correcto. Este es EL concepto mental que confunde a devs nuevos en Pulumi. Los Outputs modelan la dependencia entre recursos: 'este recurso depende de un valor que el otro producirá cuando exista'. Pulumi construye el DAG usando esta relación. Sin Outputs, no habría orden de creación correcto." },
+        { "letter": "B", "text": "Es un bug de Pulumi — deberías usar await.", "correct": false, "why": "No es bug. `await bucket.arn` no funciona porque Outputs no son Promises reales — son wrappers que participan en el graph de dependencias de Pulumi." },
+        { "letter": "C", "text": "Debes hacer preview primero para que ARN se resuelva.", "correct": false, "why": "El ARN se resuelve cuando el bucket se crea REALMENTE (durante apply, no preview). Preview solo muestra qué se creará." },
+        { "letter": "D", "text": "Es porque estás usando TypeScript en vez de Python.", "correct": false, "why": "El modelo Output<T> aplica IGUAL en Python (pulumi.Output), Go, C# — es fundamento de Pulumi, no específico de un lenguaje." }
+      ],
+      "explanation": "Output<T> es el mecanismo de Pulumi para modelar valores que existirán DESPUÉS de la creación de recursos. Métodos clave: (1) `.apply(fn)` — transforma un Output en otro; (2) `pulumi.all([a, b])` — combina múltiples Outputs; (3) `pulumi.interpolate` — template literals con Outputs; (4) `Input<T>` — el 'opuesto': acepta tanto valores directos como Outputs. Reglas: NUNCA hagas fetch de datos externos dentro de `.apply` (side effects rompen determinism). Los Outputs propagan 'secretness' automáticamente (si una password es secret, cualquier Output derivado también lo es).",
+      "realWorld": "Pulumi fue fundado por Joe Duffy (ex-Microsoft) y Eric Rudder en 2017. Snowflake usa Pulumi para infraestructura multi-cloud (AWS, Azure, GCP) con TypeScript. Mercedes-Benz migró de Terraform a Pulumi para plataforma interna de developers. Panasonic Avionics usa Pulumi + Python para IoT infra.",
+      "tags": ["Pulumi", "Output", "async", "DAG"],
+      "tech": ["pulumi", "typescript"],
+      "references": [{ "title": "Pulumi Docs — Inputs and Outputs" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "iac",
+      "topic": "AWS CDK — L1, L2, L3 constructs",
+      "difficulty": "mid",
+      "scenario": "Explorando AWS CDK, ves 3 clases distintas para crear una tabla DynamoDB: `CfnTable` (30 líneas de config verbose), `Table` (5 líneas con defaults sanos) y `DynamoDbConstruct` custom del equipo (2 líneas con opinions internas).",
+      "question": "¿Qué son L1, L2, L3 constructs en CDK y cuándo usar cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "L1 (CFN Resources) = mapping 1:1 con CloudFormation resources (`CfnTable`, `CfnBucket`). Verbose, sin defaults, refleja CloudFormation JSON/YAML. Usa L1 cuando: (a) el recurso es nuevo y no hay L2 todavía; (b) necesitas control fino sobre properties específicas; (c) escape hatch cuando L2 no expone algo.", "correct": true, "why": "Correcto. Los L1 se auto-generan del CloudFormation Resource Specification (JSON schema oficial de AWS). Cuando AWS lanza servicio nuevo, L1 disponible casi inmediato; L2 tarda meses (comunidad AWS los construye)." },
+        { "letter": "B", "text": "L2 (Curated Constructs) = APIs opinadas con defaults sanos, IAM policies auto-generadas, integraciones ergonómicas (`Table.grantReadData(lambda)` en vez de policy JSON). Son el 'sweet spot' para 80% de casos. Escritos por AWS o community, testeados.", "correct": true, "why": "Correcto. L2 es donde CDK brilla — `table.grantReadData(myLambda)` internamente crea IAM policy con least privilege exacto, algo que en CloudFormation raw serían 40 líneas de JSON. AWS Solutions team mantiene la mayoría." },
+        { "letter": "C", "text": "L3 (Patterns) = composiciones de múltiples L2 para casos de uso completos. Ejemplos: `ApplicationLoadBalancedFargateService` (ALB + Fargate + Target Group + Security Groups + Route53 en una construct). Aceleran prototipos pero pueden ser rígidos.", "correct": true, "why": "Correcto. L3 encapsulan 'best practices' para patrones comunes. Uso típico: prototipos rápidos, o cuando tu opinión coincide con la del pattern. Cuando difieres, es dolor — extender L3 es difícil, a veces mejor construir con L2 desde cero." },
+        { "letter": "D", "text": "L4 constructs son la última capa oficial de AWS CDK.", "correct": false, "why": "No existe L4 en la taxonomía oficial. La escalera es L1 → L2 → L3. Constructs personalizados del equipo son 'custom constructs' pero no una capa numerada." },
+        { "letter": "E", "text": "L1 son más seguros que L2 porque son literales.", "correct": false, "why": "Al contrario — L2 aplican defaults seguros (encryption at rest por default en Table, versioning en Bucket) que L1 no aplican. L1 raw es equivalente a CloudFormation puro con todos sus footguns." }
+      ],
+      "explanation": "La taxonomía L1/L2/L3 refleja la filosofía CDK: dar tres niveles de abstracción sobre CloudFormation. L1 = mecánico (auto-generado del CFN schema), L2 = ergonómico (escrito a mano por AWS con defaults sanos), L3 = arquitectónico (patrones complejos). Regla de oro: empieza con L2, cae a L1 cuando necesites control fino (escape hatch: `bucket.node.defaultChild as CfnBucket`). L3 solo si el patrón encaja exacto — si no, construye tus propios L3 con L2. Custom constructs del equipo son L3 con opinions internas (ej: 'todos nuestros buckets tienen versioning + KMS + lifecycle + logging por default'). Publicables como npm packages internos.",
+      "realWorld": "AWS CDK fue anunciado en 2018, GA en 2019. Amazon internamente construyó CDK antes de publicarlo — muchos servicios internos ya lo usaban. Amazon.com, Prime Video, Alexa usan CDK. Construct Hub (constructs.dev) tiene >1000 constructs publicados. Snowflake, Capital One publican constructs internos.",
+      "tags": ["AWS CDK", "constructs", "L1", "L2", "L3"],
+      "tech": ["aws-cdk", "cloudformation"],
+      "references": [{ "title": "AWS CDK — Constructs" }, { "title": "Construct Hub" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "iac",
+      "topic": "CDK — synth y CloudFormation",
+      "difficulty": "mid",
+      "scenario": "Un developer nuevo en CDK escribe `cdk deploy` y luego pregunta: '¿dónde está mi Terraform state?'. Otro dice: 'CDK usa CloudFormation stacks debajo'.",
+      "question": "¿Cómo funciona la ejecución de CDK internamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CDK es un GENERADOR de CloudFormation. `cdk synth` ejecuta tu código TS/Python y produce templates CloudFormation JSON/YAML en `cdk.out/`. `cdk deploy` invoca CloudFormation API (CreateStack/UpdateStack) con esos templates. El 'state' vive en CloudFormation stacks de AWS (managed por AWS, no por CDK). No hay `terraform.tfstate` local — CloudFormation es el backend de estado.", "correct": true, "why": "Correcto. Insight crítico: CDK NO es runtime — es transpiler de código a CloudFormation. Todas las ventajas y limitaciones de CloudFormation aplican (max 500 recursos por stack, ciertos servicios no tienen resources CFN todavía, updates que requieren replacement). La ventaja: no gestionas state file — AWS lo hace." },
+        { "letter": "B", "text": "CDK ejecuta llamadas directas a APIs de AWS (EC2, S3) sin CloudFormation.", "correct": false, "why": "Falso. Toda mutación pasa por CloudFormation. Esto tiene consecuencias: drift detection es lo que CloudFormation soporte, rollback es CloudFormation stack rollback, timing es CloudFormation timing." },
+        { "letter": "C", "text": "CDK guarda state en un archivo local `cdk.json`.", "correct": false, "why": "`cdk.json` es archivo de configuración (app entry point, feature flags, context). No es state — el state real vive en CloudFormation." },
+        { "letter": "D", "text": "CDK es un fork de Terraform que usa AWS resources.", "correct": false, "why": "Falso. CDK y Terraform son independientes. Existe CDKTF (CDK for Terraform) que sí usa Terraform backend, pero CDK 'clásico' (aws-cdk-lib) usa CloudFormation." }
+      ],
+      "explanation": "El modelo CDK → CloudFormation tiene consecuencias importantes: (1) LIMITES CFN aplican: 500 recursos/stack, algunos recursos no soportan updates in-place; (2) NO STATE FILE: no hay `terraform.tfstate` que gestionar, backup, o compartir; (3) ROLLBACK automático: si un recurso falla en update, CloudFormation revierte el stack completo (comportamiento útil y a veces frustrante); (4) DRIFT DETECTION vía CFN (mediocre — no detecta todo); (5) CROSS-STACK REFERENCES vía CFN exports/imports (limitados). Alternativas: `CDK for Terraform (CDKTF)` genera Terraform JSON en vez de CFN — combina ergonomía CDK con backend Terraform.",
+      "realWorld": "AWS Amplify usa CDK internamente para generar recursos. AWS Solutions Constructs library (patrones publicados por AWS) son L3 constructs. Prime Video escribió sobre problemas de escala con CDK: cuando tienes 100+ stacks, gestión de dependencias cross-stack se vuelve complicada. La comunidad debate CDK Pipelines vs GitOps.",
+      "tags": ["AWS CDK", "CloudFormation", "synth"],
+      "tech": ["aws-cdk", "cloudformation"],
+      "references": [{ "title": "AWS CDK — App lifecycle" }, { "title": "cdktf.io" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "iac",
+      "topic": "Crossplane — K8s-native infra",
+      "difficulty": "mid",
+      "scenario": "Tu empresa ya usa Kubernetes intensivamente con ArgoCD para GitOps de apps. Un platform engineer propone usar Crossplane para gestionar infra AWS (RDS, S3, VPC) mediante manifests YAML aplicados al mismo cluster K8s.",
+      "question": "¿Qué es Crossplane y qué problema resuelve vs Terraform?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Crossplane extiende K8s con CRDs que representan recursos cloud (AWS RDS, GCP GKE, Azure Storage). Tú aplicas YAML como cualquier manifest K8s; controllers de Crossplane reconcilian el estado deseado con la API cloud. Ventaja: MISMO tooling que apps K8s (kubectl, ArgoCD, RBAC, admission controllers). Ventaja para GitOps puro.", "correct": true, "why": "Correcto. Crossplane 'kubernetifica' la infra: todo es CRD, todo se reconcilia via controllers. Si ya usas ArgoCD/Flux para apps, aplicar el mismo workflow a infra es enorme simplificación. Un platform engineer definió: 'Crossplane es Terraform si Terraform fuera nativo de K8s'." },
+        { "letter": "B", "text": "El modelo de reconciliación continua es distinto de Terraform 'plan/apply'. Crossplane monitoriza CONSTANTEMENTE los recursos y auto-corrige drift. Si alguien cambia manualmente en la console AWS, Crossplane revierte. Terraform solo detecta drift cuando corres `plan`.", "correct": true, "why": "Correcto. Reconciliation loops son core K8s pattern. Para infra, esto significa: no puedes hacer 'quick manual fix' en la console — Crossplane lo revertirá. Es más estricto que Terraform pero también más confiable en enforcement." },
+        { "letter": "C", "text": "Compositions permiten crear abstracciones de alto nivel: defines un CompositeResource `PostgreSQLInstance` que internamente crea RDS + Subnet Group + Security Group + Secret. Devs solo aplican YAML de `PostgreSQLInstance` sin conocer los recursos AWS subyacentes. Es el 'building block' del platform engineering moderno.", "correct": true, "why": "Correcto. Compositions son el equivalente K8s de Terraform modules o CDK constructs, pero declarativos vía YAML. Un platform team define la Composition una vez (con opinions internas de seguridad, backup, tagging), devs consumen la abstracción sin conocer detalles cloud." },
+        { "letter": "D", "text": "Requiere que YA tengas Kubernetes cluster funcionando — Crossplane corre EN K8s. Bootstrap problem: ¿cómo creas el cluster inicial si Crossplane necesita cluster? Solución típica: terraform/eksctl para bootstrap cluster inicial, luego Crossplane para todo lo demás.", "correct": true, "why": "Correcto. El chicken-and-egg es real. Enterprises típicamente usan Terraform para 'foundation' (VPCs, IAM roles, cluster inicial) y Crossplane para 'day-to-day' (RDS instances, S3 buckets, workload dependencies). O usan servicios managed K8s (EKS, GKE) creados fuera de Crossplane." },
+        { "letter": "E", "text": "Crossplane reemplaza completamente Terraform en cualquier org.", "correct": false, "why": "Exagerado. Muchas orgs combinan ambos (Terraform para bootstrap y multi-cluster, Crossplane para infra por-app). Otras se quedan con Terraform porque el equipo no quiere Kubernetes-first mindset para todo." }
+      ],
+      "explanation": "Crossplane (creado por Upbound, ex-Rook Ceph team) redefine IaC como K8s CRDs. Ventajas: (1) UN solo tooling (kubectl, ArgoCD, Helm) para apps E infra; (2) reconciliación continua (drift auto-corregido); (3) RBAC K8s aplicado a infra (namespaces con SecurityContext limitando qué puede crear cada equipo); (4) admission controllers para políticas (OPA Gatekeeper); (5) Compositions para abstracciones. Desventajas: (1) requiere K8s como pre-requisito; (2) bootstrap awkward; (3) menos madura que Terraform en algunos providers; (4) YAML gets verbose sin Compositions; (5) ecosystem menor. Sweet spot: platform teams con K8s ya establecido, GitOps-heavy, con devs que consumen abstracciones (no cloud engineers).",
+      "realWorld": "Crossplane es CNCF Incubating (2020). Upbound (empresa detrás) ofrece managed version. Usuarios notables: Autodesk, Grafana Labs, Deutsche Bahn. HashiCorp Terraform mantiene market position dominante pero Crossplane crece en K8s-native shops. Empresas como Grafana Labs escribieron sobre migración parcial de Terraform a Crossplane.",
+      "tags": ["Crossplane", "K8s", "CRDs", "GitOps", "Compositions"],
+      "tech": ["crossplane", "kubernetes", "argocd"],
+      "references": [{ "title": "crossplane.io" }, { "title": "Upbound blog" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "iac",
+      "topic": "cdk8s y cdktf — CDK más allá de AWS",
+      "difficulty": "mid",
+      "scenario": "Tu equipo usa AWS CDK con éxito. Preguntan: '¿podemos usar CDK para generar manifests de Kubernetes? ¿y para Terraform en Azure?'.",
+      "question": "¿Qué son cdk8s y cdktf y qué generan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "cdk8s (CDK for Kubernetes) genera manifests YAML de K8s desde TS/Python. cdktf (CDK for Terraform) genera archivos JSON de Terraform desde TS/Python/Go/C#. Ambos usan el mismo framework CDK (`constructs` library) pero producen artifacts distintos. Filosofía: 'CDK es un compiler de código a YAML/JSON declarativo — el backend (CFN, TF, K8s) es intercambiable'.", "correct": true, "why": "Correcto. AWS abrió el framework CDK como capa genérica: la lib `constructs` es el fundamento (construct tree, synth), y hay múltiples 'toolkits' (aws-cdk-lib, cdk8s, cdktf) que producen distintos outputs. cdk8s es especialmente popular para reemplazar Helm charts con TypeScript type-safe." },
+        { "letter": "B", "text": "cdk8s deploya directamente a Kubernetes sin generar YAML.", "correct": false, "why": "cdk8s solo GENERA YAML (`cdk8s synth`); tú lo aplicas con kubectl, ArgoCD, Flux, o el tool que uses. Es intencional — mantiene GitOps compatibility." },
+        { "letter": "C", "text": "cdktf reemplaza completamente Terraform CLI.", "correct": false, "why": "cdktf genera JSON que Terraform CLI aplica (`cdktf deploy` internamente hace `terraform apply`). Sigue necesitando providers y state backend Terraform." },
+        { "letter": "D", "text": "cdk8s y cdktf son proyectos separados sin relación con AWS CDK.", "correct": false, "why": "Todos son proyectos de AWS/CNCF que comparten el core framework `constructs`. cdk8s es CNCF Sandbox, mantenido por AWS + comunidad." }
+      ],
+      "explanation": "El ecosistema CDK se ha expandido: (1) aws-cdk-lib → CloudFormation; (2) cdk8s → Kubernetes YAML; (3) cdktf → Terraform JSON. Todos comparten `constructs` (lib npm 'constructs'). Ventaja: si tu equipo aprende CDK, puedes aplicarlo en múltiples targets. cdk8s especialmente relevante como alternativa a Helm: (a) type safety real (TypeScript vs Go templates); (b) mejor testing (unit tests con Jest); (c) imports de recursos existentes (`cdk8s import`); (d) composición vía classes. Pero: menos madura que Helm en distribución (no hay 'hub' central, no hay charts ready para instalar).",
+      "realWorld": "cdk8s fue anunciado por AWS en 2020 en KubeCon. Empresas que lo adoptaron: Grafana Labs, Fidelity Investments. cdktf fue joint effort HashiCorp+AWS anunciado en 2020. Ejemplo interesante: HashiCorp Terraform sigue con mayor market share pero cdktf abrió puerta a devs TS/Python que preferían no aprender HCL.",
+      "tags": ["cdk8s", "cdktf", "CDK", "K8s", "constructs"],
+      "tech": ["cdk8s", "cdktf", "kubernetes", "terraform"],
+      "references": [{ "title": "cdk8s.io" }, { "title": "cdktf docs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "iac",
+      "topic": "Testing IaC — unit tests",
+      "difficulty": "mid",
+      "scenario": "Tu abstracción CDK `SecureBucket` debe crear un S3 bucket con encryption + versioning + block public access. Quieres tests que verifiquen esto SIN crear infra real en AWS.",
+      "question": "¿Cómo escribes unit tests de infrastructure code (CDK/Pulumi)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "En CDK: `assertions` module con `Template.fromStack(stack)` permite aserciones sobre el CloudFormation generado. `template.hasResourceProperties('AWS::S3::Bucket', { BucketEncryption: {...}, VersioningConfiguration: {...} })`. Ejecuta durante `cdk synth`, sin API calls a AWS. Rápido y determinístico.", "correct": true, "why": "Correcto. El key insight: CDK synth es puro (input código → output template), así que testeas el output. `assertions` provee helpers para verificar recursos, properties, count. Se ejecuta con `jest` como cualquier test JS." },
+        { "letter": "B", "text": "En Pulumi: `pulumi.runtime.setMocks({ newResource, call })` intercepta creación de recursos y llamadas a providers. Tus tests describen resources esperados sin llegar a AWS. Combinable con Jest/pytest.", "correct": true, "why": "Correcto. Pulumi provee un runtime de testing que 'mocka' las llamadas al engine. Cualquier `new aws.s3.Bucket(...)` en el test devuelve un mock deterministic sin ir a AWS. Ideal para verificar lógica de composición de recursos." },
+        { "letter": "C", "text": "Snapshot testing: capturas el template generado como snapshot JSON y comparas contra futuros builds. Detecta cambios NO INTENCIONALES en la infra generada. Útil para detectar drift entre versiones de CDK/libraries. Combina con assertions puntuales para claridad.", "correct": true, "why": "Correcto. Snapshot testing (Jest `toMatchSnapshot()`) es popular para verificar que refactors no cambian el output. Peligro: 'flapping snapshots' que se actualizan sin revisar — regla: siempre code review de cambios de snapshot." },
+        { "letter": "D", "text": "Aspect testing en CDK: usa `Aspects.of(stack).add(new MyAspect())` para aplicar validaciones a TODOS los recursos del tree. Ej: 'todo bucket debe tener versioning' — un Aspect visita el tree y falla synth si encuentra bucket sin versioning. Es policy-as-code embedded en el proceso de synth.", "correct": true, "why": "Correcto. Aspects son mecanismo CDK-nativo para cross-cutting concerns. Se ejecutan durante synth y pueden mutar el tree o emitir errores. Usados para enforcement de compliance interno (obligar encryption, tags, etc)." },
+        { "letter": "E", "text": "El único testing válido es `cdk deploy` en cuenta AWS real.", "correct": false, "why": "Extremo. Deploy real es integration test — lento, costoso, con side effects. Unit tests deben ser rápidos y locales; integration tests complementan (no sustituyen)." }
+      ],
+      "explanation": "Testing IaC tiene 3 niveles: (1) UNIT — verifica que synth produce lo esperado (assertions, mocks); (2) INTEGRATION — deploy en cuenta de test, verificar recursos reales (terratest, Pulumi's `pulumi up --stack test`); (3) SNAPSHOT — comparar output vs baseline (detectar cambios no intencionales). Pyramid: muchos unit, pocos integration (lentos y costosos), snapshots como safety net. Aspects en CDK son un 4o mecanismo: enforcement estático durante synth (falla el build si violación). Terraform testing es más limitado — `terraform validate` es sintaxis, `terraform plan` require credentials, terratest ejecuta apply real. Pulumi/CDK ganan en unit test story por su naturaleza programática.",
+      "realWorld": "AWS CDK provee `@aws-cdk/assertions` como parte oficial. Snowflake escribió sobre uso de Pulumi mocks para test de compositions internas. Amazon usa CDK internamente con testing pyramid: unit → snapshot → integration en dev accounts → prod deploy. HashiCorp promueve terratest (Go) para testing Terraform pero requiere deploys reales — costo y velocidad son limitaciones.",
+      "tags": ["testing", "unit tests", "mocks", "snapshot", "Aspects"],
+      "tech": ["aws-cdk", "pulumi", "jest"],
+      "references": [{ "title": "AWS CDK — Testing constructs" }, { "title": "Pulumi — Unit Testing" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "iac",
+      "topic": "OPA + Rego para policy as code",
+      "difficulty": "senior",
+      "scenario": "Compliance exige: 'ningún S3 bucket puede ser público'. Quieres bloquear PRs que violen la regla, no descubrirlo en producción. Un consultor menciona OPA y Rego.",
+      "question": "¿Qué es OPA + Rego y cómo se aplica a IaC?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OPA (Open Policy Agent) es un motor de policy propósito general (CNCF Graduated). Rego es su lenguaje declarativo para expresar policies como: 'deny if bucket.acl == public'. Aplicable en CI/CD contra outputs de IaC: `opa eval --data policies/ --input cdk.out/template.json 'data.deny'`. Falla el pipeline si hay violaciones. También K8s (admission via Gatekeeper), API gateways (Envoy), servicios internos.", "correct": true, "why": "Correcto. OPA + Rego es el estándar de facto para policy as code cross-tool. La belleza: SEPARAS las policies de los recursos — mismo Rego funciona contra CDK synth output, Terraform plan output, K8s manifests. Un equipo de compliance define policies una vez, se aplican a todo." },
+        { "letter": "B", "text": "OPA es específico de Kubernetes.", "correct": false, "why": "OPA es propósito general. Su primer big adoption fue en K8s (via Gatekeeper) pero se usa en Terraform Cloud, Kafka, servicios web, autorización de APIs, etc." },
+        { "letter": "C", "text": "Rego es un fork de HCL.", "correct": false, "why": "Rego es lenguaje declarativo distinto (inspirado en Datalog). Sintaxis diferente, orientado a rules/queries." },
+        { "letter": "D", "text": "OPA solo funciona en runtime, no en CI/CD.", "correct": false, "why": "OPA funciona en ambos. En CI/CD: `opa eval` contra artifacts (templates, plans). En runtime: sidecar/admission controller/middleware que consulta OPA en cada request." }
+      ],
+      "explanation": "OPA + Rego separa policies del código de infra. Flujo típico: (1) devs escriben CDK/Terraform; (2) CI corre `cdk synth` / `terraform plan`; (3) CI corre `opa eval` contra output con policies definidas en Rego; (4) OPA devuelve deny/allow con reasons; (5) pipeline falla o continúa. Ventajas: (a) policies auditables (git, PRs); (b) reutilizables cross-tool; (c) testables (`opa test`); (d) empresarial (Styra ofrece managed OPA). Alternativas: HashiCorp Sentinel (propio de HashiCorp, integrado en Terraform Cloud/Enterprise — poderoso pero cerrado), CDK Aspects (embedded en CDK synth, no cross-tool), Checkov/tfsec (herramientas específicas con reglas built-in pero menos extensibles).",
+      "realWorld": "OPA es CNCF Graduated (2021). Netflix, Chef, Pinterest, Capital One usan OPA. Styra (empresa detrás de OPA) ofrece Enterprise management. HashiCorp Sentinel compite en el nicho Terraform específicamente. Ejemplo Netflix: policies OPA controlan qué IAM roles pueden crear qué recursos en cuentas AWS.",
+      "tags": ["OPA", "Rego", "policy as code", "compliance"],
+      "tech": ["opa", "rego"],
+      "references": [{ "title": "openpolicyagent.org" }, { "title": "OPA — Terraform integration" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "iac",
+      "topic": "HashiCorp Sentinel vs OPA",
+      "difficulty": "senior",
+      "scenario": "Tu equipo usa Terraform Cloud Enterprise. Discuten: '¿usamos Sentinel (integrado nativo) o OPA (open source estándar)?'.",
+      "question": "¿Cuáles son los tradeoffs entre Sentinel y OPA para Terraform?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Sentinel es integrado NATIVO en Terraform Cloud/Enterprise: acceso directo al plan, state, config, workspace metadata. Escritura de policies más ergonómica para Terraform específicamente. Pero: closed-source, license HashiCorp, solo funciona con productos HashiCorp (Terraform, Vault, Consul, Nomad).", "correct": true, "why": "Correcto. Sentinel se diseñó específicamente para HashiCorp stack. Tiene 'imports' que dan acceso al modelo de datos de Terraform de forma natural. Si estás all-in en HashiCorp, es opción legítima." },
+        { "letter": "B", "text": "OPA es open source (Apache 2.0), CNCF Graduated, aplicable cross-tool (K8s, Envoy, custom). Requiere parsear el output de `terraform show -json plan.out` como input JSON. Menos ergonómico para Terraform pero portable a todo lo demás en tu stack.", "correct": true, "why": "Correcto. OPA compensa menor integración nativa con universalidad. Un equipo platform que ya usa OPA para K8s admission puede reutilizar el mismo tooling y knowledge para Terraform, ahorrando learning curve doble." },
+        { "letter": "C", "text": "Con la adopción de BUSL license por HashiCorp en 2023 para Terraform, algunas empresas migraron a OpenTofu (fork) y a stacks non-HashiCorp — esto refuerza el atractivo de OPA (neutral) sobre Sentinel (lock-in HashiCorp).", "correct": true, "why": "Correcto. El cambio de license de HashiCorp (Aug 2023) creó incertidumbre. Algunas orgs adoptaron OpenTofu (fork Linux Foundation) para evitar lock-in. Sentinel solo funciona con HashiCorp productos, lo que lo hace menos atractivo para orgs que valoran independence." },
+        { "letter": "D", "text": "Sentinel tiene enforcement levels: advisory (warning), soft-mandatory (override con approval), hard-mandatory (bloqueo). OPA por default es solo deny/allow — tienes que implementar niveles en tu CI custom.", "correct": true, "why": "Correcto. Sentinel enforcement levels son granularidad útil (algunas policies quieres warn, otras block). OPA es mecanismo más simple; capas de enforcement se construyen en el pipeline consumer." },
+        { "letter": "E", "text": "Sentinel es siempre gratis y open source.", "correct": false, "why": "Sentinel es propietario de HashiCorp. Requiere Terraform Cloud Team & Governance tier o Terraform Enterprise. En Terraform CLI open source no funciona." }
+      ],
+      "explanation": "Sentinel vs OPA es debate real en empresas con Terraform. Sentinel: mejor integrado, mejor DX para Terraform específico, pero lock-in HashiCorp y license. OPA: universal, open source, ecosistema más grande, pero más setup para Terraform. En 2023 el cambio de HashiCorp a BUSL license generó desconfianza y algunos moves. Terraform Cloud Free tier NO incluye Sentinel — es paywall. Alternativas open source específicas: Checkov (Bridgecrew/Palo Alto), tfsec (aquasec), Terrascan — más 'reglas prebuilt' menos 'policy language flexible'. Regla práctica: si eres pure-HashiCorp shop con budget para Enterprise, Sentinel; si multi-tool o OSS-first, OPA.",
+      "realWorld": "HashiCorp Terraform mantiene ~70% market share pre-license controversy. Post-2023, OpenTofu ganó tracción (Linux Foundation) con GitHub stars significativos. Empresas como Capital One, Netflix usan OPA extensivamente. HashiCorp responde con integraciones deeper (Vault + Sentinel + Terraform) para mantener lock-in valuable.",
+      "tags": ["Sentinel", "OPA", "HashiCorp", "policy", "license"],
+      "tech": ["terraform", "sentinel", "opa", "opentofu"],
+      "references": [{ "title": "HashiCorp Sentinel Docs" }, { "title": "OpenTofu blog" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "iac",
+      "topic": "CDK Aspects — policy embedded",
+      "difficulty": "senior",
+      "scenario": "En vez de policy as code externo (OPA), quieres enforcement INSIDE del código CDK. Ejemplo: '¿podemos hacer que TODOS los buckets tengan versioning sin escribirlo en cada Stack?'.",
+      "question": "¿Qué son CDK Aspects y qué problema resuelven?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aspects son mecanismo CDK para aplicar cross-cutting concerns al construct tree. Un Aspect es una clase con método `visit(node)` que se ejecuta contra CADA nodo del tree durante synth. Usos: (1) enforcement — validar y fallar synth si un recurso viola política; (2) mutation — modificar propiedades automáticamente (agregar tags, forzar encryption); (3) reporting — coletar métricas del tree. Se aplica con `Aspects.of(scope).add(new MyAspect())`.", "correct": true, "why": "Correcto. Aspects son el patrón 'visitor' aplicado al construct tree. Ejecutan durante synth (antes de generar template), permitiendo validación temprana y mutación consistente. Ejemplo típico: `TagsAspect` que agrega tags corporativas a todos los recursos taggables, `BucketVersioningAspect` que fuerza versioning si no está seteado." },
+        { "letter": "B", "text": "Son solo para logging.", "correct": false, "why": "Sub-uso. Aspects pueden mutar recursos y emitir errors — son mucho más que logging." },
+        { "letter": "C", "text": "Aspects requieren instalación de plugin externo.", "correct": false, "why": "Aspects son core del framework CDK (`aws-cdk-lib`). No requieren plugins." },
+        { "letter": "D", "text": "Solo funcionan en L3 constructs.", "correct": false, "why": "Aplican a cualquier construct del tree (L1, L2, L3, custom). El visitor pattern es agnóstico de nivel." }
+      ],
+      "explanation": "Aspects son underused pero potentes. Pattern típico: platform team define Aspects con opinions internas (tags obligatorios, encryption, logging enabled, cost allocation), los aplica al App root, y devs individuales heredan enforcement automático sin escribirlo. Comparado con OPA: OPA es EXTERNAL (corre después de synth contra template), Aspects son INTERNAL (corren durante synth y pueden MUTAR). Aspects son más rápidos (embedded en build) pero solo CDK-specific; OPA es más lento (extra step CI) pero cross-tool. Buena práctica: Aspects para 'auto-fix' (agregar tags, forzar encryption) + OPA para 'audit' (verificar compliance final). Complementarios, no competitors.",
+      "realWorld": "Amazon internamente usa Aspects extensivamente para compliance (encryption obligatorio, tagging estándar). Capital One publica CDK constructs con Aspects incluidos. Empresas fintech usan Aspects para forzar audit logging en cada recurso. Snowflake escribió sobre uso combinado Aspects (internal enforcement) + OPA (external audit).",
+      "tags": ["CDK Aspects", "policy", "visitor pattern", "enforcement"],
+      "tech": ["aws-cdk"],
+      "references": [{ "title": "AWS CDK — Aspects" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "iac",
+      "topic": "State management comparativo",
+      "difficulty": "senior",
+      "scenario": "Evalúas Terraform, Pulumi, CDK, Crossplane. Un architect pregunta: '¿cómo maneja cada uno el STATE?'. Es pregunta crítica para operational maturity.",
+      "question": "¿Cómo se compara el state management entre las herramientas modernas de IaC?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Terraform: state file (tfstate) JSON que TÚ gestionas — backends soportados (S3+DynamoDB, Terraform Cloud, GCS, Azure Blob, HTTP, Consul). Locking crítico para concurrency. Encryption at rest depende del backend. Backup y disaster recovery son responsabilidad tuya. Sensitive values en state (passwords) requieren cuidado.", "correct": true, "why": "Correcto. Terraform state es el aspecto más 'operational' de Terraform. Elegir backend correctamente es crítico (S3+DynamoDB es idiomático AWS; Terraform Cloud es managed). Casos de horror: state file borrado accidentalmente, corruption, race conditions sin lock." },
+        { "letter": "B", "text": "Pulumi: state en backend Pulumi Service (SaaS default) o self-hosted (S3, Azure Blob, GCS, filesystem, HTTP). Locking automático. State encriptado en reposo. Sensitive values marcados como `Secret` se encriptan automáticamente. Historia de deployments accesible en dashboard.", "correct": true, "why": "Correcto. Pulumi Service (SaaS) es equivalente a Terraform Cloud. Self-hosted opciones dan flexibilidad. Ventaja Pulumi: `Secret` como primer-class citizen — cualquier valor derivado de un Secret propaga secretness automáticamente." },
+        { "letter": "C", "text": "AWS CDK: NO gestionas state — CloudFormation es el state, managed por AWS. No hay tfstate file. Ventaja: cero setup ops de state. Desventaja: hereda limitaciones CFN (drift detection mediocre, no cross-account state fácil, stack limits).", "correct": true, "why": "Correcto. Esta es la simplificación más grande de CDK vs Terraform: no piensas en state. Downside: cuando algo se corrompe en CFN, no tienes tanto control (no hay `terraform state rm`)." },
+        { "letter": "D", "text": "Crossplane: state en etcd de Kubernetes vía CRDs. K8s API es el 'state store' de facto. Backup = backup del cluster etcd (velero, backup solutions). Multi-cluster requiere federation. Reconciliation continua elimina drift silenciosamente.", "correct": true, "why": "Correcto. Crossplane hereda el modelo K8s de storage/state. Ventaja: si ya operas K8s con backup y HA, infra state hereda las mismas prácticas. Desventaja: si K8s cluster se pierde, pierdes state (backup crítico)." },
+        { "letter": "E", "text": "Todos guardan state igual, es solo terminología distinta.", "correct": false, "why": "Falso. Los modelos son fundamentalmente distintos: Terraform (explicit tfstate file), Pulumi (managed backend), CDK (CFN implicit), Crossplane (K8s CRDs). Cada uno tiene ops implications diferentes." }
+      ],
+      "explanation": "State es donde las herramientas divergen operationalmente. Terraform pone el peso en el usuario: eliges backend, configuras locking, backup. Pulumi ofrece SaaS default con opción self-hosted. CDK elimina el problema delegando a CloudFormation (a costo de flexibilidad). Crossplane usa K8s como state store natural. Consecuencias: (1) DISASTER RECOVERY: Terraform requiere backup + recovery plan; CDK depende de AWS; Pulumi depende de backend elegido; Crossplane depende de K8s backup. (2) MULTI-USER: todos soportan locking pero mecanismos distintos. (3) SECRETS EN STATE: Terraform state puede contener secrets en plain text (backend encryption es crítico); Pulumi tiene Secret type; CDK/CFN via NoEcho parameters; Crossplane via K8s Secrets. (4) IMPORT existing resources: Terraform tiene `terraform import`, Pulumi `pulumi import`, CDK necesita CFN import (más awkward), Crossplane tiene `crossplane migrate`.",
+      "realWorld": "Netflix documentó state file loss como 'severe incident' que requirió reconstruction — motivó investment en backups robustos. Snowflake usa Pulumi Service (SaaS) para eliminar ops burden de state. Amazon prefiere CDK internamente en muchas equipos para no lidiar con state. Grafana Labs usa Crossplane con backups regulares de etcd.",
+      "tags": ["state", "backend", "backup", "disaster recovery"],
+      "tech": ["terraform", "pulumi", "aws-cdk", "crossplane"],
+      "references": [{ "title": "Terraform Backend Configuration" }, { "title": "Pulumi — State and Backends" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "iac",
+      "topic": "Multi-language IaC — Pulumi cross-language",
+      "difficulty": "senior",
+      "scenario": "Tu backend team usa Python, tu platform team usa Go, tu frontend team infra usa TypeScript. Un arquitecto sugiere: 'usemos Pulumi para que cada team escriba en su lenguaje pero comparta packages'.",
+      "question": "¿Cómo maneja Pulumi packages cross-language y cuál es el mecanismo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pulumi Packages usan `pulumi-plugin` protocol: un package se define UNA vez en cualquier lenguaje (típicamente TS o Go) y se compila a bindings para todos los lenguajes soportados (TS, Python, Go, C#, Java, YAML). Package Component Providers permiten crear abstracciones custom que otros teams consumen en su lenguaje preferido. Cross-language sharing real, no wrappers manuales.", "correct": true, "why": "Correcto. El sistema de Multi-Language Packages es diferenciador clave de Pulumi. Un platform team escribe `MyDatabaseComponent` en TypeScript, publica el package con schema, y devs de otros equipos lo consumen en Python o Go con types nativos. La generación es automática vía `pulumi package gen-sdk`." },
+        { "letter": "B", "text": "Cada team debe reescribir el package en su lenguaje.", "correct": false, "why": "Sería lo peor caso. Pulumi específicamente resuelve esto con Multi-Language Packages para evitar duplication." },
+        { "letter": "C", "text": "Pulumi solo soporta TypeScript.", "correct": false, "why": "Falso. Pulumi soporta TypeScript, Python, Go, C#, Java, YAML. Cross-language sharing es feature explícito." },
+        { "letter": "D", "text": "Necesitas compilar todo a un solo lenguaje antes de correr `pulumi up`.", "correct": false, "why": "Cada team ejecuta `pulumi up` en su propio lenguaje. El compartir es a nivel de packages consumidos, no del código final." }
+      ],
+      "explanation": "Multi-Language Packages es feature clave de Pulumi para org-wide platform teams: (1) platform team define abstracciones ('nuestra empresa siempre necesita RDS con backup + monitoring + IAM standard'); (2) publish como Pulumi Package con schema JSON; (3) devs consumen en su lenguaje preferido; (4) upgrade del package es coordinated (semver). Compare con CDK: `constructs` se puede compartir vía JSII (JavaScript Interop Interface Subsystem) que hace lo mismo — un construct en TS se compila a bindings Python/Java/C#/Go. Cada CDK library es JSII multi-language. Terraform también tiene modules pero no cross-language (HCL es single-language). Crossplane XRDs son declarativos YAML así que naturalmente 'multi-language' (cualquier tool que hable K8s API los consume).",
+      "realWorld": "Snowflake usa Pulumi packages internos para abstracciones de multi-cloud. AWS construye CDK bindings vía JSII para 5 lenguajes desde una sola source (TS). Panasonic usa Pulumi Python + Go para IoT + backend teams. HashiCorp Terraform siempre requiere HCL, limitando cross-team language flexibility.",
+      "tags": ["Pulumi", "multi-language", "packages", "JSII"],
+      "tech": ["pulumi", "aws-cdk", "jsii"],
+      "references": [{ "title": "Pulumi — Multi-Language Packages" }, { "title": "JSII — Multi-language libraries" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "iac",
+      "topic": "Backend management strategies",
+      "difficulty": "senior",
+      "scenario": "Nueva empresa arranca. Debate: '¿local tfstate? ¿S3 + DynamoDB? ¿Terraform Cloud? ¿Pulumi Service?'. Un architect senior dice: 'la estrategia de backend define tu operational maturity'.",
+      "question": "¿Cuáles son las mejores prácticas de backend management para IaC?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "NUNCA local state en producción. Local tfstate en laptops significa: (a) no team collaboration; (b) risk de pérdida (laptop se rompe); (c) no locking (dos devs corriendo apply concurrent corrompen state); (d) no audit trail. Aceptable solo para experimentación personal.", "correct": true, "why": "Correcto. Local state es footgun clásico. Aunque `terraform init` en local funciona, cualquier uso serio necesita backend remoto desde día 1. Empresas con incidents de 'state file borrado accidentalmente' usualmente empezaron con local sin realizar." },
+        { "letter": "B", "text": "S3 + DynamoDB para Terraform en AWS: S3 con encryption + versioning + logging + MFA delete, DynamoDB para locking. Backup: S3 versioning + cross-region replication. Configuración: separate state file per environment (prod/staging/dev) y per service. Naming convention consistente.", "correct": true, "why": "Correcto. El patrón S3+DynamoDB es idiomático AWS. Versioning en S3 da backup gratis (puedes recover state anterior). DynamoDB provee lock via `LockID` primary key. Naming crítico: `s3://terraform-state-prod/service-name/terraform.tfstate` para evitar collisions." },
+        { "letter": "C", "text": "Separación por blast radius: NO un solo tfstate global. Split por: (a) foundation (VPC, IAM, KMS — cambia raro, alto blast radius); (b) shared services (databases, DNS — medium radius); (c) apps (per service, low radius). Cada state independiente permite deploys concurrent y limita blast si state corrompe.", "correct": true, "why": "Correcto. Estado monolítico es anti-patrón — Netflix documentó el problema. Split por blast radius permite: (a) team autonomy (cada team maneja su state); (b) deploys concurrent (foundation update no bloquea app deploys); (c) faster plans (state pequeño = plan rápido); (d) blast containment (corruption en 1 state no afecta otros)." },
+        { "letter": "D", "text": "Terraform Cloud/Pulumi Service dan: state managed, locking automático, RBAC, VCS integration, remote runs (no credentials en laptops), audit log, policy as code integrado. Compensa el precio con reducción operational burden.", "correct": true, "why": "Correcto. Para equipos que valoran menos ops overhead, SaaS backends valen su precio. Terraform Cloud tiene free tier limitado + paid tiers. Pulumi Service tiene free individual + paid team. Ventaja psicológica: 'no manejas state file, punto'." },
+        { "letter": "E", "text": "Compartir un solo state file entre 10 equipos es la mejor práctica.", "correct": false, "why": "Anti-patrón. Contention en el lock (10 teams esperando turno), blast radius enorme, plans lentísimos, coupling forzado. Split por team/service." }
+      ],
+      "explanation": "Backend management es donde IaC 'operational maturity' se mide. Principios: (1) REMOTE state siempre (nunca local en prod); (2) LOCKING obligatorio (nunca concurrent applies sin lock); (3) ENCRYPTION at rest + in transit; (4) BACKUP automatizado (versioning, replication); (5) SPLIT por blast radius (foundation / shared / apps); (6) NAMING convention consistente; (7) ACCESS control (IAM: solo pipeline puede escribir state); (8) SECRETS: state contiene secretos — lock down access, considera Vault provider. Terraform Cloud/Pulumi Service simplifican todo esto pero con lock-in y costo. Self-hosted (S3+DynamoDB, GCS, Azure Blob) es más cheap pero requiere ops discipline. Crossplane: state en etcd, backup vía Velero o solutions managed K8s.",
+      "realWorld": "Netflix migró de mono-state a split por service, documentado en blogs. HashiCorp Terraform Cloud tiene enterprise tier con specific compliance certifications (SOC2, FedRAMP). Pulumi Service similar. Snowflake usa Pulumi Service para eliminar state ops. Empresas fintech usan Vault + Terraform con state encrypted por Vault keys.",
+      "tags": ["backend", "state", "S3", "DynamoDB", "Terraform Cloud"],
+      "tech": ["terraform", "pulumi", "s3", "dynamodb"],
+      "references": [{ "title": "Terraform S3 Backend" }, { "title": "Pulumi Backend Configuration" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "iac",
+      "topic": "Integration testing con terratest",
+      "difficulty": "mid",
+      "scenario": "Tienes Terraform module `my-vpc-module`. Unit test verifica sintaxis pero necesitas verificar que el deploy REAL crea recursos correctos (que subnets tienen right CIDR, que NAT gateway funciona).",
+      "question": "¿Qué es terratest y cómo se diferencia de unit testing?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "terratest (Gruntwork, Go) ejecuta `terraform apply` REAL en cuenta de test, verifica recursos con SDK AWS/GCP/Azure (¿existe el bucket? ¿el CIDR es correcto?), y ejecuta `terraform destroy` al final. Es INTEGRATION test — lento (minutos), costoso (recursos reales), pero verifica comportamiento end-to-end. Complementa unit tests, no los reemplaza.", "correct": true, "why": "Correcto. terratest es el estándar para integration testing de Terraform modules. Filosofía Gruntwork: 'modules DEBEN tener tests que crean recursos reales'. Costos: cada test corre en cuenta AWS (money) y toma minutos. Estrategia: unit tests corren en cada PR, integration corre en merge to main o nightly." },
+        { "letter": "B", "text": "terratest es fork de Terraform.", "correct": false, "why": "Falso. terratest es una library Go independiente que INVOCA `terraform` CLI y verifica outputs." },
+        { "letter": "C", "text": "terratest solo funciona con AWS.", "correct": false, "why": "Falso. Terratest tiene helpers para AWS, GCP, Azure, K8s, Docker, HTTP. Puedes verificar cualquier cosa desde Go." },
+        { "letter": "D", "text": "terratest reemplaza CI/CD.", "correct": false, "why": "terratest CORRE en CI/CD como un tipo de test. No reemplaza el pipeline." }
+      ],
+      "explanation": "Testing pyramid para IaC: (1) BASE: unit/synth tests (rápidos, muchos) — `cdk assertions`, `pulumi mocks`, `terraform validate`; (2) MIDDLE: integration en test account (más lentos, menos) — terratest, Pulumi `pulumi up` en stack test, CDK `integ-tests`; (3) TOP: smoke tests post-deploy en staging/prod (mínimos). Terratest patterns: `defer terraform.Destroy(...)` para cleanup, `random.UniqueId()` para evitar collisions cuando corren concurrent, timeouts explícitos, retry con backoff. Alternativas: Pulumi tiene testing framework nativo, CDK tiene `integ-tests` (deploy real + snapshot post-deploy), Crossplane tiene E2E con `kuttl`. Costo típico integration test suite: $10-100/mes en account de test si corre nightly.",
+      "realWorld": "Gruntwork (creadores de terratest) mantienen library open source usado por miles de teams. Netflix documentó uso de integration tests para modules críticos. HashiCorp Terraform Cloud incluye 'test framework' desde 2023 como alternative built-in. Snowflake usa Pulumi native testing para similar propósito.",
+      "tags": ["terratest", "integration testing", "Gruntwork"],
+      "tech": ["terratest", "terraform", "go"],
+      "references": [{ "title": "terratest.gruntwork.io" }, { "title": "Terraform Test Framework" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "iac",
+      "topic": "Snapshot testing y su valor",
+      "difficulty": "senior",
+      "scenario": "Actualizas AWS CDK library de v2.100 a v2.120. Corres tests unit — pasan. Deployeas — algunos recursos se reemplazan (replacement) por cambio interno de defaults en CDK, causando downtime.",
+      "question": "¿Cómo snapshot testing previene este tipo de sorpresa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Snapshot testing captura el TEMPLATE CloudFormation generado (o Terraform plan, o K8s YAML) como archivo baseline. Cuando actualizas libraries o cambias código, el nuevo output se compara al snapshot. DIFF significativo = tests fail = obligas revisión humana. Detecta cambios NO INTENCIONALES: 'upgrade de library cambió un default que causará replacement'.", "correct": true, "why": "Correcto. Snapshot es safety net para cambios silenciosos. Ej: CDK library upgrade cambia default de `Bucket.encryption` de S3 a KMS — sin snapshot testing, no lo detectas hasta deploy. Con snapshot: diff evidente en PR, review consciente." },
+        { "letter": "B", "text": "Snapshot testing solo funciona en snapshots de VMs.", "correct": false, "why": "Confusión de términos. Snapshot testing (Jest style) es feature de testing frameworks: compara output actual vs baseline JSON. No relacionado con VM snapshots." },
+        { "letter": "C", "text": "Es lo mismo que unit testing.", "correct": false, "why": "Distinto. Unit tests verifican ASSERTIONS específicas ('esperamos versioning=true'); snapshot verifica que el output ENTERO no cambió respecto al baseline (catch-all)." },
+        { "letter": "D", "text": "Deprecado — nadie lo usa.", "correct": false, "why": "Al contrario, muy popular. Jest lo popularizó, CDK lo recomienda oficialmente." }
+      ],
+      "explanation": "Snapshot testing en IaC captura output complete: template CFN, plan Terraform, YAML K8s. Workflow: (1) primera vez → generar snapshot; (2) commit al git; (3) cambios futuros → diff vs snapshot; (4) si diff intencional → `jest --updateSnapshot` y review en PR. Peligros: (a) 'snapshot rot' — dev acepta diffs sin revisar, snapshot deja de tener valor; (b) archivos huge cuando muchos recursos; (c) noise con timestamps/IDs random (usar serializers custom que excluyan). Complemento perfecto de unit tests: unit tests para requisitos específicos, snapshots para 'nada más cambió'. En CDK: usa `Template.fromStack(stack).toJSON()` como snapshot input. En Terraform: `terraform show -json plan.out` como snapshot input. En Pulumi: mocked stacks para consistent output.",
+      "realWorld": "Jest popularizó snapshot testing. AWS CDK team recomienda snapshot tests para custom constructs. Amazon internal engineering escribió sobre 'snapshot testing saved us' cases donde cambios de library upgrade fueron detectados antes de prod. Pulumi también soporta pattern similar. Terraform Cloud tests puede comparar plans across runs.",
+      "tags": ["snapshot testing", "regression", "library upgrade"],
+      "tech": ["jest", "aws-cdk", "pulumi"],
+      "references": [{ "title": "Jest — Snapshot Testing" }, { "title": "AWS CDK Testing Best Practices" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "iac",
+      "topic": "IaC para GitOps — Crossplane vs Argo + Terraform",
+      "difficulty": "senior",
+      "scenario": "Quieres GitOps para toda tu infra: cualquier cambio via PR, ArgoCD aplica. Debates: (a) Crossplane (CRDs de infra reconciliados por ArgoCD nativo) vs (b) ArgoCD + workflows corriendo Terraform.",
+      "question": "¿Qué approach es mejor para GitOps de infraestructura?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Crossplane es 'GitOps-native': manifests son CRDs, ArgoCD los reconcilia como cualquier app K8s. Cambios en git → ArgoCD sync → Crossplane controller reconcilia con cloud API. Flow uniforme, mismo tooling para apps E infra. Drift detection nativa (reconciliation loop continuo).", "correct": true, "why": "Correcto. Crossplane fue diseñado explícitamente para este flow. Un platform engineer describe: 'con Crossplane, infra ES otra K8s workload'. Simplifica mental model — un solo tool (ArgoCD/Flux) para todo." },
+        { "letter": "B", "text": "Terraform + Atlantis o ArgoCD Workflows: PRs triggean `terraform plan` en CI, humano aprueba, `terraform apply` corre. Es 'GitOps-ish' pero requiere plumbing custom. Ventaja: mantiene Terraform maturity (providers robustos, community, ecosystem) sin migrar a K8s-native.", "correct": true, "why": "Correcto. Muchas empresas prefieren keep Terraform (ya invertido, team lo sabe, providers maduros) y agregarle GitOps con Atlantis (webhooks + plan comments en PR) o pipelines custom. Menos elegante que Crossplane pero pragmático." },
+        { "letter": "C", "text": "Crossplane pros: reconciliation continuo (drift auto-corregido), un solo tooling, RBAC K8s nativo. Cons: menor madurez de providers (algunos recursos no soportados o buggy), curva de aprendizaje K8s-native, requiere cluster K8s como pre-requisito.", "correct": true, "why": "Correcto. La decisión es sobre madurez organizacional. Crossplane brilla en shops K8s-heavy con platform teams experienced. Fails en shops donde K8s es nuevo o infra teams no quieren mindset K8s-first." },
+        { "letter": "D", "text": "Terraform + GitOps pros: maturity, ecosystem, providers robustos, team ya lo sabe. Cons: no drift auto-fix (solo detection), tooling separado de apps K8s, requires custom automation para 'PR to plan comment to apply' flow.", "correct": true, "why": "Correcto. Terraform con GitOps es 'best of both' compromise. Muchas empresas convergen aquí porque migración total a Crossplane es alto costo con beneficio incremental." },
+        { "letter": "E", "text": "Ambos son idénticos en resultado.", "correct": false, "why": "Falso. Modelo mental, tooling, madurez, y ops workflow son muy distintos. Elegir uno u otro es decisión architectural con implicaciones a largo plazo." }
+      ],
+      "explanation": "GitOps de infra tiene dos escuelas: (1) K8s-NATIVE (Crossplane): todo son CRDs, ArgoCD/Flux reconcilia, drift auto-fix, mismo tooling que apps; (2) TERRAFORM + AUTOMATION (Atlantis, ArgoCD Workflows, GitHub Actions): keep Terraform, agregar GitOps-like flow encima. Elección depende de: (a) K8s adoption maturity — si ya haces todo con K8s, Crossplane; si no, Terraform; (b) team skills — K8s-native mindset vs traditional infra; (c) provider coverage — Crossplane providers menos maduros en edge cases; (d) blast radius tolerance — Crossplane auto-reconcile puede sobreescribir manual fixes urgentes. Hybrid común: Terraform para foundation (VPCs, IAM, cluster inicial) + Crossplane para day-to-day recursos por-app.",
+      "realWorld": "Grafana Labs usa Crossplane extensively. Netflix continúa con Terraform + Spinnaker. Weaveworks (creadores de Flux) evangelizan Crossplane para GitOps infra. HashiCorp Terraform mantiene market position dominante en tradiciones infra shops. Empresas fintech reguladas suelen preferir Terraform por familiaridad de auditors.",
+      "tags": ["GitOps", "Crossplane", "Atlantis", "ArgoCD"],
+      "tech": ["crossplane", "terraform", "argocd", "atlantis"],
+      "references": [{ "title": "Atlantis — Terraform PR Automation" }, { "title": "Crossplane — GitOps guide" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "iac",
+      "topic": "Pulumi Automation API",
+      "difficulty": "staff",
+      "scenario": "Construyes internal developer platform: devs completan formulario web ('quiero un microservice con Postgres'), backend crea infra. Quieres invocar Pulumi PROGRAMÁTICAMENTE desde un servicio Node.js, sin ejecutar `pulumi` CLI.",
+      "question": "¿Qué es Pulumi Automation API y qué habilita?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Automation API es SDK que permite invocar Pulumi programáticamente sin usar el CLI: `const stack = await LocalWorkspace.createOrSelectStack(...); await stack.up();`. Ideal para: (1) internal platforms que crean infra 'on-demand' via UI; (2) CI/CD customizado; (3) testing scenarios; (4) multi-tenant infra donde cada tenant tiene stack propio creado dinámicamente. Es diferenciador vs Terraform (no tiene equivalente maduro).", "correct": true, "why": "Correcto. Automation API es feature killer de Pulumi para platform engineering. Casos de uso: 'platform team escribe un servicio Node.js que expone `POST /environments` — request crea stack Pulumi con recursos y devuelve URL', tipo Vercel/Netlify para infra. Terraform tiene alternatives (Terraform CDK Automation API, Terragrunt) pero menos ergonómicas." },
+        { "letter": "B", "text": "Es el CLI de Pulumi normal.", "correct": false, "why": "Automation API está SEPARADO del CLI. El CLI usa Automation API internamente pero también expone directamente para embed en servicios." },
+        { "letter": "C", "text": "Solo funciona con Pulumi Service (SaaS).", "correct": false, "why": "Automation API funciona con cualquier backend Pulumi (local, S3, Pulumi Service)." },
+        { "letter": "D", "text": "Reemplaza Kubernetes.", "correct": false, "why": "Sin sentido — Automation API es un SDK, no un runtime de containers." }
+      ],
+      "explanation": "Automation API redefine IaC como library en vez de solo CLI. Casos avanzados: (1) MULTI-TENANT SaaS: cada customer tiene stack Pulumi propio, tu backend gestiona lifecycle; (2) SELF-SERVICE INTERNAL: devs solicitan environments via web app, backend crea infra; (3) DYNAMIC INFRA: ML training jobs, ephemeral test envs, feature branch preview envs (like Vercel); (4) CUSTOM WORKFLOWS: DAG de deploys complejos con state machines. Terraform tiene equivalencia parcial (Terraform HTTP backend, Terragrunt orchestration) pero menos coherente. CDK tiene Custom Resources y CDK Pipelines pero para embedding en apps es awkward. Crossplane es K8s-native así que 'embedding' es kubectl API directo — muy powerful pero requiere K8s. Automation API es factor decisivo para muchos platform teams que eligen Pulumi.",
+      "realWorld": "Snowflake usa Pulumi Automation API para provisioning interno de compute clusters. Coder (dev environments as a service) usa Automation API. Empresas construyendo 'Vercel for backend' o 'Heroku alternatives' internas usan patrón similar. HashiCorp responde con Terraform Cloud API y Waypoint pero less unified.",
+      "tags": ["Pulumi", "Automation API", "internal platform"],
+      "tech": ["pulumi", "typescript"],
+      "references": [{ "title": "Pulumi Automation API" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "iac",
+      "topic": "Compositions en Crossplane",
+      "difficulty": "staff",
+      "scenario": "Platform team quiere que devs pidan 'PostgreSQL' sin especificar RDS instance class, subnets, security groups, backup config. Compositions Crossplane son la respuesta.",
+      "question": "¿Cómo funcionan Compositions y XRDs en Crossplane?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "XRD (Composite Resource Definition) define un CRD custom: `XPostgreSQLInstance` con params { size, storageGB, region }. Es el 'schema' que devs consumen — abstrae complejidad AWS.", "correct": true, "why": "Correcto. XRDs son 'API contract' entre platform y devs. Bien diseñado, expone solo lo que devs necesitan decidir (size, storage) ocultando lo que es opinion internal (VPC config, backup schedule, encryption)." },
+        { "letter": "B", "text": "Composition mapea el XRD a recursos cloud concretos: `XPostgreSQLInstance` → RDSInstance + SubnetGroup + SecurityGroup + Secret. Puede tener múltiples Compositions para el mismo XRD (dev, staging, prod) con diferentes opinions.", "correct": true, "why": "Correcto. Composition es la 'implementación' del XRD. Múltiples Compositions permiten: 'dev' usa t3.small con backup off; 'prod' usa r5.large con multi-AZ + backup + encryption. Devs eligen `compositionRef` en su claim." },
+        { "letter": "C", "text": "Claims son la instanciación por devs: `kind: PostgreSQLInstance` (claim, not composite) con { size: small, storageGB: 20 }. Crossplane crea el XR (composite) que triggerea creación de recursos AWS. Devs nunca ven CRDs low-level de AWS.", "correct": true, "why": "Correcto. Claims viven en namespaces (per team RBAC), composites viven a nivel cluster. Separación permite: platform team maneja compositions cluster-wide, devs solo tocan claims en su namespace." },
+        { "letter": "D", "text": "Compositions permiten combinar patches y transformaciones: 'toma name del claim, prependea env prefix, úsalo como DB identifier'. Sistema tipo mustache templates pero con validation. Complex pero poderoso para abstracciones reutilizables.", "correct": true, "why": "Correcto. Composition Functions (feature más reciente) permite lógica más rica que patches YAML — puedes escribir Go/Python que genera resources dinámicamente. Es como CDK constructs pero declarativo." },
+        { "letter": "E", "text": "Compositions son solo para K8s workloads, no para cloud resources.", "correct": false, "why": "Falso. Compositions se usan primariamente para agrupar cloud resources (RDS, S3, VPC) exponer abstracciones opinadas. K8s workloads también posible pero es el uso menos común." }
+      ],
+      "explanation": "Compositions son core value de Crossplane para platform engineering. Analogía CDK: Composition ≈ L3 construct, Claim ≈ instanciación por dev, XRD ≈ schema/API. Ventajas vs CDK/Pulumi: (1) YAML declarativo (aceptable para GitOps puro); (2) enforcement via K8s admission (OPA Gatekeeper); (3) reconciliation continua; (4) RBAC K8s nativo. Desventajas: (1) YAML gets verbose sin funciones (Composition Functions recientes ayudan); (2) debugging harder ('¿por qué mi RDS no se creó?' requiere seguir cadena de composites + resources); (3) provider maturity variable. Best practices: (a) versionar XRDs (v1alpha1, v1beta1, v1); (b) offer múltiples Compositions per XRD para variantes; (c) test con kuttl (K8s testing); (d) document con schema properties + descriptions; (e) publish como packages Crossplane (extensible ecosystem).",
+      "realWorld": "Grafana Labs open-sourced Compositions para casos comunes. Autodesk usa Crossplane con Compositions internas. Upbound (empresa detrás) ofrece Composition marketplace. Empresas migrando de Terraform modules a Compositions reportan learning curve alta pero ergonomía mejor una vez maduros.",
+      "tags": ["Crossplane", "Compositions", "XRD", "Claims"],
+      "tech": ["crossplane", "kubernetes"],
+      "references": [{ "title": "Crossplane — Compositions" }, { "title": "Composition Functions" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "iac",
+      "topic": "OpenTofu, license, market state",
+      "difficulty": "staff",
+      "scenario": "Agosto 2023: HashiCorp cambia license de Terraform de MPL 2.0 a BUSL. La comunidad reacciona. En enero 2024, Linux Foundation anuncia OpenTofu.",
+      "question": "¿Qué implicaciones tiene la license split y OpenTofu para el mercado IaC?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "BUSL (Business Source License) prohíbe uso 'competitive' de Terraform. Empresas que ofrecen Terraform-as-a-Service (Spacelift, env0, Scalr) recibieron cease-and-desist implícito. Legalmente ambiguo para muchos uses enterprise — genera compliance uncertainty.", "correct": true, "why": "Correcto. BUSL específicamente targets vendors que competan con Terraform Cloud/Enterprise. El wording ambiguo ('competitive') generó paranoia enterprise: '¿mi CI/CD interno cuenta como service? ¿mi platform interna?'. Aunque HashiCorp aclaró intent, legal risk percebido es real." },
+        { "letter": "B", "text": "OpenTofu es fork open source (MPL 2.0) de Terraform, ahora Linux Foundation project. Compatible con Terraform providers y modules. Adoptado por Spacelift, env0, Harness. Empresas evaluando: (a) stay con Terraform y aceptar BUSL risk, (b) migrar a OpenTofu para independencia.", "correct": true, "why": "Correcto. OpenTofu es respuesta comunitaria unified. Compatibility mantenida deliberadamente (drop-in replacement). Empresas eligen basadas en risk tolerance, vendor lock-in comfort, y feature roadmap." },
+        { "letter": "C", "text": "El evento reforzó atractivo de alternativas non-Terraform: Pulumi (posiblemente ganancia neta de usuarios), CDK (dentro de AWS), Crossplane (K8s-native). Ninguna es 'ganador claro' pero fragmentación aumentó — no hay ya un 'default obvio'.", "correct": true, "why": "Correcto. Pre-2023, Terraform era el default por inercia. Post-2023, decision más consciente. Pulumi vio uptick en adoption según sus reports. AWS CDK sigue crecimiento fuerte en AWS shops. Crossplane crece en K8s-native. Fragmentación == más elección para orgs, más overhead cognitivo para decidir." },
+        { "letter": "D", "text": "HashiCorp response: enfatizar valor añadido de Terraform Cloud/Enterprise (SSO, RBAC, private registry, Sentinel, drift detection managed). Positioning: 'CLI es free-ish, Cloud es donde pagamos'. IBM adquirió HashiCorp en 2024 — cambio de dinámica de mercado.", "correct": true, "why": "Correcto. IBM-HashiCorp deal (finalizada 2024) añade complejidad — ¿IBM cambiará strategy? ¿integración con Red Hat OpenShift? Enterprise IaC market entrando período de consolidation y re-alignment." },
+        { "letter": "E", "text": "OpenTofu es solo para Kubernetes.", "correct": false, "why": "Falso. OpenTofu es fork completo de Terraform, todos los providers/resources, no específico de K8s." }
+      ],
+      "explanation": "La license split 2023 fue evento sísmico en IaC market. Análisis: (1) HashiCorp motivation: proteger revenue de Cloud/Enterprise ante vendors 'freeloading' con Terraform Cloud alternatives; (2) Community reaction: percibieron traición del social contract open source; (3) OpenTofu formation: multi-vendor consortium (Linux Foundation) para asegurar neutrality; (4) Mercado result: fragmentation, uncertainty, decisions más deliberadas. Implications para IaC engineers: (a) evaluar exposure BUSL en tu org (legal review); (b) decisions futuras consideran vendor risk explícito; (c) alternativas (Pulumi, CDK, Crossplane) ganan legitimidad como 'safe bets' contra vendor changes; (d) importancia de skills portables (patrones IaC > tool-specific expertise). Recommended reading: OpenTofu FAQ, HashiCorp license blog, various vendor analyses.",
+      "realWorld": "OpenTofu anunciado 2023, GA en enero 2024, backed por Spacelift, env0, Harness, Gruntwork. HashiCorp Terraform mantiene dominant market share pero growth curva plana. Pulumi reported user uptick post-license-change. IBM adquisición finalizada 2024 — implicaciones a largo plazo unclear pero posible mayor integration con Red Hat stack y potencial license loosening (Red Hat es strongly OSS-aligned).",
+      "tags": ["OpenTofu", "license", "BUSL", "HashiCorp", "IBM"],
+      "tech": ["terraform", "opentofu"],
+      "references": [{ "title": "opentofu.org" }, { "title": "HashiCorp License Change Blog 2023" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "iac",
+      "topic": "Elección de tool para tu contexto",
+      "difficulty": "staff",
+      "scenario": "Como platform engineer senior, tu CTO pide framework para decidir qué IaC tool usar en distintos contextos. No hay 'one size fits all'.",
+      "question": "¿Cuáles son factores decisivos para elegir IaC tool en un contexto específico?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Team skills y comfort: Terraform brilla con ops-focused teams que valoran declarativity; Pulumi/CDK brilla con dev-heavy teams que valoran testing + abstractions; Crossplane brilla con K8s-native platform teams. Ignorar skills reales del team = adoption failure garantizada.", "correct": true, "why": "Correcto. Factor #1 real. Herramienta 'mejor técnicamente' con equipo que no la adopta pierde vs herramienta 'peor técnicamente' con equipo entusiasta. Ejemplo: Pulumi es superior técnicamente en muchos aspects pero flops si el equipo prefiere HCL declarativo." },
+        { "letter": "B", "text": "Cloud landscape: multi-cloud → Pulumi/Terraform/Crossplane (providers cross-cloud); single AWS → CDK es sweet spot (deep integration); K8s-native org → Crossplane. Elegir tool alineado con cloud strategy real (no aspirational).", "correct": true, "why": "Correcto. CDK en shop multi-cloud es awkward (aws-cdk-lib es AWS-only; se puede combinar con Terraform/Pulumi pero adds complexity). Terraform es cloud-agnostic por diseño. Pulumi similar. Considerar el 'centro de gravedad' cloud realista." },
+        { "letter": "C", "text": "Abstraction needs: platform team creating internal DSL/patterns → Pulumi (Automation API, packages multi-language) o CDK (constructs) o Crossplane (Compositions). Simple infra sin abstraction → Terraform. Diferencia: si tu 'producto' es platform-as-a-service para devs internos, tools programables ganan; si solo declaras recursos, HCL es fine.", "correct": true, "why": "Correcto. El level de abstraction determina tool fit. Empresas con platform teams sofisticadas (Netflix, Snowflake, Spotify) suelen preferir tools programables para exponer abstracciones. Startups pequeñas simples: Terraform straightforward." },
+        { "letter": "D", "text": "License y vendor tolerance: post-BUSL, some orgs are BUSL-averse (open source purists, regulated industries). Pulumi (Apache 2.0), OpenTofu (MPL 2.0), Crossplane (Apache 2.0) son safer bets legal si BUSL es concern. Terraform stays si comfortable con HashiCorp/IBM ownership.", "correct": true, "why": "Correcto. Legal risk assessment es factor real post-2023. Muchas empresas hicieron formal review de BUSL implications. Depending on outcome, alternative tools became more attractive. Es factor pragmático, no ideológico." },
+        { "letter": "E", "text": "Cost of migration: migrar 500 modules Terraform existentes a Pulumi cuesta mucho (rewriting + testing + team retraining). Sunk cost real. Nueva empresa/greenfield: flexibilidad total. Empresa establecida: usualmente 'stay with what works' vence sobre 'technically superior'.", "correct": true, "why": "Correcto. Migration costs (labor + risk) suelen dominar decision en empresas establecidas. Es raro hacer full migration; más común: keep Terraform legacy + new tool para greenfield (bimodal approach)." },
+        { "letter": "F", "text": "Siempre elegir el tool más popular.", "correct": false, "why": "Anti-patrón. Popularidad no es fit. Terraform es popular pero puede ser wrong choice para K8s-native platform team. Fit > popularity." }
+      ],
+      "explanation": "Framework de decisión IaC: (1) INVENTORY: skills reales del team (no aspirational), cloud landscape actual, patterns de abstracción necesarios, license tolerance; (2) STRATEGY: greenfield vs migration, plataforma interna vs solo declaraciones, single team vs org-wide; (3) EVALUATE options against criteria con weight por importance; (4) PILOT: pequeño POC antes de bet grande; (5) DECIDE con reasoning documentado. Anti-patrones: (a) 'copy Netflix' — su contexto no es tuyo; (b) elegir por hype twitter; (c) migrate por FOMO sin ROI claro; (d) ignore team preference porque 'X es mejor técnicamente'. Bimodal común: legacy en Terraform + nuevos platform components en Pulumi/CDK — pragmático, coexistencia soportable. Documenta la decisión con ADR (Architecture Decision Record) para futuros team members entender el razonamiento.",
+      "realWorld": "Netflix mantiene Terraform + Spinnaker (legacy investment). Snowflake bet en Pulumi para greenfield. Amazon internamente CDK-heavy (dogfooding). Grafana Labs adoptó Crossplane para GitOps-nativo. HashiCorp Terraform market position sigue dominante ~70% pero fragmentación creciendo. Cada elección refleja contexto, skills, y strategy — no 'best tool' universal.",
+      "tags": ["decision framework", "tool selection", "ADR"],
+      "tech": ["terraform", "pulumi", "aws-cdk", "crossplane"],
+      "references": [{ "title": "ThoughtWorks Tech Radar — IaC tools" }, { "title": "CNCF Landscape" }]
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import { useSrsStore } from '../../stores/srs.js';
 import { useProfileStore } from '../../stores/profile.js';
 import { EmptyState, LoadingState } from '../../components/UiStates.js';
 import { hasTts, speak } from '../../lib/speech.js';
+import { SpeakButton } from '../../components/SpeakButton.js';
 import { QuestionRunner } from '../../components/questions/QuestionRunner.js';
 import { generateMixedQuestions } from '../../lib/questionGen.js';
 import {
@@ -284,15 +285,7 @@ function FlashcardsMode({ allCards }: { allCards: Card[] }) {
       </AnimatePresence>
 
       <div className="mt-3 flex justify-center">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (hasTts()) void speak(card.term);
-          }}
-          className="inline-flex items-center gap-1 rounded-full border border-slate-300/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
-        >
-          <IconPlay size={12} /> Pronunciar
-        </button>
+        <SpeakButton text={card.term} label="Pronunciar" size="md" />
       </div>
 
       {showBack ? (
@@ -457,12 +450,9 @@ function QuizMode({ allCards, kind }: { allCards: Card[]; kind: 'practice' | 'te
             {current.card.ipa ? (
               <p className="relative mt-1 font-mono text-xs text-slate-400">/{current.card.ipa}/</p>
             ) : null}
-            <button
-              onClick={() => hasTts() && void speak(current.card.term)}
-              className="relative mt-3 inline-flex items-center gap-1 rounded-full border border-slate-300/70 bg-white/70 px-3 py-1 text-[11px] font-semibold text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
-            >
-              <IconPlay size={10} /> Escuchar
-            </button>
+            <div className="relative mt-3 inline-block">
+              <SpeakButton text={current.card.term} label="Escuchar" size="sm" />
+            </div>
           </div>
 
           {/* Opciones */}

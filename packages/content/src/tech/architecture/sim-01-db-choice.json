@@ -1,0 +1,419 @@
+{
+  "id": "architecture-sim-01-db-choice",
+  "trackId": "architecture",
+  "order": 1,
+  "title": "Simulacro 01 — Elegir la base de datos correcta",
+  "focus": "SQL vs NoSQL, cuándo un motor no encaja, elegir por patrón de acceso y consistencia, no por moda.",
+  "areaCoverage": ["db-choice", "scalability", "resilience"],
+  "timeLimitMin": 60,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "db-choice",
+      "topic": "Vocabulario básico — ACID",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr te pregunta qué significa ACID y por qué la gente dice que 'Postgres es ACID pero MongoDB antes no'.",
+      "question": "¿Cuál es el significado CORRECTO de ACID?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Atomicity, Consistency, Isolation, Durability. Cuatro garantías que dan las transacciones de una DB tradicional.", "correct": true, "why": "Correcto. Atomicity = todo o nada. Consistency = la DB pasa de un estado válido a otro (constraints, triggers). Isolation = concurrencia no ve estados intermedios. Durability = una vez commit, sobrevive a crashes. Es la base del modelo transaccional relacional." },
+        { "letter": "B", "text": "Availability, Consistency, Isolation, Durability.", "correct": false, "why": "Confunde Availability (del teorema CAP) con Atomicity. Availability es una propiedad del sistema distribuido, no de la transacción." },
+        { "letter": "C", "text": "Async, Concurrent, Idempotent, Distributed.", "correct": false, "why": "Inventado. No corresponde a ninguna definición estándar." },
+        { "letter": "D", "text": "Atomicity, Concurrency, Independence, Durability.", "correct": false, "why": "Cerca pero incorrecto: Consistency e Isolation son los términos exactos, no Concurrency ni Independence." }
+      ],
+      "explanation": "ACID es la propiedad canónica de las DB relacionales desde los 70s (Jim Gray). En sistemas distribuidos, ACID compite con BASE (Basically Available, Soft state, Eventual consistency) — trade-off descrito por el teorema CAP. MongoDB históricamente no era ACID multi-documento (ganó multi-doc transactions en 4.0, 2018). DynamoDB añadió transacciones ACID en 2018. Postgres/MySQL/Oracle son ACID nativos.",
+      "realWorld": "En 2018 Jepsen (Kyle Kingsbury) publicó análisis mostrando que muchas 'DB con transacciones' violaban isolation bajo ciertos escenarios. Hoy ACID sigue siendo el default sensato, y las bases modernas convergen a soportarlo.",
+      "tags": ["ACID", "transacciones", "fundamentos"],
+      "tech": ["PostgreSQL", "MongoDB"],
+      "references": [{ "title": "Kleppmann — DDIA, Ch. 7 Transactions" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "db-choice",
+      "topic": "Teorema CAP — malinterpretación común",
+      "difficulty": "mid",
+      "scenario": "En una reunión, alguien afirma: 'CAP dice que solo puedes elegir 2 de 3: Consistency, Availability, Partition tolerance. Nosotros elegimos CA porque no tenemos partitions'.",
+      "question": "¿Qué está mal en esa afirmación?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nada, es correcto — un sistema en una sola datacenter puede ser CA.", "correct": false, "why": "Incorrecto. Incluso en la misma datacenter hay partitions (fallo de switch, ventana entre replicas). 'Partition tolerance' no es opcional en cualquier sistema con nodos que se comunican por red." },
+        { "letter": "B", "text": "En un sistema distribuido, las particiones de red SIEMPRE pueden ocurrir. La elección real es entre C y A cuando ocurre una partición. No puedes 'sacrificar P' — la naturaleza lo hace por ti.", "correct": true, "why": "Correcto. Esta es la re-lectura moderna del CAP (Brewer 2012, 'CAP Twelve Years Later'). P no es opcional: los cables se rompen, los switches fallan, los servidores se pausan por GC. Lo que sí eliges: durante una partición, ¿respondes con datos posiblemente stale (AP) o rehúsas responder para no arriesgar consistency (CP)?" },
+        { "letter": "C", "text": "CAP está deprecated — PACELC lo reemplazó.", "correct": false, "why": "PACELC (Abadi 2012) EXTIENDE CAP añadiendo 'Else Latency vs Consistency' (qué eliges en operación normal), pero CAP sigue vigente como marco base." },
+        { "letter": "D", "text": "El error es que hoy podemos tener las tres — Spanner lo demuestra.", "correct": false, "why": "Spanner (Google) parece violar CAP pero no lo hace: sacrifica availability durante particiones (a favor de consistency) — es CP, no CA. Su 'external consistency' viene de TrueTime + hardware, no de romper CAP." }
+      ],
+      "explanation": "CAP correctamente entendido: durante una partición de red, un sistema distribuido debe elegir entre CONSISTENCY (rechazar writes en el lado que no puede coordinar) o AVAILABILITY (aceptar writes y reconciliar después). Ejemplos: PostgreSQL sync replica = CP (rehúsa write si el replica cae). DynamoDB, Cassandra = AP (siempre escribe, resuelve conflictos vía LWW o CRDTs). Spanner = CP (rehúsa durante partición). PACELC añade: en operación NORMAL, ¿priorizas Latency o Consistency? Cassandra: PA/EL. Spanner: PC/EC.",
+      "realWorld": "Cloudflare, GitHub, AWS todos han tenido outages donde la elección CAP determinó el impacto. La lectura obligada es 'A Critique of the CAP Theorem' (Kleppmann 2015) — argumenta que el vocabulario CAP oscurece más de lo que aclara.",
+      "tags": ["CAP", "PACELC", "distribuidos", "consistencia"],
+      "tech": ["PostgreSQL", "DynamoDB", "Cassandra", "Spanner"],
+      "references": [{ "title": "Brewer — 'CAP Twelve Years Later'" }, { "title": "Kleppmann — 'A Critique of the CAP Theorem', 2015" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "db-choice",
+      "topic": "Índices — B-tree vs Hash vs GIN",
+      "difficulty": "mid",
+      "scenario": "Postgres. Tienes una tabla `events(id, user_id, tags jsonb, created_at)`. Queries: (1) `WHERE user_id = ?`, (2) `WHERE tags @> '{\"country\": \"AR\"}'`, (3) `WHERE created_at BETWEEN ? AND ?`.",
+      "question": "¿Qué tipo de índice para cada query?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "B-tree para las tres.", "correct": false, "why": "B-tree no puede indexar JSONB con containment (@>) eficientemente. Necesitas GIN para query 2." },
+        { "letter": "B", "text": "(1) B-tree en user_id (equality y range). (2) GIN en tags (JSONB containment). (3) B-tree en created_at (range).", "correct": true, "why": "Correcto. B-tree es óptimo para equality y range en tipos ordenados (int, timestamp). GIN (Generalized Inverted Index) está diseñado para tipos compuestos (JSONB, arrays, tsvector) donde queries buscan 'contains'. Es la elección canónica en Postgres." },
+        { "letter": "C", "text": "Hash index para todo — es O(1).", "correct": false, "why": "Hash solo sirve para equality, no range. En query 3 (range de fechas) sería inservible. Además Hash en Postgres tuvo limitaciones (sin WAL hasta v10). B-tree es más versátil y casi tan rápido en equality." },
+        { "letter": "D", "text": "BRIN para las tres — es más pequeño.", "correct": false, "why": "BRIN (Block Range Index) sirve para datos con correlación física fuerte (típico: append-only ordenado por fecha). Puede ser óptimo para query 3 si los datos están correlacionados, pero no funciona bien para user_id (aleatorio) ni JSONB." }
+      ],
+      "explanation": "Postgres ofrece: B-tree (default, equality+range en tipos ordenados), Hash (solo equality), GIN (JSONB, arrays, full-text), GiST (geo, ranges, full-text con ranking), SP-GiST (particionable, IPs), BRIN (grandes tablas append-only). Elegir mal índice es la causa #1 de queries lentas. EXPLAIN ANALYZE es tu amigo. Cuidado: cada índice cuesta en writes (mantener el índice) y espacio — no indices todo por si acaso.",
+      "realWorld": "Instagram usa GIN masivamente para sus tags. Timescale (extensión Postgres) usa BRIN + partitioning para series temporales. GitLab publicó postmortems sobre índices faltantes que degradaron su performance en factores 100x.",
+      "tags": ["índices", "B-tree", "GIN", "PostgreSQL", "JSONB"],
+      "tech": ["PostgreSQL"],
+      "references": [{ "title": "PostgreSQL Docs — Chapter 11 Indexes" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "db-choice",
+      "topic": "Aislamiento de transacciones — Read Committed vs Repeatable Read vs Serializable",
+      "difficulty": "mid",
+      "scenario": "Postgres. Query: `UPDATE accounts SET balance = balance - 100 WHERE id = 1`. Dos transacciones concurrentes ejecutan lo mismo. El default Postgres es Read Committed.",
+      "question": "¿Cuál es el comportamiento correcto y qué anomalías puede haber?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Read Committed previene lost update en este caso porque `UPDATE ... SET balance = balance - 100` toma un row lock — la segunda transacción espera y luego ve el valor actualizado.", "correct": true, "why": "Correcto. Un UPDATE con expresión que lee el valor (balance = balance - 100) adquiere un lock exclusivo. En Read Committed, la segunda transacción bloquea, espera, y cuando el primer commit ocurre, RE-LEE el balance actualizado. No hay lost update en este patrón específico. PERO si hicieras SELECT balance → app calcula → UPDATE balance = X, ahí SÍ tienes lost update — necesitarías Repeatable Read o SELECT FOR UPDATE." },
+        { "letter": "B", "text": "Read Committed permite lost update. Necesitas Serializable.", "correct": false, "why": "Solo si el patrón fuera read-then-write en la aplicación. El UPDATE atómico con expresión es seguro incluso en Read Committed." },
+        { "letter": "C", "text": "Read Committed es 'sucio' — permite dirty reads.", "correct": false, "why": "Confunde con Read Uncommitted. Read Committed nunca lee datos no committed — su nombre lo indica." },
+        { "letter": "D", "text": "En Postgres, Repeatable Read = Serializable — son sinónimos.", "correct": false, "why": "No. Postgres Repeatable Read = Snapshot Isolation (previene lost update lanzando error 40001), pero NO previene write skew. Serializable (SSI, Serializable Snapshot Isolation) sí previene write skew." }
+      ],
+      "explanation": "Niveles ANSI SQL de aislamiento: Read Uncommitted (permite dirty read — Postgres no lo soporta, mapea a RC), Read Committed (default Postgres/Oracle — previene dirty reads), Repeatable Read (previene non-repeatable read — en Postgres es Snapshot Isolation), Serializable (comportamiento como si fueran secuenciales). Postgres implementa Serializable con SSI (Serializable Snapshot Isolation, Cahill 2008) — detecta ciclos de conflicto y aborta transacciones. Trade-off: más aislamiento = más aborts (retry en app) y menos throughput. Regla: usa Read Committed por defecto, sube a Serializable donde tengas invariantes cross-row.",
+      "realWorld": "Peter Bailis publicó estudios (2014) mostrando que muchas apps 'seguras' con Read Committed tenían anomalías bajo carga real. Kingsbury's Jepsen ha encontrado bugs de isolation en casi todas las DB comerciales.",
+      "tags": ["ACID", "isolation", "MVCC", "Snapshot Isolation", "Serializable"],
+      "tech": ["PostgreSQL", "MySQL", "Oracle"],
+      "references": [{ "title": "Berenson et al. — 'A Critique of ANSI SQL Isolation Levels'" }, { "title": "Kleppmann — DDIA Ch. 7" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "db-choice",
+      "topic": "Time-series data — DB especializada vs Postgres",
+      "difficulty": "mid",
+      "scenario": "Necesitas almacenar métricas: 100k puntos/segundo, retención 90 días (~800B puntos). Queries: agregaciones por ventanas (avg, p95 por minuto) y downsampling. Alguien propone Postgres, otro InfluxDB, otro Timescale.",
+      "question": "¿Cuál es el criterio para elegir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Postgres crudo. Es universal.", "correct": false, "why": "A 100k inserts/s con 800B rows, Postgres crudo sufrirá: índices B-tree costosos, no compresión time-series, queries de ventana lentas sin optimizaciones específicas. Es factible pero costoso." },
+        { "letter": "B", "text": "TimescaleDB (extensión Postgres) da hypertables (partitioning automático por tiempo), compresión columnar (~90% reducción), continuous aggregates y sigue siendo SQL. InfluxDB v2 es más rápido para ingest puro pero cambia el lenguaje (Flux) y aísla del ecosistema. Prometheus para short-term monitoring (no long-term). VictoriaMetrics para escala máxima. Elección: Timescale si valoras SQL + ecosistema Postgres; InfluxDB/Victoria si necesitas máximo throughput.", "correct": true, "why": "Correcto. Time-series DBs añaden: (1) partitioning por tiempo automático (chunk drop = fast retention delete); (2) compresión columnar orientada a time-series (delta-of-delta encoding); (3) continuous aggregates (materialized views que se actualizan incrementalmente); (4) funciones específicas (time_bucket, gapfill, LOCF)." },
+        { "letter": "C", "text": "MongoDB — es NoSQL y escala.", "correct": false, "why": "MongoDB no está diseñado para time-series (aunque añadió 'time series collections' en 5.0). Escritura sostenida a 100k/s requiere sharding y consideraciones que TSDBs resuelven nativamente." },
+        { "letter": "D", "text": "DynamoDB con partition key = timestamp.", "correct": false, "why": "Anti-patrón grave: timestamp como partition key crea hot partition (todas las escrituras van a la partition 'ahora'). DynamoDB no está optimizado para queries de agregación por rango." }
+      ],
+      "explanation": "Time-series data tiene propiedades únicas: append-only, ordenado temporalmente, queries dominadas por 'rango de tiempo + agregación', retención con expiración. DBs generalistas no explotan esto. Especializadas (InfluxDB, TimescaleDB, VictoriaMetrics, ClickHouse, Prometheus, QuestDB) usan: columnar storage, time-based partitioning, delta encoding, downsampling automático. Regla: si tu workload es 90%+ time-series, usa una TSDB. Si es mixto, Timescale te da lo mejor de ambos mundos (SQL + optimizaciones TS).",
+      "realWorld": "Cloudflare usa ClickHouse para logs (petabytes). Uber usa M3 (interna) para metrics. Grafana Labs construyó Mimir sobre Prometheus para escala masiva. Prometheus mismo NO es para long-term — se usa con remote_write a Cortex/Mimir/Thanos.",
+      "tags": ["time-series", "TimescaleDB", "InfluxDB", "ClickHouse", "métricas"],
+      "tech": ["TimescaleDB", "InfluxDB", "ClickHouse", "Prometheus", "VictoriaMetrics"],
+      "references": [{ "title": "TimescaleDB docs — Hypertables and compression" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "db-choice",
+      "topic": "Grafos — Neo4j vs relacional",
+      "difficulty": "mid",
+      "scenario": "Red social: 10M usuarios, cada uno con ~200 conexiones. Query frecuente: 'amigos de amigos de amigos que viven en Madrid'. En Postgres esta query hace 3 JOINs y tarda 8 segundos. Un colega propone Neo4j.",
+      "question": "¿Cuándo se justifica una graph DB?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nunca — cualquier problema de grafo se resuelve con SQL recursivo (WITH RECURSIVE).", "correct": false, "why": "WITH RECURSIVE funciona pero performance degrada drásticamente con profundidad y branching (10M rows a 3 niveles con ~200 fan-out = billones de intermediate rows). Graph DBs usan 'index-free adjacency' — cada nodo tiene punteros directos a sus vecinos, traversal es O(k) por hop." },
+        { "letter": "B", "text": "Cuando: (a) tus queries dominantes son traversals de N-hops donde N > 2-3; (b) el fan-out es alto; (c) la topología cambia frecuentemente. Neo4j (Cypher), Amazon Neptune, ArangoDB son opciones. Cuidado: si la mayoría de queries son 'un hop' o 'lookup', SQL es más simple y suficiente.", "correct": true, "why": "Correcto. Graph DBs brillan en traversals profundos (recomendaciones, detección de fraude, redes sociales, knowledge graphs). En 'friend of friend of friend', Neo4j hace 3 hops en ms; SQL hace 3 joins con growth explosivo. Pero NO uses graph DB solo porque tus datos 'tienen relaciones' — todos los datos las tienen. La pregunta es si tus queries son traversals." },
+        { "letter": "C", "text": "Siempre — es el futuro de los datos.", "correct": false, "why": "Hype. Graph DBs son un nicho valioso pero pequeño. Muchos casos 'de grafo' se resuelven mejor con Postgres + índices o Elasticsearch." },
+        { "letter": "D", "text": "Solo para machine learning en grafos.", "correct": false, "why": "GNNs son un uso pero no el único. OLTP en grafos (recomendaciones en tiempo real, fraude) es el caso más común." }
+      ],
+      "explanation": "Graph DBs (property graph model): Neo4j (leader, Cypher query language), Amazon Neptune (SPARQL/Gremlin), ArangoDB (multi-model), JanusGraph (scale-out). Modelo RDF (más semantic web): Blazegraph, Virtuoso. Trade-offs: graph DBs son más difíciles de escalar horizontalmente que relacionales, herramientas de BI menos maduras, curva de aprendizaje (Cypher/Gremlin). Alternativa moderna: Postgres + Apache AGE (extensión que añade Cypher a Postgres) — mejor de ambos mundos si tu escala lo permite.",
+      "realWorld": "LinkedIn's SocialGraph maneja billones de edges. Panama Papers investigation usó Neo4j para trazar shell companies. Netflix usa graph para recommendations. Twitter's follower graph estuvo en Manhattan (custom in-memory graph store).",
+      "tags": ["graph DB", "Neo4j", "Cypher", "traversals"],
+      "tech": ["Neo4j", "Amazon Neptune", "ArangoDB", "Apache AGE"],
+      "references": [{ "title": "Robinson, Webber, Eifrem — 'Graph Databases'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "db-choice",
+      "topic": "Search — Elasticsearch como source of truth (anti-patrón)",
+      "difficulty": "senior",
+      "scenario": "Tu equipo propone usar Elasticsearch como DB única del sistema: 'es rápido, es JSON, hace search'. Elimina Postgres del stack.",
+      "question": "¿Por qué es un anti-patrón conocido y qué arquitectura es correcta?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Elasticsearch no es ACID — writes son 'eventually consistent'. Índices se refrescan cada 1s (default), y en caso de crash o split-brain se han documentado pérdidas de datos.", "correct": true, "why": "Correcto. ES está diseñado para search, no para durabilidad transaccional. Jepsen documentó (2014, 2020) pérdida de datos bajo particiones. El refresh_interval crea ventana de invisibilidad. Sin transacciones multi-index." },
+        { "letter": "B", "text": "Arquitectura correcta: source of truth en Postgres (o similar ACID). Cambios se replican asíncronamente a Elasticsearch (via CDC — Debezium, Kafka Connect, o double-write con outbox pattern). Los usuarios buscan en ES, leen detalles en Postgres.", "correct": true, "why": "Correcto. Es el patrón CQRS aplicado: write side (Postgres) mantiene invariantes; read side (ES) optimizado para búsqueda. Outbox pattern garantiza que cada cambio en la DB genera un evento que ES consume. Sync eventualmente consistent, pero Postgres es la verdad." },
+        { "letter": "C", "text": "ES tiene mapping estático — cambiar el schema requiere reindexar toda la data (puede tardar días). En una DB primaria eso es inaceptable.", "correct": true, "why": "Correcto. Aunque ES permite dynamic mapping, cambios significativos (tipo de un field, analyzer) requieren reindex completo. Con Postgres como source of truth, reindexar ES es un problema aislado — no afecta a la app." },
+        { "letter": "D", "text": "Elasticsearch escala mejor que Postgres, así que si tu carga es grande no hay alternativa.", "correct": false, "why": "Falacia. Postgres escala hasta petabytes con particionamiento y replicas. Y para search dentro de Postgres, tienes pg_trgm, full-text search nativo, y extensiones como pg_vector. ES escala search DIFERENTE, no MEJOR." },
+        { "letter": "E", "text": "OpenSearch (fork de ES 7.10 por AWS) resuelve estos problemas.", "correct": false, "why": "OpenSearch nació por licencing (Elastic cambió a SSPL) pero comparte la mayoría del código y limitaciones fundamentales. No es un ACID DB." }
+      ],
+      "explanation": "Elasticsearch/OpenSearch son inmensamente valiosos para: full-text search, log aggregation, faceted navigation, geo-search. Son un COMPLEMENTO a tu DB primaria, no un reemplazo. Patrón canónico: CDC (Change Data Capture) desde tu DB al índice. Alternativa: dual-write con outbox pattern (garantiza consistency eventual). Nunca escribas primero a ES y luego a DB — si DB falla, ES queda desincronizado sin fuente de verdad. La lección: cada DB tiene su especialidad; polyglot persistence es normal, pero define QUIÉN es source of truth.",
+      "realWorld": "Uber tuvo problemas serios usando ES para geo-search sin source of truth robusto. GitLab documenta CDC patterns entre Postgres y ES. Elastic mismo publica 'don't use ES as primary DB' en docs.",
+      "tags": ["Elasticsearch", "CQRS", "source of truth", "outbox pattern"],
+      "tech": ["Elasticsearch", "OpenSearch", "Debezium", "Kafka Connect"],
+      "references": [{ "title": "Jepsen — Elasticsearch analysis" }, { "title": "Elastic docs — 'Elasticsearch as primary datastore concerns'" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "db-choice",
+      "topic": "Vector DB — cuándo es imprescindible",
+      "difficulty": "senior",
+      "scenario": "Tu app tiene RAG (Retrieval Augmented Generation) — recuperar documentos semánticamente similares a una query. Tienes 5M documentos embebidos (1536 dim). Un compañero propone pgvector, otro Pinecone, otro Weaviate.",
+      "question": "¿Cuál es el criterio para elegir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pinecone porque es 'la vector DB de moda'.", "correct": false, "why": "Hype. Pinecone es SaaS cerrado y caro. La elección debe basarse en escala, presupuesto y ecosistema existente." },
+        { "letter": "B", "text": "pgvector si ya tienes Postgres y <10M vectores — evitas otro sistema, transacciones con tus datos, backup unificado. Pinecone/Weaviate/Qdrant si escalas > decenas de millones o necesitas filtering complejo con metadata + índices HNSW especializados. Milvus/LanceDB para billion-scale.", "correct": true, "why": "Correcto. La 'vector DB' es un mercado joven donde la boundary con SQL+extension se está estrechando. pgvector (Postgres) usa ivfflat o HNSW y basta para muchos casos. Ventaja: JOIN con tus tablas existentes, transacciones, un solo backup. Vector DBs dedicadas (Pinecone, Qdrant, Weaviate, Milvus) ganan en: escala masiva, índices más avanzados, hybrid search (BM25 + vector) y filtering complejo." },
+        { "letter": "C", "text": "Elasticsearch dense_vector — sirve para todo.", "correct": false, "why": "ES tiene soporte de vectors (desde 8.x) pero no es su fortaleza principal. Para RAG puro, dedicated vector DB o pgvector son mejores. ES brilla en hybrid search si YA lo usas." },
+        { "letter": "D", "text": "Guardar vectores en S3 y buscar linealmente.", "correct": false, "why": "5M vectores × 1536 dim × 4 bytes = ~30GB. Búsqueda lineal (KNN exact) es factible pero lenta (segundos). Índices ANN (approximate nearest neighbor: HNSW, IVF) reducen a ms. Es lo que hacen todas las vector DBs internamente." }
+      ],
+      "explanation": "Vector search: mide similitud (coseno, L2, dot product) entre embeddings de alta dimensión. Índices ANN sacrifican precisión exacta por velocidad (recall@k ~95-99%): HNSW (hierarchical navigable small world) es el estándar. Trade-offs: memoria (HNSW carga índice en RAM), construcción lenta, resource-intensivo. Vector DBs dedicadas optimizan para: shard vectores across nodes, hybrid search (combinar semántico + keyword), filtered search (WHERE metadata AND similar TO). Regla: si tu escala es <10M y ya usas Postgres, pgvector es lo pragmático. Migrar después es más fácil de lo que parece.",
+      "realWorld": "OpenAI recommendation: pgvector para MVPs. Anthropic/Notion usan mix de vector DBs. Perplexity usa custom + Qdrant. La consolidación del mercado no ha llegado — apuesta por interoperabilidad (LangChain, LlamaIndex abstraen la vector DB).",
+      "tags": ["vector DB", "RAG", "embeddings", "HNSW", "pgvector"],
+      "tech": ["pgvector", "Pinecone", "Weaviate", "Qdrant", "Milvus"],
+      "references": [{ "title": "Malkov, Yashunin — 'HNSW paper', 2016" }, { "title": "pgvector README" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "db-choice",
+      "topic": "OLTP vs OLAP — no mezclar",
+      "difficulty": "senior",
+      "scenario": "Postgres de producción. Analytics team corre queries de reporting (`SELECT SUM/GROUP BY sobre 500M rows`) contra la misma DB. La transaccional se degrada durante los reports. Alguien propone poner replicas de lectura.",
+      "question": "¿Read replicas resuelve el problema? ¿Cuál es la arquitectura correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, read replicas resuelven todo. Pon 3 y listo.", "correct": false, "why": "Read replicas ayudan a aislar la carga, pero no cambian la naturaleza del problema: Postgres es OLTP (row-store, optimizado para transacciones cortas). Un query analítico que escanea 500M rows sigue siendo lento y consume recursos, aún en replica." },
+        { "letter": "B", "text": "Read replicas aíslan la carga (bueno). Pero para analytics reales necesitas un DATA WAREHOUSE columnar: Redshift, BigQuery, Snowflake, ClickHouse. Los datos se replican via CDC/ETL. Queries analíticas 100x más rápidas por column-store + compresión + distributed execution.", "correct": true, "why": "Correcto. OLTP (row-store) vs OLAP (column-store) son arquitecturas fundamentalmente distintas. Row-store optimiza 'traer todo un row rápido' (transacciones). Column-store optimiza 'agregar una columna sobre millones de rows' (analytics). Mezclarlos es sub-óptimo en ambos. Read replica es paliativo; data warehouse es la solución arquitectural. Modernos también: DuckDB (embedded OLAP), Materialize (streaming SQL)." },
+        { "letter": "C", "text": "Usar transacciones READ ONLY para analytics.", "correct": false, "why": "READ ONLY no cambia la representación física ni el plan de query — solo bloquea writes. El problema es la naturaleza row-store vs las queries columnares." },
+        { "letter": "D", "text": "Cache los results en Redis.", "correct": false, "why": "Ayuda si los mismos reports se piden mucho, pero no resuelve la primera ejecución ni ad-hoc queries. Los data warehouses están DISEÑADOS para ejecutar queries analíticas rápido, no cachear resultados." }
+      ],
+      "explanation": "OLTP (Online Transaction Processing): reads/writes cortos, alto QPS, low latency, ACID crítico. Postgres, MySQL, Oracle. OLAP (Online Analytical Processing): queries largas, alto throughput, agregaciones masivas, historical. Column-stores: Redshift, BigQuery, Snowflake, ClickHouse, DuckDB. Diferencias clave: (1) column-store lee solo columnas necesarias (100x menos IO); (2) compresión superior en columnas (mismo dtype); (3) vectorized execution (procesa batches); (4) distributed query engine. Patrón canónico: OLTP escribe → CDC/ETL → OLAP para analytics. HTAP (Hybrid) intenta ambos: TiDB, SingleStore, Snowflake Unistore — trade-offs no triviales.",
+      "realWorld": "Airbnb migró de Postgres a Redshift para analytics ~2013. Todos los unicorns modernos tienen esta separación. Snowflake IPO ($120B) demuestra el mercado. ClickHouse (Yandex) open source ha ganado tracción por performance similar sin lock-in.",
+      "tags": ["OLTP", "OLAP", "data warehouse", "column-store", "CDC"],
+      "tech": ["Redshift", "BigQuery", "Snowflake", "ClickHouse", "DuckDB"],
+      "references": [{ "title": "Kleppmann — DDIA Ch. 3 Storage and Retrieval" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "db-choice",
+      "topic": "Connection pooling — el bottleneck que no se ve",
+      "difficulty": "senior",
+      "scenario": "Postgres con max_connections=100. Tu app en Lambda escala a 500 concurrent invocations. Errores: 'FATAL: sorry, too many clients already'. Un colega propone `max_connections=1000`.",
+      "question": "¿Cuál es el diagnóstico correcto y la solución idiomática?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Subir max_connections a 1000.", "correct": false, "why": "Postgres asigna ~10MB por connection + copia del catálogo + WAL sender. 1000 conexiones = ~10GB solo en overhead + contention en locks internos. Postgres degrada dramáticamente con muchas conexiones. La recomendación general: <200 conexiones directas." },
+        { "letter": "B", "text": "Usar un CONNECTION POOLER: PgBouncer (transaction pooling) o RDS Proxy. La app abre 500 'conexiones lógicas' al pooler, pero el pooler multiplexea sobre 20-50 conexiones reales al Postgres. Cada transacción usa una conexión durante milisegundos.", "correct": true, "why": "Correcto. Es el patrón canónico. PgBouncer en 'transaction pooling' mode reasigna la conexión física al terminar cada transacción — 500 clients con transacciones de 10ms pueden compartir 20 conexiones. RDS Proxy hace lo mismo managed. Supabase/Neon lo incluyen por default. Para Lambda es OBLIGATORIO: cada Lambda instance NO debe abrir conexión directa a Postgres." },
+        { "letter": "C", "text": "Migrar de Postgres a DynamoDB — no tiene este problema.", "correct": false, "why": "DynamoDB no tiene conexiones persistentes (es HTTP), lo que sí resuelve el problema pero cambia todo el modelo de datos. La solución correcta es connection pooling, no migrar." },
+        { "letter": "D", "text": "Aumentar CPU/RAM del server Postgres.", "correct": false, "why": "No resuelve el problema fundamental: cada connection consume RAM y overhead independiente del tamaño del server. Escalar vertical no elude el límite de conexiones eficientes." }
+      ],
+      "explanation": "Postgres usa 1 proceso OS por conexión (fork model), a diferencia de MySQL (1 thread). Cada proceso: ~10MB base + memoria de working set. Pooling modes: (1) session pooling: cliente tiene la conexión por toda la sesión (no ayuda mucho); (2) transaction pooling: reutiliza al final de cada tx (más eficiente, restringe features como prepared statements); (3) statement pooling: reutiliza por statement (más restrictivo). PgBouncer es el clásico. RDS Proxy es managed. Supabase/Neon lo hacen transparente. Nuevas DBs cloud-native (Aurora Serverless v2, Neon) escalan mejor conexiones nativamente.",
+      "realWorld": "Heroku famosamente limitaba conexiones por tier — miles de apps aprendieron pooling por necesidad. Vercel + Postgres serverless requiere Neon o similar precisamente por este problema. Discord tuvo un incidente famoso por connection exhaustion.",
+      "tags": ["connection pool", "PgBouncer", "RDS Proxy", "Lambda + DB"],
+      "tech": ["PgBouncer", "RDS Proxy", "Neon", "Supabase"],
+      "references": [{ "title": "PgBouncer FAQ" }, { "title": "AWS — 'Using RDS Proxy for Lambda'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "db-choice",
+      "topic": "Change Data Capture — el patrón universal",
+      "difficulty": "senior",
+      "scenario": "Necesitas replicar cambios de Postgres a: Elasticsearch (search), Redshift (analytics), Kafka (event stream), Redis (cache). Un compañero propone que cada servicio 'polee' cambios con un `WHERE updated_at > last_seen`.",
+      "question": "¿Por qué CDC es mejor y cómo se implementa?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Polling con `WHERE updated_at > X` pierde DELETES (no hay tupla que polear), no captura cambios intermedios (si se actualiza 3 veces entre polls, solo ves el último), y depende de que TODOS los writes actualicen updated_at correctamente. Falla silenciosamente.", "correct": true, "why": "Correcto. Polling parece simple pero es traicioneramente frágil. DELETES son invisibles. Múltiples updates entre polls se pierden intermedios. Bugs de app que olvidan updated_at rompen sync. Recovery tras fallo es complejo (¿desde qué punto?). Escala mal (query full table scan)." },
+        { "letter": "B", "text": "CDC (Change Data Capture) lee el WAL/binlog de la DB — captura CADA cambio en orden, incluyendo DELETES, sin impacto en la app. Debezium (Kafka Connect) es el estándar. AWS DMS es su equivalente managed. Postgres logical replication + tool como Debezium.", "correct": true, "why": "Correcto. CDC lee el log físico de replicación de la DB — es lo mismo que usa la replica de standby. Captura orden exacto, todos los tipos de operaciones, y la app no sabe que existe. Downstream consumers reciben stream ordenado y confiable." },
+        { "letter": "C", "text": "Outbox pattern es una alternativa/complemento: escribes en la misma transacción a la tabla de negocio + a la tabla 'outbox'. Un proceso separado lee outbox y publica a Kafka. Garantiza que 'DB write' y 'event emitted' son atómicos.", "correct": true, "why": "Correcto. Outbox resuelve el problema de dual-write (¿escribo primero a DB o a Kafka?). Ambos escritos en misma tx local → atómico. Publisher independiente hace at-least-once delivery al broker. Es más simple que CDC en muchos casos, y garantiza consistencia application-level (validaciones en la tx)." },
+        { "letter": "D", "text": "Triggers en la DB que hacen HTTP POST a los consumers.", "correct": false, "why": "Anti-patrón: triggers síncronos que hacen I/O bloquean transacciones. Si el consumer está lento o caído, tus writes fallan. Además acoplan la DB a los consumers específicos." },
+        { "letter": "E", "text": "CDC no funciona en NoSQL — solo Postgres/MySQL.", "correct": false, "why": "MongoDB tiene Change Streams. DynamoDB tiene Streams (a Kinesis/Lambda). Cassandra tiene CDC. Prácticamente toda DB moderna soporta CDC de alguna forma." }
+      ],
+      "explanation": "CDC (Change Data Capture) es la 'columna vertebral' de arquitecturas modernas event-driven. Herramientas: Debezium (open source, Kafka Connect based, soporta Postgres, MySQL, Mongo, SQL Server, Oracle), AWS DMS (managed), Fivetran (SaaS), Airbyte (open source ETL). Postgres logical replication requiere `wal_level=logical` y una publication/subscription. Trade-offs: CDC captura CAMBIOS de datos, no eventos de negocio — puede ser difícil re-derivar 'usuario compró' desde 'row de orders cambió a status=paid'. Outbox pattern resuelve esto: eventos de negocio explícitos escritos en la misma tx.",
+      "realWorld": "LinkedIn creó Databus (CDC para Oracle) → inspiró Kafka. Netflix DBLog. Airbnb SpinalTap. Todos los grandes tienen su CDC layer. Debezium es el estándar open source. Sin CDC, las arquitecturas polyglot degeneran en inconsistencias silenciosas.",
+      "tags": ["CDC", "Debezium", "outbox pattern", "event-driven"],
+      "tech": ["Debezium", "Kafka Connect", "AWS DMS", "Postgres logical replication"],
+      "references": [{ "title": "Debezium docs" }, { "title": "Kleppmann — 'Turning the database inside out'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "db-choice",
+      "topic": "Multi-tenancy — schema per tenant vs shared schema",
+      "difficulty": "senior",
+      "scenario": "SaaS B2B con 500 empresas clientes, cada una con 10-10k usuarios. Datos aislados entre tenants (por compliance). Debate: schema separado por tenant, DB separada, o tabla compartida con tenant_id.",
+      "question": "¿Cuál es la elección correcta y qué trade-offs implica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DB completamente separada por tenant. Máximo aislamiento.", "correct": false, "why": "500 DBs = 500 conexiones pool, 500 backups, 500 migraciones, 500 monitoring. Ops nightmare. Solo se justifica para clientes enterprise MUY grandes o compliance extremo (data residency)." },
+        { "letter": "B", "text": "Shared schema con tenant_id como discriminador. Simple, escalable ops-wise. Row-level security (Postgres RLS) o middleware que inyecta WHERE tenant_id = ? en toda query. Trade-offs: (a) noisy neighbor (un tenant grande afecta a otros) — mitigar con quotas; (b) todos escalan juntos; (c) más difícil aislar por compliance. Se puede migrar a esquema separado tenants especiales luego.", "correct": true, "why": "Correcto para la MAYORÍA de SaaS B2B. Comienza shared (simple, barato, ops manejable), monitorea distribución de load, y separa físicamente solo los tenants que lo justifiquen (top 5% que consumen 80% recursos). Postgres RLS es potente para forzar isolation a nivel de query. Migrar de shared a separated es más fácil que al revés." },
+        { "letter": "C", "text": "Schema separado por tenant en la misma DB. Balance perfecto.", "correct": false, "why": "500 schemas en Postgres es factible pero pesado: catálogo grande, migraciones deben aplicarse 500 veces, connection pooling se complica (search_path por schema). Es un middle ground que no gana en ninguna dimensión — mejor commit a shared o separated." },
+        { "letter": "D", "text": "Cada tenant en su propia tabla `users_tenant123`.", "correct": false, "why": "Peor de todos: 500 tablas con mismo schema, imposible hacer queries cross-tenant (analytics, admin), migraciones × 500, tooling roto." }
+      ],
+      "explanation": "Modelos multi-tenancy: (1) Shared everything: 1 DB, 1 schema, tenant_id column. Máxima densidad, mínimo ops. (2) Separate schemas: 1 DB, schema por tenant. Aislamiento lógico, ops medio. (3) Separate databases: DB por tenant. Máximo aislamiento, máximo ops. (4) Separate infrastructure: cluster por tenant enterprise. Elegir por: número de tenants (más = shared), regulatory (data residency puede forzar separated), noisy neighbor risk (shared expuesto), coste ops (equipo pequeño → shared). Postgres RLS + tenant_id + connection pooling por tenant es sweet spot moderno. Hybrid: shared por default, upgrade a separated para enterprise plans.",
+      "realWorld": "Salesforce (multi-tenancy pionero) usa shared con metadata driven. Slack: shared para free, separated para enterprise. GitHub Enterprise: separated. Notion: shared con extensivo sharding. Cada uno adaptó el modelo a su tamaño y clientes.",
+      "tags": ["multi-tenancy", "SaaS", "RLS", "isolation"],
+      "tech": ["PostgreSQL RLS", "MySQL"],
+      "references": [{ "title": "Microsoft — 'Multi-tenant SaaS patterns'" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "db-choice",
+      "topic": "UUID vs autoincrement — el debate eterno",
+      "difficulty": "senior",
+      "scenario": "Nueva tabla `orders` en Postgres. Debate: PK `SERIAL` (autoincrement bigint), PK `UUID v4` (aleatorio), PK `UUID v7` (timestamped), o `snowflake id` (custom).",
+      "question": "¿Qué elegir y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SERIAL siempre. Es lo más eficiente.", "correct": false, "why": "Eficiente en storage e índice B-tree (secuencial), pero: (1) expone volumen del negocio (`/orders/1234` → 'tienen 1234 orders'); (2) requiere coordinación con DB para asignar (round-trip); (3) hace conflictos en sharding y merge de sistemas. Trade-offs reales." },
+        { "letter": "B", "text": "UUID v4 siempre. Distribuido y sin colisiones.", "correct": false, "why": "Aleatoriedad es enemigo del B-tree: inserts van a random pages, splits constantes, cache miss alto. Con billones de rows, degrada performance de inserts 3-10x vs sequential. Además ocupa 16 bytes vs 8." },
+        { "letter": "C", "text": "UUID v7 (o ULID): tiene timestamp en los bits altos → orden temporal, insert-friendly (append al final del B-tree como sequential), no expone volumen (aleatorio en bits bajos), y sigue siendo global unique. Es el 'best of both worlds' para 2026.", "correct": true, "why": "Correcto. UUID v7 (RFC 9562, 2024) fue diseñado precisamente para este trade-off. ULID (2016) es similar. Los primeros 48 bits son timestamp millisecond, el resto aleatorio. B-tree feliz (append mostly), no expones volumen, distribuido-safe. Postgres 17 lo tiene nativo (uuidv7()); antes con extensión. Snowflake IDs (Twitter, 2010) similar: timestamp + machine + sequence — pero requieren coordinación de machine IDs." },
+        { "letter": "D", "text": "Snowflake ID (custom).", "correct": false, "why": "Válido pero requiere infraestructura (assignar machine IDs sin colisión, clock sync). Salvo escala Twitter, UUID v7 da 90% del beneficio sin coordination overhead." }
+      ],
+      "explanation": "Trade-offs de IDs: SERIAL (compacto, ordenado, expone volumen, requiere DB centralizada), UUID v4 (distribuido, opaco, aleatorio malo para índices), UUID v7/ULID (distribuido, opaco, ordenado temporal, sweet spot), Snowflake (Twitter, ordenado, requiere coord de nodos). Regla 2026: UUID v7 por defecto en sistemas distribuidos. SERIAL sigue OK en apps single-DB internas. NUNCA expongas IDs autoincrement en URLs públicas (leak de volumen, IDOR más fácil). UUID v4 solo cuando ordenamiento no importa (relaciones, join tables).",
+      "realWorld": "Stripe migró parte de sus IDs a formato 'obj_UUIDv7-like' precisamente por estos issues. Twitter Snowflake es el paper canónico (2010). Shopify escribió sobre migrar a UUIDs para sharding. Postgres 17 (2024) añadió uuidv7() nativo.",
+      "tags": ["UUID", "IDs", "B-tree", "sharding-friendly"],
+      "tech": ["PostgreSQL", "UUID v7", "Snowflake ID", "ULID"],
+      "references": [{ "title": "RFC 9562 — UUIDv6, v7, v8" }, { "title": "Twitter — Snowflake blog post" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "db-choice",
+      "topic": "Migraciones sin downtime — el arte perdido",
+      "difficulty": "senior",
+      "scenario": "Necesitas renombrar la columna `user_name` a `full_name` en una tabla con 500M rows en producción. El deploy directo (`ALTER TABLE ... RENAME`) bloquea la tabla varios minutos. La app se caería.",
+      "question": "¿Cuál es el proceso correcto de migración zero-downtime?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Fase 1: `ALTER TABLE ADD COLUMN full_name` (nueva columna, deploy app v1 que escribe en ambas). Fase 2: backfill (COPY user_name → full_name en batches sin bloquear). Fase 3: deploy app v2 que LEE de full_name pero sigue escribiendo en ambas. Fase 4: deploy app v3 que solo usa full_name. Fase 5: DROP COLUMN user_name.", "correct": true, "why": "Correcto. Es la técnica canónica 'expand and contract' (aka parallel change). Cada fase es individualmente reversible. La app y la DB evolucionan de forma independiente. Nunca hay un momento donde la app y DB estén incompatibles. Toma más tiempo pero cero downtime." },
+        { "letter": "B", "text": "En Postgres, `ADD COLUMN` sin default es instantáneo (solo metadata). `ADD COLUMN ... DEFAULT` en versiones antiguas re-escribía toda la tabla; desde PG 11 con default constante, también es instantáneo.", "correct": true, "why": "Correcto. Detalle crítico. En PG <11, `ADD COLUMN foo INT DEFAULT 0` re-escribía toda la tabla (bloqueando). PG 11+ optimiza: guarda el default en metadata, materializa solo cuando escribes a esa row. Esto habilitó migraciones online que antes eran imposibles." },
+        { "letter": "C", "text": "Usa herramientas: pt-online-schema-change (Percona, MySQL), gh-ost (GitHub, MySQL), pg_repack (Postgres). Hacen la migración creando una tabla nueva y copiando datos + triggers para capturar cambios en curso.", "correct": true, "why": "Correcto. Estas herramientas automatizan el pattern shadow-table: crean copia, aplican migración, syncan diferencias con triggers, swap atómico al final. gh-ost es el gold standard para MySQL. En Postgres, muchas migraciones son online sin herramientas, pero pg_repack ayuda con VACUUM FULL sin bloqueo." },
+        { "letter": "D", "text": "Poner la app en maintenance mode 10 minutos y hacer ALTER directo.", "correct": false, "why": "Válido en apps internas o de baja criticidad. Inaceptable para SLAs 24/7. Además, con 500M rows, 10 minutos puede no bastar." },
+        { "letter": "E", "text": "En Postgres, ALTER TABLE ... RENAME COLUMN es instantáneo (solo metadata), no toca datos.", "correct": true, "why": "Correcto! Detalle importante: RENAME en Postgres es puramente metadata, no bloquea largo tiempo. El escenario original (RENAME bloquea minutos) es inexacto en PG. En MySQL clásico sí era problemático. Sin embargo, el desafío real es que la APP no puede cambiar el nombre atómicamente con la DB — de ahí expand-and-contract." }
+      ],
+      "explanation": "Zero-downtime migrations principles: (1) DB y app deben ser compatibles en cada versión (backward + forward); (2) cada cambio individual es rápido y reversible; (3) usa múltiples deploys para 'shape shift' el schema. Anti-patrones: DROP COLUMN antes de que la app deje de leerlo; ADD COLUMN NOT NULL sin default (re-escribe tabla en PG < 11); ADD INDEX no concurrente (bloquea writes). Postgres CREATE INDEX CONCURRENTLY: crítico. Detección de long-locks en producción con `pg_stat_activity`, `pg_locks`. Herramientas para migraciones seguras: `strong_migrations` (Rails), `django-migration-linter`.",
+      "realWorld": "GitHub creó gh-ost por experiencia dolorosa migrando MySQL bajo carga. Stripe tiene playbook interno de zero-downtime. Etsy publicó posts sobre schema migration at scale. Cada empresa madura desarrolla su tooling — o adopta el estándar.",
+      "tags": ["migraciones", "zero-downtime", "expand and contract", "gh-ost"],
+      "tech": ["PostgreSQL", "MySQL", "gh-ost", "pg_repack"],
+      "references": [{ "title": "PlanetScale — 'Non-blocking schema changes'" }, { "title": "GitHub — gh-ost repository" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "db-choice",
+      "topic": "Isolation anomaly — write skew",
+      "difficulty": "senior",
+      "scenario": "Sistema de guardias médicas: regla de negocio 'siempre ≥1 doctor de guardia'. Query: `IF (SELECT COUNT(*) FROM oncall WHERE on_duty=true) >= 2 THEN UPDATE oncall SET on_duty=false WHERE id=X`. Dos doctores 'yo también' ejecutan simultáneamente, cada uno ve 2 doctores, cada uno se da de baja. Resultado: 0 doctores de guardia.",
+      "question": "¿Qué anomalía es y cómo se previene?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dirty read. Solución: Read Committed.", "correct": false, "why": "No es dirty read (no leen datos no commited). Ya están en Read Committed y la anomalía ocurre." },
+        { "letter": "B", "text": "Write skew (una forma de phantom): dos transacciones leen el mismo snapshot, cada una toma decisión basada en ese estado, y ambas commit hacen que la premisa quede falsa. Snapshot Isolation (Postgres Repeatable Read) NO lo previene — solo Serializable (SSI en Postgres).", "correct": true, "why": "Correcto. Write skew es la anomalía más traicionera porque parece imposible: cada tx individualmente sería correcta. Requiere razonar sobre INVARIANTES que abarcan múltiples rows. Serializable Snapshot Isolation (Cahill 2008) detecta ciclos de dependencia y aborta una de las transacciones. Alternativa: SELECT ... FOR UPDATE en los rows leídos (locking explícito). O materializar la constraint (constraint check trigger)." },
+        { "letter": "C", "text": "Non-repeatable read. Solución: Repeatable Read.", "correct": false, "why": "No: cada tx re-lee y verá el mismo resultado dentro de su snapshot. El problema es cross-transaction, no dentro de una tx." },
+        { "letter": "D", "text": "Deadlock. Solución: retry.", "correct": false, "why": "No hay deadlock — ambas transacciones commit sin conflicto de locks, y AMBAS pasan. El bug es lógico." }
+      ],
+      "explanation": "Write skew es el ejemplo clásico usado por Kleppmann para explicar por qué Snapshot Isolation NO es Serializable. Requiere invariantes sobre MÚLTIPLES rows (aquí: 'count >= 1'). Soluciones: (1) Serializable isolation (Postgres SSI, CockroachDB, Spanner); (2) SELECT ... FOR UPDATE en los rows relevantes (bloquea, previene el conflict); (3) constraint materializada (por ejemplo, tabla auxiliar con lock); (4) unique constraints donde apliquen. Otros ejemplos de write skew: booking system que verifica disponibilidad → doble reserva; auth que verifica límite de sesiones → sesiones extra. Detectarlo requiere pensar 'qué invariante quiero mantener a través del tiempo'.",
+      "realWorld": "El paper original de Cahill sobre SSI fue implementado en Postgres 9.1 (2011). CockroachDB, TiDB, Spanner nacieron Serializable por default. Muchos bugs en producción son write skews no detectados hasta un edge case (Black Friday, alta concurrencia).",
+      "tags": ["write skew", "Serializable", "SSI", "isolation anomalies"],
+      "tech": ["PostgreSQL SSI", "CockroachDB", "Spanner"],
+      "references": [{ "title": "Cahill — 'Serializable Isolation for Snapshot Databases', SIGMOD 2008" }, { "title": "Kleppmann — DDIA Ch. 7" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "db-choice",
+      "topic": "Consistent hashing — para qué sirve",
+      "difficulty": "senior",
+      "scenario": "Estás implementando un cache distribuido con 10 nodos Redis. Usas `hash(key) % 10` para asignar keys a nodos. Añades el nodo 11 y de repente el 90% de las keys mapean a un nodo distinto → cache miss masivo → 'thundering herd' contra la DB.",
+      "question": "¿Qué es consistent hashing y por qué resuelve esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Consistent hashing coloca nodos en un anillo (0..2^32). Cada key se hashea al mismo espacio y se asigna al PRÓXIMO nodo en el anillo. Añadir/quitar un nodo solo re-asigna las keys ENTRE ese nodo y el anterior — típicamente 1/N del total. Con virtual nodes (VNodes: cada nodo físico ocupa 100+ posiciones aleatorias en el anillo), distribución más uniforme y rebalanceo más suave.", "correct": true, "why": "Correcto. Es el algoritmo de Karger et al. (1997), popularizado por Amazon Dynamo (2007). Trade-off vs modulo simple: con N nodos, modulo hash re-asigna N-1/N (casi todo) al cambiar N. Consistent hashing re-asigna 1/N (mucho menos). VNodes evitan que un nodo por accidente reciba 'zona muerta' del anillo." },
+        { "letter": "B", "text": "Es lo mismo que hash(key) % N con más pasos.", "correct": false, "why": "Fundamentalmente distinto. Modulo re-hashea todo al cambiar N; consistent hashing minimiza re-asignación." },
+        { "letter": "C", "text": "Consistent hashing evita todos los cache misses.", "correct": false, "why": "No — solo minimiza los re-asignados durante scaling. Cache misses por TTL, cold start, etc. siguen ocurriendo." },
+        { "letter": "D", "text": "Solo sirve para Redis, no para otras bases.", "correct": false, "why": "Universal en sistemas distribuidos: Dynamo, Cassandra, Riak, Memcached client-side hashing, load balancers (session affinity), CDNs, Discord's ScyllaDB migration. Cualquier partitioning que quiera scaling suave lo usa." }
+      ],
+      "explanation": "Consistent hashing es el algoritmo fundacional del particionamiento en sistemas distribuidos modernos. Alternativas: (1) rendezvous hashing (HRW) — cada key se hashea contra cada nodo, mayor score gana; simpler than ring, similar properties. (2) Jump consistent hash (Google 2014) — mismo objetivo, requiere lista ordenada de nodos. Consistent hashing tiene limitaciones: no considera load real (hot keys pueden concentrarse); mitigación con 'consistent hashing with bounded loads' (Google/Vimeo, 2016). En sistemas grandes: partitioning explícito por rango (Spanner) o hash+range híbrido (Bigtable) suelen escalar mejor.",
+      "realWorld": "Amazon Dynamo paper (2007) es lectura obligada. Cassandra, DynamoDB, Riak usan consistent hashing con VNodes. Discord migró de Cassandra a ScyllaDB (con ring architecture similar). NGINX ip_hash usa consistent hashing para session affinity. Envoy proxy también.",
+      "tags": ["consistent hashing", "partitioning", "distribución", "Dynamo"],
+      "tech": ["Cassandra", "DynamoDB", "Redis Cluster", "Envoy"],
+      "references": [{ "title": "Karger et al. — 'Consistent Hashing', 1997" }, { "title": "DeCandia et al. — 'Dynamo: Amazon's Highly Available Key-value Store', 2007" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "db-choice",
+      "topic": "Read your writes — consistencia percibida",
+      "difficulty": "senior",
+      "scenario": "Usuario actualiza su foto de perfil. La app escribe a Postgres primary, y la siguiente lectura va a una read replica. La replica tiene 200ms de lag. El usuario ve su foto vieja después de guardar → 'este sistema está roto'.",
+      "question": "¿Qué garantía de consistencia se viola y cómo se resuelve?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Se viola 'read your writes' (aka 'read your own writes'): cada usuario debe ver sus propios cambios inmediatamente aunque otros los vean con lag.", "correct": true, "why": "Correcto. Read-your-writes es una consistencia por-usuario más débil que strong consistency global pero suficiente para la experiencia percibida. El bug del usuario no es 'ver stale data' en general — es 'no ver MI última acción'." },
+        { "letter": "B", "text": "Solución 1: rutear lecturas del mismo usuario a primary durante N segundos después de un write. Solución 2: leer siempre del primary para datos 'críticos' del usuario. Solución 3: usar timestamps/version — el cliente guarda el LSN del último write y las replicas esperan hasta alcanzar ese LSN.", "correct": true, "why": "Correcto. Todas son válidas con trade-offs distintos. Rutear a primary tras write es simple (cookie o cache local por sesión) pero carga el primary. Sticky primary por endpoint es limitante. LSN-aware reads (implementado en algunas DBs cloud-native como PlanetScale, Aurora Global) es más elegante pero requiere soporte del driver/DB." },
+        { "letter": "C", "text": "Migrar a Spanner que da strong consistency global.", "correct": false, "why": "Cambio arquitectural masivo (y caro) para un problema resoluble con patterns. Spanner tiene sus propios trade-offs (write latency por commit distribuido)." },
+        { "letter": "D", "text": "El usuario debe recargar la página.", "correct": false, "why": "UX inaceptable. El sistema debe hacer garantía por el usuario." },
+        { "letter": "E", "text": "Monotonic reads (leer siempre desde la misma replica) también resuelve el problema completo.", "correct": false, "why": "Monotonic reads garantiza 'no ver el tiempo ir hacia atrás' (si ya viste versión V, no ver V-1 después). NO garantiza que veas TU write. Es una garantía complementaria pero distinta." }
+      ],
+      "explanation": "Kleppmann define 'client-centric consistency' models: (1) read-your-writes: ver tus propias writes; (2) monotonic reads: no ir hacia atrás en el tiempo; (3) consistent prefix reads: ver escrituras en orden causal correcto. Los sistemas eventualmente consistentes deberían garantizar al menos read-your-writes por usuario. Implementaciones: (a) sticky sessions al primary; (b) version tokens (client-side session guardando ultimo LSN/write timestamp); (c) causally-consistent DBs (Cosmos DB session consistency, MongoDB causal consistency). Aurora Global Database tiene 'read-after-write consistency' opcional. La UX de aplicaciones sociales/colaborativas depende crítically de estas garantías.",
+      "realWorld": "Facebook memcache paper describe 'remote markers' para read-your-writes. AWS Aurora tiene 'session consistency' flag. MongoDB introdujo 'causal consistency' en 3.6 precisamente por este issue. Netflix documenta cómo cada servicio elige su modelo según UX requerida.",
+      "tags": ["read your writes", "consistency models", "replication lag"],
+      "tech": ["PostgreSQL replicas", "Aurora Global", "MongoDB causal consistency"],
+      "references": [{ "title": "Kleppmann — DDIA Ch. 5 Replication" }, { "title": "Terry et al. — 'Session Guarantees for Weakly Consistent Replicated Data'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "db-choice",
+      "topic": "Sharding — cuando y cómo",
+      "difficulty": "staff",
+      "scenario": "Postgres con 5TB. Queries lentas, vertical scaling ya en el máximo (r6i.32xlarge). Un colega propone sharding por user_id. Otro dice 'demasiado pronto, primero optimiza más'.",
+      "question": "¿Cuándo es 'hora' de shardear y cómo se hace bien?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Sharding introduce complejidad permanente: (1) cross-shard queries requieren fan-out; (2) cross-shard transactions se pierden (o usas 2PC); (3) rebalancing es operacional-mente complejo; (4) unique constraints solo funcionan dentro del shard; (5) migraciones se multiplican. Solo justificable cuando alternativas están agotadas.", "correct": true, "why": "Correcto. Sharding es 'one way door'. La complejidad afecta cada nueva feature. Antes de sharding: (a) query optimization, (b) read replicas, (c) archive de cold data, (d) particionamiento LOCAL (Postgres declarative partitioning — sigue siendo una DB), (e) vertical scaling al máximo. Sharding real (múltiples DBs físicas) solo cuando ningún nodo puede aguantar la data o writes." },
+        { "letter": "B", "text": "Elegir shard key es la decisión más importante: (a) debe distribuir load uniformemente; (b) queries frecuentes deben ir a UN shard (no fan-out); (c) evitar hot spots (celebrities, top products). user_id suele ser mala elección si tienes queries cross-user; tenant_id en B2B suele ser bueno.", "correct": true, "why": "Correcto. Shard key es como 'partition key' en NoSQL — la decisión que define el resto. Cambiarla después = re-shardear (proyecto de meses). Considera queries: si 90% son 'por usuario', shard por user_id. Si son 'por región', shard por region_id. Analytics típicamente requieren fan-out a todos los shards → data warehouse separado." },
+        { "letter": "C", "text": "Alternativas: Citus (extensión Postgres, shardea automáticamente), CockroachDB (Postgres-compatible con sharding built-in), Vitess (MySQL), YugabyteDB. Toman decisiones de sharding por ti al precio de trade-offs (latency de coordinación, features limitados).", "correct": true, "why": "Correcto. Antes de shardear a mano, considera 'sharded databases' que ya manejan el tema. Vitess (YouTube-origen, ahora PlanetScale) es battle-tested. Citus da Postgres sharded managed. CockroachDB es Postgres-wire con sharding+Raft. Trade-off: menos control, más magia, algunos features limitados (JOINs cross-shard, secondary indexes globales)." },
+        { "letter": "D", "text": "Sharding automático de la DB elimina toda la complejidad.", "correct": false, "why": "Reduce complejidad OPERACIONAL pero la complejidad LÓGICA (schema debe ser shard-friendly, transacciones limitadas, latency distribuida) sigue ahí. No hay 'sharding sin trade-offs'." },
+        { "letter": "E", "text": "Empieza sharding cuando llegues a ~500GB.", "correct": false, "why": "Número arbitrario. Instances r6i tienen hasta 128 vCPUs y TBs de RAM — pueden manejar TBs de data. Sharding se justifica cuando (a) ni el biggest instance funciona, o (b) escritura excede lo que un master aguanta." }
+      ],
+      "explanation": "Regla de oro: 'la mejor solución de sharding es no shardear'. Postgres con partitioning local + replicas + connection pooling llega muy lejos. Cuando SÍ shardees: (1) elige shard key con criterio (queries dominantes, load distribution, growth); (2) usa una solución probada (Vitess, Citus, CockroachDB) antes que build-your-own; (3) diseña para re-sharding desde el día 1 (nunca hardcodees número de shards); (4) monitorea distribución (algún shard 10x otros = problema); (5) mantén un plan de rebalancing. Sharding aplicado mal se convierte en el problema #1 de todo equipo posterior — 'legacy sharding' es la peor deuda técnica.",
+      "realWorld": "Instagram creció con Postgres shardeado a mano (posts famosos). Notion re-shardeó su sistema en 2021 (posts detallados). Figma usa PgBouncer + custom sharding. Discord migró de Cassandra a ScyllaDB por hot-partition issues. PlanetScale (Vitess) managed para MySQL. YugabyteDB, CockroachDB compiten en Postgres-scale.",
+      "tags": ["sharding", "particionamiento", "Citus", "Vitess", "escalabilidad"],
+      "tech": ["Postgres partitioning", "Citus", "Vitess", "CockroachDB", "YugabyteDB"],
+      "references": [{ "title": "Kleppmann — DDIA Ch. 6 Partitioning" }, { "title": "Notion — 'The great re-sharding'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "db-choice",
+      "topic": "Event Sourcing — cuándo vale la pena",
+      "difficulty": "staff",
+      "scenario": "Sistema de contabilidad. Debate: guardar el 'estado actual' de cada cuenta (balance) o guardar cada TRANSACCIÓN como evento immutable y derivar el balance por replay.",
+      "question": "¿Cuándo Event Sourcing es la elección correcta y qué costos tiene?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Event Sourcing brilla cuando: (a) la auditoría es requisito legal/de negocio (contabilidad, salud, gobierno); (b) necesitas replay para reconstruir vistas o corregir bugs; (c) la 'historia' es más importante que el 'estado actual'; (d) tienes múltiples read models (CQRS) de los mismos eventos.", "correct": true, "why": "Correcto. Event Sourcing convierte la DB en 'log de hechos que pasaron' — inmutable, ordenado. El 'estado actual' es una projection derivada. Beneficios: audit trail perfecto (regulación bancaria), debugging (replay para reproducir bugs), múltiples views (CQRS: mismo event → read model UI + read model analytics + read model search)." },
+        { "letter": "B", "text": "Costos: (1) queries de 'estado actual' requieren agregar eventos o mantener snapshots; (2) schema evolution es difícil (eventos viejos siguen ahí para siempre); (3) eventual consistency entre write log y read projections; (4) storage crece infinito; (5) most developers no lo entienden bien.", "correct": true, "why": "Correcto. Es una arquitectura que multiplica productividad en el problema correcto, y multiplica frustración en el problema incorrecto. Schema evolution: si cambias la forma de un evento, los eventos viejos no se pueden 'migrar' — hay que versionar y traducir en el consumer. Storage: log crece append-only (compactación con snapshots ayuda). Learning curve: patterns nuevos que la mayoría del equipo no conoce." },
+        { "letter": "C", "text": "Event Sourcing y CQRS son la misma cosa.", "correct": false, "why": "CQRS (Command Query Responsibility Segregation) es separar write model de read model. Event Sourcing es guardar eventos en vez de estado. Se COMBINAN a menudo (eventos son el write model, projections son los read models) pero son ortogonales." },
+        { "letter": "D", "text": "Para el 90% de sistemas, Event Sourcing es sobre-ingeniería. CRUD tradicional con audit_log tabla es suficiente.", "correct": true, "why": "Correcto. Es la mirada pragmática. Event Sourcing es un martillo enorme. Si no tienes requisitos explícitos de replay/audit/multi-view, una tabla de audit con INSERTs adicionales cubre el 90% de necesidades a 10% del costo. Fowler y Vaughn Vernon lo enfatizan: 'no default to Event Sourcing'." },
+        { "letter": "E", "text": "Todos los sistemas modernos son Event Sourced.", "correct": false, "why": "Hype. La MAYORÍA de sistemas exitosos (Amazon, Google, Netflix) NO son event sourced en su core. Usan CDC, Kafka, projections — pero source of truth suele ser DB tradicional." }
+      ],
+      "explanation": "Event Sourcing storage: EventStoreDB (dedicated), Axon Framework, Marten (Postgres extension), Kafka como event log (con toma de precauciones — retention, compaction). Snapshots (periodic materialization of state) mitigan replay cost. Frameworks: Axon, Marten, Wolverine (.NET), Commanded (Elixir), Akka Persistence. Alternativa 'light': tabla de audit_log en la DB (INSERT en cada cambio) — captura audit sin la complejidad de replay. Regla del arquitecto: Event Sourcing donde el DOMINIO exige historia (contabilidad, workflows regulados, colaboración real-time con replay). CRUD donde el estado es lo que importa.",
+      "realWorld": "LMAX (trading platform) es el caso canónico de Event Sourcing exitoso. Banking apps modernas (Monzo, Revolut) usan patterns event-sourced. Muchas 'event sourced' de startups han fracasado por complejidad (Groupon, LinkedIn Fabric — parcial rollback). Greg Young (evangelista original) matiza: 'no es para todo'.",
+      "tags": ["Event Sourcing", "CQRS", "auditoría", "immutable log"],
+      "tech": ["EventStoreDB", "Kafka", "Axon", "Marten"],
+      "references": [{ "title": "Martin Fowler — 'Event Sourcing'" }, { "title": "Vaughn Vernon — 'Implementing Domain-Driven Design'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "db-choice",
+      "topic": "Elegir DB — framework de decisión",
+      "difficulty": "staff",
+      "scenario": "Nueva startup, arquitecto lead. Producto: marketplace tipo Airbnb — usuarios, listings, bookings, reviews, mensajería, notificaciones, search. Presupuesto limitado, equipo de 5. Decidir stack de datos hoy afecta 5 años.",
+      "question": "¿Cuál es el framework MENTAL para elegir DBs en un sistema nuevo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Default sensato: Postgres como source of truth para TODO. Cubre 90%: transacciones (bookings), JSONB (metadata flexible), full-text search básico, geo (PostGIS), time-series (con Timescale extension), incluso vectors (pgvector). Añades otras DBs solo cuando Postgres se convierta en cuello de botella para un caso ESPECÍFICO.", "correct": true, "why": "Correcto. 'Postgres for everything' es la doctrina 2026 pragmática. Recursos: menos ops, menos backups, menos monitoring, un solo dialect SQL. Extensiones cubren cases especializados. Sacrificas performance óptimo por productividad. Startups mueren por complejidad, no por performance en la mayoría de casos." },
+        { "letter": "B", "text": "Redis para: (a) cache; (b) rate limiting; (c) session store; (d) colas simples (RQ/Sidekiq). Vale añadirla temprano por productividad ops-wise.", "correct": true, "why": "Correcto. Redis es la segunda DB casi universal. Su footprint operacional es muy pequeño (managed en AWS/GCP/Azure) y cubre necesidades de latencia baja que Postgres no cubre bien. Cuidado: NO uses Redis como source of truth (persistence AOF/RDB tiene edge cases, memoria limitada). Es un complemento." },
+        { "letter": "C", "text": "Añade Elasticsearch/OpenSearch cuando la búsqueda full-text de Postgres deje de ser suficiente (facetas, ranking custom, fuzzy). Complementa Postgres via CDC. No lo añadas 'por si acaso'.", "correct": true, "why": "Correcto. Postgres full-text search (tsvector, pg_trgm) llega muy lejos — MVP y probable primer año. Elasticsearch se justifica cuando: (a) faceted search complejo; (b) fuzzy/typo tolerance; (c) ranking con custom scoring; (d) autocomplete con completion suggesters. Añadirlo tarde es más barato que remover una DB innecesaria." },
+        { "letter": "D", "text": "Elegir la DB 'más rápida' para cada caso: TigerBeetle para transacciones, ScyllaDB para high-throughput, ClickHouse para analytics, MongoDB para docs.", "correct": false, "why": "Anti-patrón grave para startups: cada DB nueva = ops burden, aprender nuevo idioma de queries, mantener versiones, backups, monitoring, teoría de replicación distinta. 5 personas no puede operar 5 DBs. Especializado luego, cuando escala y equipo lo justifiquen." },
+        { "letter": "E", "text": "Empezar con la DB que usó tu ex-empresa aunque no encaje.", "correct": false, "why": "Sesgo de familiaridad. Puede ser válida (menor curva) pero no debe ser el criterio principal. Postgres es lo suficientemente universal para que la 'familiaridad' rara vez lo derrote." }
+      ],
+      "explanation": "Framework de decisión: (1) Postgres para transactional core (source of truth). (2) Redis para cache/rate-limit/sessions/simple queues. (3) Especialización por dominio SOLO cuando el domino explota (Elasticsearch para search complejo, ClickHouse/BigQuery para analytics masivos, vector DB para IA, Kafka para streams reales). (4) Managed everywhere — un startup no debe operar DBs a mano en 2026 (RDS/Aurora, MemoryDB, Opensearch managed, BigQuery/Snowflake). (5) Diseña con reversibilidad: migrar de Postgres a Postgres shardeado es más fácil que de MongoDB a Postgres. La deuda de mala elección de DB es multi-año.",
+      "realWorld": "GitHub: MySQL + Redis + Elasticsearch (core). Stripe: MongoDB (histórico) + Postgres. Airbnb: MySQL (histórico) + varios especializados. Notion: Postgres shardeado (Citus) + Elasticsearch. Linear: Postgres + Redis + almost nothing else — deliberada minimalidad. Basecamp: MySQL + Redis + Sidekiq. Los stacks minimalistas envejecen mejor.",
+      "tags": ["framework de decisión", "polyglot persistence", "Postgres por defecto"],
+      "tech": ["PostgreSQL", "Redis", "Elasticsearch"],
+      "references": [{ "title": "Kleppmann — DDIA (todo el libro)" }, { "title": "Basecamp — 'Majestic Monolith'" }, { "title": "AWS Well-Architected — Data pillar" }]
+    }
+  ]
+}

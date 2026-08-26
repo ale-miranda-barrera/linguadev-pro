@@ -1,0 +1,480 @@
+{
+  "id": "architecture-sim-14-multi-region-and-dr",
+  "trackId": "architecture",
+  "order": 14,
+  "title": "Simulacro 14 — Multi-región y Disaster Recovery",
+  "focus": "Active-active vs active-passive, DNS failover vs Global Accelerator, RTO/RPO, cross-region replication asincrónica, pilot light, warm standby, backup strategies, disaster testing.",
+  "areaCoverage": ["resilience", "scalability"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "resilience",
+      "topic": "RTO vs RPO",
+      "difficulty": "senior",
+      "scenario": "El VP de producto pregunta '¿en cuánto tiempo recuperamos si se cae AWS us-east-1? ¿Cuántos datos perdemos?'.",
+      "question": "¿Qué son RTO y RPO y cómo se comunican?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RTO (Recovery Time Objective) = cuánto tiempo desde el desastre hasta que el servicio vuelve. RPO (Recovery Point Objective) = cuántos datos podemos perder (última replicación exitosa antes del fallo). Son OBJETIVOS de negocio, no capacidades técnicas — se acuerdan con stakeholders y determinan la arquitectura y costo del DR.", "correct": true, "why": "Correcto. RTO responde 'cuánto downtime toleramos'; RPO 'cuántos datos perdemos'. Ejemplo: RTO=15min, RPO=1min significa 'volver en 15 min con máximo 1 min de datos perdidos'. Impacto en arquitectura: RTO/RPO cero (o casi) requieren active-active + synchronous replication (caros); RTO horas + RPO horas permiten backup restore (barato). NEGOCIO decide, tecnología implementa. Sin acuerdo explícito, cada equipo asume distinto." },
+        { "letter": "B", "text": "RTO y RPO son el mismo concepto.", "correct": false, "why": "Falso. Distintos: RTO = tiempo, RPO = datos perdidos. Un sistema puede tener RTO 5min y RPO 5min, o RTO 5min y RPO 24h (backup diario)." },
+        { "letter": "C", "text": "RTO/RPO son responsabilidad de ops, no del negocio.", "correct": false, "why": "Falso. Son decisiones de negocio con implicaciones de costo. Un RTO de 1 min cuesta 100x más que RTO de 1 día. Solo negocio puede decidir el trade-off en base a impacto de downtime." },
+        { "letter": "D", "text": "Todo servicio necesita RTO 0 y RPO 0.", "correct": false, "why": "Costo prohibitivo. Servicios internos poco críticos pueden tolerar RTO horas; core revenue services requieren RTO minutos. Diferenciar por tier." }
+      ],
+      "explanation": "RTO/RPO son la conversación fundamental de DR. Sirven para dimensionar la estrategia: (a) Backup & restore — RTO horas-días, RPO horas (backup schedule); (b) Pilot light — RTO decenas de minutos, RPO minutos; (c) Warm standby — RTO minutos, RPO minutos; (d) Active-active — RTO segundos, RPO cerca de 0. Cada nivel es 2-10x más caro que el anterior. Establecer RTO/RPO por tier de servicio: core revenue (aggressive), internal tools (relaxed). Documentar en contract con business, revisar anualmente.",
+      "realWorld": "AWS Well-Architected Reliability Pillar dedica capítulo a RTO/RPO. AWS re:Invent regularly presents 'Disaster Recovery Strategies' talks con estas 4 categorías. Banking industry maneja RTO/RPO reguladas (RTS in EU).",
+      "tags": ["RTO", "RPO", "DR", "business continuity"],
+      "tech": ["AWS", "backup", "replication"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability Pillar" },
+        { "title": "AWS — Disaster Recovery of Workloads on AWS" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "resilience",
+      "topic": "Estrategias DR — las 4 clásicas",
+      "difficulty": "senior",
+      "scenario": "Necesitas elegir estrategia DR según requisitos y presupuesto.",
+      "question": "¿Cuáles son las 4 estrategias clásicas de DR y sus trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Backup & Restore: backups periódicos, restore en desastre. RTO horas-días, RPO horas. MÁS BARATO. Adecuado para no-críticos.", "correct": true, "why": "Correcto. Solo pagas backups (S3/Glacier). En desastre: aprovisionas infra nueva + restore. RTO puede ser 4-24h. Adecuado para tier bajo (dev, analytics, non-customer facing)." },
+        { "letter": "B", "text": "Pilot Light: infra mínima corriendo en región DR (DB replicada, imagen containers/AMI listas), pero servicios OFF. En desastre: encender servicios. RTO decenas de minutos, RPO minutos.", "correct": true, "why": "Correcto. La 'llama piloto' está encendida (DB, secrets, network) pero los compute están apagados. Levantar en desastre = minutos. Balance costo/RTO." },
+        { "letter": "C", "text": "Warm Standby: servicios corriendo en región DR a capacidad REDUCIDA (ej. 25%). En desastre: scale-up a capacidad completa. RTO minutos, RPO minutos. Más caro que pilot light pero failover más rápido.", "correct": true, "why": "Correcto. Todo está VIVO, solo con menos capacidad. Failover = actualizar DNS + scale up. Adecuado para servicios importantes que necesitan RTO agresivo sin pagar 100% de infra doble." },
+        { "letter": "D", "text": "Multi-Site Active-Active: tráfico DISTRIBUIDO entre regiones simultáneamente. En desastre: región sana absorbe todo el tráfico. RTO cerca de 0, RPO cerca de 0. MÁS CARO y complejo (data consistency cross-region).", "correct": true, "why": "Correcto. Ambas regiones sirven tráfico normal (LB latency-based, geo routing, o weighted). Failover automático. Requiere resolver consistency (multi-region DBs — DynamoDB Global Tables, Aurora Global Database) y complejidad operacional alta. Solo para tier crítico." },
+        { "letter": "E", "text": "Existe una única estrategia DR correcta para todo.", "correct": false, "why": "Falso. Se elige por tier de servicio + RTO/RPO. Empresa madura usa mix: analytics con backup+restore, API core con active-active." }
+      ],
+      "explanation": "Las 4 estrategias son un espectro costo vs RTO/RPO: (1) Backup&Restore = $, RTO horas; (2) Pilot Light = $$, RTO 30-60min; (3) Warm Standby = $$$, RTO 5-15min; (4) Active-Active = $$$$, RTO segundos. AWS Well-Architected pilar reliability describe cada una con implementations típicas. Elegir por servicio: monolito interno con backup+restore, API critical con warm o active-active. Multi-region añade complejidad: data consistency, deploy pipelines, monitoring, ownership. No adoptar más nivel del que se necesita.",
+      "realWorld": "AWS re:Invent regular presenta 'ARC317 — DR Strategies' con estos 4 tiers. Netflix es active-active multi-region estricto (Chaos Kong killa regiones para verificarlo). Muchas empresas se conforman con pilot light + game days regulares.",
+      "tags": ["DR strategies", "backup restore", "pilot light", "warm standby", "active-active"],
+      "tech": ["AWS", "DR", "multi-region"],
+      "references": [
+        { "title": "AWS — Disaster Recovery Strategies whitepaper" },
+        { "title": "AWS re:Invent — ARC317 DR Strategies" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "resilience",
+      "topic": "Active-active vs Active-passive",
+      "difficulty": "staff",
+      "scenario": "Debates entre active-active (ambas regiones sirven tráfico) vs active-passive (una activa, otra en standby).",
+      "question": "¿Cuáles son las CONSIDERACIONES REALES de active-active?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ventaja: failover casi instantáneo (región sana ya sirve tráfico, solo redirects), uso eficiente de la infra (paga 2x, usa 2x). Desventaja: consistency cross-region (writes en ambas → conflicts, eventual consistency; strict consistency = latencia cross-region alta).", "correct": true, "why": "Correcto. Trade-off central: latencia vs consistency (CAP theorem manifesto). Active-active en múltiples regiones típicamente = eventual consistency + conflict resolution (last-write-wins, CRDTs, application-level dedup). Ejemplos: DynamoDB Global Tables (LWW), Aurora Global Database (1 writer región, otras read-only con lag)." },
+        { "letter": "B", "text": "Data consistency: hay que decidir cómo manejar writes cross-region. Opciones: (a) single-writer región (todas las escrituras al primary, réplicas read-only); (b) multi-writer con conflict resolution (LWW, CRDTs, custom logic); (c) partitioning geográfico (usuarios EU escriben a EU, US a US, sin overlap).", "correct": true, "why": "Correcto. La elección depende del uso: (a) single-writer simple pero writes cross-region tienen latencia alta; (b) multi-writer permite writes locales pero requiere conflict resolution — complejidad alta; (c) partitioning es elegante si usuarios NO cruzan regiones (Netflix video content), pero rompe para caso de multi-region user (viajero, colaboración cross-timezone)." },
+        { "letter": "C", "text": "Deployment: cada change debe ir a ambas regiones. Pipeline debe considerarlas atómicamente (blue/green por región).", "correct": true, "why": "Correcto. Deploy en 1 región deja el sistema inconsistente si la otra tiene código viejo. Pipeline maduro deploya a canary de cada región → verificación → 100% cada región. Feature flags cross-region para coordinar rollout." },
+        { "letter": "D", "text": "Monitoring y ops: incidents pueden manifestarse en 1 región sin la otra (network partition regional, dep externa regional). Alertas regionales necesarias.", "correct": true, "why": "Correcto. Dashboards por región, alertas per-región, on-call que entiende el fanout. Runbooks para 'región X caída, absorber tráfico en Y'. Cost de complejidad ops alto." },
+        { "letter": "E", "text": "Active-active es siempre mejor que active-passive.", "correct": false, "why": "Falso. Para muchos casos, active-passive con warm standby + game days regulares es mejor: menos complejidad, costos más bajos, suficiente para RTO minutos. Active-active tiene lugar en tier top." }
+      ],
+      "explanation": "Active-active multi-region es la joya de la corona en resilience, pero costoso y complejo. Requerimientos: (a) DB multi-region (DynamoDB Global Tables, Aurora Global, CockroachDB, Spanner en GCP); (b) session storage compartido o sticky por región; (c) DNS/LB routing (Route 53 latency-based, Global Accelerator); (d) deploy pipelines regionales; (e) observability regional; (f) resolución de identidad global (userId único, no per-región). Alternativas: warm standby simplifica muchísimo, aceptable para RTO minutos. Elección debe reflejar realmente el requisito de negocio.",
+      "realWorld": "Netflix es famous active-active multi-region con Chaos Kong killing regions regularmente. AWS re:Invent 2022 (ARC308) mostró Airbnb multi-region journey. Google Spanner es active-active globally con TrueTime + Paxos. AWS DynamoDB Global Tables es managed active-active.",
+      "tags": ["active-active", "active-passive", "multi-region", "consistency"],
+      "tech": ["DynamoDB Global Tables", "Aurora Global Database", "Route 53"],
+      "references": [
+        { "title": "AWS — Multi-region application architecture" },
+        { "title": "Google Spanner paper — globally consistent DB" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "resilience",
+      "topic": "DNS failover — Route 53",
+      "difficulty": "senior",
+      "scenario": "Configuras Route 53 con health check + failover policy: primary us-east-1, secondary us-west-2.",
+      "question": "¿Qué tener en cuenta con DNS failover?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TTL bajo para failover rápido (30-60s). TTL alto = clientes ven IP vieja durante minutos aunque Route 53 haya cambiado. Trade-off: más queries DNS a Route 53 (costo mínimo).", "correct": true, "why": "Correcto (visto en sim-03). TTL controla cuánto tiempo el resolver cachea. Sin TTL bajo, cambio DNS no llega. Route 53 cobra ~$0.40 por millón queries — trivial." },
+        { "letter": "B", "text": "Health checks: Route 53 corre desde múltiples locations globales, cada 30s (o 10s con fast health checks). Configurar umbral de fallos consecutivos antes de failover.", "correct": true, "why": "Correcto. Health checks de Route 53 desde N locations previenen false positives (una location con network issue). Umbral típico 3 fallos consecutivos = ~90s de detección con 30s interval." },
+        { "letter": "C", "text": "Clientes con DNS cache agresivo (algunos ISP ignoran TTL, apps con caches largos) NO se recuperarán en el TTL declarado. Solución más robusta: AWS Global Accelerator (IPs anycast que no cambian, redirige en la red).", "correct": true, "why": "Correcto y limitación conocida. Algunos ISP tienen minimum TTL 5-15 min. Java DNS cache default es 'para siempre' (JVM). Solución: (a) educate clients (fijar TTL corto); (b) Global Accelerator: IPs anycast estáticas, redirige a la región healthy dentro de la red AWS (segundos, sin depender de DNS)." },
+        { "letter": "D", "text": "Failover funciona solo si la app en secondary está lista para servir (warm standby o pilot light encendido). Sin infra en la segunda región, DNS apunta a la nada.", "correct": true, "why": "Correcto y obvio pero olvidado. Route 53 hace el switch DNS; la app secondary debe existir Y estar caliente. Si es pilot light, hay que encenderla antes o durante failover — RTO refleja este tiempo." },
+        { "letter": "E", "text": "DNS failover es zero-cost y perfecto.", "correct": false, "why": "Route 53 es barato pero no zero. Y NO es perfect: DNS caching y clientes no cooperativos limitan la efectividad. Para HA seria, considerar Global Accelerator." }
+      ],
+      "explanation": "DNS failover con Route 53 es simple y económico pero limitado por DNS caching. Configuración: (1) health checks calibrados; (2) TTL bajo; (3) infra secondary lista; (4) monitoring del failover. Alternativa superior: Global Accelerator (anycast IPs, health-based routing en la red AWS, failover segundos sin DNS). También: application-level failover (cliente reintenta múltiples endpoints), multi-CDN failover. La elección depende de RTO tolerated y complejidad.",
+      "realWorld": "Facebook outage 2021: DNS y BGP config lo tumbó globally (fuera de discussion de failover DNS, pero relacionado). AWS re:Invent tiene talks de Global Accelerator vs Route 53. Cloudflare y otras CDNs implementan anycast IP nativamente.",
+      "tags": ["Route 53", "DNS failover", "TTL", "Global Accelerator", "health checks"],
+      "tech": ["Route 53", "Global Accelerator", "DNS"],
+      "references": [
+        { "title": "AWS — Route 53 health checks" },
+        { "title": "AWS — Global Accelerator vs Route 53" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "resilience",
+      "topic": "Global Accelerator",
+      "difficulty": "senior",
+      "scenario": "Comparas Route 53 (DNS-based) vs Global Accelerator para multi-region failover.",
+      "question": "¿Qué ventaja concreta ofrece Global Accelerator?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Global Accelerator asigna 2 IPs anycast estáticas globales. El tráfico entra a la red AWS backbone en el edge más cercano al cliente y se rutea internamente a la región healthy. Cambio de región en <30s sin depender de DNS cache. Además: performance boost porque el tráfico va por backbone AWS (menos hops públicos, menos jitter).", "correct": true, "why": "Correcto. Ventajas concretas: (1) IPs fijas anycast (mismo IP responde desde múltiples POPs); (2) rerouting en la red AWS (health-based, ~30s convergence); (3) mejor performance (tráfico entra a AWS temprano, evita ISP variability); (4) mitigación DDoS built-in (AWS Shield); (5) TCP/UDP no solo HTTP. Trade-off: costo (fixed hourly + data transfer premium)." },
+        { "letter": "B", "text": "Global Accelerator es gratis, Route 53 cuesta.", "correct": false, "why": "Falso. GA cuesta ~$18/mes por accelerator + $0.015-0.035/GB DTO premium. Route 53 es MÁS BARATO." },
+        { "letter": "C", "text": "Global Accelerator reemplaza CloudFront.", "correct": false, "why": "Distintos: GA para TCP/UDP dinámico con anycast IPs y routing. CloudFront para HTTP/HTTPS con caching. Pueden combinarse (CloudFront delante, GA rutea al origin dinámico multi-region)." },
+        { "letter": "D", "text": "Global Accelerator solo funciona con EC2.", "correct": false, "why": "Falso. Soporta ALB, NLB, EC2 con Elastic IP, EKS. Cualquier endpoint con IP." }
+      ],
+      "explanation": "Global Accelerator resuelve las limitaciones de DNS failover: IPs anycast que no cambian, rerouting rápido en AWS backbone, y performance mejorado. Casos ideales: (a) gaming, VoIP (TCP/UDP low latency); (b) trading apps (latency crítica); (c) multi-region failover con clientes móviles (DNS cache hostil en apps). Casos donde no vale: (a) HTTP con cache (CloudFront gana); (b) budget-constrained (Route 53 suficiente para most). Configuración: crear accelerator, agregar listener, agregar endpoint groups por región, health check config.",
+      "realWorld": "AWS re:Invent 2018 lanzó Global Accelerator. Gaming companies (Riot, Epic) adoptaron para reducir latencia global. Formula 1 mencionado en AWS talks usando GA para servicios racing.",
+      "tags": ["Global Accelerator", "anycast", "AWS backbone", "multi-region"],
+      "tech": ["AWS Global Accelerator", "Route 53", "ALB"],
+      "references": [
+        { "title": "AWS Global Accelerator docs" },
+        { "title": "AWS re:Invent 2018 — Global Accelerator launch" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "resilience",
+      "topic": "Cross-region replication asíncrona",
+      "difficulty": "senior",
+      "scenario": "Aurora Global Database replica de primary a secondary región con lag típico de 1s. Ocurre desastre en primary — ¿pierdes datos?",
+      "question": "¿Qué implica la replicación async para RPO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Replicación async NUNCA garantiza RPO=0: los writes committed en primary pero no propagados al secondary se PIERDEN si primary muere antes de replicar. Aurora Global Database tiene RPO típico ~1 segundo (writes de último segundo se pueden perder). Para RPO=0 estricto: replicación síncrona (Aurora multi-AZ dentro de región, o strong consistency stores como Spanner) — pero con costo de latencia (write espera confirmación de todos).", "correct": true, "why": "Correcto. Async = RPO > 0 por diseño. Trade-off CAP: si quieres RPO=0 cross-region, sync replication → cada write espera acuse de otras regiones → latencia alta (100-200ms cross-region añadidos por write). Aurora Global (async) elige AP: writes rápidos local, pequeña ventana perdida en desastre. Multi-AZ intra-región puede ser sync (~ms) porque distancias cortas. Spanner con TrueTime + Paxos logra strong consistency global pero es Google-only (o CockroachDB open source similar)." },
+        { "letter": "B", "text": "Aurora Global es sincrónica.", "correct": false, "why": "Falso. Cross-region es async para no penalizar latencia de writes." },
+        { "letter": "C", "text": "Se puede lograr RPO=0 sin trade-offs.", "correct": false, "why": "CAP theorem lo prohíbe: consistency global + availability + partition tolerance no coexisten. Elegir 2." },
+        { "letter": "D", "text": "Async replication no tiene sentido, siempre usar sync.", "correct": false, "why": "Sync cross-region tiene latencia prohibitiva (100+ms por write). Async es trade-off aceptable para casi todos los casos (RPO segundos vs performance normal)." }
+      ],
+      "explanation": "Replicación cross-region async vs sync es CAP theorem manifesto. Async (Aurora Global, DynamoDB Global Tables, Kafka MirrorMaker): RPO segundos, performance normal, complejidad menor. Sync (Spanner, CockroachDB, custom con Paxos/Raft): RPO 0, latencia alta cross-region, complejidad enorme. Reality check: RPO=1s es aceptable para 99% de negocios. Verdadero RPO=0 es reservado para finance/trading donde perder 1 transacción = pérdida grande. Documentar claramente cuánto se puede perder según strategy elegida.",
+      "realWorld": "Google Spanner paper (2012) describe TrueTime + globally consistent transactions. AWS Aurora Global Database RPO documentado ~1s. Facebook TAO usa async cross-region con eventual consistency. Banking messaging (SWIFT) usa sync para pagos internacionales — RPO 0 requerido.",
+      "tags": ["replicación async", "RPO", "CAP theorem", "Aurora Global"],
+      "tech": ["Aurora Global Database", "DynamoDB Global Tables", "Spanner"],
+      "references": [
+        { "title": "Google Spanner paper" },
+        { "title": "AWS — Aurora Global Database" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "resilience",
+      "topic": "DynamoDB Global Tables",
+      "difficulty": "senior",
+      "scenario": "Necesitas DynamoDB con presencia multi-region. Configuras Global Tables.",
+      "question": "¿Qué es cierto sobre DynamoDB Global Tables?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Global Tables replica async entre regiones (~1s típico). Escrituras se pueden hacer en cualquier región (multi-writer). Conflicts se resuelven con LWW (last-write-wins) basado en timestamp.", "correct": true, "why": "Correcto. Multi-writer, LWW. Conflict resolution automática pero LOSSY: si dos regiones escriben la misma key en ventana de replicación, la 'última' (por timestamp) gana, la otra se pierde. Para casos donde esto importa: diseñar keys que evitan conflict (partition por region), o versionar en la app." },
+        { "letter": "B", "text": "Requires Streams habilitado y usa DDB Streams internamente para replicación.", "correct": true, "why": "Correcto. GT usa Streams como transporte. Cambios en tabla → Stream → replicación a otras regiones. Habilitar Streams es prerequisito." },
+        { "letter": "C", "text": "Cada región paga por su capacidad + costo de replicated write requests (RRWs).", "correct": true, "why": "Correcto. No es 'una tabla' — son N tablas físicas replicadas. Cada write en región A cuenta como write en A + RRW en cada otra región. Costo puede ser 2-3x según N regiones." },
+        { "letter": "D", "text": "Consistency: reads en la MISMA región son strongly consistent (con ConsistentRead=true). Cross-region reads son eventual (siempre). Cada región es una tabla independiente sincronizada.", "correct": true, "why": "Correcto. Fuertemente consistente EN region local (ConsistentRead=true). Cross-region siempre eventual (llegan cambios con lag). Modelo mental: N tablas idénticas con sync automático." },
+        { "letter": "E", "text": "Global Tables ofrece transactions cross-region.", "correct": false, "why": "Falso. Transactions de DDB son intra-region. Cross-region no hay concept de tx atómica." }
+      ],
+      "explanation": "DynamoDB Global Tables es el 'DR/multi-region managed' de DDB. Ideal para: (a) global apps con escritura local por región (menor latencia); (b) DR failover automático (todas las regiones tienen la data); (c) read-heavy workloads que benefician de reads locales. Trade-offs: LWW conflict resolution (no siempre suficiente), costo (RRWs), y eventual consistency cross-region (aplicación debe tolerar). Alternativas: (a) DDB single-region + backup cross-region si RPO horas aceptable; (b) Aurora Global Database si relacional necesario.",
+      "realWorld": "Amazon Retail (amazon.com) usa Global Tables internamente para catálogo. AWS re:Invent 2019 lanzó V2 con menor latencia. Airbnb, Lyft usan para user data multi-region.",
+      "tags": ["DynamoDB Global Tables", "multi-region", "LWW", "conflict resolution"],
+      "tech": ["DynamoDB", "DynamoDB Streams"],
+      "references": [
+        { "title": "AWS — DynamoDB Global Tables" },
+        { "title": "AWS re:Invent — Global Tables deep dive" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "resilience",
+      "topic": "Backup strategies — snapshots vs incremental",
+      "difficulty": "mid",
+      "scenario": "Necesitas backup de un RDS de 5TB. RTO/RPO son 4 horas.",
+      "question": "¿Qué estrategias de backup existen y sus trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "RDS automated snapshots (diarios) + retention configurable (0-35 días). Snapshots son incrementales bajo el hood (solo cambios desde el último) — restore reconstituye full imagen. RPO = window desde último snapshot (~24h típ.). RTO = tiempo de restore + cutover.", "correct": true, "why": "Correcto. RDS snapshots son storage efficient (incrementales) pero se presentan como full para restore. Costo bajo (~$0.095/GB/mes solo espacio ADICIONAL a la DB). RPO limited por schedule (por default 1x/día en backup window). Extender con point-in-time recovery (PITR): RDS logs + snapshots permiten restore a cualquier segundo dentro del retention (RPO ~5min típ.)." },
+        { "letter": "B", "text": "Cross-region snapshot copy: replicar snapshots a otra región para DR. Automated con AWS Backup + cross-region rules.", "correct": true, "why": "Correcto. Snapshot solo local no protege ante región caída. AWS Backup permite políticas cross-region + cross-account (defensivo contra ransomware/deletion accidental). Copy incurre transfer costs una vez." },
+        { "letter": "C", "text": "AWS Backup: servicio managed para políticas centralizadas (RDS, EBS, DynamoDB, EFS, S3), backup vaults con Lock (WORM, contra deletion), reporting. Alternativa a scripts custom.", "correct": true, "why": "Correcto. AWS Backup es 'orquestador' de backups cross-service con políticas declarativas. Vault Lock para inmutabilidad (compliance, ransomware defense). Reporting agregado. Backup Audit Manager para verify policies." },
+        { "letter": "D", "text": "Los snapshots RDS son 100% seguros contra deletion — no se pueden borrar accidentalmente.", "correct": false, "why": "Falso. Sin protección explícita, snapshots se pueden borrar (a mano o por retention). Deletion protection en RDS + Backup Vault Lock (WORM) son las capas de defensa." },
+        { "letter": "E", "text": "Para 5TB RDS y RPO 4h, snapshot diario + logs de transaction (PITR) es adecuado.", "correct": true, "why": "Correcto. RPO 4h se cubre con PITR (RPO ~minutos con transaction logs). Snapshot diario provee base + cross-region copy para regional DR. Simple y efectivo." }
+      ],
+      "explanation": "Backup ≠ DR completo, pero es el fundamento. Estrategias: (1) native service backups (RDS snapshots, DDB backups); (2) AWS Backup para políticas centralizadas; (3) cross-region copy para regional DR; (4) cross-account copy para defensa contra ransomware/insider (attacker en account A no puede borrar backups en account B). Backup Vault Lock provee inmutabilidad WORM (compliance requirement en muchos sectores). Verify regularmente que backups son RESTAURABLES (backup no testeado no es backup — es archivo).",
+      "realWorld": "AWS Backup announced 2019, ha crecido a cubrir 15+ servicios. AWS re:Invent 2022 con enfoque en ransomware defense via Vault Lock. Ransomware attacks a empresas 2020-2023 han demostrado importance de backups inmutables cross-account.",
+      "tags": ["backups", "snapshots", "PITR", "AWS Backup", "Vault Lock"],
+      "tech": ["RDS", "AWS Backup", "S3", "cross-region"],
+      "references": [
+        { "title": "AWS Backup docs" },
+        { "title": "AWS — Ransomware protection with Backup Vault Lock" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "resilience",
+      "topic": "Disaster testing regular",
+      "difficulty": "staff",
+      "scenario": "Tu equipo tiene DR strategy documentada pero nunca ha ejecutado un failover real. ¿Qué peligros?",
+      "question": "¿Por qué es crítico TESTEAR DR regularmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "'Untested DR is fiction'. Sin ejercitar: (a) runbooks desactualizados (endpoint que no existe, credencial revocada); (b) automation con bugs no descubiertos; (c) equipo sin muscle memory; (d) RTO estimado optimista sin evidence; (e) gaps de monitoring durante failover. Regular DR drills (trimestrales) descubren y corrigen ANTES del real desastre.", "correct": true, "why": "Correcto. Google (DiRT), Amazon (Game Days), Netflix (Chaos Kong) todos hacen DR testing regular. Descubrimientos comunes en primer drill: 'la automation asume dependency X que no existe en la región DR', 'la nueva persona de ops no tenía acceso', 'monitoring stack corría en primary — cegado durante failover'. Sin ejercitar, DR plan es aspiración, no capacidad." },
+        { "letter": "B", "text": "Testear DR es demasiado arriesgado en prod.", "correct": false, "why": "Reactive. Testar con blast radius controlado (canary region, off-peak, con equipo cerca) es MENOS riesgoso que descubrir problemas en desastre real. Netflix testea Chaos Kong (kill entire region) regularly." },
+        { "letter": "C", "text": "Basta con revisar el runbook trimestralmente sin ejecutarlo.", "correct": false, "why": "Lectura != ejecución. Bug en step 5 solo se descubre al ejecutar." },
+        { "letter": "D", "text": "DR testing es responsabilidad solo del CTO.", "correct": false, "why": "Es responsabilidad del equipo completo (SRE + dev + product). Involucrar múltiples roles asegura runbook cubre todos los aspectos." }
+      ],
+      "explanation": "DR testing regular es cultural + técnico. Formatos: (1) tabletop exercise (discusión, no ejecutar — para runbook review); (2) partial failover (failover 1 servicio, no todo); (3) full failover (game day serio, whole region); (4) automated chaos (regular experiments). Cadencia: monthly partial, quarterly full, annually full multi-region. Debrief obligatorio: qué salió bien, qué mal, action items. Track improvements (RTO real vs estimado shrinking over time = success signal).",
+      "realWorld": "Google DiRT (Disaster Recovery Testing) programs corren 1-2x año, escala global. Netflix Chaos Kong daily. Amazon internal game days documented en AWS Well-Architected. Failing to test = SRE anti-pattern doc'd in Google SRE Book.",
+      "tags": ["DR testing", "game day", "runbook validation"],
+      "tech": ["AWS FIS", "chaos engineering", "runbook"],
+      "references": [
+        { "title": "Google SRE Book — Testing for reliability" },
+        { "title": "AWS Well-Architected — Reliability Pillar" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "resilience",
+      "topic": "Region selection y sovereignty",
+      "difficulty": "mid",
+      "scenario": "Necesitas elegir regiones AWS para tu deployment multi-region.",
+      "question": "¿Qué considerar al elegir regiones?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Latencia a usuarios: geo-cerca de mayor base de usuarios. us-east-1 y eu-west-1 son defaults para NA y EU respectivamente.", "correct": true, "why": "Correcto. Latencia a usuarios directamente afecta UX. Herramientas: cloudping.co (RTT de regiones AWS), mapas de latencia. Aunque CDN mitiga (static content), APIs dinámicas requieren región cercana." },
+        { "letter": "B", "text": "Compliance / data sovereignty: leyes GDPR (EU), CCPA (California), LGPD (Brasil), data residency (China con AWS China region separate, Suiza con Zurich local, etc.). Datos personales sujetos a jurisdicción del país.", "correct": true, "why": "Correcto. GDPR: datos EU citizens deben stay en EU (con excepciones). China: AWS China (Beijing/Ningxia) es entidad separada operada por partners locales. Government workloads: AWS GovCloud (US) para US Gov. Elegir región equivocada = compliance violation." },
+        { "letter": "C", "text": "Feature availability: no todos los servicios AWS están en todas las regiones. Nuevos servicios lanzan primero en us-east-1, us-west-2, eu-west-1. Regiones nuevas o especializadas (Bahrain, Cape Town) pueden faltar servicios.", "correct": true, "why": "Correcto. AWS Region Table muestra service availability. Ejemplo: algunas ML services solo en us-east-1 al lanzamiento. Verificar que TODOS los servicios que necesitas están en la región elegida antes de commit." },
+        { "letter": "D", "text": "Costo: pricing varía por región. us-east-1 típicamente más barato; regiones nuevas o de baja escala (Bahrain, Zurich) más caras.", "correct": true, "why": "Correcto. Diferencia hasta 20-30% en algunos servicios. Balance con latencia y compliance. Trafic data cross-region cobra también." },
+        { "letter": "E", "text": "Todas las regiones AWS son equivalentes.", "correct": false, "why": "Falso. Difieren en features, precio, num AZs, service availability, y siempre latencia geográfica." }
+      ],
+      "explanation": "Selección de regiones: (1) latencia a usuarios (primary driver para UX); (2) compliance (obligatorio); (3) feature availability (verificar en Region Table); (4) costo; (5) redundancia (múltiples regiones para DR). Para multi-region DR: emparejar geographic distance (us-east-1 + us-west-2 diferentes coasts; eu-west-1 + eu-central-1 diferentes países EU). AWS Local Zones para latencia ultra-low en ciudades específicas. AWS Outposts para on-prem con managed AWS.",
+      "realWorld": "GDPR compliance forzó a muchas empresas a expandir a eu-west-1/eu-central-1. AWS China (Beijing/Ningxia) requiere ICP license — Amazon opera via partner. Cloud sovereignty debates 2022-2023 en Europa (Gaia-X, Sovereign Cloud initiatives).",
+      "tags": ["region selection", "GDPR", "data sovereignty", "compliance"],
+      "tech": ["AWS regions", "GovCloud", "Local Zones"],
+      "references": [
+        { "title": "AWS — Region and AZ selection" },
+        { "title": "AWS — Compliance programs" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "scalability",
+      "topic": "AZ (Availability Zone) design",
+      "difficulty": "senior",
+      "scenario": "Un compañero dice 'multi-AZ es DR suficiente, no necesitamos multi-region'.",
+      "question": "¿Qué es multi-AZ y en qué se diferencia de multi-region?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AZs son data centers físicamente separados dentro de una región (típ. 3-6 AZs por región), conectados con fiber redundante de baja latencia (<1ms típ.). Multi-AZ protege contra falla de UN data center. Multi-region protege contra falla de la REGIÓN COMPLETA (rare pero pasa: us-east-1 outages 2015, 2017, 2020, 2021).", "correct": true, "why": "Correcto. AZs = independencia física intra-región (poder, cooling, network separados). Latencia entre AZs baja (<2ms) permite sync replication económica. Multi-region = independencia geográfica (100s-1000s km), latencia 50-200ms típica. Regional outages son raras pero devastadoras — un evento de 2021 tumbó us-east-1 varias horas con impact global. Multi-AZ protege contra data center fires, hardware failures; multi-region protege contra provider region outage, natural disaster de gran escala." },
+        { "letter": "B", "text": "AZs son solo racks dentro del mismo data center.", "correct": false, "why": "Falso. AZs son data centers físicamente separados por km, con power/network/cooling independientes." },
+        { "letter": "C", "text": "Multi-region no aporta nada sobre multi-AZ.", "correct": false, "why": "Falso. Regional outages son riesgo real. Multi-region también permite geographical distribution para latencia." },
+        { "letter": "D", "text": "Multi-AZ y multi-region son iguales en costo.", "correct": false, "why": "Falso. Multi-region es significativamente más caro (2x DB, replication traffic, complexity ops, deploy pipelines dobles)." }
+      ],
+      "explanation": "AZ vs Region: (a) Multi-AZ: default en managed AWS services (RDS Multi-AZ, DynamoDB, S3), sync replication económica, protección contra data center failure, RTO segundos/minutos, RPO 0 típico; (b) Multi-region: opt-in, complexity mayor, protection contra regional outage, latencia cross-region agrega complexity. Elegir por tier de servicio: (1) internal tool: multi-AZ suficiente; (2) core revenue: multi-AZ + multi-region DR; (3) mission-critical global: multi-region active-active. AWS regional outages documentadas (Service Health Dashboard) recuerdan por qué multi-region existe.",
+      "realWorld": "AWS us-east-1 outage Dec 2021: cascada de fallos afectó Netflix, Slack, Roku (dependencias). AWS us-east-1 Feb 2017 S3 outage: internet 'roto' por horas. Empresas que sobrevivieron sin impact: multi-region active-active o failover automation validado.",
+      "tags": ["AZ", "region", "multi-AZ", "multi-region", "SPOF"],
+      "tech": ["AWS AZ", "AWS region", "RDS Multi-AZ"],
+      "references": [
+        { "title": "AWS — Regions and AZs" },
+        { "title": "AWS Post-event summaries (us-east-1 outages)" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "resilience",
+      "topic": "Failback complexity",
+      "difficulty": "staff",
+      "scenario": "Failover a secondary region fue exitoso durante desastre. Cuando primary región se recupera, ¿cómo hacer 'failback'?",
+      "question": "¿Por qué failback puede ser MÁS complejo que failover?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Durante el failover, secondary recibió writes que primary NO tiene (era caído). Failback naive (volver a primary) = perder esos writes. Solución: sincronizar primary con secondary antes de switch, verificar, entonces cutover. En async replication, esto puede requerir custom scripts, dual-write temporal, o reverse replication.", "correct": true, "why": "Correcto. Failover = 'crisis mode, salvar el servicio'. Failback = 'volver a normal preservando lo que pasó'. Los writes durante el downtime están SOLO en secondary. Sin sincronizar back, se pierden. Aurora Global después de failover: la región promoted es la nueva primary; la vieja primary vuelve como secondary. Similar pattern: DDB Global Tables, Kafka MirrorMaker. Complejidad: validate data consistency, coordinar app deploys, minimizar ventana de write freeze durante cutover." },
+        { "letter": "B", "text": "Failback es automático y sin complejidad.", "correct": false, "why": "Falso. Nunca es automático seguro sin verification. Datos escritos durante failover deben preservarse." },
+        { "letter": "C", "text": "Failback no es necesario — quedarse en secondary permanentemente.", "correct": false, "why": "Posible pero implica cambio permanente de topology. Aceptable a veces (nueva primary = mejor región). Pero si primary era elegida por latencia/costo/features, hay razón para failback." },
+        { "letter": "D", "text": "Failover y failback tienen misma dificultad.", "correct": false, "why": "Falso. Failover es 'emergency', frecuentemente automation-driven. Failback es 'planned', requiere reconciliation de estado divergent." }
+      ],
+      "explanation": "Failback es la mitad OLVIDADA del DR plan. Diseño maduro incluye ambos runbooks. Consideraciones: (1) reverse replication (secondary → primary temporarily); (2) validation de data consistency (checksums, counts); (3) planned cutover window (write freeze breve, similar a cutover de migración); (4) rollback plan si failback falla; (5) testing en drills (regular game days deberían incluir failback tras failover). Empresas con failover automation frecuentemente descubren que no tienen failback automation — first failback es dolor.",
+      "realWorld": "AWS post-event summaries de outages documentan casos donde failback tardó días de tuning. Google DiRT drills incluyen failback explícitamente. Netflix Chaos Kong-recovery testing.",
+      "tags": ["failback", "reverse replication", "data reconciliation"],
+      "tech": ["Aurora Global", "DynamoDB Global Tables", "Kafka MirrorMaker"],
+      "references": [
+        { "title": "AWS — Multi-region failover and failback" },
+        { "title": "Google SRE Book — Handling overload and recovery" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "resilience",
+      "topic": "Backup Vault Lock",
+      "difficulty": "senior",
+      "scenario": "Un ransomware ataque logró acceso a la cuenta AWS. Encriptó datos y borró snapshots.",
+      "question": "¿Cómo diseñar backups DEFENSIVOS contra ransomware / insider threats?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "AWS Backup Vault Lock: aplica retention inmutable (WORM — Write Once Read Many). Ni el root account puede borrar backups dentro del lock period. Compliance mode = irrevocable; Governance mode = un role específico puede modificar.", "correct": true, "why": "Correcto. Vault Lock previene deletion incluso de attacker con account access. Compliance mode es EXTRA strict — ni el root puede unlock. Regulatory-grade defense. Después de attack, restores desde vault locked garantizan recovery." },
+        { "letter": "B", "text": "Cross-account backups: copiar backups a una cuenta separada (idealmente con acceso muy restringido, IAM strict). Attacker en account principal no puede tocar la account de backups.", "correct": true, "why": "Correcto. Segregación de accounts es defensa fundamental. AWS Organizations con Backup account separado, IAM cross-account role de write-only (no delete), monitoreo con GuardDuty. Amazon best practice." },
+        { "letter": "C", "text": "MFA delete en S3 buckets con backups: para borrar object versions, se requiere MFA token — bloquea automation scripts maliciosos.", "correct": true, "why": "Correcto. S3 versioning + MFA delete = objects marked deleted pero recuperables; permanent delete requiere MFA (human step, difficult to automate en attack). Combinar con Object Lock (S3's equivalent de Vault Lock)." },
+        { "letter": "D", "text": "Backups tienen que ser accesibles fácilmente — no restringir por seguridad.", "correct": false, "why": "Falso. Backups son crown jewel; restrict access strictly. Facilidad para operators legítimos con MFA + roles, restricción máxima para attackers." },
+        { "letter": "E", "text": "Air-gapped backups (S3 Glacier Deep Archive con Vault Lock, o físicos offline) son la defensa última contra ransomware sofisticado.", "correct": true, "why": "Correcto. Vault Lock digital + separación de accounts + geographical distance + potentially offline copies. Defense in depth. Compliance frameworks (HIPAA, PCI, SOC 2) recomiendan air-gapped o WORM." }
+      ],
+      "explanation": "Ransomware attacks 2020-2023 (Colonial Pipeline, JBS, Kaseya) elevaron la conciencia de backup defense. Estrategia moderna: (1) backups automáticos frecuentes; (2) inmutabilidad (Vault Lock, S3 Object Lock); (3) segregación (separate account, separate region); (4) MFA required for destructive ops; (5) monitoring de attempted deletions (CloudTrail alerts); (6) restore testing regular (backup no restaurado != backup válido). Compliance frameworks lo requieren; también sensible business practice.",
+      "realWorld": "Colonial Pipeline 2021 attack ($4.4M ransom). AWS respondió expandiendo Vault Lock capabilities. AWS re:Invent 2022 sessions dedicated a ransomware defense. NIST publica guides.",
+      "tags": ["Vault Lock", "ransomware defense", "immutable backups", "cross-account"],
+      "tech": ["AWS Backup", "S3 Object Lock", "MFA delete", "AWS Organizations"],
+      "references": [
+        { "title": "AWS Backup Vault Lock" },
+        { "title": "NIST Ransomware Risk Management" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "resilience",
+      "topic": "S3 replication",
+      "difficulty": "mid",
+      "scenario": "Necesitas replicar un bucket S3 crítico a otra región para DR.",
+      "question": "¿Qué es S3 Cross-Region Replication (CRR)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CRR replica objects PUT tras la configuración (no retroactivamente, salvo con S3 Batch Replication). Async por diseño. Configurar filter (prefix, tag) para replicar subset. Same-Region Replication (SRR) para casos same-region (compliance, backup separation). Métricas de replication lag en CloudWatch.", "correct": true, "why": "Correcto. Puntos clave: (a) NO backfill automático — objects previos NO replicados; usar S3 Batch Replication para backfill; (b) async — RPO segundos-minutos según carga; (c) filters permiten replicar solo lo importante; (d) destination bucket puede ser en diferent account (defensa insider); (e) storage classes en destination pueden ser distintas (source Standard → destination IA para costo)." },
+        { "letter": "B", "text": "CRR replica retroactivamente todos los objetos existentes.", "correct": false, "why": "Falso. Solo objetos escritos POST-configuración. Batch Replication para retroactivo." },
+        { "letter": "C", "text": "CRR es sync — writes esperan confirm de destination.", "correct": false, "why": "Falso. Async. Writes en source confirman inmediato; replication ocurre en background." },
+        { "letter": "D", "text": "CRR replica pero no protege contra deletion.", "correct": false, "why": "Con Delete Marker Replication OFF (default), deletions no se replican — bueno para DR (attacker no puede borrar destination con delete en source). Con ON, deletions se propagan (útil para sync completo)." }
+      ],
+      "explanation": "S3 replication (CRR y SRR) es feature poderosa: async, filtered, metric-observable. Casos: (a) DR cross-region (bucket destination en otra región); (b) compliance (bucket separate account); (c) latency (buckets regionales para reads locales); (d) analytics (replicar prod → analytics account). Complementa: Versioning (obligatorio en source y dest), Object Lock (immutability), lifecycle policies (destination puede tener retention distinta). Métricas: BytesPendingReplication, OperationsPendingReplication en CloudWatch. RTC (Replication Time Control): SLA de replication en < 15 min (extra cost).",
+      "realWorld": "S3 CRR usado widely: Netflix replica catalog assets, Amazon Retail replica product images multi-region. Batch Replication (2022) resolvió el gap 'y qué hago con los objetos ya existentes'.",
+      "tags": ["S3 CRR", "cross-region replication", "SRR", "Batch Replication"],
+      "tech": ["S3", "CRR", "SRR", "RTC"],
+      "references": [
+        { "title": "AWS S3 — Replication" },
+        { "title": "AWS S3 — Batch Replication (2022)" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "scalability",
+      "topic": "Multi-region latency-based routing",
+      "difficulty": "senior",
+      "scenario": "Tienes app deployada en us-east-1, eu-west-1, ap-southeast-1. Los usuarios deben conectarse a la región más cercana.",
+      "question": "¿Cómo routing por latencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Route 53 Latency-Based Routing: para cada resolver DNS, Route 53 responde con la IP de la región de menor latencia (basado en measurements históricos). Alternativa: Route 53 Geolocation (por país/continent) o Geoproximity (por distance con bias). Global Accelerator superior si necesitas failover < 30s.", "correct": true, "why": "Correcto. Latency-based es el más común: usuario en Alemania recibe eu-west-1 IP, usuario en Japan recibe ap-southeast-1 IP. Basado en Route 53 latency database (measurements desde AWS edge locations). Geolocation: routing por país (útil para localization, compliance). Geoproximity: distance-based con bias (útil para load balancing entre regiones). Global Accelerator: anycast IPs, routing on AWS backbone, failover más rápido." },
+        { "letter": "B", "text": "Manualmente asignar región por IP range de usuario.", "correct": false, "why": "No escalable, ineficaz (IPs cambian, geolocation por IP es imprecisa). Route 53 lo hace automáticamente." },
+        { "letter": "C", "text": "Todos los usuarios al mismo región y confiar en CDN.", "correct": false, "why": "CDN acelera estático pero APIs dinámicas requieren región cercana. Latency-based rutea APIs también." },
+        { "letter": "D", "text": "Client-side: JavaScript detecta ubicación y elige región.", "correct": false, "why": "Complexity innecesaria. Route 53 lo hace transparently en DNS resolution. Client-side deja al developer el problema que la infra resuelve." }
+      ],
+      "explanation": "Multi-region routing options: (1) Latency-based (Route 53) — más común, transparent; (2) Geolocation — routing por país (compliance, localization); (3) Geoproximity — biased distance; (4) Weighted — % tráfico por region (útil para gradual rollout); (5) Failover — active-passive with health check; (6) Multivalue — DNS-level round-robin sin health check; (7) Global Accelerator — anycast, best performance + failover. Combinar: latency-based + failover secondary. Multi-region app requiere estado replicated (DDB Global Tables, Aurora Global, sessions en Redis global, etc.).",
+      "realWorld": "AWS re:Invent tiene sessions regulares sobre multi-region routing. Netflix, Airbnb, Uber utilizan patterns similares. Cloudflare tiene equivalents (Load Balancing Geo Steering).",
+      "tags": ["latency-based routing", "Route 53", "geolocation", "multi-region"],
+      "tech": ["Route 53", "Global Accelerator"],
+      "references": [
+        { "title": "AWS Route 53 — Routing policies" },
+        { "title": "AWS re:Invent — Multi-region architectures" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "resilience",
+      "topic": "Multi-region deploys",
+      "difficulty": "staff",
+      "scenario": "Tienes que deployar la nueva versión de tu app a 3 regiones. ¿Cómo coordinar?",
+      "question": "¿Cuáles son estrategias para deploys multi-región?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Waves progresivos: (1) canary en 1 región (menor tráfico); (2) full rollout región 1; (3) canary región 2; (4) rollout región 2; etc. Detects issues antes de proagarlos. Feature flags para desacoplar deploy de release cross-region. Datos cross-region backward-compatible (esencial: v2 en región A no rompe v1 en región B si datos se replican).", "correct": true, "why": "Correcto. Rollout progresivo entre regiones limita blast radius. Como con canary intra-region, ahora canary entre regiones. Región 1 es 'canary' de la deploy en general. Errors detected en región 1 se pueden fixar antes de propagar. Feature flags cross-region: activar feature en región tras región. Prerequisito: código y schema backward-compatible con code de la otra región (dado que datos se replican, ambas versiones deben poder leerlos)." },
+        { "letter": "B", "text": "Deploy simultáneo a todas las regiones en paralelo.", "correct": false, "why": "Blast radius grande si hay bug. Es el 'big bang' cross-region." },
+        { "letter": "C", "text": "Deploy solo a primary, secondary se sincroniza automágicamente.", "correct": false, "why": "El código NO se replica automáticamente. Cada región debe deployar. Automation coordina, pero cada región es un deploy." },
+        { "letter": "D", "text": "Multi-region deploys son iguales a single-region.", "correct": false, "why": "Falso. Complexity añadida: coordination, data compatibility cross-region, monitoring per-region, rollback per-region." }
+      ],
+      "explanation": "Multi-region deploys son coordinated wave deployments. Framework: (1) test in region canary (lowest traffic); (2) progressive rollout con SLI monitoring por región; (3) feature flags per-region para activación granular; (4) rollback plan por región (una región puede rollback sin afectar otras); (5) tooling: Spinnaker, ArgoCD, CodePipeline con multi-region stages. Data compatibility cross-region es la restricción más importante: nunca deploy código que rompe consistency con la región no-actualizada. Expand-contract disciplina (sim-12) es fundamental.",
+      "realWorld": "Netflix Spinnaker fue diseñado alrededor de multi-region deploys. Amazon Retail deploys a múltiples regiones cross-globally. AWS re:Invent 2019 (ARC407) sobre multi-region deploy patterns.",
+      "tags": ["multi-region deploy", "wave rollout", "coordinated deploys"],
+      "tech": ["Spinnaker", "ArgoCD", "CodePipeline"],
+      "references": [
+        { "title": "Spinnaker docs — multi-region deploys" },
+        { "title": "AWS re:Invent — Multi-region deployment patterns" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "resilience",
+      "topic": "Session state y stickiness",
+      "difficulty": "mid",
+      "scenario": "Usuarios logueados tienen sesión. Failover a otra región debería mantener la sesión.",
+      "question": "¿Cómo manejar session state cross-region?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Session state en storage replicated cross-region: DynamoDB Global Tables (session per-userId), Redis con replication cross-region (ElastiCache Global Datastore), o JWT stateless (session en token, no en server — cliente presenta con cada request, cualquier región lo valida con signature).", "correct": true, "why": "Correcto. Options: (a) storage replicated (DDB Global Tables ideal para sessions — simple, fast reads, replication automática); (b) JWT stateless (elegante, no storage needed, requiere refresh strategy para revocation); (c) sticky sessions al load balancer level (no funciona en failover — LB nuevo no tiene stickiness); (d) session lost on failover (worst UX, sometimes acceptable si sessions cortas). JWT es popular en microservicios multi-region por ser stateless." },
+        { "letter": "B", "text": "Session en memoria del server.", "correct": false, "why": "Anti-patrón cross-region: pod muere, session muere. Ni siquiera funciona intra-region con rolling deploys." },
+        { "letter": "C", "text": "Session en cookie sin firma.", "correct": false, "why": "Insecure — cliente puede modificar. Necesita signature (JWT) o storage server-side." },
+        { "letter": "D", "text": "Session cross-region es imposible.", "correct": false, "why": "Falso. Múltiples patterns funcionan (JWT, replicated storage)." }
+      ],
+      "explanation": "Session strategy multi-region: (1) JWT — stateless, session en token firmado; refresh tokens para long-lived + revocation via short-lived + refresh. Pros: escala infinite, cross-region trivial. Cons: revocation harder (blacklist required), token size; (2) Server-side sessions en replicated store (DDB Global, Redis Global). Pros: instant revoke, small tokens. Cons: storage cost, latency cross-region reads si mala partición. Design decision: startups often JWT (simplicity), enterprise often server-side (revoke control). Hybrid: short-lived JWT + refresh via server-side store.",
+      "realWorld": "Netflix uses JWT for session tokens. Slack switched from server-side sessions to JWT durante growth. Auth0/Okta popularized JWT patterns. OWASP publishes guidance on JWT security (algorithm confusion attacks).",
+      "tags": ["sessions", "JWT", "cross-region state", "Redis Global"],
+      "tech": ["JWT", "DynamoDB Global Tables", "Redis Global Datastore"],
+      "references": [
+        { "title": "AWS — ElastiCache Global Datastore" },
+        { "title": "Auth0 — JWT best practices" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "resilience",
+      "topic": "External dependencies en multi-region",
+      "difficulty": "mid",
+      "scenario": "Tu app multi-region depende de servicio SaaS externo (Stripe, Twilio, SendGrid). Ese SaaS solo tiene endpoint global.",
+      "question": "¿Cómo mitigar riesgo de external dependency?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-region NO protege contra fallo de external SaaS. Estrategias: (1) verificar que el SaaS tiene alta disponibilidad (SLA declared, historical uptime); (2) circuit breaker para degradar cuando SaaS cae; (3) queue writes localmente para retry cuando vuelva; (4) considerar multi-provider (2 SMS providers con failover) para dependencies críticas; (5) contract con SLA financially backed.", "correct": true, "why": "Correcto. Externals son SPOFs que multi-region NO resuelve. Mitigaciones: (a) circuit breaker + fallback (mensaje 'temporarily unavailable' mejor que crash); (b) queue writes (SQS/Kinesis) para no perder pero degradar sync a async; (c) multi-provider para críticos (SMS via Twilio + Vonage failover); (d) SLA contractual + monitoring del SaaS. Recording: dependencies externas son el 'unfair coupling' — tu availability = product de availability de todas tus deps críticas." },
+        { "letter": "B", "text": "Multi-region protege también contra fallos externos.", "correct": false, "why": "Falso. Multi-region protege contra fallo de TU infra. External SaaS es responsability del provider." },
+        { "letter": "C", "text": "Ignorar dependencies externas — no son tu problema.", "correct": false, "why": "El USUARIO ve tu app rota — no distingue tu bug vs Stripe caído. Tu problema by association." },
+        { "letter": "D", "text": "Reemplazar todos los SaaS con implementations propias.", "correct": false, "why": "Overkill para la mayoría. Selective: solo críticos y donde cost/complexity de build < cost de fallo." }
+      ],
+      "explanation": "External dependencies son the hidden risk en multi-region architectures. Análisis: mapear TODAS las deps externas → clasificar (critical/important/nice-to-have) → strategy por tier: (a) critical: multi-provider + circuit breaker + queue fallback; (b) important: circuit breaker + graceful degradation; (c) nice-to-have: single provider + monitoring. Contracts: SLA con providers, credits/refunds. Regular review de deps externas — no acumular deps sin evaluar riesgo. External deps también contribute a RTO — si Stripe caída, tu 'recovery' depende de Stripe recovery, not just tu infra.",
+      "realWorld": "AWS us-east-1 outage 2021 tumbó muchos SaaS providers (Slack, Roku, Autonomous vehicles) que dependían — impact cascade. Google Cloud outages afectan clients dependent en Google services. Multi-cloud arguments incluyen 'don't depend on single cloud provider for critical'.",
+      "tags": ["external dependencies", "SPOF", "SaaS", "multi-provider"],
+      "tech": ["circuit breaker", "SQS", "multi-provider patterns"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability" },
+        { "title": "Cindy Sridharan — Distributed Systems Observability" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "resilience",
+      "topic": "Compliance and multi-region",
+      "difficulty": "senior",
+      "scenario": "Tu app almacena datos de usuarios EU. Deployas multi-region para DR.",
+      "question": "¿Qué compliance issues emergen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "GDPR: datos personales de EU citizens no pueden salir de EU sin controls específicos (Standard Contractual Clauses, Adequacy Decisions). Replicación cross-region a US = GDPR concern.", "correct": true, "why": "Correcto. GDPR Article 44+ regula transfer of personal data outside EEA. AWS regions eu-west-1, eu-central-1, eu-north-1 son EU-appropriate. Replicar a us-east-1 requiere legal basis (SCCs, BCRs). Schrems II (2020) invalidó Privacy Shield — SCCs mandatory con supplementary measures. Práctica: mantener EU data en EU regions. DR to different EU region (eu-west-1 → eu-central-1) para regional DR sin transfer issue." },
+        { "letter": "B", "text": "Data residency requirements: algunos países exigen datos en el país (Russia, China, some Middle East). AWS China region separate legally. AWS Local Zones para específicas ciudades.", "correct": true, "why": "Correcto. Data localization laws varían: Russia (personal data must be en Russia), China (many data types), Vietnam, some banking (data en país del banking license). AWS China (Beijing/Ningxia) operated by partners (Sinnet, NWCD), separate accounts, separate services. AWS Local Zones (Los Angeles, Boston, etc.) para latency-sensitive workloads en cities specific." },
+        { "letter": "C", "text": "Right to erasure (GDPR): user requests data deletion. Con multi-region replication, delete propagates async — window de tiempo donde data existe en secondary. Compliance requiere prove deletion.", "correct": true, "why": "Correcto. GDPR Article 17 right to erasure = 'without undue delay'. Con async replication, hay ventana donde data existe en dest. Solución: track deletion propagation, tools de compliance (AWS Macie, custom scripts) para verify erasure en todas las regiones. Backups también — retention policies deben respetar erasure requests (Vault Lock complica esto — compliance vs regulatory tension)." },
+        { "letter": "D", "text": "Encryption: cross-region traffic debe ir encrypted. AWS mostly encrypts by default (KMS, SSE-S3), pero verificar. KMS keys son per-region — cross-region requires re-encrypt con dest region KMS.", "correct": true, "why": "Correcto. TLS en transit + encryption at rest son baseline compliance. KMS keys regional — un key en us-east-1 no descrypts en eu-west-1. Cross-region replication typically re-encrypts en destination. Multi-region KMS keys (2021 feature) permiten same key across regions (para specific use cases like envelope encryption)." },
+        { "letter": "E", "text": "Compliance no aplica a systems internos.", "correct": false, "why": "Falso. GDPR aplica a cualquier processing de EU personal data (employees, customers, prospects). Internal systems con employee data están sujetos." }
+      ],
+      "explanation": "Multi-region + compliance = complexity. Framework: (1) map data types y jurisdictions; (2) identify residency requirements por jurisdiction; (3) design region selection based on requirements; (4) implement controls (encryption, access controls, audit trails); (5) document data flows para regulators; (6) periodic compliance reviews. AWS provides compliance programs certifications (SOC, ISO, HIPAA, PCI, FedRAMP, GDPR-adjacent). Legal/compliance team involvement essential — technical team no decide compliance alone.",
+      "realWorld": "Schrems II decision (2020) affected many EU-US data flows. Meta ordered to stop EU-US transfers (2022). AWS European Sovereign Cloud announcement (2023). GDPR fines (Amazon $746M, Meta $1.2B) show materiality.",
+      "tags": ["GDPR", "data residency", "compliance", "encryption", "multi-region"],
+      "tech": ["AWS regions", "KMS", "AWS Macie"],
+      "references": [
+        { "title": "AWS Compliance programs" },
+        { "title": "GDPR text (gdpr.eu)" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "resilience",
+      "topic": "DR strategy — how to choose",
+      "difficulty": "staff",
+      "scenario": "Debes recomendar DR strategy para una app SaaS mid-size con 10k customers en US y EU, revenue $5M ARR.",
+      "question": "¿Cómo se elige DR strategy pragmáticamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Framework de decisión: (1) definir RTO/RPO con business ('cuánto downtime costaría?'); (2) mapear servicios por tier (core revenue > internal tools); (3) estimar cost of DR vs cost of downtime; (4) elegir strategy por tier (core = warm standby/active-active; support = pilot light; internal = backup+restore); (5) implementar gradualmente; (6) test regularly.", "correct": true, "why": "Correcto. DR es business decision guided by tech. RTO/RPO agreed with stakeholders. Cost analysis: $5M ARR / 8760 hours = ~$570/hour of downtime revenue impact — plus reputation, plus SLA credits. Warm standby ~$2-3k/mes extra vs downtime cost of $5-15k/hour = ROI clear for core. Internal tools con RTO 24h: backup+restore suficiente (~$100/mes). Balance costo vs tolerance. Test regularmente (game days) — DR sin test es ficción." },
+        { "letter": "B", "text": "Todo debe ser active-active multi-region.", "correct": false, "why": "Overkill para mid-size. Complexity + cost injustificable para internal tools o low-revenue segments." },
+        { "letter": "C", "text": "Solo backups son suficientes.", "correct": false, "why": "Backup+restore RTO horas — inaceptable para revenue-critical services. Sub-optimal para core." },
+        { "letter": "D", "text": "Copiar lo que hace Netflix.", "correct": false, "why": "Netflix scale y requirements diferentes. Mimic sin analysis = over-engineering. Adapt principles, not implementations." }
+      ],
+      "explanation": "DR strategy = matching capability to requirement. Framework: (1) Business Impact Analysis (BIA) por servicio; (2) RTO/RPO agreements; (3) Cost/benefit analysis; (4) Strategy selection por tier; (5) Implementation phased; (6) Regular testing (game days); (7) Continuous improvement. AWS Well-Architected Reliability Pillar guides this. Trade-offs: complexity, cost, ops burden, latency (in active-active). Mid-size company typical: multi-AZ default (most services), warm standby to secondary region for core (managed via CloudFormation StackSets or Terraform workspaces), backup+restore for non-critical. Yearly game days.",
+      "realWorld": "Startups typically start with multi-AZ + backups, add multi-region when scale justifies. Growth-stage add warm standby for core. Enterprise mature has full active-active for revenue-critical. Journey documented in many SaaS engineering blogs (GitLab, Buffer, HubSpot).",
+      "tags": ["DR strategy", "business impact analysis", "RTO/RPO", "tier"],
+      "tech": ["AWS", "multi-region", "warm standby"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability Pillar" },
+        { "title": "AWS Disaster Recovery whitepaper" }
+      ]
+    }
+  ]
+}

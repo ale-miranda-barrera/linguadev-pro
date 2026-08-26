@@ -1,0 +1,419 @@
+{
+  "id": "devops-sim-18-grafana-and-dashboards",
+  "trackId": "devops",
+  "order": 18,
+  "title": "Simulacro 18 — Grafana y dashboards",
+  "focus": "Diseño de dashboards, variables/templates, Alertmanager en Grafana, notification channels, RED/USE panels, integración Loki + Tempo, dashboards as code (Grafonnet, Terraform), unified observability.",
+  "areaCoverage": ["monitoring"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "monitoring",
+      "topic": "¿Qué es Grafana?",
+      "difficulty": "junior",
+      "scenario": "Un nuevo miembro pregunta '¿Grafana guarda las métricas?'. Otro dice 'Grafana es un TSDB'. Ninguno tiene razón.",
+      "question": "¿Cuál es el rol de Grafana en un stack de observabilidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Grafana es una plataforma de VISUALIZACIÓN y alerting sobre múltiples data sources — NO almacena datos por sí misma. Conecta a data sources (Prometheus, Loki, Tempo, InfluxDB, PostgreSQL, CloudWatch, Datadog, Elasticsearch, etc.) via plugins, consulta datos on-demand, renderiza en dashboards. Grafana Cloud sí ofrece storage backends managed (Mimir=metrics, Loki=logs, Tempo=traces), pero eso son productos SEPARADOS. Grafana OSS solo visualiza.", "correct": true, "why": "Correcto. Grafana es agnóstico de storage — puedes cambiar de Prometheus a InfluxDB sin cambiar el dashboard (data source variable). Este desacoplamiento es fortaleza clave. Grafana Labs también vende storage backends comerciales pero son productos distintos." },
+        { "letter": "B", "text": "Grafana es un TSDB (time-series database).", "correct": false, "why": "Falso. Grafana NO tiene TSDB. Muchos confunden Grafana con Prometheus/Mimir (que son storage) porque a menudo se despliegan juntos." },
+        { "letter": "C", "text": "Grafana solo funciona con Prometheus.", "correct": false, "why": "Falso. 100+ data sources oficiales + comunidad. Prometheus es el más popular, pero Grafana es multi-backend por diseño." },
+        { "letter": "D", "text": "Grafana ejecuta las alerts como Alertmanager.", "correct": false, "why": "Parcial. Grafana tiene Grafana Alerting nativo (evalúa alerts sobre queries de sus data sources), separado del Alertmanager de Prometheus. Puede USAR Alertmanager como router o el suyo propio." }
+      ],
+      "explanation": "Stack típico: (1) instrumentación (client libraries, exporters); (2) storage (Prometheus/Mimir para metrics, Loki para logs, Tempo para traces); (3) visualización + alerting (Grafana); (4) notification (email, Slack, PagerDuty via Alertmanager o Grafana Alerting). Grafana también tiene: Grafana Cloud (managed SaaS), Grafana Enterprise (features comerciales — SSO avanzado, reporting), OnCall (incident management, adquirido de Amixr en 2021), Faro (frontend RUM). Ecosystem completo pero Grafana core es visualization.",
+      "realWorld": "Torkel Ödegaard creó Grafana en 2013 fork de Kibana. Grafana Labs fundada 2014 (Suecia). Hoy 1000+ empleados, valorada $6B+. GitHub Grafana repo tiene 60k+ stars — de los proyectos OSS más populares. Instalado en cientos de miles empresas.",
+      "tags": ["Grafana", "arquitectura", "data sources"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — What is Grafana" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "monitoring",
+      "topic": "Variables y templates en dashboards",
+      "difficulty": "junior",
+      "scenario": "Tienes 20 microservicios y creaste 20 dashboards idénticos, cada uno hardcoding un service_name diferente. Cambiar un panel = editar 20 dashboards.",
+      "question": "¿Cómo resuelven esto las variables/templates de Grafana?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un DASHBOARD template con variable $service que aparece como dropdown en el top. Las queries usan $service (ej. rate(http_requests_total{service=\"$service\"}[5m])). El usuario cambia dropdown, dashboard entero refleja el nuevo servicio. Variables se cargan de: query al datasource (label_values(up, service)), lista custom, constant, interval, data source. Elimina duplicación.", "correct": true, "why": "Correcto. Templating es feature core de Grafana. 20 dashboards → 1 dashboard + variable. Cambio en panel = un solo cambio afecta a todos los servicios. Es la primera lección de mantenibilidad." },
+        { "letter": "B", "text": "Copiar el JSON del dashboard 20 veces y cambiar strings.", "correct": false, "why": "Anti-patrón masivo. Es literalmente lo que las variables reemplazan. Genera drift entre dashboards, imposible mantener." },
+        { "letter": "C", "text": "Un dashboard por cada servicio automáticamente por Grafana.", "correct": false, "why": "Grafana no auto-genera dashboards por servicio. Sin templating, cada servicio requiere manualidad." },
+        { "letter": "D", "text": "Grafana solo soporta un servicio por dashboard.", "correct": false, "why": "Falso. Con variables MULTI-SELECT, un solo dashboard puede mostrar comparativa entre servicios seleccionados." }
+      ],
+      "explanation": "Tipos de variables: (1) Query — ejecuta query al datasource para obtener valores (label_values(metric, label)); (2) Custom — lista static de valores; (3) Constant — solo variable oculta usada en queries; (4) Data source — permite selector entre datasources (staging vs prod); (5) Interval — intervalos de tiempo ($__interval automático); (6) Ad hoc filters — filtros dinámicos por label. Features avanzados: (a) chained variables ($service depende de $environment); (b) multi-select con All; (c) regex filter en la variable; (d) include All value. Cache: variables se resuelven al load del dashboard. Refresh options: never, on time range change, on dashboard load.",
+      "realWorld": "kube-prometheus-stack incluye dashboards con variables ($cluster, $namespace, $pod). Grafana Marketplace tiene dashboards pre-hechos con variables. Best practice universal: nunca hardcodees valores; siempre variable.",
+      "tags": ["variables", "templates", "dashboards", "reutilización"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Templates and variables" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "monitoring",
+      "topic": "RED dashboard design",
+      "difficulty": "mid",
+      "scenario": "Necesitas diseñar un 'RED dashboard' estándar para todos los servicios: Request rate, Error rate, Duration. Debe ser interpretable en 5 segundos y usable en incident response a las 3AM.",
+      "question": "¿Qué elementos debe tener un buen RED dashboard?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "3 rows principales: R (rate stat + graph), E (errors count + ratio graph), D (latency percentiles p50/p95/p99). Cada uno con VALOR NUMÉRICO grande + graph histórico. Colores: verde/amarillo/rojo con thresholds basados en SLO.", "correct": true, "why": "Correcto. Layout de RED debe ser predictable — mismo formato para cada servicio permite eye scanning rápido. Valores numéricos grandes (stat panel) permiten glance rápido; graphs históricos dan contexto." },
+        { "letter": "B", "text": "Variables en top: $service, $environment, $namespace. Time range picker configurable (last 1h, 6h, 24h). Refresh interval razonable (30s).", "correct": true, "why": "Correcto. Variables permiten reutilizar dashboard entre servicios. Time picker + refresh son controles de contexto essenciales para incident response." },
+        { "letter": "C", "text": "Panels annotations: cuando hubo un deploy, mostrar línea vertical en gráficos. Se enlaza con annotations (Prometheus alerts, deploys de CI/CD, releases). Permite ver 'antes/después del deploy'.", "correct": true, "why": "Correcto. Annotations son gold para debugging. Ver el spike de errors comenzando exactamente en el deploy X es el diagnóstico obvio. Grafana permite annotations desde queries, alertas, o webhook externo (deployment tools)." },
+        { "letter": "D", "text": "Links en panels: click en un data point del histogram de latency → abre el trace en Tempo/Jaeger. Click en spike de error rate → abre logs filtrados en Loki. Deep integration entre datos.", "correct": true, "why": "Correcto. 'Unified observability' es la promesa moderna. Grafana panels permiten data links con placeholders (${__data.fields.trace_id}) para deep linking. Exemplars de Prometheus + Tempo + Loki integrados = investigación en clicks, no queries manuales." },
+        { "letter": "E", "text": "Mostrar 50 panels con toda métrica posible por si acaso.", "correct": false, "why": "Anti-patrón. 'Dashboard fatigue' — más de ~10 panels = cognitive overload. Un buen dashboard responde 3-5 preguntas específicas rápidamente." }
+      ],
+      "explanation": "Best practices dashboard design: (1) Purpose-driven — cada dashboard responde preguntas específicas (RED = health del servicio; USE = health del nodo); (2) Golden layout — panels críticos top-left (Nielsen F-pattern); (3) Consistent units (siempre bytes, o siempre KB, no mix); (4) Thresholds visibles (líneas horizontales rojo/amarillo con SLO); (5) Legend claro con statistics (last, mean, max); (6) Time range apropiado (RED = last 1h típicamente). Anti-patrones: dashboards de 100+ panels, colores random, unidades inconsistentes, sin links a otros contextos.",
+      "realWorld": "Grafana Labs published 'Grafana Dashboard Best Practices'. kube-prometheus-stack dashboards son referencia industry. Bookmark: play.grafana.org tiene ejemplos live. Netflix, Airbnb tienen internal dashboard guidelines publicados en blogs.",
+      "tags": ["dashboard design", "RED", "annotations", "data links"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Dashboard best practices" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "monitoring",
+      "topic": "Grafana Alerting (nuevo, unificado)",
+      "difficulty": "senior",
+      "scenario": "Team lead pregunta: 'Antes usabamos Alertmanager con recording rules en Prometheus. Ahora vi que Grafana tiene su propio alerting. ¿Cuál usamos?'.",
+      "question": "¿Cómo funciona Grafana Alerting unificado y qué trade-offs tiene vs Alertmanager de Prometheus?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Grafana Alerting (unificado, GA en Grafana 8.0): evalúa alerts CROSS-DATASOURCE. Puedes crear alert que combine query de Prometheus + Loki + CloudWatch. Rule engine propio de Grafana. Sends a notification policies (routes con matchers, receivers). Puede DELEGAR a Alertmanager externo o usar interno. Trade-offs: (a) potente para cross-datasource pero requires Grafana up (single point); (b) menos maduro que Alertmanager para casos avanzados (sharding, HA gossip); (c) UI-driven vs YAML-driven. Elección: Grafana Alerting para setups nuevos, cross-datasource; Prometheus Alertmanager para stacks maduros Prometheus-only.", "correct": true, "why": "Correcto. Grafana Alerting introduje en 2021 unificar alerting fragmentado (había Grafana legacy alerts + Prometheus Alertmanager separados). Ahora es motor unificado. Real trade-off: complejidad extra vs simplicidad de Alertmanager de Prometheus si ya lo tienes." },
+        { "letter": "B", "text": "Son idénticos — no importa cuál uses.", "correct": false, "why": "Trade-offs reales existen. Grafana Alerting cross-datasource; Alertmanager Prometheus-only pero más maduro para HA gossip." },
+        { "letter": "C", "text": "Grafana Alerting es solo para Grafana Cloud.", "correct": false, "why": "Falso. Disponible en OSS. Es feature core desde Grafana 8." },
+        { "letter": "D", "text": "Debes elegir uno — no se pueden coexistir.", "correct": false, "why": "Falso. Puedes tener alerts en Prometheus rules (evaluadas por Prometheus, ruteadas por Alertmanager) Y alerts en Grafana (evaluadas por Grafana, ruteadas por notification policies). Coexisten." }
+      ],
+      "explanation": "Grafana Alerting components: (1) Alert rules — queries (Prometheus PromQL, Loki LogQL, SQL, CloudWatch, etc.) con conditions; (2) Contact points — destinations (email, Slack, PagerDuty, Discord, webhook, Teams); (3) Notification policies — árbol de routing (equivalente al route tree de Alertmanager); (4) Silences — mute temporal; (5) Mute timings — mute programado recurrente (ej. mantenimiento cada domingo 2AM). Alertmanager externo se puede referenciar. Migration from legacy Grafana alerts: automatic upgrade path en Grafana 9. Ventaja de Alertmanager Prometheus: gossip clustering para HA es sólido, comunidad grande, más features avanzados.",
+      "realWorld": "Grafana Labs migró internamente. Muchas empresas mantienen Alertmanager Prometheus (tooling existente, config as code YAML). Emerging pattern: Grafana Alerting para orgs nuevas o cross-datasource; Prometheus Alertmanager para orgs con historia Prometheus.",
+      "tags": ["Grafana Alerting", "Alertmanager", "notification policies"],
+      "tech": ["Grafana", "Alertmanager"],
+      "references": [{ "title": "grafana.com — Grafana Alerting" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "monitoring",
+      "topic": "Panels: elección del tipo correcto",
+      "difficulty": "mid",
+      "scenario": "Nuevo dashboard. Debes visualizar: (a) requests por segundo actual, (b) latency percentiles historic, (c) distribution de status codes, (d) resource usage por pod, (e) alarma binaria (up/down).",
+      "question": "¿Qué tipo de panel usar para cada caso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Requests/sec ACTUAL: Stat panel (gran número con background color según threshold). Complementa con sparkline pequeña de la última hora. Uso: instant status glance.", "correct": true, "why": "Correcto. Stat panel es para valor único + trend implícita. Ideal para KPIs. Alternativas: Gauge para 'porcentaje de capacidad'." },
+        { "letter": "B", "text": "Latency percentiles historic: Time series (line chart) con múltiples series (p50, p95, p99), colores distintos. Log scale opcional si valores span órdenes de magnitud. Puede tener band Y para SLO threshold.", "correct": true, "why": "Correcto. Time series para tendencia. Múltiples percentiles en un solo panel ayuda comparar (p99 spike vs p50 flat = long tail issue)." },
+        { "letter": "C", "text": "Distribution de status codes: Pie chart o bar gauge para snapshot; Time series stacked bar chart para historia. Alternativa: Grafana Heatmap para show distribution over time.", "correct": true, "why": "Correcto. Diferentes preguntas requieren visualizaciones distintas: snapshot ratio (pie) vs historia stacked. Heatmap best para distribution changes." },
+        { "letter": "D", "text": "Resource usage por pod: Table panel con columnas ordenables, o bar chart con múltiples series por pod. Time series si te importa historia; table si te importa lista top N ahora.", "correct": true, "why": "Correcto. Table permite orden interactivo y muchas filas. Bar chart cuando quieres visual comparison. Depende de qué pregunta responder." },
+        { "letter": "E", "text": "Todo debe ser Time series — no uses otros tipos.", "correct": false, "why": "Falso. Grafana tiene 15+ tipos de panels por razón. Cada tipo tiene use case ideal. Sobre-usar time series es común pero limita." }
+      ],
+      "explanation": "Panel types Grafana: (1) Time series — trends históricas (la mayoría); (2) Stat — un número prominente; (3) Gauge — porcentaje visual (0-100); (4) Bar gauge — múltiples gauges pequeños; (5) Table — datos tabulares; (6) Heatmap — distribution over time; (7) Pie chart — snapshot proportions; (8) Bar chart — comparaciones categóricas; (9) Alert list — alerts activos; (10) Text — markdown/HTML para documentation; (11) Node graph — topología; (12) Trace panel — trace individual; (13) Logs panel — Loki logs; (14) Geomap — datos geoespaciales. Regla: elige el tipo que responde la PREGUNTA más rápido para el viewer.",
+      "realWorld": "Grafana Play (play.grafana.org) tiene ejemplos live. Mikrotik, home labs, empresas grandes — todos usan mix. Anti-patrón común: usar table cuando time series sería más informativo, o pie chart con 20 slices (unreadable).",
+      "tags": ["panels", "visualización", "dashboard design"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Panel visualizations" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "monitoring",
+      "topic": "Data sources y federated queries",
+      "difficulty": "senior",
+      "scenario": "Necesitas dashboard que combine: métrica de Prometheus (error rate), log count de Loki (grep 'ERROR'), y trace count de Tempo. Un panel único mostrando correlación.",
+      "question": "¿Cómo se combinan queries de múltiples data sources en Grafana?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Mixed data source: en un panel, puedes agregar queries desde data sources distintos. Cada query tiene su datasource dropdown. Grafana ejecuta cada query independientemente contra su backend y combina en el panel. Data source variable (${datasource}) permite selector dinámico. Transformations panel (join, merge, calculate field) permite combinar los results client-side para gráficas correlacionadas.", "correct": true, "why": "Correcto. Mixed data source + transformations son features clave para 'unified observability'. Grafana orquesta queries a distintos backends y presenta unificado. Sin esto, tendrías que exportar datos a un solo backend (caro y complejo)." },
+        { "letter": "B", "text": "Debes exportar todos los datos a Prometheus primero.", "correct": false, "why": "Anti-patrón. Grafana está diseñado para dejar los datos donde viven — logs en Loki/ES, traces en Tempo/Jaeger, metrics en Prometheus. Mover todo a un TSDB rompe fortalezas de cada storage." },
+        { "letter": "C", "text": "No es posible combinar datos de sources distintos.", "correct": false, "why": "Falso. Todo el diseño de Grafana lo permite." },
+        { "letter": "D", "text": "Debe usar Grafana Enterprise features para esto.", "correct": false, "why": "Falso. Mixed data source es feature OSS. Enterprise agrega SSO, reporting, otros — no mixed sources." }
+      ],
+      "explanation": "Mixed data source workflow: en Query editor del panel, elige 'Mixed' como datasource → cada query row tiene su datasource dropdown. Refs A, B, C, D... Transformations tab permite: (1) Join by field (correlacionar por timestamp o ID); (2) Merge, (3) Calculate new field (percentage, delta); (4) Filter by name/value; (5) Group by; (6) Sort by. Result: un panel con datos de múltiples backends correlacionados client-side. Alternative: exemplars en histogram Prometheus llevan trace_id → click abre trace en Tempo automatically. Log-to-trace correlation: Loki labels tienen trace_id → click log entry abre trace.",
+      "realWorld": "Grafana Cloud markets 'unified observability' — su tesis. Datadog compete integrando todo en un solo backend. Elastic APM similar. Grafana approach: keep data where it lives, unify at query/UI layer. Trade-off: mayor complejidad ops, mayor flexibilidad.",
+      "tags": ["mixed data source", "correlation", "unified observability"],
+      "tech": ["Grafana", "Loki", "Tempo", "Prometheus"],
+      "references": [{ "title": "grafana.com — Mixed data sources" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "monitoring",
+      "topic": "Loki integration",
+      "difficulty": "senior",
+      "scenario": "Team usa ELK stack para logs (Elasticsearch + Logstash + Kibana). Costos crecen. Grafana Labs sugiere Loki como alternativa. ¿Diferencias?",
+      "question": "¿Qué es Loki y cómo se compara con Elasticsearch para logs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Loki (Grafana Labs, 2018): 'Prometheus for logs'. Indexa solo METADATA (labels — como Prometheus) no el contenido del log. Storage: labels + comprimidos raw log chunks en object storage (S3, GCS). Query: LogQL — sintaxis inspirada en PromQL con filtros y agregaciones. Ventajas: 10-100x menor costo storage que Elasticsearch (no full-text indexing); operational simplicity. Trade-offs: queries de full-text sobre gran volumen son más lentas que ES (grep sobre chunks); útil cuando sabes qué labels filtrar antes de buscar en contenido.", "correct": true, "why": "Correcto. Loki fue diseñado por Grafana Labs para complementar Prometheus. Filosofía: 'label like Prometheus, store cheaply, grep on demand'. Elasticsearch indexa TODO el contenido (fast search, expensive storage). Loki es tradeoff opuesto: cheap storage, search selectivo por labels first." },
+        { "letter": "B", "text": "Loki es idéntico a Elasticsearch pero más nuevo.", "correct": false, "why": "Arquitectura fundamentalmente distinta. Elasticsearch = inverted index de contenido; Loki = index de labels + chunks comprimidos." },
+        { "letter": "C", "text": "Loki reemplaza Kibana y Elasticsearch juntos.", "correct": false, "why": "Parcial — Loki reemplaza Elasticsearch (storage/query engine para logs); Grafana reemplaza Kibana (UI). No es 'un solo producto' — es stack." },
+        { "letter": "D", "text": "Loki no soporta queries full-text.", "correct": false, "why": "Sí soporta — LogQL {job=\"api\"} |= \"error\" busca 'error' en logs con label job=api. La diferencia: no pre-indexa contenido, ejecuta grep on demand. Es más lento en full-text pero mucho más cheap en storage." }
+      ],
+      "explanation": "Loki arquitectura: (1) Distributor (ingesta, hash logs por labels); (2) Ingester (buffer in-memory, flush chunks a S3); (3) Querier (leer chunks para query); (4) Query frontend (split queries, cache); (5) Compactor (merge chunks pequeños); (6) Index gateway (labels index). Retention: labels + chunks en object storage cheap. LogQL ejemplo: sum by (level) (count_over_time({app=\"api\", level=~\"error|warn\"}[5m])). Trade-offs: (a) selecciona logs por labels primero, luego full-text (2-step); (b) queries que grep-across-everything son lentos (Elasticsearch mejor); (c) mucho más cheap storage (10-100x). Cuándo Loki: costos importan, buenas labels (structured logging); Cuándo ES: full-text intensive, security analytics, low latency search sobre TB.",
+      "realWorld": "Grafana Labs corre Loki para clientes. GitLab migró parcialmente de ELK a Loki. Cloudflare bloguea sobre uso. FluentBit + Promtail son shippers comunes. Costs comparados en varios blogs (Grafana claim 10x cheaper vs ES managed).",
+      "tags": ["Loki", "logs", "Elasticsearch", "LogQL"],
+      "tech": ["Loki", "Grafana", "Elasticsearch"],
+      "references": [{ "title": "grafana.com/oss/loki" }, { "title": "grafana.com — Loki vs Elasticsearch" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "monitoring",
+      "topic": "Tempo integration",
+      "difficulty": "senior",
+      "scenario": "Team quiere distributed tracing. Debate: Jaeger (más maduro), Zipkin (histórico), Tempo (Grafana). ¿Diferencias?",
+      "question": "¿Qué es Grafana Tempo y cómo se compara con Jaeger?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Tempo (Grafana Labs, 2020): backend de traces que solo requiere OBJECT STORAGE (S3, GCS, Azure Blob). No requiere Elasticsearch/Cassandra para indexado. Query: por trace_id (fast) + TraceQL (query language similar SQL para filter/search traces sin trace_id). Integrado con Loki (log → trace via trace_id in log) y Prometheus (exemplars). Jaeger: más viejo (2016, Uber), soporta multiple backends (Cassandra, ES, memory), UI propio, sampling propio. Zipkin: original (Twitter, 2012), simpler. Elección: Tempo si stack Grafana; Jaeger si necesitas features avanzados (sampling on-the-fly, más plugins).", "correct": true, "why": "Correcto. Tempo es 'Prometheus/Loki para traces' — filosofía cheap storage. Jaeger tiene más features UI pero más overhead ops (necesita ES/Cassandra). En 2026, OpenTelemetry es la instrumentación estándar; ambos Tempo y Jaeger son OTel-compatible backends." },
+        { "letter": "B", "text": "Tempo es fork de Jaeger.", "correct": false, "why": "Falso. Codebase independiente escrita en Go por Grafana Labs. Design distinto (object storage-first vs pluggable backends)." },
+        { "letter": "C", "text": "Tempo solo funciona con Grafana Cloud.", "correct": false, "why": "Falso. OSS, self-hostable. Grafana Cloud lo ofrece managed también." },
+        { "letter": "D", "text": "No hay diferencia práctica — usa cualquiera.", "correct": false, "why": "Diferencias reales: Tempo optimizado para cheap storage + trace_id lookup; Jaeger optimizado para rich UI + varias backends. Elección impacta costos y operational complexity." }
+      ],
+      "explanation": "Tempo arquitectura: distributor recibe spans (OTLP, Jaeger, Zipkin, formats); ingester buffers + flush a S3; querier lee de S3 para trace lookup; compactor optimiza blocks. TraceQL (2023): { .service.name = \"api\" && duration > 500ms } permite buscar traces sin trace_id, útil para investigation. Metrics Generator (2022): Tempo genera métricas RED derivadas de traces automáticamente (service graph, latency distributions). Integration: Grafana panel logs (Loki) → click 'View trace' → Tempo. Sampling: usualmente head-based en collector antes de llegar a Tempo (para no storage-lote datos irrelevantes).",
+      "realWorld": "Grafana Labs opera Tempo para clientes. Uber creó Jaeger. Twitter Zipkin (2012, primer distributed tracing OSS). Datadog APM, New Relic, Honeycomb tienen sistemas propietarios. OpenTelemetry standard hoy, todos backends compatibles.",
+      "tags": ["Tempo", "traces", "Jaeger", "TraceQL"],
+      "tech": ["Tempo", "Jaeger", "Grafana"],
+      "references": [{ "title": "grafana.com/oss/tempo" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "monitoring",
+      "topic": "Dashboards as code",
+      "difficulty": "senior",
+      "scenario": "Team tiene 200 dashboards. Cambios manualmente en UI Grafana. No hay versioning, no code review, drift entre environments (staging vs prod). Necesitas 'GitOps' para dashboards.",
+      "question": "¿Qué opciones existen para gestionar dashboards as code?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "JSON export/import: Grafana permite export dashboard como JSON. Commit JSON en git. En deploy, provision automáticamente via API o file-based provisioning. Simple pero JSON es verboso y hard to maintain a mano.", "correct": true, "why": "Correcto. Es el enfoque baseline. Grafana file provisioning: dashboards en directory → Grafana los carga al start. GitOps: cambia dashboard en UI → export JSON → PR → merge → deploy." },
+        { "letter": "B", "text": "Grafonnet: DSL basado en Jsonnet (extendable JSON) para generar dashboard JSON. Reduce boilerplate — funciones reutilizables (redPanel(), usePanel()). Mantenido por Grafana Labs (grafonnet-lib) y comunidad.", "correct": true, "why": "Correcto. Grafonnet es la solución 'Grafana-way' para dashboards as code. Jsonnet permite abstracciones (funciones, imports, template inheritance). Steep learning curve pero mantenible a scale." },
+        { "letter": "C", "text": "Terraform Grafana provider: recursos grafana_dashboard, grafana_folder, grafana_alert_rule, grafana_data_source. Manage Grafana infra completamente as code. Aplica plan → estado deseado en Grafana.", "correct": true, "why": "Correcto. Ideal si ya usas Terraform para todo. Provider oficial Grafana Labs. terraform apply crea/actualiza dashboards, folders, alerting, users, teams. Beneficio: single tool para toda infra." },
+        { "letter": "D", "text": "Grafana Operator (Kubernetes): CRDs GrafanaDashboard, GrafanaDatasource, GrafanaAlert. Define dashboards en YAML dentro del cluster, el operator los sincroniza a Grafana. Ideal para Kubernetes-native workflows.", "correct": true, "why": "Correcto. Community project (grafana-operator) muy adopted. CRDs permiten dashboards de servicios vivan junto al código en git, y operator los sincroniza. GitOps-friendly con ArgoCD/Flux." },
+        { "letter": "E", "text": "Grafana no soporta dashboards as code.", "correct": false, "why": "Falso. Multiple opciones oficiales y comunidad." }
+      ],
+      "explanation": "Opciones comparadas: (1) JSON files + provisioning — simple, verbose, hard scale; (2) Grafonnet — Jsonnet DSL, potente pero learning curve; (3) Terraform provider — bueno si stack Terraform; (4) Grafana Operator — mejor para Kubernetes GitOps; (5) grafanalib (Python) — comunidad, similar a Grafonnet but Python; (6) Newer: dashboards en Grafana UI con git sync (feature emerging). Best practice pattern: (a) dashboards de infra shared → Terraform o Operator; (b) dashboards por servicio → junto al código en repo del servicio; (c) code review dashboard changes como código; (d) staging/prod versions distintas via variables. Anti-patrón: cambios manuales en UI sin backup a git — perdidos en next re-provision.",
+      "realWorld": "Grafana Labs internal usa mix. Weaveworks blogs sobre Grafonnet. GitLab dashboards as code en repo público. Empresas mad grandes: dashboards junto a service code, PR reviewed, deploy con CI/CD.",
+      "tags": ["dashboards as code", "Grafonnet", "Terraform", "GitOps"],
+      "tech": ["Grafana", "Grafonnet", "Terraform"],
+      "references": [{ "title": "github.com/grafana/grafonnet-lib" }, { "title": "registry.terraform.io/providers/grafana/grafana" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "monitoring",
+      "topic": "Grafana permissions y multi-tenancy",
+      "difficulty": "senior",
+      "scenario": "Empresa con 10 teams, cada uno con sus servicios. No quieres que el team A vea/modifique dashboards del team B. Y algunos teams tienen su propio Prometheus.",
+      "question": "¿Cómo se estructura permisos y multi-tenancy en Grafana?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Grafana tiene: (1) Organizations (aislamiento total, usuarios separados); (2) Folders con permissions (team A owns folder A, viewers/editors específicos); (3) Teams (grupos de users); (4) Roles (Viewer, Editor, Admin globally, o role-based access en Enterprise). Para MULTI-TENANCY estricto (SaaS con clientes aislados), Grafana Enterprise ofrece 'multi-org' + Mimir/Loki/Tempo con X-Scope-OrgID header para tenant isolation en storage. OSS Grafana + Mimir/Loki también soportan multi-tenancy via headers.", "correct": true, "why": "Correcto. Grafana escala desde single-team (folder permissions) a SaaS multi-tenant (organizations + storage tenant IDs). Enterprise features (RBAC, LDAP/SSO, reporting) útiles a scale grande. OSS suficiente para casos medianos." },
+        { "letter": "B", "text": "Grafana no tiene permissions — todos ven todo.", "correct": false, "why": "Falso. Sistema robusto de permisos por folder/dashboard/team." },
+        { "letter": "C", "text": "Necesitas un Grafana por team.", "correct": false, "why": "Overkill. Folders + team permissions cubren el 95% de casos sin duplicar infra." },
+        { "letter": "D", "text": "Multi-tenancy solo funciona en Grafana Cloud.", "correct": false, "why": "Falso. OSS Grafana + Mimir/Loki soportan multi-tenancy con configurations. Cloud lo hace transparente pero self-hosted es viable." }
+      ],
+      "explanation": "Layers: (1) Auth — Grafana user (local, LDAP, OAuth, SAML SSO); (2) Org — top-level tenant (usually 1 en self-hosted, N en SaaS); (3) Folder — agrupación de dashboards con permissions por role/team/user; (4) Dashboard — puede tener permissions override propios; (5) Datasource — permission de query (Enterprise). Enterprise RBAC: 30+ roles predefinidos + custom. LBAC (label-based access control, 2023): control acceso a métricas específicas por labels — útil para tenant metrics. Multi-tenant storage: Mimir/Loki/Tempo aceptan X-Scope-OrgID en header, cada tenant tiene datos aislados. Grafana proxy inyecta el header basado en org context.",
+      "realWorld": "Grafana Cloud es SaaS multi-tenant con miles de clientes. GitLab, Shopify usan Grafana self-hosted con folders + teams para múltiples product teams. Enterprise RBAC essential en empresas con compliance requirements.",
+      "tags": ["permissions", "multi-tenancy", "folders", "teams", "Enterprise"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Permissions" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "monitoring",
+      "topic": "Panel transformations",
+      "difficulty": "mid",
+      "scenario": "Query devuelve 5 series con nombres largos ('http_requests_total_5m_rate_agg'). Quieres: renombrar más corto, dividir por 100 para porcentaje, filtrar solo top 3.",
+      "question": "¿Cómo transformar datos post-query en Grafana sin cambiar la query?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Transformations tab del panel: aplica operations sobre el result set retornado por la query. Ejemplos: Rename by regex (patrón → nombre), Calculate field (formula sobre valores), Filter data by name/value (keep/drop series), Sort by (top N), Group by (agrupar y agregar), Join by field (correlacionar series por timestamp), Reduce (a un valor por serie). Se aplican en orden — pipeline.", "correct": true, "why": "Correcto. Transformations son gold para editar visualización sin re-query. Se aplican en orden como pipeline de datos. Alternative: hacer todo en la query (PromQL/LogQL/SQL) — sometimes más eficiente, sometimes menos expresivo." },
+        { "letter": "B", "text": "Debes editar la query.", "correct": false, "why": "No siempre. Transformations client-side dan flexibilidad sin complicar query. Especialmente útil para operaciones cross-query (join). Query es más eficiente pero menos expresivo." },
+        { "letter": "C", "text": "Transformations no existen en Grafana OSS.", "correct": false, "why": "Falso. Feature core, disponible OSS." },
+        { "letter": "D", "text": "Solo aplican a queries SQL, no Prometheus.", "correct": false, "why": "Falso. Data source agnostic — aplican a cualquier result set." }
+      ],
+      "explanation": "Common transformations: (1) Add field from calculation (delta, ratio, percentage); (2) Filter by name / value; (3) Group by / Reduce (aggregate); (4) Join by field (correlate series por timestamp o ID); (5) Merge (concatenate result sets); (6) Rename by regex; (7) Sort by; (8) Time series to table / Table to time series; (9) Organize fields (reorder, rename, hide columns); (10) Config from query results (dynamic thresholds/units). Order matters — pipeline. Debug: cada transformation muestra data preview. Trade-off vs query: query más eficient (ejecuta en el server); transformation más flexible + no re-query. Usa query para reducing data volume; transformations para presentation.",
+      "realWorld": "Grafana docs tienen ejemplos live. Community forums repletos de recipes. Newer transformations agregadas cada release. Anti-patrón: transformations muy complejas que serían más claras como query — mantén ambos worlds equilibrados.",
+      "tags": ["transformations", "data manipulation", "panels"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Transformations" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "monitoring",
+      "topic": "Grafana Loki + Tempo + Prometheus workflow",
+      "difficulty": "staff",
+      "scenario": "Alerta 'HighLatency' dispara. On-call abre Grafana. Necesita: (1) ver metric evolution; (2) drill down a logs de ese momento; (3) drill down a trace específico de request lento; (4) correlacionar logs + trace del mismo request.",
+      "question": "¿Cómo integran Grafana Prometheus + Loki + Tempo para investigación unificada?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Exemplars en histogram Prometheus (adjunta trace_id a bucket) permiten click en punto de latency spike → abre trace en Tempo directamente. Configurado en datasource Prometheus con 'Exemplars' → link a Tempo datasource.", "correct": true, "why": "Correcto. Bridge metric → trace es LA feature clave. Sin ella, sabes 'p99 alto' pero no CUÁL request. Con exemplars, un click revela el trace específico." },
+        { "letter": "B", "text": "Trace-to-logs (Tempo → Loki): en Tempo datasource config, define 'Trace to logs' con label matcher. Click en span → Grafana query Loki para logs con trace_id igual. Muestra logs correlacionados del mismo request.", "correct": true, "why": "Correcto. Structured logging con trace_id como field → Loki puede grep por trace_id → link desde trace panel to logs. Investigación cross-signal en clicks." },
+        { "letter": "C", "text": "Logs-to-trace (Loki → Tempo): logs en formato JSON con trace_id incluido → Loki data source detecta el field → click en log entry ofrece 'View trace' → abre Tempo. Requires structured logging + trace propagation.", "correct": true, "why": "Correcto. Reverso del anterior. Ver log 'ERROR: payment failed' → click → trace muestra qué request fue, qué services tocó, dónde tardó." },
+        { "letter": "D", "text": "Service graphs derivados de traces (Tempo metrics generator): genera métricas Prometheus de service-to-service latency y errors basado en traces. Dashboards que muestran topología automáticamente.", "correct": true, "why": "Correcto. Metrics generator de Tempo produce RED metrics por service edge automáticamente. Sin instrumentar RED manualmente en cada servicio, obtienes RED desde traces." },
+        { "letter": "E", "text": "Debe elegir uno: metrics, logs, o traces.", "correct": false, "why": "Falso. Filosofía moderna es 'three pillars', todos correlacionados. Grafana Labs vende 'unified observability' como visión." }
+      ],
+      "explanation": "Unified observability workflow: (1) alert (metric threshold) → open dashboard; (2) see latency spike on graph → click exemplar dot → open trace in Tempo; (3) in trace, see 'checkout-service' slow span → click 'View logs' → Loki filtered by trace_id shows logs of that request; (4) understand context, root cause. Configuración: (a) apps instrument con OpenTelemetry (metrics + traces + logs with trace_id); (b) Grafana datasources: Prometheus (with exemplars config), Loki (with derived fields for trace_id), Tempo (with trace_to_logs config); (c) provision configs via file provisioning. Sin exemplars/trace_id in logs, no puedes bridge. Es investment de instrumentation al inicio, dividendos huge en incident response.",
+      "realWorld": "Grafana Labs 'LGTM stack' (Loki + Grafana + Tempo + Mimir) marketed como observability stack unificado. Datadog, Honeycomb tienen equivalentes propietarios. Empresas madurando en 2023-2026 hacia unified observability.",
+      "tags": ["unified observability", "exemplars", "trace-to-logs", "LGTM stack"],
+      "tech": ["Grafana", "Loki", "Tempo", "Prometheus", "Mimir"],
+      "references": [{ "title": "grafana.com — LGTM stack" }, { "title": "grafana.com — Correlations" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "monitoring",
+      "topic": "Grafana OnCall",
+      "difficulty": "mid",
+      "scenario": "Team no tiene incident management. Usan email para alerts (fáciles de ignorar). No hay escalation policy. Un incident nocturno tomó 6h de MTTR porque nadie se enteró.",
+      "question": "¿Qué es Grafana OnCall y cómo se compara con PagerDuty?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Grafana OnCall (adquirido de Amixr 2021): OSS + Cloud incident management. Features: rotations (calendarios de on-call), escalation policies (primary → secondary → manager tras N min), notification via múltiples canales (mobile push, Slack, SMS, phone), acknowledgment tracking, integrations con Alertmanager, Prometheus, custom webhooks. PagerDuty: pionero, más features enterprise (analytics, AIOps, incident postmortem workflows integrados). Trade-off: OnCall más barato/OSS, PagerDuty más maduro y feature-rich. Para setups Grafana-native, OnCall integra tightly.", "correct": true, "why": "Correcto. OnCall es entry a full incident management. Rotation + escalation es el mínimo para on-call funcional. PagerDuty líder histórico pero costoso; OnCall alternativa OSS creciente." },
+        { "letter": "B", "text": "OnCall es solo el nombre marketing de Alertmanager.", "correct": false, "why": "Falso. Producto separado, features distintos (rotations, escalations, mobile app). Alertmanager rutea; OnCall gestiona quién y cómo se le contacta." },
+        { "letter": "C", "text": "PagerDuty ha desaparecido — todos usan OnCall.", "correct": false, "why": "PagerDuty sigue dominant en mercado enterprise. OnCall es alternativa emergente." },
+        { "letter": "D", "text": "Grafana OnCall reemplaza runbooks.", "correct": false, "why": "No. Runbooks (documentation) siguen siendo responsabilidad del equipo. OnCall gestiona notification/escalation, no contenido de respuesta." }
+      ],
+      "explanation": "OnCall components: (1) Schedules — rotation calendars (semanal, quincenal, follow-the-sun); (2) Escalation chains — orden de notificación con delays; (3) Routes — matching de alerts a schedules; (4) Integrations — Alertmanager, Prometheus, PRTG, webhook; (5) Mobile apps (iOS/Android) para push notifications; (6) Slack integration (post alert al channel + acknowledge desde Slack). PagerDuty features adicionales: incident timelines, postmortem tools, Analytics, AIOps event correlation, Rundeck integration para runbook automation. Alternativas: Opsgenie (Atlassian), VictorOps (Splunk, ahora Splunk On-Call), FireHydrant, incident.io.",
+      "realWorld": "Grafana Labs adquirió Amixr en 2021 rebranded como Grafana OnCall. Cloud ofrecido gratis en tier Grafana Cloud. Adoptado por empresas medianas. PagerDuty sigue #1 en enterprise. Startups usan OnCall o incident.io.",
+      "tags": ["Grafana OnCall", "PagerDuty", "incident management", "rotations"],
+      "tech": ["Grafana OnCall", "PagerDuty"],
+      "references": [{ "title": "grafana.com/oss/oncall" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "monitoring",
+      "topic": "Panel best practices: color, units, thresholds",
+      "difficulty": "mid",
+      "scenario": "Junior crea panel con: colores random, unidad 'short' (default), sin thresholds, series names largos y sin abreviar. Team review pide mejoras.",
+      "question": "¿Cuáles son best practices de color, units y thresholds en panels?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Units: SIEMPRE elegir la unidad apropiada (bytes, seconds, percent, requests/sec). Grafana formatea automáticamente (KB, MB, GB). Sin unit correcto, valores como '1500000000' son ilegibles. Sobrescribir por serie via override.", "correct": true, "why": "Correcto. Units es lo primero después de la query. Configurable en Standard options → Unit. Grafana tiene ~200 units built-in agrupados por categoría." },
+        { "letter": "B", "text": "Thresholds: define líneas horizontales/color changes en el panel para valores critical/warning. Ejemplo: latency > 500ms rojo, > 200ms amarillo, < 200ms verde. Basado en SLOs, no arbitrarios. Comunica health status a glance.", "correct": true, "why": "Correcto. Thresholds convierten un gráfico numérico en semaphore visual. Configurable como absolute o percentage. Puede aplicar a background color, line color, fill." },
+        { "letter": "C", "text": "Color scheme: usa colores semánticos consistentes — rojo/errors, verde/success, amarillo/warning. Evita paleta random. Para múltiples series, palette Grafana defaults son ok; para categorical (status codes) usa colores distinguibles.", "correct": true, "why": "Correcto. Color consistente cross-dashboards ayuda cognición. Rojo siempre significa 'malo'. Colorblind-safe palettes disponibles." },
+        { "letter": "D", "text": "Legend: mostrar solo información útil (Last, Mean, Max). Esconder series con label largos verboso. Usa 'legend format' en query (ej. {{ method }} {{ status }}) para labels concisos.", "correct": true, "why": "Correcto. Legend legible es crítico. Legend con nombres de series de 200 chars es unusable. legend format PromQL: {{ label }} personaliza." },
+        { "letter": "E", "text": "Todos los paneles deben tener el mismo color rojo.", "correct": false, "why": "Falso. Colores tienen significado (semantic). Uniforme = pierdes information channel." }
+      ],
+      "explanation": "Grafana panel options areas: (1) Standard options — Unit, Min/Max, Decimals, Display name, Color scheme, No value; (2) Thresholds — steps con color/value/mode (absolute/percentage); (3) Value mappings — reemplazar valor con string (0 → 'Offline', 1 → 'Online'); (4) Data links — click behavior (open URL con placeholders); (5) Panel options — Title, Description, Repeat options. Override system: aplica config a series específicas por matcher (byName, byRegex, byQuery). Best practice: baseline en Standard options, exceptions con overrides.",
+      "realWorld": "Grafana Play (play.grafana.org) tiene ejemplos. Community shares dashboards con quality varying. Best practices vary por equipo pero unidades correctas y thresholds SLO-based son universal.",
+      "tags": ["units", "thresholds", "color", "legend"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Panel options" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "monitoring",
+      "topic": "Grafana Faro y RUM",
+      "difficulty": "senior",
+      "scenario": "Backend monitoring cubierto. Pero users reportan slow page loads que no ves en tus métricas backend. Necesitas 'observability desde el browser'.",
+      "question": "¿Qué es Grafana Faro y cómo cubre Real User Monitoring (RUM)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Grafana Faro: SDK JavaScript + Collector para RUM (Real User Monitoring). Instrumenta browser: (1) errors JavaScript, (2) performance metrics (Web Vitals: LCP, FID, CLS), (3) user sessions, (4) traces (frontend → backend con W3C Trace Context), (5) console logs. Envía a Grafana Cloud o self-hosted collector. Integra con Tempo para trace end-to-end (browser click → backend service). Alternativas: Datadog RUM, New Relic Browser, Sentry (mainly errors), Elastic RUM. Sin RUM, backend metrics no muestran user experience real (network, JS execution, browser rendering).", "correct": true, "why": "Correcto. Backend p99 <100ms puede ser p99 <2s en browser (network + rendering). RUM cierra el loop mostrando lo que el USER experimenta. Faro es la entrada Grafana a este mercado, competing con Datadog RUM y Sentry." },
+        { "letter": "B", "text": "RUM se hace con blackbox exporter.", "correct": false, "why": "Blackbox exporter es sondeo (synthetic monitoring desde servidor). RUM es telemetría desde real users' browsers — completamente distinto." },
+        { "letter": "C", "text": "Grafana Faro solo funciona con Grafana Cloud.", "correct": false, "why": "OSS collector permite self-hosting. Cloud lo hace más simple pero no obligatorio." },
+        { "letter": "D", "text": "Backend metrics son suficientes — RUM redundante.", "correct": false, "why": "Falso. Backend metrics no capturan: JS errors, browser rendering time, network latency del último kilómetro, CDN misses, geographic performance. RUM llena esta gap crítica." }
+      ],
+      "explanation": "Faro components: (1) faro-web-sdk — instrumenta browser (npm package o script tag); (2) Collector — recibe telemetry, forwards a Loki (logs+errors), Tempo (traces), Prometheus (metrics); (3) Grafana app plugin — dashboards y views. Web Vitals capturados: LCP (Largest Contentful Paint), FID (First Input Delay), CLS (Cumulative Layout Shift), TTFB, INP. Session tracking: user sessions con identifiers pseudonimizados. Trace propagation: SDK propaga trace_id al backend (via fetch headers), permite end-to-end trace desde browser click hasta DB query. Privacy: cuidado con PII — usa scrubbing rules.",
+      "realWorld": "Faro relativamente nuevo (2023 GA). Sentry líder histórico en frontend errors. Datadog RUM crece. Empresas serias sobre user experience adoptan RUM. Grafana Labs marketed como parte de LGTM stack (para frontend).",
+      "tags": ["Grafana Faro", "RUM", "Web Vitals", "frontend monitoring"],
+      "tech": ["Grafana Faro", "Sentry", "Datadog RUM"],
+      "references": [{ "title": "grafana.com/oss/faro" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "monitoring",
+      "topic": "Alertmanager routing en Grafana",
+      "difficulty": "senior",
+      "scenario": "Team quiere: critical alerts → PagerDuty; warning alerts → Slack #alerts; info alerts → email digest diario; alerts de team A → team A Slack channel; mantenimiento programado → mute.",
+      "question": "¿Cómo configurar notification policies para todos estos casos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Notification policies (equivalente a Alertmanager route tree): (1) Root policy con contact point default (fallback); (2) Nested routes con matchers (severity=critical → PagerDuty; team=A → Slack team A); (3) continue: true para matchear múltiples; (4) grouping (group_by, group_wait, group_interval, repeat_interval) para evitar storm; (5) Mute timings — periodos programados de silencio (mantenimiento sábado 2AM); (6) Silences — mute ad-hoc via UI.", "correct": true, "why": "Correcto. Notification policies es la traducción de Alertmanager route tree a Grafana Alerting. Mismo modelo mental. Configurado via UI o provisioning JSON/YAML. Mute timings son mejora de UX sobre silences manuales." },
+        { "letter": "B", "text": "Un contact point único para todas las alertas.", "correct": false, "why": "Anti-patrón. Todos los alerts al mismo canal = ruido. Routing por severity/team es esencial." },
+        { "letter": "C", "text": "Cada alert debe tener contact point especificado individualmente.", "correct": false, "why": "Anti-patrón. No scale. Reglas basadas en labels (routing) permiten add alerts sin reconfigurar routing." },
+        { "letter": "D", "text": "Grafana Alerting no soporta mute — usa external tool.", "correct": false, "why": "Falso. Silences + Mute timings son features nativas." }
+      ],
+      "explanation": "Contact points types en Grafana: email, Slack, PagerDuty, Opsgenie, VictorOps, Discord, Microsoft Teams, Webhook, Prometheus Alertmanager (delegate to external), Google Chat, Line, Kafka, Pushover, Threema, SNS, Cisco Webex, Telegram, WeCom. Puedes tener múltiples contact points en un receiver. Notification templates: customizable messages con Go templating ({{ .Alerts.Firing }}). Provisioning: YAML file provisioned al start (idempotent). Best practice pattern: (1) severity → escalation level (critical=page, warning=chat, info=digest); (2) team → team channel; (3) service → tag para grouping.",
+      "realWorld": "Grafana Labs internal usa este stack. Prometheus Alertmanager sigue popular for OSS purists. incident.io, Rootly emerging con features de incident management integradas.",
+      "tags": ["notification policies", "routing", "contact points", "mute"],
+      "tech": ["Grafana Alerting"],
+      "references": [{ "title": "grafana.com — Notification policies" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "monitoring",
+      "topic": "Performance de Grafana",
+      "difficulty": "staff",
+      "scenario": "Grafana muy lento. Dashboard tarda 30s en cargar. Users se quejan. Team debate: ¿Grafana problem? ¿Data source problem? ¿Dashboard problem?",
+      "question": "¿Cómo diagnosticar y resolver problemas de performance de Grafana?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Query performance: dashboard con 20 paneles = 20 queries paralelas al datasource. Optimiza queries: use recording rules pre-agregadas (Prometheus), limita tiempo range, reduce cardinality de results. Query inspector en cada panel muestra tiempo, request/response, warnings.", "correct": true, "why": "Correcto. 80% de dashboard slowness = queries slow. Query inspector es la herramienta debug. Recording rules pre-computan queries pesadas — dashboard consulta series derivada instantáneo." },
+        { "letter": "B", "text": "Caching: Grafana Enterprise tiene query caching (Redis/Memcached) — repite queries idénticas hit cache. OSS: usar reverse proxy con cache (nginx). Data source como Loki tienen caché en Query Frontend.", "correct": true, "why": "Correcto. Cache es multiplier. Query que consultan 30 usuarios / minuto = 30 hits al backend sin cache, 1 hit + 29 cache con cache. Enterprise feature core." },
+        { "letter": "C", "text": "Panel design: muchos paneles pequeños son mejor que uno gigante con 50 series (rendering costoso). Time range razonable (last 1h típico vs last 30d). Refresh interval razonable (30s vs 5s hammers backend).", "correct": true, "why": "Correcto. UI rendering también es factor. Panel con 50 series y refresh cada 5s = load bell en browser + backend. Ajusta refresh según use case (dashboard operacional 30s ok; incident response 10s aceptable)." },
+        { "letter": "D", "text": "Escalar Grafana: si Grafana server saturado (CPU/RAM), scale horizontal (múltiples instances tras load balancer, DB shared). Session en Redis. Requires config apropiada.", "correct": true, "why": "Correcto. Un solo Grafana escala bastante pero eventualmente hits límites. HA setup: 3+ instances, PostgreSQL para state, Redis para session, LB en front. Cloud managed lo hace transparente." },
+        { "letter": "E", "text": "Aumentar RAM del Grafana resuelve todo.", "correct": false, "why": "Falso. Grafana raramente RAM-bound (excepto en render de imágenes para reporting). Bottlenecks más comunes: queries lentas, panels heavy, dashboard design malo." }
+      ],
+      "explanation": "Debugging performance: (1) Query inspector — tiempo cada query, count series retornadas; (2) Browser dev tools — network waterfall (queries paralelas), rendering time; (3) Grafana metrics — instala prometheus scraper para el propio Grafana (grafana_http_request_duration_seconds); (4) Backend logs; (5) Datasource server metrics (Prometheus, Loki también monitorean sus queries). Common fixes: recording rules, transformations en vez de complex queries, cache, better dashboard design (fewer panels, smaller time ranges, less refresh frequency). Enterprise: query caching, reporting queue.",
+      "realWorld": "Grafana Labs bloguea best practices. GitLab publica sus optimizations. Empresas grandes tienen dashboards que sirven 100s users concurrent — requiere tuning constante. Anti-patrón: dashboards con time range 30d + refresh 5s → backend melts.",
+      "tags": ["performance", "caching", "escalabilidad", "query optimization"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Performance and scalability" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "monitoring",
+      "topic": "Annotations",
+      "difficulty": "mid",
+      "scenario": "Cada vez que hay incident, team dice 'esto empezó justo después del deploy X'. Pero no aparece en dashboards. Necesitas ver deploys marcados en gráficos.",
+      "question": "¿Qué son annotations y cómo se usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Annotations: eventos discretos marcados con líneas verticales / regions en panels. Sources: (1) manual (click en gráfico, añadir); (2) queries (search 'annotation source' data que retorna time + description); (3) alerting state changes (Grafana Alerting registra automáticamente); (4) externas (deploys via HTTP API POST). Uso: correlacionar cambios (deploys, releases, config changes) con métricas — 'p99 spike empezó exacto al deploy 14:32'.", "correct": true, "why": "Correcto. Annotations son the missing link entre 'change happened' y 'metric changed'. Sin ellas, correlación deploy → incident es adivinación. Con ellas, obvia. Best practice: pipeline CI/CD hace POST a Grafana API para cada deploy." },
+        { "letter": "B", "text": "Annotations son solo comentarios de texto — no aparecen en gráficos.", "correct": false, "why": "Falso. Sí aparecen como líneas/regions en time series panels." },
+        { "letter": "C", "text": "Solo se pueden crear manualmente.", "correct": false, "why": "Falso. Múltiples sources: manual, query, alert state changes, API externa." },
+        { "letter": "D", "text": "Solo aparecen en un panel específico.", "correct": false, "why": "Configurable — por dashboard o por panel. Usualmente dashboard-wide (aplica a todos los panels time series)." }
+      ],
+      "explanation": "Annotation types: (1) region — time range con start/end (deploy que tarda 3 min); (2) point — single moment (alert fired). Configuration: Dashboard settings → Annotations → add data source annotation query. Query examples: Prometheus con 'changes(deployment_version[5m]) > 0' → cada deploy es annotation; Loki con `{job=\"deploys\"}` → cada log entry es annotation; PostgreSQL con SELECT time, description FROM deploys. API endpoint: POST /api/annotations con dashboardUID, panelId, time, tags, text. Common integrations: CI/CD (Jenkins, GitLab CI, GitHub Actions) postean annotations en cada deploy; feature flag changes (LaunchDarkly webhook); config changes (Consul).",
+      "realWorld": "Standard practice en empresas maduras: cada deploy → annotation en Grafana. Grafana Cloud tiene 'unified change tracking'. GitLab, Shopify, todos hacen esto. Sin annotations, incident postmortem timeline es reconstrucción tediosa.",
+      "tags": ["annotations", "correlations", "deploys"],
+      "tech": ["Grafana"],
+      "references": [{ "title": "grafana.com — Annotations" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "monitoring",
+      "topic": "Grafana Cloud vs self-hosted",
+      "difficulty": "staff",
+      "scenario": "Team evalúa: mantener self-hosted Prometheus + Grafana OSS, o migrar a Grafana Cloud (managed).",
+      "question": "¿Cuáles son los trade-offs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Self-hosted: control total, no vendor lock-in, más cheap si tienes equipo SRE, personalización. Overhead: mantener Prometheus (+Thanos/Mimir para escala), Loki, Tempo, Grafana. Storage, HA, upgrades, backups son tu problema. Grafana Cloud: managed, pay-per-usage, HA transparent, sin ops overhead, integraciones out-of-box. Costo puede escalar rápido con cardinality/volume; vendor lock-in (aunque OSS-compatible = migratable). Elección: startups → Cloud (velocidad); empresas con SRE team + escala grande → self-hosted (costo, control); híbrido común (Cloud para prod, self-hosted para dev).", "correct": true, "why": "Correcto. Trade-off clásico build vs buy. Ahorros SaaS son time-to-value inicial. Costo largo plazo depende de escala — a cierta size, self-hosted es mucho más cheap (mismos economics que AWS RDS vs self-hosted DB). Vendor lock-in menor con Grafana Cloud porque el stack es OSS." },
+        { "letter": "B", "text": "Grafana Cloud es siempre mejor.", "correct": false, "why": "Depende. A escala grande, costo Cloud puede ser $500K/año vs $50K self-hosted (con SRE incluido)." },
+        { "letter": "C", "text": "Self-hosted es siempre mejor.", "correct": false, "why": "Startups queman tiempo valioso en ops que podrían gastar en producto. Cloud vale la pena early." },
+        { "letter": "D", "text": "Son idénticos en costo.", "correct": false, "why": "Falso. Cost curves distintas — SaaS lineal con usage, self-hosted step function (más cheap después de inversion inicial de team + infra)." }
+      ],
+      "explanation": "Grafana Cloud stack: Cloud Metrics (Mimir), Cloud Logs (Loki), Cloud Traces (Tempo), Grafana, OnCall, Synthetic Monitoring, Faro, Kubernetes Monitoring. Pricing: por active series (metrics), GB logs, spans (traces). Free tier generoso para pequeños proyectos. Enterprise pricing custom. Self-hosted equivalent: kube-prometheus-stack Helm chart + Loki + Tempo + configurar todo. Comparativa costs: pequeño (100k series, 100GB logs) — Cloud gratis o ~$50/mo, self-hosted ~$100/mo + 1h/mes ops; mediano (1M series, 1TB logs) — Cloud ~$1500/mo, self-hosted ~$500/mo + 5h/mes ops; grande (10M+ series, 10TB+ logs) — Cloud ~$20k+/mo, self-hosted ~$5k/mo + SRE dedicated. Hybrid pattern: Cloud para primary, self-hosted para bulk.",
+      "realWorld": "Grafana Labs crece Cloud rapidly. Startups eligen Cloud. Empresas madura mix. Datadog compete strongly (mas features integrated pero más caro). Chronosphere (M3 comercial) para escala extreme.",
+      "tags": ["Grafana Cloud", "SaaS", "build vs buy", "escalabilidad"],
+      "tech": ["Grafana Cloud"],
+      "references": [{ "title": "grafana.com/products/cloud" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "monitoring",
+      "topic": "Grafana observability roadmap",
+      "difficulty": "staff",
+      "scenario": "CTO pregunta: '¿cuál es la visión de observability para los próximos 3 años? ¿Qué queremos implementar antes vs después?'.",
+      "question": "¿Cuál es una roadmap sensato para adopción de observability con Grafana stack?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Phase 1 (0-3 meses): metrics básicas. Prometheus + Grafana. Instrument key services con RED. USE dashboards para infra. Alerts en Golden Signals. Baseline funcionando.", "correct": true, "why": "Correcto. Metrics es foundation. Sin metrics no puedes SLO. Prometheus + Grafana es standar fast to setup. RED dashboards por servicio + USE por nodo cubren lo esencial." },
+        { "letter": "B", "text": "Phase 2 (3-6 meses): logs structured + Loki. Migrar de plain-text logs a JSON con correlation IDs. Instalar Loki, dashboards de errors, correlation con metrics. Retire ELK si over-scale.", "correct": true, "why": "Correcto. Logs vienen después de metrics porque son downstream — investigas logs cuando metric sugiere problema. Structured logging (JSON) es prerequisite para search útil. Loki es opcion cheap." },
+        { "letter": "C", "text": "Phase 3 (6-12 meses): distributed tracing con OpenTelemetry + Tempo. Instrumentar servicios (auto-instrumentation primero, manual instrumentation en hot paths). Exemplars + trace-to-logs correlación. Investigación cross-signal habilitada.", "correct": true, "why": "Correcto. Tracing es el pilar más costoso de implementar (instrumentation en cada service) pero highest value para debugging distributed systems. OpenTelemetry es standard hoy." },
+        { "letter": "D", "text": "Phase 4 (12+ meses): SLO management maduro. Recording rules por SLO, error budget dashboards, burn rate alerts multi-window, políticas de freeze en burn. Advanced: Nobl9 o Grafana SLO para SLO tooling. Chaos engineering para test resilencia.", "correct": true, "why": "Correcto. SLOs maduros requieren instrumentation solid (fases anteriores). Sin metrics/logs/traces confiables, SLO es aspiracional. Chaos engineering al final valida que las defensas funcionan." },
+        { "letter": "E", "text": "Implementar todo simultáneamente en semana 1.", "correct": false, "why": "Anti-patrón. Big bang usually fails. Cada fase enseña lecciones para la siguiente. Incremental delivery = success." }
+      ],
+      "explanation": "Progresión observability maturity (basado en Google SRE, Charity Majors, Cindy Sridharan writing): (1) monitoring básico — up/down + few key metrics; (2) three pillars separados — metrics + logs + traces cada uno útil solo; (3) correlated observability — exemplars, trace-to-logs, unified queries; (4) SLO-driven — reliability como product feature con budgets; (5) chaos + continuous verification — proactive testing. Costs incrementales: (a) tooling; (b) SRE headcount; (c) developer time instrumenting. ROI: reduces MTTR dramatically, prevents incidents, improves user experience. Falacias comunes: 'nos podemos saltar a phase 4' (no — foundations first), 'compramos Datadog y ya' (herramienta sola no cambia cultura).",
+      "realWorld": "Google SRE Book roadmap explicit. Charity Majors (Honeycomb) writes about observability evolution. Cindy Sridharan libro 'Distributed Systems Observability' referencia. Empresas top publican journeys (Netflix, Uber, Slack blogs).",
+      "tags": ["roadmap", "maturity", "observability", "SLO"],
+      "tech": ["Grafana", "Prometheus", "Loki", "Tempo"],
+      "references": [{ "title": "Cindy Sridharan — Distributed Systems Observability" }, { "title": "Google SRE Book" }]
+    }
+  ]
+}

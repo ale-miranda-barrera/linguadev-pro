@@ -1,0 +1,420 @@
+{
+  "id": "programmer-sim-07-networking-http-and-tcp",
+  "trackId": "programmer",
+  "order": 7,
+  "title": "Simulacro 07 — Networking, HTTP/2/3 y TCP en profundidad",
+  "focus": "HTTP/1.1 vs 2 vs 3, TCP handshake, TLS, keep-alive, connection pooling, HOL blocking, slow start, congestion control.",
+  "areaCoverage": ["apis"],
+  "timeLimitMin": 28,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "apis",
+      "topic": "Handshake TCP + TLS — costo real",
+      "difficulty": "junior",
+      "scenario": "En code review, un dev pregunta: '¿cuántos round-trips cuesta abrir una conexión HTTPS a un server nuevo antes de mandar el primer byte de la request?'",
+      "question": "¿Cuál es la respuesta correcta (asumiendo TCP + TLS 1.2 tradicional)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "1 round-trip (SYN → SYN-ACK → ACK).", "correct": false, "why": "Cubre solo TCP handshake (~1 RTT). Falta el TLS handshake, que en 1.2 son 2 RTTs adicionales." },
+        { "letter": "B", "text": "3 round-trips: 1 para TCP (SYN, SYN-ACK, ACK) + 2 para TLS 1.2 (ClientHello/ServerHello + certificate + key exchange). Luego el HTTP request. Por eso RTT alto (móvil, satélite) mata latencia hasta first-byte.", "correct": true, "why": "Correcto. Es la razón por la que TLS 1.3 (2018) redujo el handshake a 1-RTT (y 0-RTT con session resumption) — un cambio enorme. TCP 3-way requiere 1 RTT antes de mandar datos; TLS 1.2 requiere 2 RTTs por default. Total 3 RTTs de setup. Sobre WiFi (~30ms RTT) son 90ms perdidos antes de empezar." },
+        { "letter": "C", "text": "0 round-trips si usas HTTP/2.", "correct": false, "why": "HTTP/2 no cambia el handshake TCP/TLS — sigue teniendo el mismo costo. HTTP/2 optimiza DESPUÉS del setup (multiplexing, header compression)." },
+        { "letter": "D", "text": "5 round-trips (DNS + TCP + TLS + HTTP).", "correct": false, "why": "DNS es un lookup separado (cacheable) y usualmente 1 RTT si no está cacheado. Estrictamente la pregunta es sobre abrir la conexión HTTPS; DNS puede o no contar. La respuesta canónica es 3 RTTs sin contar DNS." }
+      ],
+      "explanation": "El costo de setup es INVISIBLE en dev (localhost, RTT ~0.1ms) y DOMINANTE en móvil o rutas internacionales (RTT 100-300ms). Un mal diseño que abre nueva conexión por request es catastrófico en mobile: 300ms × 3 = 900ms antes del primer byte.\n\nOptimizaciones clásicas:\n- **HTTP keep-alive**: reutilizar conexión TCP para múltiples requests. Amortiza el handshake.\n- **HTTP/2**: 1 conexión, N requests multiplexadas. Elimina cost por-request.\n- **TLS 1.3**: 1-RTT handshake (0-RTT con resumption). ~40% más rápido que 1.2.\n- **HTTP/3 (QUIC)**: combina TCP+TLS en uno, 0-RTT en conexión repetida.\n- **TCP Fast Open**: envía data en el SYN. Poco adopción por firewalls.\n- **Session resumption**: TLS reconecta con session ticket, saltando parte del handshake.\n\nRegla: en cualquier cliente que hace muchas requests al mismo host, USA connection pooling / keep-alive. No abrir-cerrar por request.",
+      "realWorld": "Google publicó QUIC internamente en 2012 midiendo que TLS+TCP handshake era ~30% de latencia P75 en mobile. El paper original de QUIC muestra ahorro de 100-300ms típicos. Cloudflare, Facebook, YouTube usan HTTP/3 (QUIC) en producción desde 2020.",
+      "tags": ["TCP handshake", "TLS", "RTT", "HTTPS"],
+      "tech": ["TCP", "TLS 1.2", "TLS 1.3", "QUIC"],
+      "references": [{ "title": "Ilya Grigorik — 'High Performance Browser Networking'" }, { "title": "RFC 8446 — TLS 1.3" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "apis",
+      "topic": "HTTP/2 multiplexing y HOL blocking",
+      "difficulty": "mid",
+      "scenario": "Un dev pregunta en code review: 'si HTTP/2 permite N requests multiplexadas en una conexión TCP, ¿por qué HTTP/3 tuvo que existir? ¿Qué problema no arregló HTTP/2?'",
+      "question": "¿Cuál es la respuesta técnica más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HTTP/3 es solo una optimización menor. HTTP/2 ya resuelve todo.", "correct": false, "why": "Falso. HTTP/3 arregla un problema fundamental de HTTP/2 (TCP head-of-line blocking) que solo se ve bajo pérdida de paquetes." },
+        { "letter": "B", "text": "HTTP/2 elimina head-of-line blocking a nivel HTTP (múltiples streams sobre una conexión), pero SIGUE atado a TCP: si un paquete TCP se pierde, TODOS los streams se detienen esperando la retransmisión (TCP asegura entrega en orden a nivel byte-stream). HTTP/3 usa QUIC sobre UDP, con streams independientes a nivel transporte — un paquete perdido solo afecta a su stream.", "correct": true, "why": "Correcto y matizado. Es exactamente por qué QUIC/HTTP/3 se diseñó. Bajo redes con packet loss significativo (WiFi malo, móvil, satélite), HTTP/2 sobre TCP puede rendir PEOR que HTTP/1.1 con múltiples conexiones — porque una conexión con paquete perdido bloquea 100 requests. HTTP/3 aísla los streams a nivel UDP." },
+        { "letter": "C", "text": "HTTP/2 solo soporta 100 requests por conexión; HTTP/3 quita el límite.", "correct": false, "why": "Falso. HTTP/2 tiene un setting SETTINGS_MAX_CONCURRENT_STREAMS típicamente 100+, pero se puede subir. No es la limitación clave." },
+        { "letter": "D", "text": "HTTP/2 no permite server push, HTTP/3 sí.", "correct": false, "why": "Invertido: HTTP/2 tenía server push (deprecated por poco uso). HTTP/3 lo mantiene por compatibilidad. No es la razón del cambio." }
+      ],
+      "explanation": "El progreso HTTP se puede resumir por qué problema resuelve cada versión:\n\n- **HTTP/1.0**: primitivo, sin keep-alive. Handshake por request.\n- **HTTP/1.1**: keep-alive default, pipelining (mal soportado). Head-of-line blocking a nivel HTTP: request 2 espera respuesta 1.\n- **HTTP/2 (2015)**: binary framing, multiplexing de streams sobre 1 conexión TCP, header compression (HPACK), server push, priority. Elimina HOL blocking A NIVEL HTTP. Un problema resuelto: 100 pequeños JS/CSS sin necesidad de sharding.\n- **HTTP/3 (2022, RFC 9114)**: usa QUIC sobre UDP. Streams verdaderamente independientes a nivel transporte. TLS integrado (0-RTT posible). Sobrevive cambios de red (migración de WiFi a móvil sin reconectar — connection ID en vez de tuple IP+puerto).\n\nQUIC = TCP + TLS + streaming reinventado sobre UDP. UDP se eligió porque el ossification del stack TCP (kernels lentos de actualizar, firewalls) hacía imposible iterar TCP.",
+      "realWorld": "Facebook publicó en 2020 mediciones mostrando 5-15% mejora en tail latency (P90+) al migrar a HTTP/3. Fastly reporta ganancias similares en CDN. Google Search, Youtube, Cloudflare usan HTTP/3 activamente. Curl añadió soporte experimental en 2019.",
+      "tags": ["HTTP/2", "HTTP/3", "QUIC", "HOL blocking", "multiplexing"],
+      "tech": ["HTTP/2", "QUIC", "UDP", "TCP"],
+      "references": [{ "title": "RFC 9114 — HTTP/3" }, { "title": "Robin Marx — 'HTTP/3 explained'" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "apis",
+      "topic": "Connection pooling — sizing",
+      "difficulty": "mid",
+      "scenario": "Un servicio en Java usa `HttpClient` con connection pool default (típicamente 5 conexiones por host). Bajo carga alta, se ven timeouts de 'Timeout waiting for connection from pool'. El equipo sube a 1000 conexiones. Ahora el server destino se queja: 'demasiadas conexiones, timeouts al hacer accept'.",
+      "question": "¿Cómo se dimensiona correctamente un connection pool HTTP?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cuantas más conexiones, mejor. Subir hasta que no haya timeouts.", "correct": false, "why": "Anti-patrón. Cada conexión consume recursos en cliente Y servidor. Sobre-dimensionar mueve el bottleneck al servidor, causando el nuevo problema descrito." },
+        { "letter": "B", "text": "Ley de Little: pool_size = throughput (req/s) × latency (s). Ejemplo: 100 req/s @ 50ms = 5 conexiones ocupadas en promedio. Suma buffer (2-3x). Y NUNCA excedas la capacidad del servidor destino (que se dimensiona igual). Prefiere HTTP/2 (multiplexa) — reduce dramáticamente el número de conexiones necesarias.", "correct": true, "why": "Correcto y basado en la ley de Little (John Little, MIT 1961): L = λ × W. En un sistema estable, número medio en cola = tasa × tiempo. Aplicado a pools: si latency down-stream es 50ms y quieres 100 req/s, necesitas capacidad para al menos 5 concurrentes. Buffer para picos (2-3x típico). Recuerda: el servidor destino tiene su propio límite (thread pool, file descriptors) — coordina." },
+        { "letter": "C", "text": "Poner max_connections = (número de threads del app server).", "correct": false, "why": "Correlación incidental, no causal. Depende de: latency de la downstream, número de calls por request, ratio de calls por thread. Ley de Little es la fórmula real." },
+        { "letter": "D", "text": "Usar 1 conexión por CPU core.", "correct": false, "why": "Aplica a workloads CPU-bound. Aquí es I/O-bound (esperando servidor remoto) — el número de cores es irrelevante." }
+      ],
+      "explanation": "Connection pooling es un caso clásico de la Ley de Little en sistemas:\n\n**L = λ × W**  → concurrencia en sistema = tasa de llegada × tiempo en sistema\n\nAplicado: si tu servicio hace 100 requests/s a un downstream que responde en 50ms, la concurrencia media es 5. Pool de 5 basta en steady-state, pero picos (bursts) requieren buffer.\n\nCómo dimensionar en la práctica:\n1. Mide latency actual del downstream (P50, P95, P99).\n2. Mide tu throughput objetivo.\n3. Aplica Little: pool_size ≈ throughput × P95_latency.\n4. Multiplica por 1.5-3x para buffer.\n5. NUNCA excedas capacidad del downstream (coordina con su team).\n\nHTTP/2 cambia el juego: una conexión maneja 100 streams multiplexados → necesitas ~10x menos conexiones. gRPC usa HTTP/2 por default.\n\nConfiguración típica: Apache HttpClient (maxTotal, maxPerRoute), OkHttp (maxRequests, maxRequestsPerHost), Netty (channelPool). Cada uno con su model. Java HttpClient (JDK 11+) tiene defaults conservadores.",
+      "realWorld": "Zalando publicó incidente 2016 donde connection pools mal dimensionados causaron cascada. Netflix Hystrix (deprecated) documenta el patrón semaphore vs thread pool. Discord post-mortem 2019 sobre 'noisy neighbor' con Elixir pools.",
+      "tags": ["connection pool", "Little's Law", "HTTP client", "sizing"],
+      "tech": ["Apache HttpClient", "OkHttp", "HTTP/2"],
+      "references": [{ "title": "John Little — 'A Proof for the Queuing Formula L = λW' (1961)" }, { "title": "Brendan Gregg — 'Systems Performance'" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "apis",
+      "topic": "Keep-alive y TIME_WAIT",
+      "difficulty": "senior",
+      "scenario": "Un servicio hace millones de llamadas HTTP a un microservicio interno. Ve `netstat` con miles de conexiones en TIME_WAIT y ocasionalmente 'address already in use' al crear nueva conexión. Sin keep-alive.",
+      "question": "¿Cuál es la causa raíz y las soluciones?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TIME_WAIT es el estado post-close donde el kernel mantiene la 4-tupla (src_ip, src_port, dst_ip, dst_port) por 2×MSL (~60-120s) para evitar que paquetes tardíos de la conexión vieja se confundan con una nueva. Sin keep-alive + alto ratio de conexiones nuevas → los puertos efímeros locales se agotan → 'address already in use'.", "correct": true, "why": "Correcto. Es el TIME_WAIT del lado que hace close() primero. El rango de puertos efímeros default en Linux es ~28K (32768-60999). Con 500 nuevas conexiones/segundo cerradas, en <60s agotas todo el rango. Solución de raíz: keep-alive." },
+        { "letter": "B", "text": "Habilitar HTTP keep-alive en cliente y servidor. Reutilizar conexiones amortiza handshake Y evita el problema del TIME_WAIT.", "correct": true, "why": "Correcto. Es la solución fundamental. Reduce el número de conexiones NUEVAS drásticamente. En clientes típicos (Apache HttpClient, OkHttp), keep-alive es default; verifica que el servidor no lo cierre agresivamente (Connection: close)." },
+        { "letter": "C", "text": "Aumentar `net.ipv4.ip_local_port_range` a 1024-65535 para tener más puertos efímeros.", "correct": true, "why": "Correcto como tuning complementario. Duplica el rango disponible. Útil en clientes que hacen muchas conexiones cortas legítimamente (crawlers, load testers). No sustituye keep-alive pero da margen." },
+        { "letter": "D", "text": "Habilitar `net.ipv4.tcp_tw_reuse=1` para reciclar sockets en TIME_WAIT.", "correct": true, "why": "Correcto y sutil. tcp_tw_reuse permite al kernel usar un socket TIME_WAIT para nueva conexión si es seguro (timestamps activos). Se recomienda ampliamente en servicios de alto tráfico. NO uses tcp_tw_recycle (deprecated, causa problemas con NAT)." },
+        { "letter": "E", "text": "Cambiar a usar UDP para evitar TIME_WAIT.", "correct": false, "why": "UDP no es un reemplazo de TCP para HTTP. Aunque HTTP/3 usa UDP, no es simplemente 'cambiar a UDP' — requiere QUIC completo." }
+      ],
+      "explanation": "TIME_WAIT es una feature, no un bug: garantiza que paquetes tardíos de una conexión cerrada no puedan corromper una nueva conexión con la misma 4-tupla. El estado dura 2×MSL (Maximum Segment Lifetime) = típicamente 60-120s.\n\nSíntomas comunes:\n- Cliente hace millones de conexiones cortas → agota puertos efímeros locales.\n- Servidor con `Connection: close` en cada response → cliente cierra rápido → TIME_WAIT del lado del cliente.\n\nLa RESPUESTA correcta es keep-alive. Cuando la conexión permanece abierta, no hay close() → no hay TIME_WAIT. Todos los HTTP clients modernos hacen keep-alive por default; el problema típico es que un middlebox (LB, proxy) fuerza `Connection: close`.\n\nTunings del kernel Linux para servicios de red pesada:\n- `net.ipv4.ip_local_port_range = 1024 65535`\n- `net.ipv4.tcp_tw_reuse = 1` (safe)\n- `net.core.somaxconn = 4096` (accept queue)\n- `net.ipv4.tcp_max_syn_backlog = 8192`\n\nOJO con SNAT / load balancers: si hay NAT en el path, TIME_WAIT del lado del NAT puede ser el bottleneck, no del cliente.",
+      "realWorld": "Vincent Bernat (Exoscale) publicó 'Coping with the TCP TIME_WAIT state' — reference obligado. Discord post-mortem 2019 sobre bug de conexiones agotadas en Elixir por no reutilizar. Uber ingeniería documentó ajustes de sysctl para servicios high-volume.",
+      "tags": ["TIME_WAIT", "keep-alive", "ephemeral ports", "sysctl"],
+      "tech": ["TCP", "Linux", "HTTP"],
+      "references": [{ "title": "Vincent Bernat — 'Coping with the TCP TIME_WAIT state on busy Linux servers'" }, { "title": "RFC 793 — TCP" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "apis",
+      "topic": "TCP slow start y bandwidth-delay product",
+      "difficulty": "senior",
+      "scenario": "Descargar un archivo de 10MB desde un CDN cercano (RTT 20ms) tarda 500ms. Desde uno lejano (RTT 200ms, misma throughput teórica) tarda 8s. La banda pipe es 100Mbps en ambos casos.",
+      "question": "¿Por qué la diferencia tan grande, y qué mitigaciones existen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TCP slow start: nuevas conexiones empiezan con congestion window (cwnd) pequeña (~10 MSS típicamente) y la duplican por cada RTT hasta detectar loss o alcanzar el receive window. Con RTT alto, tardas muchos RTTs en llenar el pipe. BDP (Bandwidth-Delay Product) = 100Mbps × 200ms = 2.5MB — necesitas cwnd de al menos 2.5MB para saturar la red.", "correct": true, "why": "Correcto. Es el fenómeno fundamental. Slow start es una feature (evita colapso de congestión) pero penaliza conexiones cortas en redes de alto BDP. La conexión con RTT 200ms tarda log2(2500) ≈ 11 RTTs = 2.2s solo en llegar a cwnd óptima." },
+        { "letter": "B", "text": "Usar TCP BBR (Bottleneck Bandwidth and RTT) en vez de CUBIC. BBR modela ancho de banda y RTT explícitamente en vez de reactuar a packet loss.", "correct": true, "why": "Correcto. BBR (Google, 2016) reemplaza el algoritmo tradicional basado en loss. Especialmente efectivo en redes con loss no relacionado a congestión (wireless, satélite). Google reporta 4x throughput en algunos casos. Es el default en muchos servicios Google, Netflix, Cloudflare." },
+        { "letter": "C", "text": "Aumentar `initial cwnd` en el servidor (10 → 30+). Reduce el tiempo de slow start ramp-up.", "correct": true, "why": "Correcto y estándar en CDNs. Google publicó paper en 2010 argumentando que initial cwnd de 3 (RFC original) era anacrónico. Se recomendó 10 (RFC 6928, 2013). Hoy CDNs usan 20-32 para bursts pequeños. Sin embargo, subir demasiado puede causar congestion en la primera burst." },
+        { "letter": "D", "text": "Usar conexiones persistentes (keep-alive) o HTTP/2 para amortizar el slow start.", "correct": true, "why": "Correcto. La primera request paga slow start; las siguientes usan la cwnd ya crecida. HTTP/2 en particular multiplexa muchas requests sobre 1 conexión, así solo hay un slow start por sesión. En una conexión larga, después de segundos la cwnd está estable." },
+        { "letter": "E", "text": "Reducir el tamaño del archivo dividiéndolo en múltiples conexiones paralelas.", "correct": false, "why": "Anti-patrón moderno. HTTP/1.1 con 6 conexiones paralelas fue común, pero causa MÁS overhead (6 slow starts) y perjudica al servidor. HTTP/2/3 multiplexa correctamente. Descarga paralela solo tiene sentido cross-server (multi-source, tipo BitTorrent)." }
+      ],
+      "explanation": "TCP slow start es el mecanismo por el que TCP evita colapso: empieza conservador y aumenta la carga hasta encontrar el límite. En una red con RTT bajo, se satura en milisegundos — invisible. En redes de alto BDP (long-fat networks), es dominante.\n\nBandwidth-Delay Product = capacidad de la red = cuánto puede estar 'en vuelo' antes de recibir ACK. BDP = bandwidth × RTT. Ejemplo: 100Mbps × 200ms = 2.5MB. Si tu cwnd < BDP, no saturas el pipe.\n\nCubic (Linux default históricamente) reacciona a pérdida de paquetes. En red lossy pero no congested (wifi, mobile, satellite), Cubic se comporta pobremente. BBR modela bandwidth y RTT — inmune a pérdidas espurias.\n\nOptimizaciones agregadas:\n- **CDN**: hacer el CDN cerca del cliente reduce RTT → menos slow start dominante.\n- **Warm connection**: mantener conexión abierta entre requests.\n- **QUIC/HTTP/3**: 0-RTT resumption evita re-hacer slow start desde cero.",
+      "realWorld": "Google publicó 'BBR: Congestion-Based Congestion Control' (2016). Netflix midió que aumentar initial cwnd de 10 a 30 en Open Connect mejoró video start-up P75 en 15%. Akamai, Cloudflare afinan cwnd inicial por región.",
+      "tags": ["TCP slow start", "cwnd", "BDP", "BBR", "CUBIC"],
+      "tech": ["TCP", "Linux kernel", "BBR"],
+      "references": [{ "title": "RFC 6928 — Increasing the Initial Window" }, { "title": "Cardwell et al. — 'BBR: Congestion-Based Congestion Control' (2016)" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "apis",
+      "topic": "Cache-Control y validators",
+      "difficulty": "mid",
+      "scenario": "Un dev implementa un endpoint que devuelve datos de perfil. Añade el header `Cache-Control: max-age=3600` para 'cachear en el cliente'. Otro dev pregunta: '¿esto es suficiente? ¿Qué pasa cuando cambia el perfil?'",
+      "question": "¿Cuál es el diseño correcto de caching HTTP?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`max-age=3600` es suficiente. El cliente refresca cada hora.", "correct": false, "why": "Incompleto. El cliente tendrá datos stale hasta 1 hora tras cambios. Falta un mecanismo de INVALIDACIÓN (validators: ETag / Last-Modified) para revalidar antes de expiry." },
+        { "letter": "B", "text": "Añadir `ETag: \"<hash>\"` en la respuesta. El cliente enviará `If-None-Match: \"<hash>\"` en revalidaciones. Servidor responde 304 Not Modified (sin body) si nada cambió. Combinar con `max-age` moderado + `stale-while-revalidate` para UX suave. Y `Cache-Control: private` si es data por-usuario.", "correct": true, "why": "Correcto y completo. ETag es el validator moderno (Last-Modified es su predecesor menos preciso). 304 ahorra bandwidth. `stale-while-revalidate` (RFC 5861) permite servir stale mientras se revalida en background. `private` evita que CDNs/proxies cacheen data de usuarios distintos. Es el diseño correcto para APIs REST cacheables." },
+        { "letter": "C", "text": "Poner `Cache-Control: no-cache`.", "correct": false, "why": "Sutil: no-cache NO significa 'no cachear' — significa 'cachear pero SIEMPRE revalidar'. Es válido si quieres revalidación en cada request, pero pierde el beneficio de max-age. Para 'nunca cachear' es `no-store`." },
+        { "letter": "D", "text": "Usar solo `Expires` header con timestamp de expiración.", "correct": false, "why": "Expires es HTTP/1.0 legacy. Cache-Control lo supersede desde HTTP/1.1. Además, Expires requiere clocks sincronizados entre cliente y servidor — problemático." }
+      ],
+      "explanation": "Caching HTTP tiene dos capas complementarias:\n\n1. **Freshness (max-age, Expires)**: cuánto tiempo la respuesta es 'fresca' — el cliente puede servirla sin ir al servidor. Reduce tráfico, mejora latency.\n\n2. **Validation (ETag, Last-Modified)**: cuando expira, el cliente puede revalidar (`If-None-Match`, `If-Modified-Since`). Server responde 304 (Not Modified, sin body) o 200 (con new body). Ahorra bandwidth aunque no elimina la request.\n\nOtros directives clave:\n- `public` / `private`: si CDNs/proxies pueden cachear (private = solo cliente).\n- `no-cache`: cachear pero revalidar SIEMPRE.\n- `no-store`: nunca cachear (data sensible).\n- `must-revalidate`: no servir stale al expirar (para bancos, etc).\n- `immutable`: para assets versionados (nunca revalidar).\n- `stale-while-revalidate=N`: servir stale durante N segundos mientras revalidas async.\n- `stale-if-error=N`: servir stale si origin falla.\n\nAssets estáticos (JS/CSS con hash en nombre) → `max-age=31536000, immutable`. APIs por-usuario → `Cache-Control: private, max-age=60` + ETag. HTML dinámico → `no-store` o `no-cache`.",
+      "realWorld": "Vercel, Netlify, Cloudflare usan `stale-while-revalidate` como default para SSR pages — UX suave con freshness. GitHub API usa ETags agresivamente y cuenta rate limit de forma diferente para 304s. Fastly documenta patrones de caching a escala.",
+      "tags": ["Cache-Control", "ETag", "304", "stale-while-revalidate"],
+      "tech": ["HTTP", "REST", "CDN"],
+      "references": [{ "title": "RFC 9111 — HTTP Caching" }, { "title": "MDN — Cache-Control docs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "apis",
+      "topic": "CORS preflight",
+      "difficulty": "mid",
+      "scenario": "Frontend en `app.example.com` llama a API en `api.example.com`. Se recibe error CORS. El dev configuró `Access-Control-Allow-Origin: *`. Sigue fallando en llamadas POST con `Content-Type: application/json`.",
+      "question": "¿Qué está faltando y cómo funciona CORS realmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El browser ignora la respuesta del servidor. Hay que deshabilitar CORS en el browser.", "correct": false, "why": "Falso. CORS es una feature de seguridad del browser — no se puede ni se debe deshabilitar. Es intencionalmente estricto." },
+        { "letter": "B", "text": "POST con `Content-Type: application/json` NO es 'simple' según CORS: dispara un preflight OPTIONS. El servidor debe responder al OPTIONS con `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`, `Access-Control-Max-Age`, además del Origin. Y con credentials (cookies), no puede usarse `*` — debe ser origin específico y añadir `Access-Control-Allow-Credentials: true`.", "correct": true, "why": "Correcto y matizado. Requests 'simples' (GET/POST con Content-Type urlencoded/multipart/plain) NO tienen preflight. Cualquier otro (JSON, custom headers, PUT/DELETE, etc.) dispara OPTIONS preflight. El servidor debe manejar OPTIONS y responder los headers de permiso ANTES de que el browser envíe la request real." },
+        { "letter": "C", "text": "El bug es que api.example.com y app.example.com son subdominios distintos — hay que usar el mismo dominio.", "correct": false, "why": "Falso. Subdominios distintos son 'different origins' — CORS aplica, pero se puede permitir explícitamente. No es necesario cambiar dominios." },
+        { "letter": "D", "text": "Hay que usar JSONP.", "correct": false, "why": "JSONP es un hack de la era pre-CORS. Deprecated y con problemas de seguridad. CORS es el mecanismo correcto desde 2014+." }
+      ],
+      "explanation": "CORS (Cross-Origin Resource Sharing) es la manera correcta de permitir requests cross-origin con seguridad. Same-Origin Policy es el default del browser: JS no puede leer respuestas de otros orígenes (protección contra CSRF, data exfiltration).\n\nRequests clasificados:\n\n**Simple requests** (no preflight):\n- GET, HEAD, POST\n- Content-Type: text/plain, multipart/form-data, application/x-www-form-urlencoded\n- Sin headers custom\n\n**Preflighted** (OPTIONS antes):\n- Cualquier otro método (PUT, DELETE, PATCH)\n- Cualquier Content-Type distinto (JSON!)\n- Headers custom (X-Auth-Token, X-Requested-With)\n\nEl preflight manda OPTIONS con `Access-Control-Request-Method` y `Access-Control-Request-Headers`. El servidor responde con `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`. `Access-Control-Max-Age` cachea el preflight (evita OPTIONS por cada request).\n\nWith credentials (cookies, Authorization): NO puedes usar `*`. Debes: (1) origin específico en `Access-Control-Allow-Origin`; (2) `Access-Control-Allow-Credentials: true`; (3) cliente debe setear `credentials: 'include'` (fetch) o `withCredentials = true` (XHR).",
+      "realWorld": "Es la fuente #1 de bugs para devs frontend. Todos los frameworks (Express cors middleware, Spring @CrossOrigin, ASP.NET UseCors) implementan lo mismo. Stripe, Twilio, GitHub tienen docs explícitas de CORS por lo mismo.",
+      "tags": ["CORS", "preflight", "OPTIONS", "security"],
+      "tech": ["HTTP", "browser", "REST"],
+      "references": [{ "title": "MDN — Cross-Origin Resource Sharing (CORS)" }, { "title": "Fetch Living Standard — CORS protocol" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "apis",
+      "topic": "gRPC vs REST vs GraphQL",
+      "difficulty": "senior",
+      "scenario": "En arquitectura, discutes: 'para comunicación server-to-server interna, ¿gRPC vs REST/JSON? ¿Cuál elegir?'",
+      "question": "¿Qué diferencias TÉCNICAS reales soportan la elección?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "gRPC usa Protocol Buffers (binary, schema-first) y HTTP/2 (multiplexing, streaming bidireccional). Payloads ~5-10x más chicos que JSON. Streaming nativo. Genera clients type-safe en 10+ lenguajes.", "correct": true, "why": "Correcto. Es el core value de gRPC: binary serialization + HTTP/2 + schemas. Ideal para tráfico interno de microservicios donde latency y bandwidth importan. La generación de code cross-language elimina discrepancias cliente/servidor." },
+        { "letter": "B", "text": "REST/JSON es más simple para debugging (curl, browser), gateways/CDNs lo entienden, y el ecosistema de tools (Postman, Swagger, cache HTTP) es enorme. Ideal para APIs públicas.", "correct": true, "why": "Correcto. gRPC es más eficiente pero requiere tools especializados (grpcurl, BloomRPC). REST se debuguea con curl. Además, gateways HTTP tradicionales entienden REST — para APIs públicas al cliente final, REST/JSON sigue dominando." },
+        { "letter": "C", "text": "gRPC no funciona en browsers directamente — requiere gRPC-Web (con proxy Envoy o similar) por limitaciones del browser (no acceso raw HTTP/2 stream).", "correct": true, "why": "Correcto y frecuentemente olvidado. Los browsers no exponen las APIs de HTTP/2 necesarias para gRPC (trailers, control de streams). gRPC-Web añade una capa que se traduce en un backend proxy. Complejidad extra que REST evita." },
+        { "letter": "D", "text": "GraphQL es mejor en todos los casos porque resuelve over-fetching.", "correct": false, "why": "Sobre-generalizado. GraphQL soluciona over-fetching y N+1 en el cliente, pero introduce complejidad: schema management, N+1 en el server (necesita dataloader), caching HTTP menos natural, autorización granular más difícil. No es 'mejor' universalmente — es adecuado para clientes con necesidades muy variadas (multi-plataforma con distintas vistas)." },
+        { "letter": "E", "text": "gRPC no soporta autenticación.", "correct": false, "why": "Falso. gRPC soporta múltiples auth: TLS mTLS, tokens via metadata (equivalente a headers), interceptors. Es muy usado en entornos zero-trust (Google's BeyondCorp, Netflix)." }
+      ],
+      "explanation": "La decisión REST vs gRPC vs GraphQL es contextual:\n\n**gRPC** — mejor para:\n- Comunicación server-to-server interna\n- Alta throughput / baja latency\n- Streaming bidireccional (chat, actualizaciones en real-time)\n- Poliglota (muchos lenguajes con clients auto-generados)\n- Contratos estrictos entre teams\n\n**REST/JSON** — mejor para:\n- APIs públicas\n- Simplicidad, tooling universal, debugging\n- Cache HTTP natural (GET, ETag)\n- Cuando browsers son clients directos\n\n**GraphQL** — mejor para:\n- Múltiples clientes con vistas distintas (web + móvil + partners)\n- Reducir over-fetching / under-fetching\n- Evolución de schemas sin versioning\n- Costo: complejidad de setup, N+1 en resolvers, difícil cache HTTP\n\nCombinaciones híbridas son comunes: BFF (Backend-for-Frontend) en GraphQL o REST, con microservicios internos en gRPC. Netflix hace exactamente esto.",
+      "realWorld": "Netflix usa gRPC internamente para 10K+ microservicios. Google es autor de gRPC. GitHub migró a GraphQL para su API v4 (2016). Uber usa mezcla: gRPC interno, REST para partners. Stripe mantiene REST clásico por accesibilidad.",
+      "tags": ["gRPC", "REST", "GraphQL", "Protobuf", "HTTP/2"],
+      "tech": ["gRPC", "Protobuf", "HTTP/2", "GraphQL"],
+      "references": [{ "title": "gRPC — 'Motivation and Design Principles'" }, { "title": "GraphQL spec — RFC" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "apis",
+      "topic": "Retries idempotentes y exponential backoff",
+      "difficulty": "senior",
+      "scenario": "Un servicio hace retries en llamadas a un downstream. Su código: `for i in range(5): try: call() except: continue`. Otro servicio se queja: 'nos DDoSean con retries en cada incidente'.",
+      "question": "¿Cómo se diseña un retry correcto en 2026?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Solo retriar códigos que sabes son idempotentes/transitorios: 5xx (excepto 501/505), 429 (Too Many Requests), 408 (Timeout). NUNCA retriar 4xx client errors (400, 401, 403, 404): son deterministicos.", "correct": true, "why": "Correcto. Retriar 400 (Bad Request) es idiota — la request es mala, no cambiará. Retriar 401 (Unauth) idem. La regla: retry solo para errores del server o de red, no del cliente. 429 y 503 pueden traer `Retry-After` que debes respetar." },
+        { "letter": "B", "text": "Exponential backoff con jitter: sleep = min(cap, base * 2^attempt) * random(0.5, 1.5). El jitter evita 'retry storms' sincronizados donde 1000 clientes retriaan a la vez.", "correct": true, "why": "Correcto. AWS documentó 'thundering herd' de retries sin jitter causando cascadas. Backoff exponencial evita hammering; jitter descoordina. Ver AWS Architecture Blog 'Exponential Backoff and Jitter' (Marc Brooker)." },
+        { "letter": "C", "text": "Circuit breaker: después de N fallos consecutivos, dejar de retriar por T segundos. Da respiro al downstream para recuperarse.", "correct": true, "why": "Correcto y complementario. El circuit breaker (Netflix Hystrix, Resilience4j, Polly) previene que millones de retries maten al downstream durante un incidente. Estados: CLOSED (normal) → OPEN (todo falla, no llamar) → HALF_OPEN (probar unos pocos). Es la defensa fundamental contra cascadas." },
+        { "letter": "D", "text": "Presupuesto de retries: solo retriar si el downstream tiene 'salud' medida. Si el error rate ya es alto, es contraproducente retriar (feedback loop negativo).", "correct": true, "why": "Correcto y elegante. Es lo que hace envoy's retry budget: 'no gastes más de X% de tu tráfico en retries'. Evita que un servicio con problemas se hunda más por sus propios retries. Google SRE Book cap. 22 lo documenta." },
+        { "letter": "E", "text": "Retry todo, incluyendo POST creations. Es idempotente si el server maneja bien.", "correct": false, "why": "Solo si tienes Idempotency-Key implementado (Stripe pattern). Sin él, retriar POST puede duplicar cargos, órdenes, etc. Retriar POST sin idempotencia es un bug esperando ocurrir." }
+      ],
+      "explanation": "Retries son un arma de doble filo. Bien hechos, salvan tu servicio de fallos transitorios (paquetes perdidos, GC pause de 200ms). Mal hechos, causan cascadas y matan al downstream.\n\nReglas del retry correcto:\n\n1. **Selectividad**: retry solo lo retriable (network errors, 5xx, 429, 408).\n2. **Exponential backoff con jitter**: base × 2^attempt × random(0.5, 1.5). Cap superior.\n3. **Idempotency**: si el endpoint no es idempotent, requiere Idempotency-Key.\n4. **Timeout total**: nunca retriar infinitamente. Total deadline por operación.\n5. **Circuit breaker**: apagar retries cuando el downstream está muerto.\n6. **Retry budget**: no exceder X% del tráfico en retries.\n7. **Retry al edge, no en cada capa**: si cada micro-servicio retria 3x, tu tráfico se multiplica 3^N. Retriar solo en el borde.\n\nLibrerías: Resilience4j (Java), Polly (.NET), retry-axios (Node), tenacity (Python), backoff (Go). Todas implementan estos patterns.",
+      "realWorld": "AWS SDK aplica exponential backoff con jitter por default desde 2015 (paper de Marc Brooker). Google SRE Book cap. 22 sobre 'Addressing Cascading Failures'. Netflix Hystrix (retirado, Resilience4j es el sucesor) popularizó circuit breaker. Envoy proxy tiene retry budgets built-in.",
+      "tags": ["retry", "backoff", "jitter", "circuit breaker"],
+      "tech": ["Resilience4j", "Polly", "Envoy", "AWS SDK"],
+      "references": [{ "title": "AWS Arch Blog — 'Exponential Backoff and Jitter' (Marc Brooker)" }, { "title": "Google SRE Book — 'Addressing Cascading Failures'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "apis",
+      "topic": "WebSockets vs SSE vs long-polling",
+      "difficulty": "mid",
+      "scenario": "Necesitas notificar cambios en tiempo real a 100K clientes web conectados. Un dev propone WebSocket, otro Server-Sent Events (SSE), otro long-polling.",
+      "question": "¿Cuál es la elección correcta según el use case?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Siempre WebSocket. Es el más moderno.", "correct": false, "why": "Sobre-simplificado. WS es la opción más flexible pero también la más compleja. Para notifications unidireccionales, SSE es más simple y suficiente." },
+        { "letter": "B", "text": "Si es UNIDIRECCIONAL (server → client, updates/notifications): SSE. Usa HTTP normal, auto-reconnect built-in, funciona a través de proxies HTTP. Si es BIDIRECCIONAL (chat, gaming, colaboración): WebSocket. Si soporte antiguo o proxies estrictos: long-polling como fallback.", "correct": true, "why": "Correcto y matizado. SSE (EventSource API) fue diseñado exactamente para push unidireccional: HTTP standard, GET con `Content-Type: text/event-stream`, browser reconecta automáticamente con Last-Event-ID. Perfect para notificaciones, feeds. WebSocket es full-duplex pero más pesado, requiere upgrade handshake, y algunos firewalls corporativos lo bloquean. Long-polling es fallback universal aunque menos eficiente." },
+        { "letter": "C", "text": "Long-polling siempre. Los otros son inestables.", "correct": false, "why": "Long-polling funciona pero es ineficiente (nuevas conexiones frecuentes) y añade latency (cada mensaje espera hasta la próxima poll). WS y SSE son estables en 2026." },
+        { "letter": "D", "text": "HTTP/2 push. Ha reemplazado a los 3.", "correct": false, "why": "HTTP/2 push está DEPRECATED (Chrome lo desactivó en 2022). Nunca fue popular. No es alternativa." }
+      ],
+      "explanation": "Comparación técnica:\n\n**SSE (Server-Sent Events)**:\n- Unidireccional (server → client)\n- HTTP standard (GET, `text/event-stream`)\n- Auto-reconnect + Last-Event-ID (resume)\n- Funciona por proxies HTTP\n- Simple, pocos edge cases\n- Un solo tipo de mensaje (texto)\n- Limitación de conexiones por dominio (~6 en HTTP/1.1, ilimitado HTTP/2)\n\n**WebSocket**:\n- Bidireccional full-duplex\n- Handshake HTTP upgrade → protocol propio (RFC 6455)\n- Binary o text\n- No auto-reconnect (implementarlo)\n- Algunos firewalls corporativos bloquean el upgrade\n- Ideal para chat, gaming, editores colaborativos\n\n**Long-polling**:\n- Cliente hace request, server responde cuando hay data (o timeout)\n- Cliente re-request inmediatamente\n- Fallback universal\n- Overhead alto (nueva request cada mensaje)\n\nOtros: WebTransport (nuevo, sobre HTTP/3, aún emergiendo). GraphQL Subscriptions típicamente sobre WebSocket.",
+      "realWorld": "Slack usa WebSocket para chat en tiempo real. Twitter (X) usa SSE para timeline updates. Github Actions logs streaming usa SSE. Firebase Realtime Database usa long-polling con fallback a WebSocket. LinkedIn migró parte de su push a SSE en 2018.",
+      "tags": ["WebSocket", "SSE", "long-polling", "real-time"],
+      "tech": ["WebSocket", "EventSource", "HTTP"],
+      "references": [{ "title": "MDN — Server-Sent Events" }, { "title": "RFC 6455 — WebSocket Protocol" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "apis",
+      "topic": "DNS resolution y latency",
+      "difficulty": "mid",
+      "scenario": "Un servicio Java hace requests a API externa. En logs, algunas requests son 500ms más lentas que otras sin razón aparente. Después de mucho debugging, se descubre que la JVM cachea DNS por siempre por default, y ocasionalmente hace un lookup nuevo (500ms al servidor DNS).",
+      "question": "¿Cómo se gestiona DNS correctamente en apps de larga vida?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "La JVM tiene `networkaddress.cache.ttl` = -1 (forever) por default cuando SecurityManager está activo, o 30s sin SecurityManager. Ajustar según el caso: TTL corto (~30s) si el destino tiene DNS con múltiples IPs y rotación (típico en cloud).", "correct": true, "why": "Correcto. Es un gotcha clásico de Java. En AWS o Kubernetes, los targets tienen IPs que cambian frecuentemente (autoscaling, deploys). Un TTL de forever significa que la JVM sigue conectando a IPs muertas. Ajustar a 30-60s es estándar en clientes cloud." },
+        { "letter": "B", "text": "Configurar `networkaddress.cache.negative.ttl` corto (10s) para no cachear fallos DNS de forma prolongada. Si el DNS falla momentáneamente, no queremos ese estado 'sticky'.", "correct": true, "why": "Correcto y sutil. Java cachea NEGATIVOS también. Un DNS blip que devuelve NXDOMAIN puede quedarse cacheado si negative.ttl es largo. Ajustar bajo mitiga esto." },
+        { "letter": "C", "text": "Usar un DNS resolver local (systemd-resolved, dnsmasq, coredns) que cachee cerca del proceso.", "correct": true, "why": "Correcto. Añade una capa de cache local — reduce latency y presión sobre DNS upstream. Recomendado especialmente en K8s (nodelocaldns pattern) donde el DNS lookup atraviesa múltiples hops (pod → kube-dns → upstream)." },
+        { "letter": "D", "text": "Hard-code las IPs en la config para evitar DNS por completo.", "correct": false, "why": "Anti-patrón masivo. Los IPs cambian (cloud, migrations, autoscaling). Hard-coding rompe el modelo de DNS-based service discovery. Solo válido en emergencias de corto plazo." },
+        { "letter": "E", "text": "Usar HTTP/2 para evitar DNS lookups.", "correct": false, "why": "HTTP/2 no cambia DNS. La resolución de nombre ocurre igual. HTTP/2 amortiza al reutilizar conexión, pero el primer lookup igual pasa." }
+      ],
+      "explanation": "DNS es una fuente de latency y bugs subestimada. Tres capas de caching:\n\n1. **App layer**: JVM cache, C library getaddrinfo cache, DNS library del framework (ej: dnsjava).\n2. **OS layer**: nscd, systemd-resolved en Linux.\n3. **Network layer**: kube-dns/coredns en K8s, ISP DNS, root DNS.\n\nProblemas comunes:\n- **Java cache=forever**: conexión a IP muerta post-scale.\n- **Negative cache demasiado largo**: NXDOMAIN persiste.\n- **DNS timeout largo**: default 5s en muchos resolvers → una request lenta bloquea 5s.\n- **IPv6/IPv4 dual-stack (Happy Eyeballs)**: Java 7+ intenta ambos, puede ser lento en redes con IPv6 mal configurado.\n\nBest practices:\n- Configura TTL de app corto (10-30s) en clouds dinámicos.\n- Instala DNS cache local en producción.\n- Monitoriza DNS latency separada de application latency.\n- En K8s: usa NodeLocal DNSCache addon.\n- En serverless (Lambda): cachea sockets, no reconectes.",
+      "realWorld": "AWS Lambda tuvo issues famosos con DNS resolution en clientes Java hasta 2019. Netflix desarrolló Denominator para gestión de DNS. Cloudflare 1.1.1.1 apunta a mejorar latency DNS globalmente. Bug de DNS en Slack 2018 causó incidente de 3h.",
+      "tags": ["DNS", "TTL", "resolver", "latency"],
+      "tech": ["JVM", "DNS", "Kubernetes"],
+      "references": [{ "title": "Java Networking Properties — networkaddress.cache.ttl" }, { "title": "K8s docs — NodeLocal DNSCache" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "apis",
+      "topic": "TLS 1.3 y forward secrecy",
+      "difficulty": "senior",
+      "scenario": "Un dev pregunta: 'Migramos de TLS 1.2 a TLS 1.3. ¿Qué ganamos concretamente?'",
+      "question": "¿Cuáles son las mejoras REALES de TLS 1.3?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Handshake más rápido: 1-RTT (vs 2-RTT en 1.2), con 0-RTT posible en session resumption. Reduce latency inicial significativamente.", "correct": true, "why": "Correcto. TLS 1.3 elimina un round-trip fusionando ClientKeyShare con ClientHello. En reconexiones (resumption), 0-RTT permite mandar app data desde el primer paquete. Cloudflare mide ~100ms de mejora en RTTs típicos móvil." },
+        { "letter": "B", "text": "Elimina cipher suites débiles: MD5, SHA-1, RC4, CBC-mode (BEAST/Lucky13), export ciphers, static RSA (no forward secrecy). Solo AEAD ciphers (AES-GCM, ChaCha20-Poly1305).", "correct": true, "why": "Correcto y crítico para seguridad. TLS 1.2 permitía negociar cipher suites vulnerables si el server los aceptaba. TLS 1.3 los eliminó por diseño. Static RSA key exchange (sin ephemeral) violaba forward secrecy — un breach del private key permitía descifrar TODO el tráfico pasado. TLS 1.3 requiere ephemeral (D)HE." },
+        { "letter": "C", "text": "Encripta más del handshake: solo ClientHello y ServerHello van en claro. Certificate y extensiones se cifran — mejora privacidad (SNI encrypted con ECH añadido después).", "correct": true, "why": "Correcto. En TLS 1.2, certificate iba en claro — permitía a un observer identificar 'quién habla con quién'. TLS 1.3 cifra a partir del ServerHello. Encrypted Client Hello (ECH) añade cifrado del SNI (server name) — muy relevante para privacidad ante censura." },
+        { "letter": "D", "text": "TLS 1.3 obligatorio bajo HTTPS.", "correct": false, "why": "Falso. HTTPS puede seguir usando TLS 1.2 (aún en 2026 muchos servidores). TLS 1.3 es OPCIONAL y negociado. Sin embargo, PCI-DSS y muchas policies modernas exigen 1.2+, y 1.3 es fuertemente preferido." },
+        { "letter": "E", "text": "Simplifica cipher negotiation: menos combinaciones, menor superficie de ataque.", "correct": true, "why": "Correcto. TLS 1.2 tenía cientos de cipher suites — combinaciones de auth, key exchange, cifrado, MAC. Muchas vulnerables. TLS 1.3 reduce a un puñado (TLS_AES_128_GCM_SHA256 y variantes) — separando cipher del key exchange. Configuración correcta es casi automática." }
+      ],
+      "explanation": "TLS 1.3 (RFC 8446, agosto 2018) es una revisión mayor. Los objetivos: menos latency, más seguridad por default, menos configurabilidad peligrosa.\n\nCambios clave:\n\n1. **1-RTT / 0-RTT handshake**: ClientHello ya incluye key shares tentativos. Server responde con selección + certificate cifrado.\n\n2. **Forward secrecy obligatorio**: solo ephemeral key exchange (ECDHE/DHE). Ganancia: capturar tráfico ahora y descifrar después con clave robada = imposible.\n\n3. **AEAD-only**: cifrado autenticado (integridad + confidencialidad en una operación). Elimina ataques por padding oracle.\n\n4. **Simplificación**: menos cipher suites, menos extensions confusas, menos modes.\n\n5. **Encrypted handshake**: certificate y extensions cifrados desde ServerHello.\n\nRiesgo con 0-RTT: replay attacks (mismo request puede ser inyectado dos veces). RFC advierte usar solo con requests idempotent. Cloudflare, Google implementan mitigaciones.\n\nAdopción 2026: >90% del tráfico web moderno. Todos los browsers, servidores modernos soportan. Legacy servers (IIS antiguo, load balancers pre-2020) siguen en 1.2.",
+      "realWorld": "Cloudflare tuvo un rol clave en el diseño (Nick Sullivan). El primer draft se probó en Firefox y Chrome antes del RFC final. Kazakhstan intentó imponer man-in-the-middle certs en 2019; TLS 1.3 (con ECH) dificulta esto. Facebook Fizz es una implementación TLS 1.3 open source usada en producción.",
+      "tags": ["TLS 1.3", "forward secrecy", "0-RTT", "ECH"],
+      "tech": ["TLS 1.3", "OpenSSL", "Fizz"],
+      "references": [{ "title": "RFC 8446 — TLS 1.3" }, { "title": "Cloudflare — 'A Detailed Look at RFC 8446 (TLS 1.3)'" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "apis",
+      "topic": "TCP Nagle vs delayed ACK",
+      "difficulty": "senior",
+      "scenario": "Una app envía muchos mensajes pequeños por TCP. Latency es ocasionalmente 40-200ms más alta de lo esperado, sin razón aparente en red.",
+      "question": "¿Qué interacción TCP puede causar esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nagle's algorithm (agrupa envíos pequeños hasta recibir ACK del anterior) interactúa mal con delayed ACK (receptor espera hasta 200ms antes de mandar ACK, esperando piggyback). Resultado: sender espera ACK que receptor está reteniendo. Latency spike ~40-200ms. Fix: TCP_NODELAY en sockets para request-response de baja latency, o batchear mensajes explícitamente.", "correct": true, "why": "Correcto y textbook. Nagle (1984) fue diseñado para evitar el 'small packet problem' (tráfico interactivo Telnet). Delayed ACK (Braden 1989) para reducir ACK overhead. Juntos crean un pathological interaction cuando la app manda write pequeños y espera respuesta. Redis, memcached, DBs típicamente activan TCP_NODELAY." },
+        { "letter": "B", "text": "El GC está pausando el proceso 40-200ms.", "correct": false, "why": "Posible causa alternativa, pero el patrón descrito es signatura de Nagle+delayed-ACK. Si es GC, se vería en el JVM, no en el network stack." },
+        { "letter": "C", "text": "El kernel está haciendo swap.", "correct": false, "why": "Swap causaría latency mucho más errática y en cualquier tipo de operación, no específicamente en mensajes pequeños TCP." },
+        { "letter": "D", "text": "El firewall inspecciona cada paquete.", "correct": false, "why": "Firewall stateful puede añadir latency, pero no específicamente 40-200ms constante. Nagle+DA es el patrón exacto." }
+      ],
+      "explanation": "Nagle's algorithm (RFC 896) buffera writes pequeños hasta que hay MSS-worth de datos O se recibe ACK del último paquete pendiente. Objetivo: reducir tráfico de paquetes tiny en redes lentas (Telnet, 1980s).\n\nDelayed ACK (RFC 1122) retiene ACKs hasta 200ms (500ms max) esperando data de vuelta para piggyback. Reduce overhead de ACKs solos.\n\nInteracción patológica en pattern request-response con mensajes pequeños:\n1. App escribe request pequeña. Nagle: no MSS-full, no ACK pendiente → envía inmediatamente.\n2. Server recibe, procesa, escribe response pequeña. Delayed ACK: espera 200ms antes de ACKear la request.\n3. Server escribe response — Nagle: no ACK pendiente (todavía no recibió ACK de nada), pero también dice 'espera'. Actually la lógica es más sutil.\n4. Cliente envía 2do request pequeño. Nagle: hay ACK pendiente del receptor → NO envía, espera ACK.\n5. Receptor eventualmente manda ACK después de 40-200ms.\n6. Cliente ahora envía. Latency spike.\n\nFix: TCP_NODELAY desactiva Nagle. Ideal para: chat, gaming, DB clients, RPC. Curl, Redis, memcached, MySQL client lo usan.\n\nAlternativa: TCP_CORK (Linux) — accumula hasta cork() release. Útil para batching explícito.",
+      "realWorld": "Discord documentó bugs por interaction Nagle+DA en 2016. John Nagle mismo escribió en Hacker News admitiendo que su algoritmo debería estar OFF por default en TCP con delayed ACK. Redis documenta TCP_NODELAY como settings recomendado.",
+      "tags": ["Nagle", "delayed ACK", "TCP_NODELAY", "latency"],
+      "tech": ["TCP", "Linux", "sockets"],
+      "references": [{ "title": "RFC 896 — Nagle's algorithm" }, { "title": "John Nagle — Hacker News comment on TCP_NODELAY" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "apis",
+      "topic": "OSI vs TCP/IP y encapsulación",
+      "difficulty": "junior",
+      "scenario": "Un dev dice: 'HTTP es capa 7, TCP es capa 4, IP es capa 3. Cada capa envuelve la anterior con su header'. ¿Es correcto conceptualmente?",
+      "question": "¿Cuál es la respuesta más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Correcto en general. Encapsulación: HTTP request → TCP segment (con header con puertos) → IP packet (con header con IPs) → Ethernet frame (con MACs). Cada capa añade header al frente y a veces trailer al final. En destino, se desencapsula al revés. Nota: OSI (7 capas) es más teórico; TCP/IP práctico es 4-5 capas.", "correct": true, "why": "Correcto y matizado. La encapsulación es la base de todo networking. OSI teórico separa presentación, sesión, aplicación; en la práctica HTTP colapsa esas 3 capas. Modelo TCP/IP: Application (HTTP), Transport (TCP/UDP), Internet (IP), Link (Ethernet/WiFi). Cada capa aporta sus responsabilidades." },
+        { "letter": "B", "text": "Incorrecto. TCP es capa 5.", "correct": false, "why": "TCP es capa 4 (Transport) por consenso universal. Capa 5 en OSI es Session (poco usada en TCP/IP)." },
+        { "letter": "C", "text": "Incorrecto. HTTP no tiene número de capa.", "correct": false, "why": "HTTP se sitúa en capa 7 (Application) en OSI y en la Application layer en TCP/IP. Es una convención." },
+        { "letter": "D", "text": "Incorrecto. Solo TLS envuelve a HTTP.", "correct": false, "why": "TLS se coloca entre HTTP y TCP (a veces se considera capa 5-6, 'session/presentation'). Pero HTTP siempre corre sobre algún transporte (TCP o QUIC)." }
+      ],
+      "explanation": "Modelo OSI (teórico, 7 capas): Physical, Data Link, Network, Transport, Session, Presentation, Application.\n\nModelo TCP/IP (práctico, 4-5 capas): Link (Ethernet), Internet (IP), Transport (TCP/UDP), Application (HTTP, DNS, SSH).\n\nEncapsulación en el orden de send:\n1. App genera HTTP request (bytes).\n2. TCP añade header con source/dest port, seq, flags → 'segment'.\n3. IP añade header con source/dest IP → 'packet'.\n4. Ethernet añade header con source/dest MAC + checksum trailer → 'frame'.\n5. NIC lo pone en el wire como bits.\n\nEn destino, cada capa quita su header y pasa arriba.\n\nTLS es un caso especial: se coloca conceptualmente entre TCP y HTTP (algunos la ponen en capa 5-6). QUIC es transport (capa 4) que INCLUYE TLS y streams — desafía el modelo estricto.\n\nEste modelo importa porque: (1) explica dónde debuggear (tcpdump ve L2-L4, wireshark disecta L7); (2) firewalls trabajan en distintas capas (L3-4 = packet, L7 = WAF); (3) diseño de APIs — no violar layers.",
+      "realWorld": "OSI fue standard ISO oficial pero perdió ante TCP/IP en los 80s (la 'Internet Wars'). Sin embargo, la terminología OSI sobrevive: 'layer 7 load balancer', 'layer 4 firewall'. Todos los libros de networking (Tanenbaum, Kurose-Ross) lo usan.",
+      "tags": ["OSI", "TCP/IP", "encapsulación", "layers"],
+      "tech": ["TCP", "IP", "HTTP"],
+      "references": [{ "title": "Tanenbaum — 'Computer Networks'" }, { "title": "Kurose & Ross — 'Computer Networking: A Top-Down Approach'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "apis",
+      "topic": "QUIC connection migration",
+      "difficulty": "staff",
+      "scenario": "En una app móvil, el usuario está descargando un video sobre WiFi. Sale del edificio y el phone hace hand-off a 4G. Con HTTP/2, la conexión se rompe y hay que reiniciar. Con HTTP/3 (QUIC), no.",
+      "question": "¿Cómo logra QUIC 'connection migration'?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "QUIC usa un magic 'sticky IP' que sobrevive cambios.", "correct": false, "why": "No hay magia sticky IP — el IP del cliente CAMBIA cuando pasa de WiFi a 4G. Ninguna tecnología cambia eso." },
+        { "letter": "B", "text": "QUIC identifica una conexión por un Connection ID (CID) generado por servidor y cliente, NO por la tupla IP+puerto. Si el cliente cambia de red (IP nueva), envía paquetes desde la nueva IP con el mismo CID; el servidor los reconoce y sigue la conexión sin reset. TCP identifica por (src_ip, src_port, dst_ip, dst_port), así que cualquier cambio requiere nueva conexión y handshake.", "correct": true, "why": "Correcto y profundo. Es una de las razones estratégicas por las que QUIC vale la pena. El Connection ID es criptográficamente autenticado — un attacker no puede spoofearlo sin las keys. Antes de aceptar tráfico de una nueva IP, servidor hace 'path validation' con un challenge para confirmar reachability. Cambio de red transparente a la app." },
+        { "letter": "C", "text": "QUIC usa multipath TCP debajo del capó.", "correct": false, "why": "Falso. QUIC va sobre UDP, no TCP. Multipath TCP (MPTCP) es una tecnología distinta, poco desplegada." },
+        { "letter": "D", "text": "El OS hace transparent connection migration.", "correct": false, "why": "El OS no puede — la 4-tupla cambia y TCP no lo permite. Requiere protocol nuevo (QUIC) que la app implementa." }
+      ],
+      "explanation": "Connection migration es una feature nativa de QUIC habilitada por el diseño de Connection IDs. Beneficios reales:\n\n1. **Roaming WiFi ↔ móvil**: descargas y videollamadas continúan sin corte.\n2. **NAT rebinding**: NATs cambian el puerto externo cada X minutos por diseño — TCP requiere nueva conexión. QUIC mantiene.\n3. **Load balancer failover**: si el LB rutea la nueva IP al mismo backend basado en CID, la sesión sobrevive.\n\nMecánica:\n- Cliente y servidor negocian múltiples CIDs al inicio (por privacidad — se usan distintos para distintos paths).\n- Al detectar nueva ruta (IP nueva), cliente envía PATH_CHALLENGE.\n- Servidor responde PATH_RESPONSE. Si válido, migración confirmada.\n- Todo esto sin interrumpir el data stream.\n\nDesafíos operacionales: los load balancers TRADICIONALES basados en 4-tupla no funcionan con QUIC — necesitan ser CID-aware. Cloudflare, Facebook desarrollaron su propio LB QUIC-aware. Es un cambio de infra.\n\nPrivacy: cambiar CID por path evita que un observer correlacione tu presencia en WiFi y móvil.",
+      "realWorld": "Facebook publicó paper 'Migrating Facebook to QUIC' documentando connection migration como beneficio clave. Google Meet, YouTube usan QUIC para calls estables durante hand-offs. Aplicaciones móviles con streaming pesado son el use case primario.",
+      "tags": ["QUIC", "connection migration", "Connection ID", "HTTP/3"],
+      "tech": ["QUIC", "HTTP/3", "UDP"],
+      "references": [{ "title": "RFC 9000 — QUIC Transport Protocol" }, { "title": "Facebook Engineering — 'Migrating Facebook to QUIC'" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "apis",
+      "topic": "Load balancing L4 vs L7",
+      "difficulty": "senior",
+      "scenario": "El equipo debate: 'usamos ELB Classic (L4) o ALB (L7) para nuestro API gateway?'",
+      "question": "¿Qué diferencias TÉCNICAS relevantes hay entre load balancing L4 y L7?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "L4 (Transport, TCP/UDP): balancea por 4-tupla (IP+puerto). Sticky por hash de IP. Rápido, low CPU, transparente al protocolo. NO puede rutear por path, header, cookie ni terminar TLS por default.", "correct": true, "why": "Correcto. Ejemplos: HAProxy modo tcp, AWS NLB, Azure Load Balancer, LVS/IPVS. Ventajas: throughput muy alto (millions of connections), low latency, cero conocimiento del protocolo (funciona para cualquier TCP/UDP). Limitación: no puede tomar decisiones basadas en contenido L7." },
+        { "letter": "B", "text": "L7 (Application, HTTP): parsea la request HTTP. Puede rutear por path (/api → svc-a, /web → svc-b), host header, cookie, method. Puede terminar TLS, modificar headers, hacer retry inteligente, buffering. Más CPU, más features.", "correct": true, "why": "Correcto. Ejemplos: HAProxy modo http, nginx, Envoy, AWS ALB, Traefik. Ventajas: control granular, observabilidad L7 (path metrics), TLS termination centralizado, path-based routing (API gateways). Costo: latency ligeramente mayor, más CPU, complejidad de config." },
+        { "letter": "C", "text": "L4 puede hacer sticky sessions por cookie.", "correct": false, "why": "Falso. L4 no ve cookies (son HTTP layer). Sticky en L4 se hace por hash de IP (client_ip → same backend) o mejor, por conexión (una conexión = un backend). Sticky por cookie requiere L7." },
+        { "letter": "D", "text": "L7 puede hacer health checks basados en HTTP (200 OK), L4 solo TCP (SYN-ACK).", "correct": true, "why": "Correcto y práctico. Health check L4 = 'puerto abierto?', no dice nada de la app funcional. L7 = '/health devuelve 200?' — mucho más informativo. Backends pueden aceptar TCP pero estar bloqueados (deadlock, DB down, warming) — L7 lo detecta." },
+        { "letter": "E", "text": "L7 solo funciona con HTTP; L4 con cualquier protocolo.", "correct": true, "why": "Correcto. L7 requiere parser del protocolo. HTTP tiene parsers ubicuos; gRPC (que es HTTP/2) también. Postgres, Redis, MySQL: casi siempre por L4 (aunque hay proxies especializados como pgbouncer)." }
+      ],
+      "explanation": "L4 vs L7 no es 'mejor' — es distinto:\n\n**L4** para: high throughput, protocolos custom, bajo latency, cuando no necesitas routing complejo.\n\n**L7** para: HTTP-based (API gateway, ingress), path routing, cookie affinity, TLS centralizado, WAF integrado.\n\nEn arquitecturas modernas, ambos coexisten:\n- **L4 externo** (NLB/NGINX stream mode): entra tráfico, distribuye entre pods.\n- **L7 interno** (Envoy, Istio, Traefik): rutea por path/service, aplica policies.\n\nService mesh (Istio, Linkerd) es esencialmente L7 sidecars — proxies Envoy que interceptan tráfico entre servicios, aplicando policies, colecting metrics, doing mTLS.\n\nHTTP/2 y gRPC: preferentemente L7 para explotar multiplexing (un backend con muchas streams). L4 con HTTP/2 puede causar imbalance (una conexión con todos los streams a un solo backend).\n\nQUIC/HTTP/3: reto para L4 tradicional (Connection ID en vez de tupla). L4 QUIC-aware está emergiendo.",
+      "realWorld": "Envoy (Matt Klein, Lyft) es el proxy L7 más avanzado. Google usa Maglev (L4 con consistent hashing). AWS ALB para APIs, NLB para bases de datos y servicios legacy. Netflix Zuul 2 es un L7 proxy para su edge.",
+      "tags": ["load balancer", "L4", "L7", "Envoy", "HAProxy"],
+      "tech": ["HAProxy", "nginx", "Envoy", "AWS ALB"],
+      "references": [{ "title": "Envoy documentation" }, { "title": "Google — Maglev paper (NSDI 2016)" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "apis",
+      "topic": "MTU, PMTUD y fragmentación",
+      "difficulty": "senior",
+      "scenario": "Un servicio VPN reporta que ciertas requests HTTP se cuelgan al descargar responses grandes. Requests pequeñas funcionan. Análisis muestra que paquetes TCP se pierden en cierto tamaño.",
+      "question": "¿Qué está ocurriendo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El servicio DDoS bloquea las requests grandes.", "correct": false, "why": "Improbable dado el patrón (tamaño-dependent, no rate-dependent). El patrón encaja con MTU/fragmentation." },
+        { "letter": "B", "text": "El path tiene un enlace con MTU menor (ej: VPN añade encapsulation → MTU efectivo 1420 vs 1500 típico). Los paquetes 'DF' (Don't Fragment) que exceden MTU son descartados. Path MTU Discovery debería usar ICMP 'Fragmentation Needed' para ajustar, PERO muchos firewalls bloquean ICMP → 'PMTUD blackhole'. TCP retransmite indefinidamente sin resolver. Fix: TCP MSS clamping en el gateway VPN o reducir MTU en el host.", "correct": true, "why": "Correcto y textbook. Es EL bug clásico de VPNs. IPsec, GRE, WireGuard añaden headers que reducen la MTU efectiva del túnel (típicamente a 1400-1420 bytes). Sin PMTUD funcional, los paquetes grandes se pierden silenciosamente. TCP MSS clamping (`iptables ... TCPMSS --clamp-mss-to-pmtu`) fuerza a los peers a usar MSS pequeño." },
+        { "letter": "C", "text": "El browser tiene un bug con paquetes grandes.", "correct": false, "why": "El browser no ve paquetes — ve streams. Es un issue de capa 3-4." },
+        { "letter": "D", "text": "TLS no puede cifrar mensajes grandes.", "correct": false, "why": "Falso. TLS records tienen max 16KB pero se fragmentan a nivel TLS sin problema — no es el issue." }
+      ],
+      "explanation": "MTU (Maximum Transmission Unit) es el tamaño máximo de un packet que se puede enviar en un link sin fragmentación. Ethernet estándar: 1500 bytes. Con IPv6 y protocolos sobre TCP, cada capa consume bytes de header.\n\nPMTUD (Path MTU Discovery, RFC 1191/8201):\n1. Sender envía paquetes con DF (Don't Fragment) bit.\n2. Si un router intermedio necesita fragmentar pero DF está seteado, dropea el paquete y envía ICMP 'Fragmentation Needed' con la MTU sugerida.\n3. Sender recibe ICMP, ajusta MSS.\n\nEl problema: muchos firewalls y NATs bloquean todo ICMP como 'seguridad'. Resultado: sender no recibe el ICMP, sigue mandando paquetes grandes, todos se pierden. → 'PMTUD blackhole'.\n\nSíntomas: TCP conexión abre, requests chicas OK, respuestas grandes se cuelgan. Ping funciona. Debugging: `ping -M do -s 1472 <host>` (mandar sin fragment, tamaño = MTU-28) — falla si MTU es menor.\n\nFixes:\n1. **TCP MSS clamping**: gateway rewrite del SYN para limitar MSS negotiado.\n2. **PMTU probing**: PLPMTUD (RFC 4821) usa TCP para detectar sin ICMP.\n3. **Reducir MTU** en la interfaz del host (menos eficiente pero funciona).\n4. **QUIC** hace su propio PMTU probing por diseño — más robusto.\n\nEste bug es endémico en VPNs, tunnels, IPv6-in-IPv4, cloud interconnects.",
+      "realWorld": "AWS Direct Connect docs advierten sobre MTU. WireGuard defaults a MTU=1420 por esto. Cloudflare publicó 'The story of the missing HTTP header' documentando un bug relacionado. GitHub tuvo incidente en 2018 relacionado a PMTUD en su infra.",
+      "tags": ["MTU", "PMTUD", "fragmentación", "VPN"],
+      "tech": ["TCP", "IP", "VPN"],
+      "references": [{ "title": "RFC 1191 — Path MTU Discovery" }, { "title": "Cloudflare Blog — 'The story of the missing HTTP header'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "apis",
+      "topic": "HTTP/2 header compression (HPACK)",
+      "difficulty": "staff",
+      "scenario": "Un dev pregunta: 'HTTP/2 tiene HPACK para comprimir headers. ¿Por qué HTTP/3 tuvo que crear QPACK? ¿Qué problema tenía HPACK?'",
+      "question": "¿Cuál es la respuesta técnica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HPACK asumía TCP: mantiene una tabla dinámica sincronizada entre peers actualizando por orden estricto. Como QUIC (base de HTTP/3) permite streams desordenados, si un stream con actualización de tabla se retrasa, TODOS los otros streams se bloquean esperando — se reintroducía head-of-line blocking a nivel HPACK. QPACK resuelve esto separando 'encoder stream' y 'decoder stream' con acknowledgment explícito y permitiendo referencias tanto absolutas como pendientes.", "correct": true, "why": "Correcto. Es un detalle sutil pero importante. HPACK fue diseñado asumiendo entrega ordenada de TCP. Cuando pasas a QUIC (streams independientes), esa asunción se rompe. QPACK separa el estado en 'streams de control' (encoder/decoder streams) unidireccionales por stream, con acuerdo explícito de qué entries están sincronizadas — evitando el HOL blocking a nivel de compresión." },
+        { "letter": "B", "text": "HPACK tenía vulnerabilidad de seguridad y fue reemplazado.", "correct": false, "why": "HPACK tuvo issues (CRIME-style attacks si mezclas secret y attacker-controlled headers) pero QPACK no es una respuesta a seguridad — es a HOL blocking en QUIC." },
+        { "letter": "C", "text": "QPACK usa Brotli en vez de Huffman.", "correct": false, "why": "Falso. Ambos usan Huffman para strings y tablas de statics + dinámicos. La diferencia es cómo se sincroniza la tabla dinámica." },
+        { "letter": "D", "text": "HPACK no comprimía suficientemente.", "correct": false, "why": "HPACK comprime bien; el reemplazo no es por ratio de compresión sino por incompatibilidad con QUIC." }
+      ],
+      "explanation": "HPACK (RFC 7541) fue una gran mejora sobre HTTP/1 (headers en texto plano, sin compresión, repitiendo cookies/user-agent en cada request). Mecanismos:\n\n1. **Static table**: 61 entries pre-definidas de headers comunes (:method GET, :status 200, content-type, etc).\n2. **Dynamic table**: entries recientes del stream. Ambos peers mantienen la misma tabla.\n3. **Huffman encoding**: para strings.\n4. **Referencias**: si un header ya está en la tabla, se envía solo su index (1-2 bytes).\n\nAhorro típico: 90% en apps con muchos cookies o headers repetidos.\n\nEl problema HOL: si stream 5 tiene un header que actualiza la tabla dinámica, y stream 3 quiere usar esa entry — stream 3 debe esperar a stream 5. En TCP, siempre está en orden. En QUIC con streams paralelos e independientes, stream 3 puede llegar ANTES que 5.\n\nQPACK (RFC 9204) resuelve con:\n- **Encoder stream**: unidireccional, envía updates de la tabla dinámica.\n- **Decoder stream**: envía acknowledgments.\n- **Headers en request streams**: pueden referenciar tabla, PERO con opción 'usar solo entries confirmadas' o 'usar entry X pero espera si no está aún'.\n\nComplejidad más alta pero desbloquea el paralelismo real de QUIC.",
+      "realWorld": "El diseño de QPACK fue debatido intensamente en el IETF; muchos borradores durante 4 años. Facebook y Google implementaron primero. Su complejidad es un factor que retrasa la adopción total de HTTP/3.",
+      "tags": ["HPACK", "QPACK", "HTTP/2", "HTTP/3", "compression"],
+      "tech": ["HTTP/2", "HTTP/3", "QUIC"],
+      "references": [{ "title": "RFC 9204 — QPACK" }, { "title": "RFC 7541 — HPACK" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "apis",
+      "topic": "gRPC deadlines vs timeouts",
+      "difficulty": "senior",
+      "scenario": "Un dev configura timeouts en cliente Java HTTP: `readTimeout=5s, connectTimeout=2s`. En gRPC hay algo distinto: 'deadlines'. Otro dev pregunta la diferencia.",
+      "question": "¿Cuál es la diferencia CRÍTICA y por qué importa en microservicios?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son sinónimos.", "correct": false, "why": "Diferencia importante. Timeout es 'cuánto espera cada capa'; deadline es 'timestamp absoluto cuando la operación debe completar', y se propaga a llamadas anidadas." },
+        { "letter": "B", "text": "Timeout es local: cliente A espera N segundos. Si A llama B llama C, cada uno tiene su timeout independiente → 'timeout amplification' (A puede esperar 5s+5s+5s si B espera a C). Deadline es un TIMESTAMP absoluto propagado en metadata: A dice 'termina antes de T'. B y C ven el mismo deadline y saben cuánto tiempo les queda. Si el deadline pasa, TODO se cancela en cadena. Evita trabajo desperdiciado en operaciones ya inútiles.", "correct": true, "why": "Correcto y fundamental para microservicios. gRPC deadline se propaga automáticamente por el context (Go) o Context (Java). Si A da deadline de 5s a B, y B ya usó 3s procesando, cuando B llama a C le da 2s de deadline. Si C aún tiene más callees, se ajusta. Cuando el deadline expira, el context se cancela y todas las operaciones pendientes reciben CancelledException — pueden abortar trabajo desperdiciado (queries, otros RPCs)." },
+        { "letter": "C", "text": "Deadline solo funciona en gRPC, timeout en HTTP.", "correct": false, "why": "Cierto que deadline es más común en gRPC, pero el concepto se puede implementar en HTTP con headers custom (X-Deadline, o Grpc-Timeout, o context propagation en Envoy). Java's context+ChannelPipeline de Netty puede hacerlo. La distinción es CONCEPTUAL, no de tech." },
+        { "letter": "D", "text": "Timeout es más eficiente que deadline.", "correct": false, "why": "Al revés: deadline es más eficiente porque cancela trabajo obsoleto en toda la cadena." }
+      ],
+      "explanation": "Timeout vs deadline es una distinción crítica en sistemas distribuidos.\n\n**Timeout** (per-hop): 'espera hasta N segundos'. Local a cada llamada. Problemas:\n- Amplificación: A(5s) → B(5s) → C(5s) = puede tardar 15s en peor caso.\n- Trabajo desperdiciado: si A dio timeout, B y C siguen procesando la request abandonada.\n- Configuración fragmentada: cada capa tiene su propio config.\n\n**Deadline** (end-to-end): 'debe terminar antes del timestamp T'. Propagado por la cadena. Beneficios:\n- Bounded total time. A sabe que el usuario espera 5s max; propaga.\n- Cancelación en cascada: al expirar, TODAS las operaciones se cancelan.\n- Adaptive: si B toma 4s, C recibe deadline de 1s (no 5s ingenuos).\n- Config centralizada: solo el edge (BFF, API gateway) decide.\n\nImplementaciones:\n- **gRPC**: metadata `grpc-timeout` header, propagado automáticamente por interceptors.\n- **Go context.Context**: `context.WithDeadline()` — inspiró muchos frameworks.\n- **Java**: Context de gRPC, Reactor Mono/Flux con timeouts, virtual threads + structured concurrency (Loom).\n- **Envoy/Istio**: retry timeouts + circuit breakers coordinados.\n\nDeadlines son ORTOGONAL a retries: si retries, el deadline se comparte (no dobla el tiempo).",
+      "realWorld": "Google SRE Book cap. 22 documenta deadlines como best practice desde Google interno. Uber usa deadlines en su TChannel/gRPC stack. Twitter Finagle (Scala) tiene deadlines desde 2011. Es uno de los distinctions de 'ingeniería madura de microservicios'.",
+      "tags": ["deadline", "timeout", "context", "gRPC", "microservicios"],
+      "tech": ["gRPC", "Go context", "Java Context"],
+      "references": [{ "title": "gRPC docs — Deadlines" }, { "title": "Google SRE Book — 'Handling Overload'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "apis",
+      "topic": "TCP congestion control moderno",
+      "difficulty": "staff",
+      "scenario": "Un servicio de video streaming tiene throughput bajo en clientes con conexiones móviles lossy. El equipo evalúa cambiar el TCP congestion control del kernel.",
+      "question": "¿Qué diferencias hay entre CUBIC, BBR y otros algoritmos modernos, y cuándo usar cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CUBIC (Linux default histórico) es loss-based: aumenta cwnd hasta detectar pérdida, reduce, y crece de nuevo con función cúbica. Predecible en redes clásicas pero interpreta cualquier loss como congestión — pobre en redes wireless/lossy donde loss no siempre indica congestión.", "correct": true, "why": "Correcto. CUBIC es el sucesor de Reno/NewReno; su curva cúbica converge más rápido a un fair share que Reno. Fue el default en Linux 2.6.19+ (2006). Su suposición 'loss = congestion' es la debilidad clave en redes modernas donde loss puede ser radio interference, buffer bloat, o link errors." },
+        { "letter": "B", "text": "BBR (Bottleneck Bandwidth and RTT, Google 2016) modela explícitamente el ancho de banda del bottleneck y el RTT. Envía a la tasa medida del bottleneck, no reacciona a loss individual. Mucho mejor en redes lossy y con buffer bloat. Adoptado por Google, Netflix, Cloudflare.", "correct": true, "why": "Correcto. BBR fue una revolución conceptual. Ping-medido con probe de bandwidth: mide máx throughput observado y mín RTT observado, envía a esa tasa. Loss no implica automáticamente reducción. Reduce buffer bloat (grandes buffers en routers que causaban latency spikes). Netflix midió 4x throughput en algunos casos." },
+        { "letter": "C", "text": "BBR es siempre mejor. Usar BBR en todos lados.", "correct": false, "why": "No es universal. BBR puede ser 'unfair' con flows CUBIC (les roba bandwidth por su modelo agresivo) — problema en enlaces compartidos. Google publicó BBR v2 que mitiga esto. Depende del contexto: BBR muy bueno para streaming, calls; en LAN interna con solo BBR-BBR, funciona bien; en Internet mixto, cuidado." },
+        { "letter": "D", "text": "Otros algoritmos: DCTCP (Data Center TCP) usa ECN (Explicit Congestion Notification) en vez de loss — solo en data centers con switches compatibles. Vegas usa RTT como señal de congestion. Copa combina ambos.", "correct": true, "why": "Correcto. Ecosistema variado. DCTCP es ideal para intra-DC (Facebook, Microsoft, Google lo usan internamente). Vegas fue precursor pero pobre coexistencia con Reno. Compound TCP (Windows) mezcla loss-based y delay-based. Copa es research reciente. La 'guerra' de algoritmos sigue viva." },
+        { "letter": "E", "text": "El algoritmo de congestion es negociado por TCP.", "correct": false, "why": "Falso. Cada lado usa el suyo — no se 'negocia'. Sender es quien decide su algoritmo de cwnd. Ambos lados pueden usar distintos algoritmos." }
+      ],
+      "explanation": "TCP congestion control determina la performance de la mayoría del tráfico Internet. Décadas de investigación:\n\n**Loss-based** (reacciona a pérdida):\n- Reno (1990): AIMD (Additive Increase, Multiplicative Decrease).\n- NewReno: mejor recovery de multiple losses.\n- CUBIC (2006): función cúbica, más agresivo. Linux default.\n\n**Delay-based** (reacciona a aumento de RTT):\n- Vegas (1994): elegante pero pierde a Reno en fair-share.\n- FAST TCP: rendimiento en enlaces de alto BDP.\n\n**Model-based**:\n- BBR (2016): mide bandwidth y RTT, envía a la tasa óptima.\n- BBRv2 (2019): más justo con CUBIC.\n\n**Especializados**:\n- DCTCP: usa ECN, para data centers.\n- Compound TCP: Windows, mezcla loss + delay.\n\nSelección práctica:\n- **Servidor web moderno**: BBR — mejor experiencia para clientes con conexiones diversas.\n- **Data center interno**: DCTCP si tienes ECN, sino CUBIC/BBR.\n- **Bulk transfer academic**: BBR o específicos.\n- **Legacy compatibilidad**: CUBIC sigue vigente.\n\nCómo cambiar en Linux: `sysctl net.ipv4.tcp_congestion_control=bbr` (requiere módulo bbr cargado).",
+      "realWorld": "Neal Cardwell (Google) es el arquitecto de BBR. Netflix público en 2019 su migración a BBR. Cloudflare publicó comparativas detalladas. Microsoft desarrolló Compound TCP. Facebook y Microsoft usan DCTCP internamente. El debate 'BBR vs CUBIC fairness' aún activo en la comunidad de investigación.",
+      "tags": ["congestion control", "BBR", "CUBIC", "DCTCP", "TCP"],
+      "tech": ["TCP", "Linux kernel", "BBR"],
+      "references": [{ "title": "Cardwell et al. — 'BBR: Congestion-Based Congestion Control' (ACM Queue 2016)" }, { "title": "Alizadeh et al. — 'DCTCP' (SIGCOMM 2010)" }]
+    }
+  ]
+}

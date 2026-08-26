@@ -1,0 +1,416 @@
+{
+  "id": "programmer-sim-14-linux-and-shell",
+  "trackId": "programmer",
+  "order": 14,
+  "title": "Simulacro 14 — Linux y shell para developers",
+  "focus": "Fundamentos de Linux que todo dev debe manejar: procesos y threads, señales y shutdown, file descriptors, permisos, pipes, grep/awk/sed, systemd, cron y cgroups.",
+  "areaCoverage": ["fundamentals"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "fundamentals",
+      "topic": "Procesos vs threads en Linux",
+      "difficulty": "senior",
+      "scenario": "Discusión técnica: '¿threads en Linux son 'más ligeros' que procesos?'. Un compañero responde: 'En Linux realmente no hay diferencia en el kernel — ambos son task_struct y usan clone()'.",
+      "question": "¿Cuál es la respuesta técnicamente correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Correcto: en el kernel Linux ambos son 'tasks' representados por struct task_struct. La diferencia entre 'proceso' y 'thread' es qué COMPARTEN via flags de clone(): CLONE_VM (memoria), CLONE_FS (filesystem), CLONE_FILES (file descriptors), CLONE_SIGHAND (signal handlers). Un thread comparte todo, un proceso comparte nada (fork). Ligereza es tema de qué se copia, no de estructura kernel distinta.", "correct": true, "why": "Correcto. Linux fue innovador: en lugar de tener estructuras distintas para procesos y threads (como Windows), unificó todo bajo task_struct + clone() con flags para elegir qué compartir. pthread_create() bajo el capó llama clone() con flags específicos. Los 'threads' son ligeros porque no copian memoria/tablas de páginas — no porque el kernel los trate distinto." },
+        { "letter": "B", "text": "Threads son estructuras completamente distintas más pequeñas en el kernel.", "correct": false, "why": "Falso. Ambos usan la misma task_struct (~10 KB). La diferencia es qué recursos apuntan (comparten o no). Esto es diseño único de Linux — otros sistemas (Solaris, Windows) tienen abstracciones distintas." },
+        { "letter": "C", "text": "Threads no existen en Linux — solo procesos.", "correct": false, "why": "Falso. Existen NPTL (Native POSIX Thread Library) desde 2003. La afirmación 'todo es task' no significa que threads no existan como abstracción." },
+        { "letter": "D", "text": "La diferencia es solo user-space (pthread library).", "correct": false, "why": "Parcialmente cierto — pthread está en user-space, pero clone() flags dictan qué comparten a nivel kernel. Hay diferencia real en compartir memoria/FDs, solo que se expresa via flags no via estructuras distintas." }
+      ],
+      "explanation": "La API clone() de Linux es la primitiva: clone(fn, stack, flags, arg) donde flags controlan qué se comparte. fork() = clone(0) sin flags → nada compartido = proceso separado. pthread_create() = clone con CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD → todo compartido = thread. Impacto: (1) crear thread es ~100x más rápido que fork (no copia page tables); (2) context switch entre threads del mismo proceso es más barato (no cambia CR3 = address space); (3) todos los threads comparten heap = necesidad de sincronización (mutex, atomics); (4) fork() en app multi-threaded es peligroso (solo el thread llamador sobrevive). Herramienta: `ps -eLf` muestra threads (LWP = light weight process = thread).",
+      "realWorld": "El diseño de Linux permitió crear runtimes como Go que multiplexan miles de goroutines sobre pocos threads OS. Erlang lo va aún más lejos con procesos ligeros propios. La unificación clone() es citada como una de las decisiones de diseño más elegantes del kernel.",
+      "tags": ["procesos", "threads", "clone", "kernel"],
+      "tech": ["Linux", "pthread", "clone"],
+      "references": [{ "title": "man 2 clone" }, { "title": "Linux Kernel Development (Robert Love)" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "fundamentals",
+      "topic": "SIGTERM vs SIGKILL — graceful shutdown",
+      "difficulty": "mid",
+      "scenario": "Tu app procesa jobs de una queue. El deploy la mata con `kill -9` a cada rolling update. Los jobs en proceso se pierden. El senior te dice 'usa SIGTERM y maneja shutdown gracefully'.",
+      "question": "¿Cuál es la diferencia entre SIGTERM y SIGKILL y qué hacer con SIGTERM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SIGTERM (15) es cortés: el proceso puede interceptarlo con handler y hacer cleanup (drenar jobs, cerrar conexiones DB, flush logs). SIGKILL (9) es imparable — el kernel mata sin dar oportunidad. Handler típico en SIGTERM: (1) dejar de aceptar nuevo trabajo; (2) esperar a que in-flight complete con timeout; (3) cerrar recursos; (4) exit(0). SystemD/Kubernetes envían SIGTERM primero, esperan grace period (default 30s), luego SIGKILL.", "correct": true, "why": "Correcto. Es la distinción clave para graceful shutdown. SIGKILL no puede ser interceptado, bloqueado o ignorado — el kernel lo aplica directamente. SIGTERM es la señal 'por favor termina', que apps bien escritas capturan. El patrón universal es: kill (default SIGTERM) → esperar timeout → SIGKILL si sigue vivo. Docker stop, systemctl stop, kubectl delete pod — todos siguen este flow. Apps que NO manejan SIGTERM correctamente pierden trabajo en cada deploy." },
+        { "letter": "B", "text": "SIGTERM es solo para procesos zombie.", "correct": false, "why": "Falso — SIGTERM es la señal estándar de shutdown cortés a cualquier proceso. Zombie processes son otra cosa (children muertos sin wait() por parent)." },
+        { "letter": "C", "text": "SIGKILL es más rápido — usar siempre.", "correct": false, "why": "'Rápido' pero pierde estado, conexiones abiertas, jobs no persistidos. La velocidad de matar es irrelevante frente a la corrupción de estado." },
+        { "letter": "D", "text": "Ambos son bloqueables por el proceso.", "correct": false, "why": "Falso. SIGKILL y SIGSTOP son las DOS señales imparables — no pueden ignorarse, bloquearse ni handlearse. Es diseño intencional del kernel para permitir kill garantizado." }
+      ],
+      "explanation": "Señales Linux fundamentales: SIGHUP (1, terminal cerró, tradicionalmente 'reload config'), SIGINT (2, Ctrl+C), SIGQUIT (3, Ctrl+\\), SIGKILL (9, imparable), SIGSEGV (11, segfault), SIGTERM (15, cortés), SIGSTOP (imparable, suspend), SIGCONT (resume). Handler en distintos lenguajes: Node `process.on('SIGTERM', ...)`, Python `signal.signal(SIGTERM, handler)`, Go `signal.Notify(ch, SIGTERM)`. Reglas: SIGKILL y SIGSTOP no capturables; handlers deben ser async-signal-safe (limitado en qué pueden hacer). Timeouts razonables: 30s default en K8s, ajustable con terminationGracePeriodSeconds.",
+      "realWorld": "El sistema de deploys de Kubernetes depende críticamente de este flow. Apps que no implementan graceful shutdown causan errores 5xx durante cada rolling update — visible en dashboards SLO. Sidekiq, Celery, todas las queues productivas documentan cómo implementar shutdown correctamente.",
+      "tags": ["signals", "SIGTERM", "SIGKILL", "graceful shutdown"],
+      "tech": ["Linux", "signals"],
+      "references": [{ "title": "man 7 signal" }, { "title": "Kubernetes — Pod Lifecycle & Termination" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "fundamentals",
+      "topic": "File descriptors — límites y leaks",
+      "difficulty": "senior",
+      "scenario": "Servicio Node.js empieza a fallar con `EMFILE: too many open files` después de horas corriendo. `lsof -p <pid> | wc -l` muestra 10000+ FDs abiertos.",
+      "question": "¿Qué está pasando y cómo se diagnostica correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "FD leak: la app abre archivos/sockets/pipes sin cerrarlos. Cada proceso tiene un límite (ulimit -n, típicamente 1024 default; systemd LimitNOFILE puede sobrescribir). Diagnóstico: (1) `lsof -p <pid>` para ver qué FDs están abiertos; (2) buscar patrones en el listado (miles del mismo tipo → sospechoso); (3) revisar el código: `fs.open`, `net.connect`, `child_process.spawn` sin cleanup. Fix: usar try/finally, RAII patterns, o wrappers que cierran automáticamente. Subir ulimit es solo band-aid.", "correct": true, "why": "Correcto. FDs son un recurso finito por proceso. Cada archivo, socket, pipe, epoll instance consume uno. Límites default suelen ser 1024 (soft) / 4096 (hard) — inadecuado para servidores. En Linux, `ulimit -n` muestra soft limit, `ulimit -Hn` hard. Aumentar es válido y necesario para servidores (10k-1M típicos), pero la causa raíz de EMFILE tras horas es leak, no límite bajo. Herramientas: lsof, /proc/<pid>/fd/ (listing directo). En Node.js `--max-old-space-size` es memoria no FDs — no confundir." },
+        { "letter": "B", "text": "Es normal — Node.js siempre tiene muchos FDs abiertos.", "correct": false, "why": "Falso. Node.js bien escrito tiene decenas o pocos cientos de FDs. Miles indica leak." },
+        { "letter": "C", "text": "Solo aumentar ulimit -n 100000.", "correct": false, "why": "Aplaza el problema — el leak continúa hasta llegar al nuevo límite. Y consume memoria del kernel innecesariamente. Fix el leak primero." },
+        { "letter": "D", "text": "Reiniciar la app periódicamente con cron.", "correct": false, "why": "Anti-patrón (band-aid). Oculta bugs, causa restart storms en runtime, deja mal olor en el diseño." }
+      ],
+      "explanation": "File descriptors son integers per-process que apuntan a entradas en la file table del kernel (archivos, sockets, pipes, timerfd, eventfd, etc.). Límites: (1) per-process: ulimit -n (soft), -Hn (hard); en systemd services vía LimitNOFILE; (2) system-wide: /proc/sys/fs/file-max. Debug de leaks: `lsof -p <pid>`, `ls -la /proc/<pid>/fd`, tools como `fdisk`, `handle` (Windows). En Node.js: `process._getActiveHandles()` (privado pero útil). Buenas prácticas: try/finally cerrando, streams con .destroy(), connection pools con maxSize. En Java, try-with-resources. En Python, context managers (with).",
+      "realWorld": "El bug clásico en Node.js: aplicaciones que crean pool de conexiones DB sin límite. En Postgres pg-pool y otros, sin maxSize la pool crece sin fin, cada conexión = 1+ FDs. Es una de las causas #1 de OOM/EMFILE en producción.",
+      "tags": ["file descriptors", "ulimit", "EMFILE", "leaks"],
+      "tech": ["Linux", "lsof", "Node.js"],
+      "references": [{ "title": "man 2 open" }, { "title": "man 5 limits.conf" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "fundamentals",
+      "topic": "Permisos — chmod y su octal",
+      "difficulty": "junior",
+      "scenario": "Tu script deploy falla con 'permission denied'. Un compañero sugiere `chmod 777 script.sh`. Otro dice 'nunca uses 777, usa 755 o 750'.",
+      "question": "¿Qué significan los números y cuál es correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los números son 3 dígitos octales: OWNER, GROUP, OTHERS. Cada dígito es suma de: read(4) + write(2) + execute(1). 755 = rwxr-xr-x (owner rwx, group y others rx). 777 = rwxrwxrwx (todos rwx) — peligroso porque cualquier user puede modificar. 750 = rwxr-x--- (nadie fuera del owner y grupo puede leer ni ejecutar). Usar el mínimo necesario.", "correct": true, "why": "Correcto. Permisos Unix son 9 bits (3 grupos × 3 permisos) representables en 3 dígitos octales. Regla mínimo privilegio: dar solo lo necesario. Scripts públicos: 755. Scripts con secretos: 750 o 700. Config con credenciales: 600 (solo owner read/write). 777 es equivalente a 'sin permisos' — cualquier user puede overwrite, gran vector de ataque. Además setuid (4000), setgid (2000), sticky (1000) son bits especiales (4o dígito prefijo)." },
+        { "letter": "B", "text": "777 significa 'all permissions granted' — más seguro.", "correct": false, "why": "Al contrario — 777 es el MENOS seguro. Permite a cualquier user modificar el archivo. En sistema multi-user o con procesos comprometidos, es entry point de escalación." },
+        { "letter": "C", "text": "Los números son binarios: 111 = todos los permisos.", "correct": false, "why": "Falso. Son octales, no binarios. Cada dígito es 0-7." },
+        { "letter": "D", "text": "chmod es solo para archivos, no para directorios.", "correct": false, "why": "Falso. chmod aplica a ambos. En directorios: r=list contents, w=create/delete files inside, x=cd into. Sin x en directorio, ni siquiera puedes acceder a files dentro aunque tengas permiso en ellos." }
+      ],
+      "explanation": "Permisos Unix: 3 clases (user u, group g, others o) × 3 permisos (r read, w write, x execute). En archivos: r=leer contenido, w=modificar, x=ejecutar. En directorios: r=listar, w=crear/borrar files dentro, x=acceder (cd). chmod acepta simbólico (u+x, go-w) o octal (755). Bits especiales: setuid (u+s, 4000) — el proceso corre como owner del archivo; setgid (g+s, 2000) — como group; sticky (o+t, 1000) — en /tmp evita que users borren files de otros. Umask define permisos default al crear archivos (típico 022 → 755 dirs, 644 files). ACLs (setfacl) para permisos más finos que user/group/other.",
+      "realWorld": "SSH exige permisos estrictos en ~/.ssh (700) y ~/.ssh/authorized_keys (600) — rechaza login si son laxos. Web servers no sirven archivos con permisos laxos (Apache/nginx). AWS S3 buckets con permisos laxos causaron los mayores incidentes de data leak conocidos.",
+      "tags": ["permisos", "chmod", "octal", "linux"],
+      "tech": ["Linux", "chmod"],
+      "references": [{ "title": "man 2 chmod" }, { "title": "man 1 chmod" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "fundamentals",
+      "topic": "chown vs chgrp — grupos y ownership",
+      "difficulty": "junior",
+      "scenario": "Tras copiar archivos con sudo, todos son owned por root:root. Tu app corre como 'app:app' y no puede leerlos. Necesitas cambiar owner masivo.",
+      "question": "¿Cuál es el comando correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`sudo chown -R app:app /path` — recursivamente cambia owner y group. -R para directorios. Sintaxis owner:group. Si solo owner: `chown -R app`; si solo group: `chgrp -R app` o `chown -R :app`.", "correct": true, "why": "Correcto. chown cambia owner y opcionalmente group con sintaxis user:group. -R (recursive) para árboles de directorios. Requiere permisos (owner actual o root). Alternativa: `chown -R app: /path` (nota los dos puntos vacíos — usa el group primario del user)." },
+        { "letter": "B", "text": "sudo chmod -R app:app /path", "correct": false, "why": "chmod cambia PERMISOS, no OWNERSHIP. Comando incorrecto. Confusión frecuente entre chmod/chown/chgrp." },
+        { "letter": "C", "text": "sudo owner app /path", "correct": false, "why": "No existe el comando 'owner'." },
+        { "letter": "D", "text": "sudo chgrp app /path solo cambia group. Suficiente si la app tiene group access.", "correct": false, "why": "Parcialmente cierto pero solo funcionaría si los permisos originales daban acceso al grupo. Si son 600 (solo owner), chgrp no ayuda. chown es más definitivo." }
+      ],
+      "explanation": "Ownership en Unix: cada archivo tiene owner (UID) y group (GID). chown cambia ambos (u:g), chgrp solo group. Regla: solo root o el owner actual puede cambiar owner (con excepciones capabilities). Comandos relacionados: id (mostrar UID/GID del user actual), groups (mostrar groups del user), useradd/adduser (crear user), usermod -aG group user (añadir user a group), chown --reference=file1 file2 (copiar owner de otro archivo). Trap frecuente: montar volúmenes en Docker con owner del host que no matchea con el user del container — típico problema de 'permission denied' en Docker.",
+      "realWorld": "Instalar apps con sudo make install típicamente deja archivos como root; luego cambiar a un service user es paso estándar. En Docker, `USER app` en Dockerfile + `chown` en COPY (`COPY --chown=app:app`) evita el problema. Kubernetes securityContext.runAsUser/runAsGroup + fsGroup para volumes.",
+      "tags": ["chown", "chgrp", "ownership", "linux"],
+      "tech": ["Linux"],
+      "references": [{ "title": "man 1 chown" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "fundamentals",
+      "topic": "Pipes y redirections — stdin/stdout/stderr",
+      "difficulty": "mid",
+      "scenario": "Ejecutas `cmd 2>&1 | tee log.txt` y luego intentas `cmd > log.txt 2>&1`. Un compañero pregunta cuál es la diferencia y qué es cada símbolo.",
+      "question": "¿Cuáles afirmaciones son ciertas sobre el comportamiento de redirections en shell?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "`cmd 2>&1 | tee log.txt` mergea stderr con stdout ANTES del pipe, luego tee escribe todo a log.txt y a stdout. Correcto para capturar ambos streams via pipe.", "correct": true, "why": "Correcto. La redirection 2>&1 se aplica antes del pipe, por lo que ambos streams entran al pipe y llegan a tee." },
+        { "letter": "B", "text": "`cmd > log.txt 2>&1` funciona porque primero stdout va a log.txt, luego 2>&1 apunta stderr al DESTINO ACTUAL de stdout (log.txt). Ambos streams terminan en log.txt.", "correct": true, "why": "Correcto. El orden importa: primero se abre log.txt como stdout, luego 2>&1 hace 'copy FD 2 al destino actual de FD 1'. Regla mental: primero abrir stdout, luego apuntar stderr." },
+        { "letter": "C", "text": "`cmd 2>&1 > log.txt` es equivalente a `cmd > log.txt 2>&1`.", "correct": false, "why": "Falso — el orden importa. Con `2>&1 > log.txt`, cuando 2>&1 se evalúa stdout aún es la terminal → stderr va a la terminal; luego stdout se redirige a log.txt. Solo stdout se captura, stderr sigue en pantalla." },
+        { "letter": "D", "text": "En Bash 4+, `cmd &> log.txt` es shortcut equivalente a `cmd > log.txt 2>&1`.", "correct": true, "why": "Correcto. &> es syntactic sugar Bash-specific. `cmd &>> log.txt` es la versión append equivalente." },
+        { "letter": "E", "text": "`2>&1` significa 'ignorar stderr'.", "correct": false, "why": "Falso. Para ignorar: `2>/dev/null`. `2>&1` mergea streams (duplica FD 2 al destino de FD 1)." }
+      ],
+      "explanation": "I/O en shell: FDs default (0 stdin, 1 stdout, 2 stderr). Operadores: `>` truncate write, `>>` append, `<` read stdin, `2>` stderr, `<<EOF ... EOF` heredoc, `<<< 'string'` here-string, `|` pipe, `|&` pipe stderr también (bash 4+). Combos útiles: `cmd 2>/dev/null` (silenciar errores), `cmd &>/dev/null` (silenciar todo), `cmd > out.log 2> err.log` (streams separados), `cmd | tee -a log.txt` (view + save append). Process substitution: `<(cmd)` — tratar output como archivo. Es la base de scripts productivos: dominar redirection = poder debugear y componer.",
+      "realWorld": "Bug clásico en scripts CI: capturar solo stdout y perder mensajes de error. En producción systemd, journalctl captura stdout+stderr por default — pero al debug local muchas veces uno se pierde de errores por redirection mal ordenada.",
+      "tags": ["pipes", "stdout", "stderr", "shell"],
+      "tech": ["bash", "Linux"],
+      "references": [{ "title": "Bash Reference Manual — Redirections" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "fundamentals",
+      "topic": "grep avanzado — regex y flags",
+      "difficulty": "mid",
+      "scenario": "Necesitas encontrar en logs: (1) todas las líneas con `ERROR` o `WARN`; (2) contexto de ±3 líneas alrededor de cada match; (3) case-insensitive; (4) solo en archivos .log.",
+      "question": "¿Cuál es el comando correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`grep -riE -C 3 --include='*.log' 'ERROR|WARN' /var/log/` — -r recursivo, -i case-insensitive, -E extended regex (permite |), -C 3 contexto (3 líneas antes y después), --include filtra por pattern de archivo.", "correct": true, "why": "Correcto. grep con las flags apropiadas es potente. -r es recursivo (más rápido que find + grep). -E habilita ERE (alternation con |); alternativa: escape \\| en BRE. -C es contexto simétrico; -A/-B para asimétrico. --include restringe a archivos matching. Alternativa moderna: ripgrep (rg) — más rápido, respeta .gitignore por default, sintaxis similar." },
+        { "letter": "B", "text": "grep 'ERROR' /var/log/*.log && grep 'WARN' /var/log/*.log — dos comandos en cascada.", "correct": false, "why": "Ineficiente (escanea dos veces), pierde el orden temporal de los eventos, no da contexto. Regex alternation es la solución idiomática." },
+        { "letter": "C", "text": "grep -i 'ERROR/WARN' — usar / como separator.", "correct": false, "why": "/ no es operador regex — busca literal 'ERROR/WARN'. Alternation es |, y necesitas -E o \\|." },
+        { "letter": "D", "text": "grep no soporta múltiples patterns.", "correct": false, "why": "Falso. Soporta con -E 'pat1|pat2' o -e pat1 -e pat2 (múltiples -e) o archivo con -f." }
+      ],
+      "explanation": "grep flags esenciales: -i case-insensitive, -v invertir (líneas que NO matchean), -c count, -l list files con matches, -L files sin matches, -n line numbers, -H filename siempre, -w whole word, -x exact line, -E extended regex, -F fixed string (más rápido, no regex), -P Perl regex (features avanzadas), -r/-R recursivo (-R sigue symlinks), -A/-B/-C contexto, --include/--exclude/--exclude-dir. Alternativas 2026: ripgrep (rg) es dramáticamente más rápido, respeta .gitignore, sintaxis Rust regex. ag (silver searcher) similar. Para logs muy grandes, considerar structured logging + jq en vez de grep.",
+      "realWorld": "SRE / on-call responders viven en grep + tail -f + jq. Skill fundamental. Los shortcuts fluent (una line con múltiples pipes) ahorran horas al mes. Herramientas como Elastic Stack son la 'escalación' cuando grep no basta.",
+      "tags": ["grep", "regex", "logs", "linux"],
+      "tech": ["grep", "ripgrep", "Linux"],
+      "references": [{ "title": "man 1 grep" }, { "title": "BurntSushi ripgrep" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "fundamentals",
+      "topic": "awk — extracción y transformación",
+      "difficulty": "mid",
+      "scenario": "Log de Apache: `192.168.1.1 - - [10/Oct/2024:13:55:36] \"GET /api/users HTTP/1.1\" 200 1234`. Quieres: contar requests por IP, sumar bytes por IP, y filtrar solo status 5xx.",
+      "question": "¿Cuál es la solución con awk?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`awk '$9 ~ /^5/ { count[$1]++; bytes[$1] += $10 } END { for (ip in count) print ip, count[ip], bytes[ip] }' access.log` — awk splitea por whitespace, $1 es la IP, $9 status, $10 bytes. Arrays asociativos count/bytes indexados por IP. END block al final del input.", "correct": true, "why": "Correcto. awk es tres partes: BEGIN block (antes), main body (por cada línea), END block (después). Arrays asociativos son first-class. $N referencia columna N. ~ es match regex. Operaciones agregadas típicas (sum, count, avg) son one-liners en awk. Es ideal para logs formato conocido — bindeas columnas a variables o usas $N directamente." },
+        { "letter": "B", "text": "awk 'print $1' access.log", "correct": false, "why": "Sintaxis incorrecta — awk necesita { ... } alrededor de statements. Y no cumple con el requerimiento (contar/sumar/filtrar)." },
+        { "letter": "C", "text": "grep + wc + cut en cascada.", "correct": false, "why": "Funciona pero verboso y muchos passes. awk lo hace en uno solo con lógica clara." },
+        { "letter": "D", "text": "awk solo lee — no puede computar.", "correct": false, "why": "Falso. awk tiene variables, arrays, loops, funciones, aritmética. Es lenguaje completo." }
+      ],
+      "explanation": "awk estructura: `BEGIN { init } /pattern/ { action } END { finish }`. Sin pattern actúa en toda línea. Variables útiles: $0 (línea completa), $1-$N (campos), NF (num fields), NR (num record/line), FS (field separator, default whitespace; cambiar con `awk -F,` para CSV). Operadores: `~` match, `!~` no match. Arrays asociativos: `count[key]++`. Multi-file: FILENAME variable. gawk (GNU awk) tiene extensiones útiles (regexes avanzadas, funciones extras). Idiomáticamente: para report/summary rápido de logs, awk es más eficiente que Python o similar; para procesamiento complejo, migrar a lenguaje real.",
+      "realWorld": "SRE / DevOps tradicionalmente usan awk para reports ad-hoc de logs. La comunidad Erlang tiene un chiste: 'todo problema tiene una solución awk'. Modern alternatives (miller, jq para JSON) complementan pero no reemplazan awk para logs de texto.",
+      "tags": ["awk", "logs", "text processing", "linux"],
+      "tech": ["awk", "gawk"],
+      "references": [{ "title": "The AWK Programming Language (Aho, Kernighan, Weinberger)" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "fundamentals",
+      "topic": "sed — sustitución y edición in-place",
+      "difficulty": "mid",
+      "scenario": "Necesitas reemplazar 'localhost' por 'db.prod' en 50 archivos de config .yaml. Un compañero propone `sed 's/localhost/db.prod/g' config.yaml > config.yaml.new && mv ...` en un loop.",
+      "question": "¿Cuál es la forma idiomática y sus advertencias?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`sed -i.bak 's/localhost/db.prod/g' *.yaml` — -i edita in-place, .bak crea backup. Advertencias: (1) sed BSD (macOS) vs GNU sed sintaxis distinta para -i (BSD requiere `-i ''` sin backup); (2) regex de sed es BRE por default (usar -E para ERE); (3) si el pattern contiene / , usar otro separador `sed 's|/path|/new|g'`; (4) backup .bak permite revertir si algo sale mal — siempre útil.", "correct": true, "why": "Correcto. sed -i evita el patrón manual de leer + escribir + rename. La sintaxis -i.bak (GNU sed) o `-i .bak` (BSD, con space) crea backup automático. Para sustituciones simples, sed es más rápido y menos código que un script. Advertencias reales: portabilidad Mac/Linux (BSD vs GNU sed diferencias molestas), y regex con caracteres especiales necesita escape apropiado o separator alternativo." },
+        { "letter": "B", "text": "El loop con temp files es más seguro.", "correct": false, "why": "sed -i con backup es equivalente a nivel seguridad y menos código. Y usar find + sed -i escala mejor que loops shell." },
+        { "letter": "C", "text": "sed solo puede reemplazar la primera ocurrencia.", "correct": false, "why": "Falso — flag `g` (global) reemplaza todas en la línea. Sin `g`, solo primera de la línea; con `g`, todas." },
+        { "letter": "D", "text": "sed no soporta regex.", "correct": false, "why": "Falso — sed soporta BRE (default) y ERE (con -E). Es una de sus features principales." }
+      ],
+      "explanation": "sed comandos comunes: s/pat/rep/flags (substitute), d (delete), p (print), y/abc/xyz/ (transliterate). Flags: g (global en línea), i (case-insensitive), N (n-ésima ocurrencia). Ranges: `sed '5,10d'` borra líneas 5-10. -n suprime print default. -i in-place (con cuidado por portabilidad Mac). Multi-comando: `-e cmd1 -e cmd2` o script file con -f. Perl es alternativa moderna: `perl -pi -e 's/pat/rep/g' *.yaml` — más consistente cross-platform que sed. Para operaciones complejas, ruby / python; sed brilla en one-liners simples.",
+      "realWorld": "Bug notorio: `sed -i` en Mac sin argumento entre `-i` y el pattern deja backup con nombre extraño (BSD interpreta el pattern como backup ext). GNU sed sin espacio interpreta correctamente. Scripts cross-platform usan `sed -i.bak` (funciona en ambos) o Perl.",
+      "tags": ["sed", "sustitución", "text processing", "linux"],
+      "tech": ["sed", "GNU sed", "BSD sed"],
+      "references": [{ "title": "man 1 sed" }, { "title": "sed & awk (Dougherty, Robbins)" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "fundamentals",
+      "topic": "systemd — services básicos",
+      "difficulty": "mid",
+      "scenario": "Quieres correr tu app Node.js como service Linux: (1) inicia con el boot; (2) reinicia si crashea; (3) logs a journalctl; (4) corre como user no-root.",
+      "question": "¿Qué afirmaciones son ciertas sobre systemd services para apps productivas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Estructura mínima: /etc/systemd/system/myapp.service con secciones [Unit] (Description, After=network.target), [Service] (ExecStart, User, Restart=always, WorkingDirectory), [Install] (WantedBy=multi-user.target). Activar con `systemctl daemon-reload && systemctl enable --now myapp`.", "correct": true, "why": "Correcto. Estructura estándar. daemon-reload informa a systemd de cambios en unit files; enable crea symlink para autostart en boot; --now inicia inmediatamente." },
+        { "letter": "B", "text": "journalctl -u myapp -f captura stdout/stderr automáticamente cuando el service usa systemd — sin necesidad de redirigir a archivos manualmente.", "correct": true, "why": "Correcto. systemd redirige stdout/stderr de los services al journal por default. Beneficio: logs indexados, rotables, con metadata (unit, PID, boot). Se pueden filtrar por prioridad, tiempo, boot con flags de journalctl." },
+        { "letter": "C", "text": "Restart=on-failure combinado con RestartSec=5s y StartLimitBurst evita restart loops descontrolados si el servicio crashea repetidamente.", "correct": true, "why": "Correcto. Sin control de rate, un service que crashea en boot entra en restart storm consumiendo CPU. StartLimitBurst=5 + StartLimitIntervalSec=60 le da 5 intentos en 60s antes de dejarlo en 'failed'. Práctica esencial para production." },
+        { "letter": "D", "text": "Añadir línea a /etc/rc.local es la forma moderna equivalente a systemd.", "correct": false, "why": "rc.local es legacy pre-systemd. En sistemas modernos (todos los Linux mainstream 2015+), systemd es el init. rc.local puede existir por compatibilidad pero no ofrece restart, monitoring, dependencies." },
+        { "letter": "E", "text": "nohup node app.js & es suficiente para production background.", "correct": false, "why": "nohup + & lanza en background pero no sobrevive a reboot, no reinicia en crash, no captura logs correctamente. Es hack para sesiones interactivas, no producción." }
+      ],
+      "explanation": "systemd unit file mínimo:\n```\n[Unit]\nDescription=My App\nAfter=network.target\n\n[Service]\nType=simple\nUser=app\nWorkingDirectory=/opt/myapp\nExecStart=/usr/bin/node index.js\nRestart=always\nRestartSec=5\nEnvironment=NODE_ENV=production\n\n[Install]\nWantedBy=multi-user.target\n```\nType common: simple (default, proceso primario), forking (double-fork), oneshot (script que corre y termina), notify (avisa cuando ready). systemctl comandos: start/stop/restart/status/enable/disable/reload/daemon-reload. journalctl: -u service, -f follow, --since, -p priority. Alternative moderns: podman + quadlet permite gestión containers con systemd unit-style. En cloud/K8s, orchestration reemplaza systemd para apps, pero systemd sigue esencial para infra base.",
+      "realWorld": "Casi todas las distros Linux (Ubuntu, Debian, RHEL, Fedora, Arch) usan systemd. Alpine usa OpenRC. Container runtimes (podman) integran con systemd via Quadlet. Skill esencial para cualquier deployment on-VM.",
+      "tags": ["systemd", "services", "journalctl", "linux"],
+      "tech": ["systemd", "Linux"],
+      "references": [{ "title": "man 5 systemd.service" }, { "title": "Arch Linux Wiki — systemd" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "fundamentals",
+      "topic": "cron — sintaxis y errores comunes",
+      "difficulty": "mid",
+      "scenario": "Añades `0 3 * * * /usr/local/bin/backup.sh` al crontab. El job no corre. Manualmente `./backup.sh` funciona.",
+      "question": "¿Cuáles son las causas típicas y cómo diagnosticar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Causas frecuentes: (1) cron corre con PATH mínimo (típico /usr/bin:/bin), tu script asume tools de /usr/local/bin no en PATH — solución: usar paths absolutos o setear PATH al inicio del script; (2) el script asume cwd — cron corre desde $HOME; (3) variables de entorno del shell interactivo (NVM node, virtualenv Python) no cargadas; (4) permisos de ejecución no seteados. Diagnosticar: redirigir output `>> /tmp/cron.log 2>&1` en la línea del crontab, revisar /var/log/syslog o journalctl -u cron.", "correct": true, "why": "Correcto. cron es notoriamente confuso porque corre en un ambiente MUY minimalista distinto al shell interactivo. Diferencias clave: PATH cortísimo, sin HOME expandido a veces, sin variables de shell, cwd = $HOME o /. Bug 90% frecuente: script usa `node` que en shell interactivo es de NVM, pero en cron no está en PATH. Solución universal: pathfull paths, source ~/.profile al inicio del script, y siempre redirigir output para capturar errores." },
+        { "letter": "B", "text": "El problema es la sintaxis — debe ser 0 3 * * * *.", "correct": false, "why": "Falso — cron estándar tiene 5 campos (minute, hour, day-of-month, month, day-of-week). 6 campos es para systemd timers o Spring cron. `0 3 * * *` es válido (3 AM cada día)." },
+        { "letter": "C", "text": "cron está deprecated — usar systemd timers.", "correct": false, "why": "systemd timers son alternativa moderna con más features (logging, dependencies, calendar expressions), pero cron sigue siendo estándar y no está deprecated. Ambos coexisten." },
+        { "letter": "D", "text": "cron requiere reinicio del sistema tras editar crontab.", "correct": false, "why": "Falso — crontab -e o modificaciones a /etc/crontab son recogidas automáticamente por el daemon. No requiere reboot." }
+      ],
+      "explanation": "cron gotchas: (1) environment mínimo — asumir nada del shell interactivo; (2) PATH limitado — usar absolute paths o exportar PATH; (3) no shell dotfiles cargados — source si necesario; (4) MAILTO envía output por email si no redirigís; (5) sintaxis variable: /etc/crontab tiene campo user, `crontab -e` no; (6) 'day of week' 0 = Sunday, 7 también (compatible); (7) '*/N' para intervalos, especial @reboot para al arranque. Alternativa moderna: systemd timers (calendar events más expresivos, logging via journalctl, dependencies, error handling). Herramientas de programación de jobs a escala: Airflow, Prefect, Temporal (jobs más complejos que cron).",
+      "realWorld": "El bug 'funciona manual, no en cron' es tan común que es meme. StackOverflow tiene miles de threads. La solución universal es: siempre exportar PATH y source shell config al inicio del script.",
+      "tags": ["cron", "scheduling", "systemd timers", "linux"],
+      "tech": ["cron", "systemd"],
+      "references": [{ "title": "man 5 crontab" }, { "title": "man 5 systemd.timer" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "fundamentals",
+      "topic": "cgroups y limits — memoria y CPU",
+      "difficulty": "senior",
+      "scenario": "Tu container en Kubernetes tiene `resources.limits.memory: 512Mi`. La app hace `Runtime.getRuntime().maxMemory()` (Java) y devuelve 8 GB — la memoria del NODO, no del container. Al asignar heap alto, el OOM Killer mata el container.",
+      "question": "¿Cuál es la explicación y solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "cgroups (control groups) del kernel limitan recursos del container; APIs viejas de sistemas leen /proc/meminfo o /proc/cpuinfo del host, ignorando cgroups. JVM viejas (Java 8 antes de u191) no eran cgroup-aware — pedían 25% del RAM del NODO. Solución: usar JDK 11+ (cgroup-aware por default), y en JDK 8 setear `-XX:+UseContainerSupport` (u191+) o `-Xmx` explícito. Análogo en Node: usar `--max-old-space-size` explícito. Runtimes modernos son cgroup-aware; código legacy no.", "correct": true, "why": "Correcto. cgroups son la primitiva Linux que hace posibles containers: limitan CPU, memoria, IO, network por grupo de procesos. Docker/K8s usan cgroups. Pero programas que leen /proc directamente no ven los limits — ven el host completo. JVM histórica es el ejemplo más notorio: pedía Xmx = 25% de RAM detectada. En un container con 512Mi limit en un host de 32 GB, JVM intentaba usar 8 GB → OOM Killer instantáneo. Fix desde Java 8u191 y default en 11+: JVM lee cgroup limits y calcula heap sensiblemente." },
+        { "letter": "B", "text": "K8s no aplica los limits — solo requests importan.", "correct": false, "why": "Falso. limits son enforced via cgroups (memory limit) o CFS quotas (CPU). requests solo afectan scheduling." },
+        { "letter": "C", "text": "El OOM Killer mata siempre el proceso más grande.", "correct": false, "why": "OOM Killer usa heurística de score (oom_score) que considera size, priority, y otros. En containers, es el cgroup OOM que dispara cuando el cgroup entero excede el limit — mata procesos DENTRO del cgroup." },
+        { "letter": "D", "text": "Solución: aumentar memoria del container.", "correct": false, "why": "Band-aid. La causa raíz es que el runtime no respeta cgroups. Aumentar memoria solo posterga el problema y desperdicia recursos." }
+      ],
+      "explanation": "cgroups (v1 y v2) limitan y contabilizan recursos. Principales subsystems: memory, cpu (shares y quotas), blkio, net_cls, pids, devices. Kubernetes usa cgroups para enforcement. Bug pattern: apps que leen /proc/meminfo, /proc/cpuinfo, /sys/... ven el host, no el container. Ejemplos: Java pre-191, Node.js pre-12 (heap default basado en host RAM), muchas apps Python/Go que leen num_cores para tuning de pools. Solución universal: (1) usar runtimes modernos cgroup-aware; (2) configurar explícitamente (Xmx, GOMAXPROCS, worker counts); (3) en K8s, resource limits + requests bien dimensionados. cgroups v2 es unified hierarchy (default en distros modernas).",
+      "realWorld": "Netflix documentó extensivamente el problema JVM + cgroups. Casi cada empresa Java migró a JDK 11+ parcialmente por esta razón. En Go, GOMAXPROCS default en cgroups fue añadido en Go 1.5+; la lib uber-go/automaxprocs sigue siendo popular para casos edge.",
+      "tags": ["cgroups", "memory limits", "OOM", "JVM"],
+      "tech": ["Linux", "cgroups", "Kubernetes"],
+      "references": [{ "title": "Linux kernel — Control Groups (cgroups) documentation" }, { "title": "OpenJDK — JEP 178: Container Awareness" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "fundamentals",
+      "topic": "ps, top, htop — inspección de procesos",
+      "difficulty": "junior",
+      "scenario": "El sistema está lento. Necesitas identificar qué proceso está consumiendo más CPU / memoria en tiempo real.",
+      "question": "¿Cuál es la herramienta más útil?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`top` (built-in) o `htop` (mejorado, colorful, más ergonómico) muestran procesos ordenados por CPU/memoria en tiempo real. En top: 'M' ordena por memoria, 'P' por CPU. En htop: F6 para elegir sort. Alternativas: `ps aux --sort=-%cpu | head`, `ps aux --sort=-%mem | head`. Para tiempo real programático: `pidstat`, `atop`.", "correct": true, "why": "Correcto. top es standard; htop añade UX significativa (mouse, colores, tree view con F5, filter con F4). ps es snapshot (útil para scripts, no realtime). Muchos SREs prefieren htop para diagnóstico local. Alternativas útiles: btop (aún más bonito), glances (multi-recurso), atop (con logging histórico)." },
+        { "letter": "B", "text": "`ls /proc` — mostrar todos los procesos.", "correct": false, "why": "Muestra directorios per-PID pero no CPU/memoria sin más trabajo. Es primitiva más baja." },
+        { "letter": "C", "text": "Reiniciar el servidor.", "correct": false, "why": "Rechaza diagnosticar. Mala práctica." },
+        { "letter": "D", "text": "Chequear el syslog.", "correct": false, "why": "Syslog puede tener pistas pero no muestra CPU/memoria realtime. Herramienta equivocada para el objetivo." }
+      ],
+      "explanation": "Herramientas de inspección: (1) top — clásico, sin dependencies; (2) htop — mejor UX, showtree con F5; (3) atop — con histórico, útil para análisis post-mortem; (4) glances — multi-recurso overview; (5) ps — snapshot programático, ideal en scripts (`ps aux`, `ps -ef`, `pstree`); (6) pidstat (sysstat) — sampling específico por PID; (7) vmstat, iostat, mpstat — recursos globales. Para procesos zombie: `ps aux | grep 'Z'` o STAT column con Z. Para procesos por user: `ps -u username`. Skill esencial: leer TOP output rápidamente para triage.",
+      "realWorld": "Cada SRE en on-call ha escrito 'htop' cientos de veces. Es el primer comando cuando algo va lento. Herramientas modernas (Datadog, New Relic) proveen equivalentes visuales para producción, pero conocer top/htop local sigue siendo esencial.",
+      "tags": ["top", "htop", "procesos", "linux"],
+      "tech": ["top", "htop", "Linux"],
+      "references": [{ "title": "man 1 top" }, { "title": "htop.dev" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "fundamentals",
+      "topic": "strace y lsof — debugging profundo",
+      "difficulty": "senior",
+      "scenario": "Un proceso Node.js se queda 'colgado' — no responde pero tampoco consume CPU. No hay logs útiles. Necesitas saber qué está haciendo en el kernel.",
+      "question": "¿Qué herramientas usar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "`strace -p <pid>` muestra syscalls en vivo del proceso. Útil para: ver si está bloqueado en read/write/select/futex; qué archivos abre; qué syscalls fallan. Alternativa moderna: bpftrace para tracing dinámico sin fork/attach overhead.", "correct": true, "why": "Correcto. strace intercepta syscalls (attaching via ptrace). Si el proceso está 'colgado', strace muestra la última syscall — típicamente read/select/epoll_wait/futex bloqueado. Overhead alto (cada syscall interceptada), pero para debug muy útil. `strace -c` da resumen estadístico. Modern: bpftrace, perf trace para menor overhead." },
+        { "letter": "B", "text": "`lsof -p <pid>` lista file descriptors abiertos: archivos, sockets, pipes. Ayuda a identificar leaks o si está bloqueado esperando IO en un socket específico.", "correct": true, "why": "Correcto. lsof es complementario a strace. Muestra el ESTADO del proceso: qué recursos tiene abiertos. `lsof -p <pid>` muestra todo; `lsof -i :port` quién usa un puerto; `lsof <file>` quién tiene un archivo abierto. Diagnóstico clásico: proceso hung esperando socket → lsof muestra sockets → strace confirma epoll_wait bloqueado en el fd correspondiente." },
+        { "letter": "C", "text": "`cat /proc/<pid>/stack` muestra el kernel stack trace del proceso — si está bloqueado, ves en qué función del kernel.", "correct": true, "why": "Correcto. /proc/<pid>/stack requiere CONFIG_STACKTRACE en el kernel (usualmente sí) y ver el proceso. Muestra el stack DEL KERNEL — muy útil para saber en qué syscall exacta está esperando (schedule, sys_read, futex_wait, etc.)." },
+        { "letter": "D", "text": "`kill -QUIT <pid>` (SIGQUIT) fuerza a runtimes como Java/Node a dump thread state, útil para deadlocks en user-space.", "correct": true, "why": "Correcto. SIGQUIT default core dump, pero JVM lo intercepta y dumpea todos los threads. Node.js con --report-on-signal genera diagnostic report. Complementa la vista kernel de strace con la vista user-space del runtime." },
+        { "letter": "E", "text": "Reiniciar el proceso — no hay forma de debuguearlo.", "correct": false, "why": "Falso. Hay múltiples herramientas para inspección de procesos vivos. Reiniciar pierde la evidencia — mala práctica en diagnóstico." }
+      ],
+      "explanation": "Toolkit de debugging Linux avanzado: (1) strace — syscall tracing; (2) ltrace — library call tracing; (3) lsof — file descriptors; (4) /proc/<pid>/stack — kernel stack; (5) /proc/<pid>/status y stat — estado detallado; (6) gdb — attach para inspección; (7) perf — profiling y tracing con menor overhead; (8) bpftrace / bcc-tools — eBPF-based, moderno y menos intrusivo; (9) SIGQUIT / --report-on-signal — runtime-specific dumps. Escalada típica: htop/top identifica el proceso → strace/lsof entienden qué hace → perf/bpftrace para performance profunda → gdb para casos extremos.",
+      "realWorld": "Brendan Gregg (Netflix) publicó extensivamente sobre performance debugging Linux, popularizó eBPF/bpftrace. Es el toolkit estándar para SRE senior. strace en producción tiene overhead pero es útil para debugging one-off.",
+      "tags": ["strace", "lsof", "debugging", "linux"],
+      "tech": ["strace", "lsof", "bpftrace"],
+      "references": [{ "title": "Brendan Gregg — Linux Performance" }, { "title": "man 1 strace" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "fundamentals",
+      "topic": "find — búsqueda avanzada",
+      "difficulty": "mid",
+      "scenario": "Necesitas: (1) borrar todos los .tmp de más de 7 días; (2) encontrar archivos > 100 MB; (3) buscar archivos modificados en la última hora.",
+      "question": "¿Qué afirmaciones sobre find y sus filtros son correctas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "`find /tmp -name '*.tmp' -type f -mtime +7 -delete` borra archivos .tmp modificados hace MÁS de 7 días. -delete evita el fork por archivo que hace -exec rm {} \\;", "correct": true, "why": "Correcto. -mtime +N = más de N días, -N = menos de N, N = exactamente N. -delete es más eficiente que -exec rm. Siempre probar sin -delete primero para verificar el listado." },
+        { "letter": "B", "text": "`find / -type f -size +100M` encuentra archivos regulares mayores a 100 megabytes.", "correct": true, "why": "Correcto. -size +100M = más de 100 MiB (mebibytes, base 2). Sufijos: c (bytes), k (KiB), M (MiB), G (GiB). Sin sufijo = bloques de 512 bytes." },
+        { "letter": "C", "text": "`find . -type f -mmin -60` encuentra archivos modificados en los últimos 60 minutos.", "correct": true, "why": "Correcto. -mmin es minutos análogo a -mtime en días. -60 = menos de 60 minutos (recientes), +60 = hace más de 60 minutos." },
+        { "letter": "D", "text": "`-exec cmd {} +` (batch) es preferible a `-exec cmd {} \\;` (uno a uno) porque forkea menos procesos.", "correct": true, "why": "Correcto. {} + agrupa archivos en batches respetando ARG_MAX (como xargs). {} \\; forkea el comando por cada archivo — mucho más lento con muchos archivos. Ambos válidos, batch es preferido cuando el comando lo soporta." },
+        { "letter": "E", "text": "`find / -age 7 -remove` es sintaxis válida moderna.", "correct": false, "why": "Sintaxis inventada — no existe -age ni -remove en find. Los flags correctos son -mtime y -delete." }
+      ],
+      "explanation": "find es enormemente poderoso: filtros combinables con -a (and, default), -o (or), -not. Filtros comunes: -name pattern, -iname (case-insensitive), -type (f file, d dir, l link), -size (con +/- y unidades), -mtime/-mmin (modification), -ctime (change of inode), -atime (access; disabled si noatime mount), -perm (permisos), -user, -group. Acciones: -print (default), -delete, -exec cmd {} \\; (uno a uno) o \\+ (batch). Ejemplos: `find . -type f -name '*.log' -exec gzip {} \\+` (comprimir todos los logs), `find /var -mtime +30 -type f -delete` (limpieza de logs viejos). Alternativa moderna: fd (Rust) — más rápido, respeta .gitignore.",
+      "realWorld": "SREs usan find + cron para cleanup automatizado (rotación de logs, borrado de temporales). Bug clásico: `find / -delete` sin filtros → borra todo el filesystem. Siempre ejecutar sin -delete primero para verificar el listado.",
+      "tags": ["find", "búsqueda", "cleanup", "linux"],
+      "tech": ["find", "Linux"],
+      "references": [{ "title": "man 1 find" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "fundamentals",
+      "topic": "netstat / ss — inspección de red",
+      "difficulty": "senior",
+      "scenario": "Tu app en el puerto 8080 no responde. Quieres saber: (1) si algo está escuchando en 8080; (2) qué proceso lo tiene; (3) cuántas conexiones activas hay.",
+      "question": "¿Cuál es la herramienta moderna y sus comandos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`ss` (moderna, del paquete iproute2) reemplaza netstat (deprecated en muchas distros). `ss -tlnp` muestra puertos TCP escuchando (-t tcp, -l listening, -n numeric, -p process). `ss -tp state established | wc -l` cuenta conexiones establecidas. `ss -s` summary. Alternativa: `lsof -i :8080` para saber quién usa el puerto.", "correct": true, "why": "Correcto. ss es más rápida que netstat y provee más información. Está en el paquete iproute2 junto con ip (que reemplaza ifconfig, route, arp). Flags similares a netstat pero muchas útiles nuevas: filtros de estado (state established, listening), src/dst filters. Salida más rica. lsof -i es alternativa cross-tool para 'quién usa este puerto'." },
+        { "letter": "B", "text": "netstat -tulnp (deprecated pero funcional).", "correct": false, "why": "Cierto que aún funciona pero está deprecated y en distros minimalistas (Alpine, distroless) no se instala. ss es la herramienta actual." },
+        { "letter": "C", "text": "ping localhost 8080.", "correct": false, "why": "ping usa ICMP, no TCP — no chequea puertos. telnet o nc son las herramientas para test de puerto." },
+        { "letter": "D", "text": "curl es la única forma.", "correct": false, "why": "curl solo prueba a nivel HTTP — no dice si algo escucha en el puerto (si nada responde HTTP, no distingues 'nada escucha' vs 'algo escucha pero no HTTP')." }
+      ],
+      "explanation": "Herramientas de red modernas: (1) ss — replace netstat; (2) ip — replace ifconfig/route/arp; (3) nftables — replace iptables (aunque iptables sigue común); (4) tcpdump / tshark — packet capture; (5) mtr — mejor traceroute; (6) nmap — port scanning; (7) curl -v / wget para HTTP; (8) nc (netcat) — swiss army knife TCP/UDP; (9) dig / host — DNS. Comandos frecuentes: `ss -tlnp` (TCP listen with process), `ss -tup state established` (con UDP y TCP), `ip a` (interfaces), `ip r` (routes), `dig @8.8.8.8 example.com`. Para debugging producción: tcpdump + wireshark offline es powerful.",
+      "realWorld": "Alpine Linux no incluye netstat por default; ss viene con iproute2. Distros modernas removieron net-tools legacy. Skill esencial para diagnóstico de red — SRE typical.",
+      "tags": ["ss", "netstat", "network", "linux"],
+      "tech": ["ss", "iproute2", "lsof"],
+      "references": [{ "title": "man 8 ss" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "fundamentals",
+      "topic": "disk usage — du y df",
+      "difficulty": "junior",
+      "scenario": "Disco lleno. Necesitas: (1) espacio libre por partición; (2) qué directorio en /var ocupa más.",
+      "question": "¿Cuáles comandos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) `df -h` (human readable). (2) `du -sh /var/*` (summary per top-level dir, sorted with `| sort -h`). Para búsqueda interactiva más rápida: `ncdu /var` (interactive TUI).", "correct": true, "why": "Correcto. df muestra espacio filesystem-level (por mount point). du calcula uso de directorios sumando recursivamente. -s (summary, no cada archivo), -h (human readable, KB/MB/GB), -x (no cross filesystems). `du -sh /var/*` muestra top-level. Combinar con sort para ranking: `du -sh /var/* 2>/dev/null | sort -h | tail`. ncdu (n-curses disk usage) es TUI interactiva para navegar — mucho más rápida que du manual." },
+        { "letter": "B", "text": "ls -la muestra tamaño de directorio recursivo.", "correct": false, "why": "Falso. ls -la muestra tamaño de la ENTRADA de directorio (típicamente 4KB), no del contenido. Confusión frecuente." },
+        { "letter": "C", "text": "df solo funciona en ext4.", "correct": false, "why": "Falso — df funciona en cualquier filesystem montado." },
+        { "letter": "D", "text": "df -h y du -sh son intercambiables.", "correct": false, "why": "Falso — df ve el filesystem, du ve directorios. Pueden diferir (archivos eliminados con FDs abiertos siguen ocupando en df pero no en du)." }
+      ],
+      "explanation": "df vs du confusión: df pregunta al filesystem 'cuánto está usado?'; du recorre directorios sumando. Discrepancy común: archivo eliminado pero con FD abierto → sigue ocupando espacio (visible en df, no en du). Solución: reiniciar el proceso que tiene el FD (`lsof | grep deleted` para identificar). Herramientas útiles: (1) ncdu — TUI navegable, recomendada; (2) dust (Rust) — más rápida, colorful; (3) baobab (GUI GNOME); (4) `find / -type f -size +100M` para archivos grandes. Otra causa de 'disco lleno' pero du muestra poco: inodes agotados — check `df -i`.",
+      "realWorld": "El caso clásico: log file borrado pero nginx sigue con el FD abierto, el disco sigue lleno. `lsof +L1` muestra archivos deleted pero con FDs. Solución: restart nginx o rotate logs con logrotate (que usa signal a nginx para reopen).",
+      "tags": ["df", "du", "disk", "linux"],
+      "tech": ["df", "du", "ncdu"],
+      "references": [{ "title": "man 1 df" }, { "title": "man 1 du" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "fundamentals",
+      "topic": "SSH — configuración y ProxyJump",
+      "difficulty": "senior",
+      "scenario": "Necesitas: (1) conectarte a un server X en red privada via un bastion Y; (2) evitar re-tipear IPs largas; (3) no repetir passphrase de la key en cada conexión.",
+      "question": "¿Cuál es la configuración correcta en ~/.ssh/config?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En ~/.ssh/config: `Host bastion\\n  HostName bastion.example.com\\n  User me\\nHost x\\n  HostName 10.0.0.5\\n  User me\\n  ProxyJump bastion`. Ejecutar `ssh x`. Para el passphrase, usar ssh-agent: `eval $(ssh-agent) && ssh-add ~/.ssh/id_ed25519`. Muchos SO tienen agentes gráficos (macOS Keychain, gnome-keyring).", "correct": true, "why": "Correcto. ~/.ssh/config es potente pero infrautilizado. Host aliases + ProxyJump elimina el tunneling manual (ssh -o 'ProxyCommand ssh bastion nc %h %p' era el patrón antiguo). ssh-agent maneja passphrase caching — típed una vez, persistente en la sesión. Config avanzada: ControlMaster + ControlPath para reutilizar conexiones (drop de latency), ForwardAgent para SSH desde el server destino." },
+        { "letter": "B", "text": "Escribir un alias en .bashrc: alias sshx='ssh -A me@bastion \"ssh 10.0.0.5\"'", "correct": false, "why": "Funciona pero es un hack — no reusa conexiones, no usa ProxyJump moderno, no da beneficios de ControlMaster. Config oficial es más idiomática." },
+        { "letter": "C", "text": "SSH no soporta jumping — usar VPN.", "correct": false, "why": "Falso. ProxyJump (-J flag o config) es soportado desde OpenSSH 7.3 (2016). Muy común." },
+        { "letter": "D", "text": "Guardar el password en un archivo.", "correct": false, "why": "SSH ni siquiera soporta password en config (por diseño de seguridad). Y guardar passwords en archivos es anti-patrón. Keys + passphrase + agent es el flujo correcto." }
+      ],
+      "explanation": "~/.ssh/config completo:\n```\nHost bastion\n  HostName bastion.example.com\n  User me\n  IdentityFile ~/.ssh/id_ed25519\n\nHost prod-*\n  User me\n  ProxyJump bastion\n  IdentityFile ~/.ssh/id_ed25519\n  ForwardAgent yes\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-%r@%h:%p\n  ControlPersist 10m\n\nHost prod-db\n  HostName 10.0.0.5\n\nHost prod-web\n  HostName 10.0.0.6\n```\nBeneficios: `ssh prod-db` funciona, con connection multiplexing (ControlMaster), agent forwarding, jump automático. Keys: prefer Ed25519 (`ssh-keygen -t ed25519`) sobre RSA (más rápido, más seguro por bit). Agent forwarding solo a servers de confianza (server puede usar TUS keys). Alternativa moderna: SSH certificates con CA (Hashicorp Vault, Teleport) elimina la necesidad de gestionar authorized_keys en cada server.",
+      "realWorld": "Bastion hosts (jump boxes) son estándar en ops. AWS Systems Manager Session Manager reemplaza SSH tradicional en cloud para audit y IAM. Teleport es popular para SSH+K8s+DB access con certificate rotation.",
+      "tags": ["SSH", "bastion", "ProxyJump", "linux"],
+      "tech": ["OpenSSH", "ssh-agent"],
+      "references": [{ "title": "man 5 ssh_config" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "fundamentals",
+      "topic": "xargs — construir comandos a partir de stdin",
+      "difficulty": "mid",
+      "scenario": "Tienes una lista de PIDs (uno por línea) y quieres killearlos. `kill $(cat pids.txt)` funciona pero falla si son muchos ('argument list too long').",
+      "question": "¿Cuál es la solución con xargs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`cat pids.txt | xargs kill` — xargs lee stdin y construye comandos ajustando batch size según ARG_MAX del sistema. Para paths con espacios: `find ... -print0 | xargs -0 cmd` (null-terminated). Para parallelismo: `xargs -P N` corre N procesos en paralelo.", "correct": true, "why": "Correcto. xargs es específicamente para el problema 'muchos args'. Divide en batches respetando ARG_MAX. Flags críticos: -0 con -print0 de find (safe para nombres con espacios/newlines); -P para paralelismo (útil para batch de comandos slow); -n 1 para un arg por invocación; -I {} para posicionar el arg en el medio del comando (`xargs -I {} echo processing {}`). Es una de las herramientas de composición shell más útiles." },
+        { "letter": "B", "text": "for pid in $(cat pids.txt); do kill $pid; done — loop tradicional.", "correct": false, "why": "Funciona pero es más lento (forkea kill N veces vs xargs que hace en batches). Y para procesamiento paralelo, xargs -P es mucho más simple." },
+        { "letter": "C", "text": "kill no acepta multiple PIDs.", "correct": false, "why": "Falso — kill acepta múltiples PIDs (`kill 1 2 3`). El problema del comando original era el ARG_MAX." },
+        { "letter": "D", "text": "cat pids.txt | kill — usar pipe directo.", "correct": false, "why": "Falso — kill lee args, no stdin. Sin xargs, el pipe no convierte stdin en args." }
+      ],
+      "explanation": "xargs patterns comunes: (1) `find . -name '*.log' | xargs rm` — pero prefer `find ... -delete` o `find ... -exec rm {} +`; (2) `find . -name '*.txt' -print0 | xargs -0 -P 4 gzip` — comprime en paralelo, safe con nombres complicados; (3) `docker ps -q | xargs docker stop` — stop all containers; (4) `xargs -I {} curl -X POST {}/health < urls.txt` — un curl por línea con placeholder. Nota: `find -exec {} +` es equivalente a find + xargs sin la magia de xargs -P. Para paralelismo real, GNU parallel es más potente pero xargs -P cubre 80% de casos.",
+      "realWorld": "SREs usan xargs constantemente: rm masivos, batch API calls, procesamiento de listas. La regla 'muchos args' se hits al querer procesar cientos/miles de archivos — xargs es el fix universal.",
+      "tags": ["xargs", "batch", "shell", "linux"],
+      "tech": ["xargs", "GNU parallel"],
+      "references": [{ "title": "man 1 xargs" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "fundamentals",
+      "topic": "Shell scripting — safety flags",
+      "difficulty": "senior",
+      "scenario": "Un script bash falla silenciosamente: un comando en el medio retorna error, pero el script continúa y produce output parcial corrupto. Además cuando una variable no está definida, se expande a string vacío causando bugs.",
+      "question": "¿Qué prácticas defensivas debe tener todo script bash serio?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar `set -euo pipefail` al inicio del script: -e (exit si un comando falla), -u (error si variable no definida), -o pipefail (falla el pipe si CUALQUIER comando del pipe falla, no solo el último). Complementar con `IFS=$'\\n\\t'` para evitar splitting por espacios inesperados, y `trap 'echo error; exit 1' ERR` para logging estructurado.", "correct": true, "why": "Correcto. Los defaults de bash son insanamente permisivos por retrocompatibilidad. `set -e` (errexit) hace que error en cualquier comando aborte el script. `set -u` (nounset) hace que $undefined_var explote en vez de expandir a ''. `set -o pipefail` fija el bug de que `cmd_que_falla | cmd_ok` retorne 0. Los tres juntos son 'strict mode' de bash. Trade-off: hay casos donde -e no dispara (comandos en condicionales, funciones específicas) — bash es peculiar. Combinar con ShellCheck lint es best practice." },
+        { "letter": "B", "text": "Añadir echo antes de cada comando para 'ver qué pasa'.", "correct": false, "why": "Debug print manual, poco escalable. -x flag (set -x) hace lo mismo automáticamente y de forma más consistente. Y no resuelve el issue de error handling." },
+        { "letter": "C", "text": "No usar bash — usar Python.", "correct": false, "why": "Válido para scripts complejos, pero para scripts genuinamente shell (glue de comandos), bash es más natural. Y los mismos principios aplican en cualquier lenguaje: fail fast." },
+        { "letter": "D", "text": "Los scripts bash son inherentemente frágiles — no aplicar defensive coding.", "correct": false, "why": "Falso. Con strict mode + ShellCheck + tests (bats), bash es perfectamente viable para muchas tareas." }
+      ],
+      "explanation": "Bash strict mode: `set -euo pipefail` es el must-have; `IFS=$'\\n\\t'` para safer splitting; `trap 'error_handler' ERR` para logging estructurado. Advertencias: (1) -e no dispara en subshells de condicionales (`if cmd; then` — cmd fallo no aborta); (2) -u puede requerir cambios (`${var:-default}` para valores optional); (3) -o pipefail cambia semántica de pipes — cuidado con head que puede 'errorear' un cat que fue perfecto. Herramientas para bash serio: ShellCheck (lint estático, poderoso), bats (testing framework), shfmt (formatter). Regla: si el script pasa 100 líneas o hace lógica de negocio, migrar a Python/Go.",
+      "realWorld": "Aaron Maxwell escribió el post viral 'Use the Unofficial Bash Strict Mode' que popularizó `set -euo pipefail`. Es ahora estándar en scripts productivos. GitLab, Kubernetes documentation exigen ShellCheck-clean scripts en contribuciones.",
+      "tags": ["bash", "strict mode", "scripting", "linux"],
+      "tech": ["bash", "ShellCheck"],
+      "references": [{ "title": "Aaron Maxwell — Use the Unofficial Bash Strict Mode" }, { "title": "ShellCheck.net" }]
+    }
+  ]
+}

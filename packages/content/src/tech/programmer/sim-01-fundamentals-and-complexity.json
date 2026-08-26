@@ -1,0 +1,417 @@
+{
+  "id": "programmer-sim-01-fundamentals-and-complexity",
+  "trackId": "programmer",
+  "order": 1,
+  "title": "Simulacro 01 — Fundamentos, complejidad y elección de estructura",
+  "focus": "Complejidad temporal/espacial en escenarios reales, elección de estructura de datos según patrón de acceso, referencia vs valor y sus bugs típicos.",
+  "areaCoverage": ["fundamentals", "data-structures", "algorithms"],
+  "timeLimitMin": 20,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "fundamentals",
+      "topic": "Big-O básico — identificar complejidad",
+      "difficulty": "junior",
+      "scenario": "Un compañero muestra esta función para saber si un array tiene duplicados:\n\n```python\ndef has_duplicates(items):\n    for i in range(len(items)):\n        for j in range(i+1, len(items)):\n            if items[i] == items[j]:\n                return True\n    return False\n```",
+      "question": "¿Cuál es la complejidad temporal en el PEOR caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "O(n) porque solo recorre el array una vez.", "correct": false, "why": "Falso. Hay DOS loops anidados. El externo va n veces, el interno va n-i veces. La sumatoria de (n-1) + (n-2) + ... + 1 = n(n-1)/2 ≈ O(n²)." },
+        { "letter": "B", "text": "O(n log n) por el patrón de indexing.", "correct": false, "why": "log n aparecería con divide-and-conquer (merge sort, binary search). Aquí no hay división del problema — es un doble loop lineal." },
+        { "letter": "C", "text": "O(n²). Doble loop anidado que en el peor caso (sin duplicados) recorre todos los pares.", "correct": true, "why": "Correcto. En peor caso (no hay duplicados o el duplicado está al final) hace n(n-1)/2 comparaciones. Esto es Θ(n²). Alternativa O(n) con espacio O(n): usar un set — `return len(items) != len(set(items))`." },
+        { "letter": "D", "text": "O(2^n) porque hay dos loops.", "correct": false, "why": "Confusión típica: 'dos loops' no es 2^n. 2^n aparece en algoritmos exponenciales tipo subset enumeration o brute-force sin poda." }
+      ],
+      "explanation": "Regla mental para loops anidados: multiplica las iteraciones. Dos loops de n = O(n²). Si el interno va de i+1 a n, sigue siendo O(n²) porque las constantes no cambian el orden. Big-O ignora constantes: n²/2 y n² son el mismo orden. Para bajar a O(n): usar un set (hash) — trade CPU por memoria. Es el clásico patrón 'space-time tradeoff' que verás por doquier.",
+      "realWorld": "En interviews de Google/Meta, esta pregunta es filtro básico. Muchos candidatos senior fallan porque no distinguen 'peor caso' de 'promedio'. Y en producción, un endpoint con O(n²) sobre listas de 1000 items ejecuta 1M ops — inaceptable en un hot path.",
+      "tags": ["big-O", "loops anidados", "peor caso", "fundamentals"],
+      "tech": ["Python"],
+      "references": [{ "title": "CLRS — Chapter 3: Growth of Functions" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "fundamentals",
+      "topic": "Stack vs Heap — dónde vive qué",
+      "difficulty": "junior",
+      "scenario": "Un compañero pregunta: 'En Java, cuando escribo `String s = new String(\"hola\");` dentro de un método, ¿dónde se guarda `s` y dónde se guarda el objeto `\"hola\"`?'",
+      "question": "¿Cuál es la explicación correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ambos en el stack, porque están dentro de un método.", "correct": false, "why": "Falso. En Java, TODOS los objetos (creados con `new`) viven en el heap. Solo primitivos (int, long, boolean...) y referencias viven en el stack cuando son locales." },
+        { "letter": "B", "text": "La referencia `s` vive en el stack (frame del método). El objeto String vive en el heap. Cuando el método termina, la referencia desaparece; el objeto sobrevive hasta que el GC lo recoge.", "correct": true, "why": "Correcto. Regla Java: referencias locales → stack, objetos (heap). Esto explica por qué puedes devolver una referencia de un método y el objeto sigue vivo (no como C con pointers a variables locales, que colapsa)." },
+        { "letter": "C", "text": "Ambos en el heap porque Java no tiene stack.", "correct": false, "why": "Falso. La JVM tiene stack (uno por thread) donde viven los frames de método con variables locales y referencias." },
+        { "letter": "D", "text": "En Java no importa: el JIT decide en runtime.", "correct": false, "why": "El JIT puede hacer 'escape analysis' y allocar en el stack si prueba que el objeto no escapa del método (optimización). Pero por defecto conceptual, los objetos van al heap." }
+      ],
+      "explanation": "Modelo mental: STACK guarda frames de método (rápido, LIFO, tamaño limitado ~1MB por thread). HEAP guarda objetos (más lento, gestionado por GC). Este modelo aplica a Java, C#, Kotlin, Scala. En C/C++ tú controlas dónde va cada cosa (`malloc`/`new` = heap, `int x` = stack). En Python/JS TODO es heap conceptualmente porque todo es objeto — el stack solo guarda referencias.",
+      "realWorld": "Los famosos StackOverflowError vienen de recursión infinita: cada llamada añade un frame al stack, se llena, muere. OutOfMemoryError viene del heap lleno. Diagnosticar el error correcto ahorra horas de debugging.",
+      "tags": ["memoria", "stack", "heap", "JVM"],
+      "tech": ["Java", "JVM"],
+      "references": [{ "title": "JVM Specification — Runtime Data Areas" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "algorithms",
+      "topic": "Complejidad amortizada vs peor caso",
+      "difficulty": "mid",
+      "scenario": "Estás en code review. Un compañero afirma: 'insertar al final de un ArrayList es O(1)'. Otro responde: 'eso está mal, en el peor caso es O(n) porque hay que redimensionar cuando el array interno se llena, así que el algoritmo entero que lo llama n veces es O(n²)'. Ambos discuten sobre un servicio que carga 10 millones de eventos en memoria durante boot.",
+      "question": "¿Quién tiene razón sobre la complejidad de insertar n elementos y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El segundo. Cada inserción puede ser O(n), así que n inserciones son O(n²) siempre.", "correct": false, "why": "Confunde 'peor caso individual' con 'peor caso amortizado'. Si duplicas capacidad al llenarte (estrategia estándar), la mayoría de inserciones son O(1) y solo unas pocas son costosas. La suma amortizada de n inserciones es O(n), no O(n²)." },
+        { "letter": "B", "text": "El primero. Insertar es O(1) amortizado: aunque una inserción puntual pueda costar O(n) al redimensionar, ese costo se distribuye entre las siguientes O(n) inserciones baratas.", "correct": true, "why": "Correcto. Con estrategia de duplicación (growth factor 2, o 1.5 en algunos runtimes), la sumatoria de costos de n inserciones es O(n). Cada elemento se copia como máximo log₂(n) veces amortizado, y la serie geométrica converge a O(n) total. Por eso decimos 'amortizado O(1)'." },
+        { "letter": "C", "text": "Depende del lenguaje. En Java es O(1), en Python es O(n).", "correct": false, "why": "Falso. Tanto ArrayList (Java) como list (Python) usan la misma estrategia de duplicación y ambos ofrecen O(1) amortizado en append. La confusión viene de que Python usa growth factor ~1.125 en versiones modernas, pero sigue siendo amortizado O(1)." },
+        { "letter": "D", "text": "El segundo. O(1) es una mentira que solo aplica cuando el array ya tiene capacidad reservada.", "correct": false, "why": "Parcialmente cierto en un caso puntual, pero el análisis amortizado (aggregate analysis) demuestra que el costo total sobre n inserciones sigue siendo O(n) sin necesidad de reservar capacidad antes. Es un concepto clave que evita entender mal las estructuras dinámicas." }
+      ],
+      "explanation": "'Complejidad amortizada' analiza el costo PROMEDIO por operación sobre una secuencia de operaciones, no cada operación en aislamiento. Aunque hay picos de O(n), el trabajo se amortiza sobre operaciones subsecuentes. Este concepto es la razón por la que estructuras como ArrayList, HashMap (rehash), y algoritmos como Union-Find con path compression pueden ofrecer costos aparentemente 'imposibles'. En la vida real: si sabes que vas a insertar N elementos, PRE-DIMENSIONA (ArrayList(N), dict de Python con hint) — evitas todos los resize aunque el amortizado siga siendo O(1).",
+      "realWorld": "Bug clásico en producción: un endpoint que recibe cientos de miles de items y hace `list.append` sin pre-alocar. En Python, cada resize copia el array; en un servicio de alta concurrencia, si además usas GIL, esto se vuelve latencia visible en p99. Fix típico: `list = [None]*n` cuando conoces n, o `list.reserve(n)` en C++.",
+      "tags": ["complejidad", "amortizado", "estructuras dinámicas", "big-O"],
+      "tech": ["ArrayList", "Python list", "std::vector"],
+      "references": [{ "title": "CLRS — Chapter 17: Amortized Analysis" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "data-structures",
+      "topic": "Elección de estructura por patrón de acceso",
+      "difficulty": "mid",
+      "scenario": "Servicio de matchmaking de un juego online. Necesitas: (1) insertar un jugador cuando entra a cola, (2) sacar al jugador con mayor rating cada vez que se libera slot en un servidor, (3) actualizar el rating de un jugador si sigue en cola mucho tiempo (para no bloquearlo). La cola tiene decenas de miles de jugadores.",
+      "question": "¿Qué estructura de datos es la más adecuada para este workload?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un ArrayList ordenado por rating. Insertar en la posición correcta y sacar el último.", "correct": false, "why": "Insertar ordenado es O(n) por el shift de elementos. Con decenas de miles de jugadores y alta frecuencia de entrada, esto colapsa. Sacar el último es O(1), pero el insert domina." },
+        { "letter": "B", "text": "Una PriorityQueue (heap) por rating.", "correct": false, "why": "Cerca pero incompleto. Heap ofrece insert O(log n) y pop-max O(log n) — bien para 1 y 2. Pero UPDATE de un elemento arbitrario es O(n) en un heap estándar porque hay que buscarlo primero. El requisito 3 lo descarta." },
+        { "letter": "C", "text": "Un heap indexado (indexed priority queue): heap + HashMap<playerId, heapIndex>.", "correct": true, "why": "Correcto. Insert O(log n), pop-max O(log n), update-key O(log n) porque el HashMap te da la posición en el heap directamente y luego haces sift-up/sift-down. Es la estructura estándar en Dijkstra, matchmaking, schedulers de OS." },
+        { "letter": "D", "text": "Un TreeMap<rating, PlayerId>. Ofrece ordenamiento y update.", "correct": false, "why": "Problema sutil: dos jugadores pueden tener el mismo rating (colisión de key). Además, actualizar el rating requiere remove + insert manual, y no hay forma directa de encontrar la entrada por playerId sin escanear. Si TIENES que usarlo, necesitas TreeMap<rating, Set<PlayerId>> + HashMap<PlayerId, rating> — más código y más bugs." },
+        { "letter": "E", "text": "Redis Sorted Set (ZADD, ZPOPMAX, ZADD para update).", "correct": false, "why": "Es la respuesta correcta si el matchmaking es DISTRIBUIDO (varios servidores). Pero para el enunciado (una cola en memoria dentro de UN servicio), meter Redis introduce latencia de red innecesaria. La respuesta correcta asume estructura local. En un examen de arquitectura, esta sería la respuesta ganadora." }
+      ],
+      "explanation": "La regla de oro al elegir estructura: enumera TODOS los accesos que vas a hacer y su frecuencia. Si tu operación 'rara' (update de rating) es O(n), y ocurre 1000 veces por segundo con n=50000, tienes 50M ops/segundo solo en updates = servicio muerto. El heap indexado paga un poco más de memoria (HashMap adicional) para bajar todas las operaciones a O(log n).",
+      "realWorld": "Este es literalmente el diseño de la cola de matchmaking de League of Legends y del scheduler CFS de Linux (red-black tree, mismo espíritu). También lo verás en implementaciones de A* / Dijkstra en librerías de grafos.",
+      "tags": ["heap", "priority queue", "estructuras híbridas", "matchmaking"],
+      "tech": ["PriorityQueue", "TreeMap", "Redis ZSET"],
+      "references": [{ "title": "Sedgewick — Algorithms, 4th ed., §2.4 Priority Queues" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "fundamentals",
+      "topic": "Referencia vs valor — bug de mutación compartida",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr escribió este código en Python:\n\n```python\ndef init_users(n):\n    default = {'score': 0, 'items': []}\n    users = [default for _ in range(n)]\n    return users\n\nusers = init_users(3)\nusers[0]['items'].append('sword')\nprint(users[1]['items'])  # ??\n```\n\nEspera que `users[1]['items']` esté vacío. Reporta que 'algo raro pasa': todos los usuarios tienen la espada.",
+      "question": "¿Cuál es la causa del bug y la corrección más idiomática?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los diccionarios en Python son por valor: reemplazar `[default for _ in range(n)]` por `[dict(default) for _ in range(n)]`.", "correct": false, "why": "Los dicts NO son por valor — son por referencia (todo en Python es referencia excepto inmutables). Pero `dict(default)` solo hace shallow copy — copia el dict externo pero NO la lista interna 'items'. Los users siguen compartiendo la MISMA lista. Bug parcialmente fixed, sigue apareciendo en 'items'." },
+        { "letter": "B", "text": "El list comprehension reutiliza la misma referencia N veces. Usar `[{'score': 0, 'items': []} for _ in range(n)]` para crear un dict nuevo por iteración.", "correct": true, "why": "Correcto. `[default for _ in range(n)]` NO copia default: crea N referencias al MISMO dict. Cualquier mutación se ve reflejada en todos los slots. El fix crea un dict LITERAL nuevo en cada iteración, incluida su lista 'items'." },
+        { "letter": "C", "text": "Usar `copy.deepcopy(default)` en cada iteración.", "correct": false, "why": "Funciona técnicamente pero es matar mosca con cañón. `deepcopy` es lento y se usa cuando tienes estructuras anidadas complejas cuyo layout no controlas. Aquí, un literal directo es más claro, más rápido y más idiomático." },
+        { "letter": "D", "text": "Reemplazar `default = {...}` por `default = frozendict({...})` para forzar inmutabilidad.", "correct": false, "why": "frozendict no existe en stdlib (existe en PyPI pero raro). Además, no resuelve el problema real: la lista interna sería mutable de todos modos. El diagnóstico está mal." }
+      ],
+      "explanation": "Regla mental para Python (y también JavaScript, Ruby, Java para objetos): TODO son referencias excepto tipos inmutables (int, str, tuple, frozenset). Al asignar `a = b`, ambos apuntan al mismo objeto. Mutar por uno se ve por el otro. Este bug aparece en: (1) argumentos default mutables en funciones `def f(x=[]):`; (2) inicialización de matrices `[[0]*n]*n`; (3) copias shallow de estructuras anidadas. La solución preferida es siempre construir el objeto DENTRO del loop/comprehension, no reutilizar una referencia externa.",
+      "realWorld": "Este bug le pasó a Bitcoin Core en 2013: default argument mutable causó que múltiples nodos compartieran el mismo objeto de estado. En Django, el mismo patrón se documenta como 'gotcha' de argumentos default mutables en views.",
+      "tags": ["referencia", "mutabilidad", "shallow copy", "python gotcha"],
+      "tech": ["Python", "JavaScript"],
+      "references": [{ "title": "PEP 8 / Python docs — Common Gotchas" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "algorithms",
+      "topic": "Elegir el algoritmo correcto (no siempre el más 'inteligente')",
+      "difficulty": "mid",
+      "scenario": "Endpoint que recibe una lista de 10-30 items y debe devolverla ordenada por precio. Se ejecuta ~5000 veces por segundo. Un miembro del equipo propone reemplazar el `Collections.sort()` (que usa Timsort, O(n log n)) por un merge sort custom porque 'es más eficiente asintóticamente'.",
+      "question": "¿Cuál es la respuesta arquitecturalmente correcta y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aceptar el cambio: merge sort tiene mejor peor caso que Timsort.", "correct": false, "why": "Timsort YA es O(n log n) y en la práctica es MÁS RÁPIDO que un merge sort textbook porque explota runs ordenados existentes. Además, con n=10-30, la constante del sort domina — insertion sort ganaría, y de hecho Timsort usa insertion sort internamente para chunks pequeños." },
+        { "letter": "B", "text": "Rechazar: para n<32 la diferencia asintótica es irrelevante. Timsort ya cambia a insertion sort internamente por debajo de un umbral. Micro-optimizar aquí es riesgo sin ganancia.", "correct": true, "why": "Correcto. Big-O importa cuando n crece. Con n=30 y constantes de Timsort optimizadas en assembler, ganarle es prácticamente imposible con código Java propio. Y meter código custom introduce riesgo de bug de correctitud por 0 ganancia observable. La regla: no cambies código de librería estándar sin datos de perfilado que lo justifiquen." },
+        { "letter": "C", "text": "Aceptar solo si se benchmarks demuestran una mejora >20%.", "correct": false, "why": "Cercano pero incompleto. Aunque el benchmark sea favorable, el mantenimiento de un sort custom en tu codebase es una deuda técnica desproporcionada al beneficio. Además, hay que benchmark con datos REALES y con el load real, no un micro-benchmark en aislamiento." },
+        { "letter": "D", "text": "Reemplazar por bubble sort porque en n pequeño gana en cache locality.", "correct": false, "why": "Bubble sort es O(n²) — peor incluso con n pequeño que insertion sort. Nadie lo usa en producción salvo por razones educativas." }
+      ],
+      "explanation": "Ley del programador senior: el compilador/runtime/librería estándar es MÁS INTELIGENTE que tú en el 99% de casos porque tiene años de perfilado real. Sustituirlos requiere: (1) evidencia de perfilado, (2) beneficio que justifique la deuda técnica, (3) tests exhaustivos. Además: Big-O tiene sentido cuando n → ∞. Para n < 100, las constantes ocultas dominan. Un algoritmo O(n²) con constante pequeña puede batir a un O(n log n) con constante grande.",
+      "realWorld": "El commit famoso de Google 'faster hash function' que era 3x más lento en promedio porque el autor no midió con el tamaño real de las hash tables de producción. Y la anécdota de Knuth: 'Premature optimization is the root of all evil'.",
+      "tags": ["premature optimization", "sorting", "big-O real", "constantes"],
+      "tech": ["Timsort", "Java Collections"],
+      "references": [{ "title": "Knuth — 'Structured Programming with Goto Statements', 1974" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "data-structures",
+      "topic": "HashMap collision y cuando NO usarlo",
+      "difficulty": "senior",
+      "scenario": "Un desarrollador reporta que un endpoint de deduplicación de eventos que usa un HashSet<Event> se comporta inconsistentemente en producción: a veces detecta duplicados, a veces no, aleatoriamente. En dev funciona perfecto. La clase Event tiene `equals()` sobrescrito para comparar por `eventId` y `timestamp`, pero NO tiene `hashCode()` sobrescrito.",
+      "question": "¿Cuál es el bug y qué principio general viola?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo un tema estético: al sobrescribir equals sin hashCode, la mayoría de HashSets se rompen porque dos objetos 'iguales' terminan en buckets distintos.", "correct": true, "why": "Correcto. Contrato: si a.equals(b) entonces a.hashCode() == b.hashCode(). Sin sobrescribir hashCode(), Object.hashCode() devuelve algo basado en identidad de memoria — dos Event con mismo eventId+timestamp tendrán hashCodes DIFERENTES, irán a buckets distintos, y HashSet los tratará como distintos. En dev funciona por casualidad (mismo objeto reusado); en prod (objetos nuevos cada request) falla." },
+        { "letter": "B", "text": "El bug es concurrencia: HashSet no es thread-safe. Cambiar a ConcurrentHashMap.newKeySet().", "correct": false, "why": "Es un problema separado (real, pero no éste). El síntoma 'a veces detecta duplicados, a veces no' es indistinguible de la ausencia de hashCode override. En este caso, aún con ConcurrentHashMap y equals+hashCode incorrecto, el bug persiste." },
+        { "letter": "C", "text": "El bug es determinismo del timestamp: nunca hay dos events con el mismo timestamp.", "correct": false, "why": "Posible tema separado, pero el enunciado dice 'equals compara por eventId Y timestamp' — asumamos que sí matchea. El problema es que HashSet ni siquiera INVOCA equals() si los hashCodes son distintos, y los son sin override." },
+        { "letter": "D", "text": "Usar TreeSet en lugar de HashSet — compareTo evita el problema.", "correct": false, "why": "Solución técnica pero cambia el contrato: TreeSet necesita ordenamiento total. También requiere que compareTo sea consistente con equals — otra trampa. Mejor fijar hashCode correctamente." }
+      ],
+      "explanation": "El principio violado es el 'equals/hashCode contract' de Java (y GetHashCode/Equals en .NET, __eq__/__hash__ en Python). Regla dura: si sobrescribes uno, DEBES sobrescribir el otro. Las estructuras basadas en hash (HashMap, HashSet, LinkedHashMap, ConcurrentHashMap...) usan hashCode para localizar el bucket y equals solo para desambiguar colisiones. Sin override consistente, se rompen silenciosamente. Herramientas: IDE genera ambos con un click, Lombok @EqualsAndHashCode, records de Java 14+ los generan automáticamente.",
+      "realWorld": "Este bug tumbó un sistema de facturación en una fintech: eventos duplicados no se detectaban en prod porque cada evento se serializaba/deserializaba con Gson creando instancias nuevas, cada una con hashCode distinto. En dev tests usaban mocks singletons — mismo objeto, mismo hashCode.",
+      "tags": ["equals hashCode", "contrato", "hash collision", "dev vs prod"],
+      "tech": ["Java", "HashSet", "HashMap"],
+      "references": [{ "title": "Effective Java (Bloch) — Item 11: Always override hashCode when you override equals" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "data-structures",
+      "topic": "LinkedList vs ArrayList — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Un desarrollador defiende: 'para insertar al medio uso LinkedList porque es O(1). ArrayList es O(n)'. Otro contra-argumenta: 'en la práctica LinkedList casi nunca gana'.",
+      "question": "¿Cuáles afirmaciones son VERDADERAS sobre LinkedList vs ArrayList en el mundo real?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Insertar al medio de una LinkedList es O(1) SOLO si ya tienes el nodo (iterator). Si tienes solo un índice, hay que recorrer O(n) primero. En la mayoría de casos, el 'access' domina.", "correct": true, "why": "Correcto. La ventaja O(1) es solo cuando estás iterando y quieres splice. Para 'inserta en posición 500', el traversal cuesta 500 pasos → mismo O(n) efectivo que el shift de ArrayList." },
+        { "letter": "B", "text": "ArrayList tiene mejor cache locality: los elementos son contiguos en memoria, el prefetch de CPU los lee juntos. LinkedList tiene nodos dispersos → cache miss por elemento.", "correct": true, "why": "Correcto y crítico. En hardware moderno, un cache miss cuesta ~100 ciclos vs 1 ciclo de cache hit. LinkedList paga cache miss por cada `.next`. Bjarne Stroustrup demostró que ArrayList gana a LinkedList incluso en inserción/deleción al medio en la mayoría de tamaños prácticos por esto." },
+        { "letter": "C", "text": "LinkedList siempre gana en 'lista de tamaño desconocido' porque no necesita resize.", "correct": false, "why": "El 'no resize' es cierto pero es un beneficio marginal. ArrayList amortiza el resize a O(1) por append. Y LinkedList paga por cada nodo su overhead de dos punteros (16-24 bytes extra) — más memoria total." },
+        { "letter": "D", "text": "En Java, `java.util.LinkedList` implementa Queue/Deque además de List — útil como cola FIFO.", "correct": true, "why": "Correcto (dato práctico). Aunque incluso para cola, ArrayDeque generalmente es mejor por cache locality. LinkedList sobrevive por API compatibility." },
+        { "letter": "E", "text": "En Rust, `LinkedList` está en la stdlib pero el propio equipo desaconseja usarla — recomiendan `VecDeque` casi siempre.", "correct": true, "why": "Correcto. La doc oficial de Rust dice literalmente 'It is almost always better to use Vec or VecDeque'. Consenso moderno: LinkedList es un caso raro, no un default." }
+      ],
+      "explanation": "Big-O NO es toda la historia. En hardware moderno, la localidad de datos (cache) domina el rendimiento real. Estructuras contiguas (arrays, vectors) ganan por prefetch y menos indirection. Estructuras con nodos (linked lists, trees no balanceados) sufren cache misses. Por eso B-trees ganan a BSTs en DBs (más elementos por nodo = mejor cache). Regla moderna: 'prefer contiguous memory' salvo requisito específico (splice frecuente en secuencias grandes, iteradores estables tras insert).",
+      "realWorld": "Bjarne Stroustrup en Going Native 2012 demostró en vivo que `std::vector` gana a `std::list` incluso en el escenario clásicamente 'malo' de vector (insertar al medio manteniendo orden). Herb Sutter y muchos otros repitieron el mensaje: linked lists son casi siempre peor opción.",
+      "tags": ["cache locality", "LinkedList", "ArrayList", "modern hardware"],
+      "tech": ["Java", "C++", "Rust"],
+      "references": [{ "title": "Bjarne Stroustrup — 'Going Native 2012: Why you should avoid Linked Lists'" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "algorithms",
+      "topic": "Búsqueda binaria — condiciones y bugs típicos",
+      "difficulty": "mid",
+      "scenario": "Un desarrollador implementa búsqueda binaria clásica:\n\n```java\nint lo = 0, hi = arr.length - 1;\nwhile (lo <= hi) {\n    int mid = (lo + hi) / 2;\n    if (arr[mid] == target) return mid;\n    if (arr[mid] < target) lo = mid + 1;\n    else hi = mid - 1;\n}\nreturn -1;\n```\n\nUn revisor senior dice: 'esto tiene un bug famoso que afectó a la stdlib de Java durante años'.",
+      "question": "¿A qué bug se refiere y cómo se corrige?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El `<=` debería ser `<`. El bug es un off-by-one que causa loop infinito.", "correct": false, "why": "Falso. Con `<=` y las actualizaciones `mid+1` / `mid-1`, el algoritmo termina correctamente. Cambiarlo a `<` haría que falle en arrays de tamaño 1." },
+        { "letter": "B", "text": "`(lo + hi) / 2` puede overflow si lo+hi > Integer.MAX_VALUE. El fix es `lo + (hi - lo) / 2` o en Java `Integer.divideUnsigned(lo+hi, 2)`.", "correct": true, "why": "Correcto. Bug documentado por Joshua Bloch en 2006: `Arrays.binarySearch` de la stdlib de Java tenía este bug durante 9 años. Con arrays de más de 2^30 elementos (posible con arrays de bytes en aplicaciones de big data), lo+hi supera Integer.MAX_VALUE y wrappea a negativo. `lo + (hi-lo)/2` es aritméticamente equivalente pero no overflow." },
+        { "letter": "C", "text": "Falta manejar el caso arr null.", "correct": false, "why": "Es una validación buena en defensive programming pero no es el bug 'famoso' de la stdlib." },
+        { "letter": "D", "text": "Debería usar recursión para claridad.", "correct": false, "why": "Iterativa es preferible: sin stack overhead, sin riesgo de StackOverflowError. La stdlib usa iterativa." }
+      ],
+      "explanation": "Overflow silencioso es de los bugs más traicioneros porque no lanza excepción — simplemente da un número negativo mal. En Java, int overflow es UB en el sentido lógico (comportamiento silencioso definido pero probablemente indeseado). Prevención: (1) `lo + (hi-lo)/2` — nunca sale del rango; (2) usar `long` intermedio si no puedes garantizar rango; (3) Math.floorDiv, Math.addExact que lanzan excepción en overflow. Este mismo bug apareció en implementaciones de merge sort, en librería Guava, y en tests SIN encontrar hasta que alguien probó con arrays de 2GB.",
+      "realWorld": "Joshua Bloch publicó 'Extra, Extra – Read All About It: Nearly All Binary Searches and Mergesorts are Broken' en el blog oficial de Google Research (2006). El fix llegó a JDK 6. Todavía hoy se enseña en universidades como ejemplo de que 'algoritmos textbook' pueden esconder bugs 20 años.",
+      "tags": ["binary search", "overflow", "bugs famosos", "int"],
+      "tech": ["Java", "Arrays.binarySearch"],
+      "references": [{ "title": "Joshua Bloch — 'Nearly All Binary Searches and Mergesorts are Broken' (Google Research, 2006)" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "data-structures",
+      "topic": "HashMap vs TreeMap — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Un endpoint devuelve el histórico de precios de una acción por día. Los usuarios frecuentemente piden 'precios entre fecha X y fecha Y'. Un desarrollador usa `HashMap<LocalDate, Price>` y filtra: `map.entrySet().stream().filter(e -> in_range(e)).collect(...)`. Otro sugiere `TreeMap`.",
+      "question": "¿Qué estructura es correcta y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HashMap. Es O(1) por lookup, más rápido siempre.", "correct": false, "why": "O(1) es solo para lookup exacto por key. El caso de uso es RANGE QUERY, no lookup exacto. HashMap no tiene noción de orden entre keys — hay que escanear TODAS las entries: O(n)." },
+        { "letter": "B", "text": "TreeMap. Ofrece `subMap(from, to)` que devuelve una vista ordenada del rango en O(log n + k) donde k es el tamaño del rango. Es la estructura correcta para range queries.", "correct": true, "why": "Correcto. TreeMap (red-black tree en Java) ordena keys y permite operaciones de rango eficientes: subMap, headMap, tailMap, floorKey, ceilingKey. Para queries por rango sobre datos ordenables, es la opción canónica. Trade-off: put/get son O(log n) vs O(1) de HashMap." },
+        { "letter": "C", "text": "LinkedHashMap: preserva orden de inserción.", "correct": false, "why": "LinkedHashMap preserva orden de INSERCIÓN, no orden natural de keys. Para queries por rango de fechas, no ayuda salvo que insertes ordenadamente y hagas full scan comparando." },
+        { "letter": "D", "text": "Usar HashMap<Year, HashMap<Month, ...>> anidados.", "correct": false, "why": "Complica sin resolver el problema base: 'entre fecha X y fecha Y' que cruza años/meses sigue siendo full scan. Además, cascadas de HashMap son código frágil y difícil de leer." }
+      ],
+      "explanation": "Elección entre HashMap y TreeMap se basa en la operación DOMINANTE: (1) lookup exacto por key → HashMap O(1); (2) queries por rango u orden → TreeMap O(log n) por operación pero soporta subMap, first/last, ceiling/floor. También: TreeMap es predecible (log n siempre) mientras HashMap tiene O(1) amortizado pero puede degradar con hash colisiones (Java 8+ mitiga con árbol interno en bucket). En Postgres, un B-tree index es equivalente a TreeMap para queries de rango — por eso las DBs usan B-trees, no hash indexes por defecto.",
+      "realWorld": "Redis Sorted Sets (skip list, mismo espíritu que TreeMap) son la elección para leaderboards, series temporales, geospatial queries. HashMap-only ha causado incidentes: monitoreo de series temporales con dict Python normal → n=millones puntos → cada query 'last hour' escanea todo → CPU al 100%.",
+      "tags": ["TreeMap", "HashMap", "range query", "estructuras ordenadas"],
+      "tech": ["Java TreeMap", "Redis ZSET", "Postgres B-tree"],
+      "references": [{ "title": "Sedgewick — 'Algorithms 4th ed.' §3.3 Balanced Search Trees" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "algorithms",
+      "topic": "Recursión — memoization y complejidad",
+      "difficulty": "mid",
+      "scenario": "Un candidato en interview escribe fibonacci recursivo naive:\n\n```python\ndef fib(n):\n    if n < 2: return n\n    return fib(n-1) + fib(n-2)\n```\n\nCon n=40 tarda ~30 segundos.",
+      "question": "¿Cuál es la complejidad y la corrección mínima que la reduce drásticamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Complejidad O(n). Fix: cambiar a iteración con loop.", "correct": false, "why": "Iteración baja la complejidad Y elimina overhead de recursión, pero la complejidad de la versión recursiva NO es O(n). Es O(2^n) — árbol binario de llamadas casi completo hasta profundidad n." },
+        { "letter": "B", "text": "Complejidad O(2^n) por el árbol binario de llamadas duplicadas. Fix mínimo: memoization con @lru_cache o dict manual. Baja a O(n) tiempo y O(n) memoria.", "correct": true, "why": "Correcto. Cada llamada hace 2 más, sin cache; T(n) = T(n-1) + T(n-2) + O(1) ≈ Fibonacci(n) ≈ φ^n. La memoization guarda cada fib(k) computado una vez → n subproblemas únicos → O(n). En Python: `@functools.lru_cache(None)` sobre la función." },
+        { "letter": "C", "text": "Complejidad O(n log n). Fix: tail recursion optimization.", "correct": false, "why": "Complejidad mal identificada — no es n log n. Y Python no tiene TCO — el intérprete no elimina el frame. Además fib no es tail-recursive en su forma clásica." },
+        { "letter": "D", "text": "Complejidad O(n²). Fix: usar exponenciación de matriz.", "correct": false, "why": "Complejidad mal identificada. Matrix exponentiation baja a O(log n) — es real, pero es una optimización mucho más agresiva, no la respuesta a 'corrección mínima'." }
+      ],
+      "explanation": "Memoization = trade memoria por tiempo. Guardas resultados de subproblemas ya resueltos → complejidad se colapsa desde exponencial a polinomial. Es la base de Dynamic Programming (bottom-up = tabulation, top-down = memoization). Python facilita con `functools.lru_cache`. Reglas: solo funcional si la función es PURA (mismo input → mismo output). En Java: HashMap manual, en JavaScript: closure con Map. Warning: cuidado con memoization sobre argumentos no-hasheables (lists) — usa tuplas.",
+      "realWorld": "React usa memoization intensivamente: `useMemo`, `useCallback`, `React.memo`. Los engines de bases de datos memoizan planes de query. Compiladores memoizan resultados de análisis. La técnica está por todas partes bajo distintos nombres (caching, tabulation, DP).",
+      "tags": ["recursión", "memoization", "DP", "complejidad exponencial"],
+      "tech": ["Python", "functools.lru_cache"],
+      "references": [{ "title": "CLRS — Chapter 15: Dynamic Programming" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "fundamentals",
+      "topic": "Floating point — errores típicos",
+      "difficulty": "mid",
+      "scenario": "Un desarrollador reporta un bug en el checkout: `0.1 + 0.2 == 0.3` devuelve `false` en JavaScript. El código tiene:\n\n```js\nif (total === expectedTotal) { proceed(); }\n```\n\nY falla intermitentemente.",
+      "question": "¿Cuál es la explicación correcta y qué DEBE usarse para dinero?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es un bug de JavaScript. Otros lenguajes lo hacen bien.", "correct": false, "why": "Falso. `0.1 + 0.2 !== 0.3` es cierto en TODOS los lenguajes que usan IEEE 754 double precision (Java, C, C#, Python, Ruby...). No es bug del lenguaje: es cómo se representan decimales en binario." },
+        { "letter": "B", "text": "IEEE 754 no puede representar 0.1 exactamente en binario (fracción infinita, como 1/3 en decimal). La suma acumula error de redondeo. Para dinero: usar tipos DECIMAL (BigDecimal en Java, Decimal en Python/C#, decimal.js en JS, DECIMAL/NUMERIC en SQL). NUNCA float/double para dinero.", "correct": true, "why": "Correcto. Regla dura: dinero → decimal type (base 10). Cálculos con floats acumulan errores que en fintech son incidentes regulatorios. Java BigDecimal, Python decimal.Decimal, .NET decimal (128-bit base 10), Postgres NUMERIC. Alternativa 'pobre': guardar cents como entero (int/long) — funciona bien y evita todo lo del float." },
+        { "letter": "C", "text": "Usar `Math.abs(a - b) < 0.0001` — comparación con epsilon.", "correct": false, "why": "Solución PARCIAL para comparaciones aproximadas (útil en gráficos, ML, física). NO para dinero: acumular error a lo largo de miles de operaciones excede el epsilon. Y elegir un epsilon 'correcto' es magia negra. Usar decimal es la respuesta." },
+        { "letter": "D", "text": "Redondear a 2 decimales antes de comparar: `total.toFixed(2) === expected.toFixed(2)`.", "correct": false, "why": "Compara strings, no valores. Y el error en float puede empujar 0.005 hacia 0.00 o 0.01 al redondear (round-half-to-even vs half-up: distintos runtimes lo hacen distinto). Para dinero, decimal desde el principio." }
+      ],
+      "explanation": "IEEE 754 double representa números como (signo, mantissa, exponente) en base 2. Solo se representan exactamente decimales cuya expansión en binario termine (0.5, 0.25, 0.125...). El 0.1 en binario es 0.00011001100110011... (periódico infinito). Al truncar cabe 53 bits, hay error. La suma propaga el error. Reglas: (1) dinero → decimal o entero (cents); (2) comparaciones de floats → epsilon o mejor evitar; (3) NUNCA loops `while (x != 1.0)` con incrementos de 0.1; (4) para cálculos científicos hay libraries de arbitrary precision (mpmath, GMP).",
+      "realWorld": "El famoso Ariane 5 explotó en 1996 por overflow al convertir float64 a int16 (aunque distinto tipo de bug). Coinbase y otras crypto han tenido incidentes por usar floats en cálculo de fees. Todas las guidelines financieras (SOX, Basel III) requieren precisión decimal fija.",
+      "tags": ["floating point", "IEEE 754", "dinero", "decimal", "epsilon"],
+      "tech": ["JavaScript", "BigDecimal", "decimal", "NUMERIC"],
+      "references": [{ "title": "David Goldberg — 'What Every Computer Scientist Should Know About Floating-Point Arithmetic', ACM 1991" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "data-structures",
+      "topic": "Bloom Filter — cuándo y por qué",
+      "difficulty": "senior",
+      "scenario": "Diseñas un caché distribuido. Antes de consultar la DB para cada request, quieres saber si la key EXISTE. Consultar Redis por 'existe?' es rápido pero para 10^8 keys y 500k req/s es caro. Un compañero propone Bloom Filter.",
+      "question": "¿Cuándo es correcto usar un Bloom Filter y qué garantiza?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bloom Filter garantiza que si dice 'no existe' es CIERTO (no false negatives). Si dice 'existe' PUEDE ser falso positivo (con probabilidad tunable). Es útil como pre-filtro barato antes de hit caro: en el caso de 'no existe', evitas la query completamente.", "correct": true, "why": "Correcto. Bloom Filter usa k hash functions sobre m bits. Zero false negatives, false positives configurables (típico ~1%). Ejemplo de uso: Google Chrome verifica URLs contra lista de malware con Bloom Filter local — si el filtro dice 'no', no hay que consultar servidor. Ahorra 99% de queries." },
+        { "letter": "B", "text": "Bloom Filter es un HashMap más eficiente en memoria — reemplaza a HashSet.", "correct": false, "why": "Falso. Bloom Filter NO guarda las keys — solo bits. No puedes iterarlo, no puedes obtener 'las keys que contiene', y tiene falsos positivos. Es una PROBABILISTIC data structure, no un HashMap." },
+        { "letter": "C", "text": "Bloom Filter es determinista: si preguntas 'existe X?' siempre devuelve la misma respuesta.", "correct": false, "why": "Es determinista para MISMO conjunto de items insertados, pero puede dar false positives — es decir, decir 'existe X' cuando X nunca fue insertado (colisión de todos los k hashes). El uso correcto asume 'existe' = 'posiblemente existe, verificar en la fuente real'." },
+        { "letter": "D", "text": "Bloom Filter permite borrar keys.", "correct": false, "why": "Falso en la versión clásica: al setear un bit, puede haber sido compartido por otra key — no puedes 'desetear'. Existe Counting Bloom Filter (contador en cada slot) que sí permite borrar, con más memoria." }
+      ],
+      "explanation": "Probabilistic data structures cambian precisión por memoria/tiempo. Bloom Filter: 'existe en el set?' con false positives. HyperLogLog: 'cuántos elementos únicos?' con error ~2%. Count-Min Sketch: 'cuántas veces apareció X?' con overestimation. Uso típico: pre-filtro barato antes de operación cara (query a disco, red, DB). El diseño clave: el filtro cabe en RAM (10^8 keys ~ 100 MB con 1% error), la fuente real (DB) responde solo cuando el filtro dice 'quizás sí'.",
+      "realWorld": "Cassandra usa Bloom Filters para saber si una SSTable en disco contiene una key — evita el hit de disco si dice 'no'. Google BigTable, LevelDB, RocksDB, Postgres pg_bloom lo usan. Chrome Safe Browsing usa BF para lista de malware. Medium documenta uso de Bloom Filter para 'is article already recommended to this user?'.",
+      "tags": ["bloom filter", "probabilistic", "trade-offs", "memoria"],
+      "tech": ["Cassandra", "Redis", "RocksDB"],
+      "references": [{ "title": "Burton Bloom — 'Space/Time Trade-offs in Hash Coding with Allowable Errors', 1970" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "algorithms",
+      "topic": "Two pointers / Sliding window — reconocer el patrón",
+      "difficulty": "mid",
+      "scenario": "Problema: 'dado un array de enteros positivos, encuentra el subarray CONTIGUO más largo cuya suma sea ≤ K'. Un candidato propone: 'genero todos los subarrays y para cada uno checkeo la suma'.",
+      "question": "¿Cuál es la complejidad de la solución naïve y cómo se optimiza con sliding window?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Naive es O(n²) (todos los pares i,j). Sliding window mueve dos punteros (left, right); expande right sumando, cuando la suma > K contrae left restando. Cada índice se visita máximo 2 veces → O(n).", "correct": true, "why": "Correcto. Naive genera n(n-1)/2 pares y suma cada uno O(n) → O(n³) sin optimizar (o O(n²) con prefix sums). Sliding window explota que el array es de POSITIVOS: agregar aumenta suma, quitar la baja. Los dos punteros se mueven monotónicamente. Complejidad amortizada O(n)." },
+        { "letter": "B", "text": "Naive es O(n log n) porque puede binary-searchear el right.", "correct": false, "why": "No para este problema en su forma más simple. Binary search sobre prefix sums funciona si el array es de positivos y quieres el subarray de suma exactamente K — otra variante. La complejidad naive por definición es O(n²) o O(n³) según implementación." },
+        { "letter": "C", "text": "No se puede optimizar; O(n²) es óptimo.", "correct": false, "why": "Falso. Sliding window da O(n). Es un patrón fundamental que todo mid-level debería reconocer." },
+        { "letter": "D", "text": "Solo funciona con DP; no hay solución iterativa.", "correct": false, "why": "Falso. Este es EL problema para sliding window — no requiere DP. DP se usaría si permites números negativos y el patrón no sea monotónico." }
+      ],
+      "explanation": "Sliding window (o 'two pointers') se aplica cuando: (1) trabajas con subarrays/substrings contiguos; (2) la ventana crece/encoge según una condición monotónica. Se usa en: substring más largo sin caracteres repetidos, min-window substring, k-diferentes elementos, etc. Requiere invariante: al mover el puntero derecho, ¿qué necesito para mantener validez? Al mover el izquierdo, ¿cómo restauro? Es un patrón que reduce muchos problemas de O(n²) a O(n). Cuando el array tiene negativos o la condición no es monotónica, sliding window puede no aplicar directamente — usar prefix sums + HashMap.",
+      "realWorld": "Rate limiting en APIs (Redis Cell, sliding-window log/counter) es el mismo patrón: ventana temporal de N segundos. TCP congestion window. Compression algorithms (LZ77) usan sliding window sobre bytes. Es un patrón general aplicable en ingeniería de sistemas.",
+      "tags": ["sliding window", "two pointers", "patrones", "optimización"],
+      "tech": [],
+      "references": [{ "title": "Skiena — 'The Algorithm Design Manual', Ch. Techniques" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "fundamentals",
+      "topic": "Big-O de operaciones en estructuras stdlib",
+      "difficulty": "junior",
+      "scenario": "Un desarrollador está memorizando complejidades. Marca las siguientes: (a) Python `dict[key]`, (b) Java `HashMap.get`, (c) Python `list.index(x)`, (d) Java `LinkedList.get(i)`, (e) Python `set.add(x)`.",
+      "question": "¿Cuáles son CORRECTAS según los docs oficiales (caso promedio)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Python `dict[key]` es O(1) promedio, O(n) peor caso.", "correct": true, "why": "Correcto. CPython implementa dict con open addressing hash table. Promedio O(1), peor caso O(n) por colisiones adversariales (hash flooding attack, mitigado con randomization desde Python 3.3)." },
+        { "letter": "B", "text": "Java `HashMap.get` es O(1) promedio, O(log n) peor caso desde Java 8.", "correct": true, "why": "Correcto. Desde Java 8, si un bucket tiene >8 elementos y la tabla tiene >64, se convierte a red-black tree — de ahí el O(log n) peor caso vs O(n) previo." },
+        { "letter": "C", "text": "Python `list.index(x)` es O(1).", "correct": false, "why": "Falso. `list.index(x)` busca linealmente por valor → O(n). Confundir con `list[i]` (acceso por índice) que sí es O(1). Bug común: usar `if x in list` (O(n)) cuando quisieras `if x in set` (O(1))." },
+        { "letter": "D", "text": "Java `LinkedList.get(i)` es O(1).", "correct": false, "why": "Falso. LinkedList.get(i) recorre desde el head (o tail si i > size/2) → O(n). ArrayList.get(i) es O(1). Este es un error común en interviews." },
+        { "letter": "E", "text": "Python `set.add(x)` es O(1) promedio.", "correct": true, "why": "Correcto. Set en Python usa hash table (mismo espíritu que dict). Add, contains, remove todos O(1) promedio." }
+      ],
+      "explanation": "Conocer las complejidades de operaciones stdlib es fundamental para no elegir la estructura equivocada. Tabla mental (Python): list access O(1), search O(n), append O(1) amortizado; dict/set access O(1) promedio; sorted O(n log n). Java: ArrayList get O(1), add amortizado O(1), contains O(n); HashMap O(1) promedio; TreeMap O(log n). Java tiene además LinkedHashMap (preserva orden), ConcurrentHashMap (thread-safe). Python 3.7+ dicts preservan orden de inserción por spec.",
+      "realWorld": "En 2011 se descubrió 'hash flooding' contra Java, Python, Ruby: atacantes enviaban strings con hashes colisionantes, saturando HashMap y causando DoS. Todos parchearon con hash randomization (SipHash en Python, randomized seed en Java). Es la razón por la que HashMap peor caso importa en producción.",
+      "tags": ["stdlib", "complejidad", "estructuras básicas"],
+      "tech": ["Python", "Java"],
+      "references": [{ "title": "Python Time Complexity Wiki" }, { "title": "Java Collections Framework docs" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "algorithms",
+      "topic": "String algorithms — no reinventar",
+      "difficulty": "senior",
+      "scenario": "Necesitas verificar si un texto contiene alguna de 10.000 palabras 'prohibidas' (moderación de contenido). Un desarrollador propone: `for word in banned: if word in text: return True`.",
+      "question": "¿Por qué es problemático y qué estructura resuelve mejor?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Está bien: `word in text` es O(1) porque strings son inmutables.", "correct": false, "why": "Falso. `word in text` es O(|text| + |word|) o peor sin optimización (Boyer-Moore mejora en promedio). Total: O(k * (|text| + |word|)) con k=10000. Con texto largo y k grande, es lento." },
+        { "letter": "B", "text": "Cada búsqueda escanea el texto entero. Con 10k palabras es O(k × |text|). Alternativa: Aho-Corasick — construye un autómata que busca TODAS las palabras en un SOLO paseo por el texto: O(|text| + suma|word| + matches).", "correct": true, "why": "Correcto. Aho-Corasick (1975) es el algoritmo canónico para 'multi-pattern string matching'. Construye un trie de patrones con failure links (como KMP generalizado). Un solo paseo por el texto encuentra TODAS las ocurrencias. Es lo que usan antivirus, IDS (Snort), fgrep (originalmente)." },
+        { "letter": "C", "text": "Regex con alternation: `(word1|word2|...|word10000)`.", "correct": false, "why": "Superficialmente similar pero: (1) el regex engine backtracking puede ser catastrófico con 10k alternativas — 'ReDoS'; (2) engines modernos (RE2, Rust regex) internamente construyen algo similar a Aho-Corasick, PERO no todos los engines lo hacen. Preferible usar Aho-Corasick explícitamente." },
+        { "letter": "D", "text": "Guardar palabras en HashSet y hacer `for w in text.split(): if w in banned`.", "correct": false, "why": "Solo funciona si las palabras prohibidas son exactamente words con separadores conocidos. Falla si la palabra está incrustada (b4dw0rd, banned-word con guiones, o UTF-8 con normalizaciones). Aho-Corasick maneja substrings arbitrarios." }
+      ],
+      "explanation": "Cuando aparece 'buscar múltiples patrones en un texto', el algoritmo canónico es Aho-Corasick. No es exótico — está en librerías (pyahocorasick, Java Aho-Corasick, Go cloudflare/ahocorasick). Alternativas por caso: (1) UN patrón muy usado → KMP o Boyer-Moore; (2) matching aproximado (typos) → Levenshtein automaton; (3) full-text search con ranking → Elasticsearch/Lucene (inverted index + tf-idf). No reinventar: usar herramientas correctas.",
+      "realWorld": "El comando `fgrep` usaba Aho-Corasick para búsqueda de múltiples strings. Snort IDS lo usa para matching de firmas de ataques. Sistemas de moderación (Facebook, Reddit) usan variantes optimizadas. En bio-informática, matching de motifs de DNA usa el mismo algoritmo.",
+      "tags": ["string matching", "Aho-Corasick", "algoritmos clásicos"],
+      "tech": ["pyahocorasick", "fgrep", "Snort"],
+      "references": [{ "title": "Aho & Corasick — 'Efficient string matching: An aid to bibliographic search', CACM 1975" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "data-structures",
+      "topic": "Union-Find (Disjoint Set Union)",
+      "difficulty": "senior",
+      "scenario": "Un compañero está implementando 'friends recommendation': dados N usuarios y M pares de amistades, agrupar usuarios en componentes conexos. Con N=10M, M=100M, su BFS/DFS clásico tarda muchísimo. Piensa en 'algo tipo Union-Find' pero no está seguro.",
+      "question": "¿Cuáles afirmaciones son CIERTAS sobre Union-Find en este contexto?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Union-Find con path compression y union by rank ofrece complejidad prácticamente O(1) amortizada por operación (α(n) — función inversa de Ackermann, ≤4 para n cósmico).", "correct": true, "why": "Correcto. Tarjan (1975) demostró la complejidad α(n). En la práctica, es constante para cualquier N imaginable. Con N=10M, α(n) ≈ 4. Es la estructura correcta para 'agrupar dinámicamente y consultar componente'." },
+        { "letter": "B", "text": "Es óptimo para el enunciado: procesar las 100M amistades con union() y responder 'están conectados X e Y?' con find(). BFS/DFS son óptimos para explorar UN grafo estático — no para stream de conexiones.", "correct": true, "why": "Correcto. Union-Find es 'incremental': cada nueva amistad se procesa en O(α(n)). BFS/DFS son single-shot: si añades una arista después, hay que re-explorar. Para streams de aristas, DSU gana categóricamente." },
+        { "letter": "C", "text": "Union-Find NO soporta borrar aristas (para 'des-hacerse amigos'). Fixed union — no split.", "correct": true, "why": "Correcto. La estructura clásica es monótona (solo une, nunca separa). Para desunir, necesitas 'Link-Cut Trees' o 'Euler Tour Trees' — mucho más complejos. En diseño real, esto es una limitación real de DSU." },
+        { "letter": "D", "text": "Union-Find se usa en el algoritmo de Kruskal para MST (Minimum Spanning Tree).", "correct": true, "why": "Correcto. Kruskal ordena aristas por peso, itera añadiendo si NO forma ciclo — ciclo = ambos vértices en el mismo componente. Chequeo con find(u) == find(v). O(m log m) total." },
+        { "letter": "E", "text": "En Python, hay que implementarlo a mano — no hay en stdlib.", "correct": true, "why": "Correcto. Python stdlib no tiene DSU. Se implementa en ~20 líneas. Java tampoco lo tiene stdlib. En competitive programming se implementa siempre; librería 'scipy.sparse.csgraph' tiene una implementación." }
+      ],
+      "explanation": "Union-Find (DSU) resuelve 'estás en el mismo componente?' con complejidad casi constante. Optimizaciones críticas: (1) path compression — cuando haces find(x), pon x apuntando directo a la raíz; (2) union by rank/size — al unir, cuelga el árbol más pequeño del más grande. Sin ambas, degradas a O(n) por operación. Aplicaciones: MST (Kruskal), detección de ciclos en grafo, connected components dinámicos, image processing (connected pixels), typing systems (Hindley-Milner unification).",
+      "realWorld": "Facebook 'friends of friends' se resuelve con variantes de DSU + BFS acotado. Compiladores usan DSU para type unification (Hindley-Milner). Percolation en física computacional usa DSU sobre grid. En 2020, Cloudflare publicó cómo usan estructuras similares para IP address grouping en su edge network.",
+      "tags": ["union find", "DSU", "grafos", "componentes conexos"],
+      "tech": ["Kruskal", "connected components"],
+      "references": [{ "title": "Tarjan — 'Efficiency of a Good But Not Linear Set Union Algorithm', JACM 1975" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "algorithms",
+      "topic": "Complejidad espacial — no solo tiempo",
+      "difficulty": "senior",
+      "scenario": "Un endpoint procesa un archivo CSV de 20GB para generar estadísticas. La primera versión: `df = pandas.read_csv('20gb.csv'); df.groupby('user').sum()`. Se queda sin memoria en producción (pod con 4GB RAM).",
+      "question": "¿Cuál es la estrategia arquitectural más correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aumentar la memoria del pod a 32GB. Es más simple.", "correct": false, "why": "Solución sí, escalable no. Si el archivo mañana es 200GB no cabe. Y el costo de un pod 32GB es alto (mayoría de horas del día no lo necesita). Es el patrón que llevó a AWS a inventar Lambda y stream processing." },
+        { "letter": "B", "text": "Streaming: leer el archivo por chunks (pandas chunksize, o `csv.reader`), procesar cada chunk, acumular resultado incremental (dict de sums por user). Complejidad espacial O(unique_users) en lugar de O(rows).", "correct": true, "why": "Correcto. Es la técnica canónica para 'data doesn't fit in memory'. El streaming procesa en O(1) memoria adicional por chunk. Para groupby, mantienes un dict acumulador — normalmente unique_users << rows. Es el modelo que usan MapReduce, Spark, y ETL modernos." },
+        { "letter": "C", "text": "Ordenar el archivo por 'user' externamente (external sort en disco) y luego procesar secuencialmente por grupos.", "correct": false, "why": "Válido si el groupby es sobre columnas MUY cardinales (unique_users comparable a rows) donde un dict no cabe en memoria. Es la técnica de Unix `sort | uniq -c`, y de motores MR. Pero para 'streaming groupby normal' es sobre-complejo." },
+        { "letter": "D", "text": "Migrar a Snowflake/BigQuery. Nada se hace en memoria de la app.", "correct": false, "why": "Excelente solución arquitectural a largo plazo. Pero el enunciado plantea 'cambiar la solución de código', no 'migrar arquitectura'. Respuesta correcta con matiz." }
+      ],
+      "explanation": "Complejidad espacial es la 'segunda dimensión' de eficiencia. Reglas: (1) si tu algoritmo requiere cargar todo en memoria y los datos crecen, has creado deuda; (2) piensa en streams — muchas operaciones (sum, count, min/max, groupby con pocas keys, top-k con heap) se pueden hacer en O(1) o O(log n) espacio; (3) para operaciones que fundamentalmente requieren todo el dataset (mediana exacta, sort general), usar external sort/algorithms. Este modelo mental está detrás de MapReduce, Spark, Flink, y todo procesamiento de big data.",
+      "realWorld": "Google MapReduce paper (2004) muestra el patrón shuffle+reduce que resuelve exactamente estos casos. AWS Lambda tiene límite de 10GB RAM por request — obliga a streaming. Stripe procesa terabytes de logs diarios con Spark streaming. En 2020, Discord migró su pipeline de Rust a algo aún más streaming por costos de RAM.",
+      "tags": ["complejidad espacial", "streaming", "external sort", "memoria"],
+      "tech": ["pandas", "Spark", "MapReduce"],
+      "references": [{ "title": "Dean & Ghemawat — 'MapReduce: Simplified Data Processing on Large Clusters', 2004" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "data-structures",
+      "topic": "LRU Cache — diseño e implementación",
+      "difficulty": "staff",
+      "scenario": "Necesitas un caché en memoria de 10.000 entradas máximo. Cuando se llena, expulsa la entrada MENOS RECIENTEMENTE USADA. Cada get/put debe ser O(1). Un compañero implementa: `HashMap<K, V>` + lista de keys ordenada por acceso. Get es O(1) para el value, pero para 'actualizar como MRU' hace `list.remove(k); list.add(k)` → O(n).",
+      "question": "¿Cuál es el diseño canónico de LRU Cache O(1) y qué combina?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HashMap<K, Node> + Doubly Linked List de Nodes. HashMap da O(1) para localizar el Node; DLL permite unlink en O(1) (prev/next del Node) y move-to-front en O(1). Get: lookup, move-to-front. Put: si existe update+move, si no insert + evict tail si supera capacidad.", "correct": true, "why": "Correcto y es la respuesta EXACTA esperada en interviews FAANG. La clave: el HashMap almacena PUNTEROS a nodos de la DLL, no valores directos. Así el 'remove desde middle' de la DLL es O(1) (no hay que buscar). Java: LinkedHashMap con accessOrder=true hace exactamente esto." },
+        { "letter": "B", "text": "TreeMap con timestamp como key.", "correct": false, "why": "TreeMap ordena por key. Actualizar timestamp requiere remove + insert O(log n). Además, colisiones de timestamp complicarían. No O(1)." },
+        { "letter": "C", "text": "PriorityQueue por 'last access time'.", "correct": false, "why": "PriorityQueue no soporta update de prioridad en O(1) ni pop-min-cuando-existe-en-medio. Terminaría en O(log n) o peor." },
+        { "letter": "D", "text": "Un solo HashMap con expiración TTL.", "correct": false, "why": "TTL no es LRU. TTL expira por tiempo absoluto; LRU expira el menos usado independientemente del tiempo. Semánticas distintas — muchos caches soportan ambos." }
+      ],
+      "explanation": "LRU es un problema clásico que enseña composición de estructuras. La lección: cuando ninguna estructura sola te da todos los tiempos requeridos, combinar dos donde una compensa la limitación de la otra. Aquí: HashMap resuelve lookup O(1); DLL resuelve reordenamiento O(1) con punteros conocidos. En Java, `LinkedHashMap` está construido así internamente — puedes activar `accessOrder=true` y overridear `removeEldestEntry` para tener LRU listo. Otras políticas de cache: LFU (least frequently used), FIFO (Redis default), ARC (adaptive), 2Q, W-TinyLFU (usado en Caffeine).",
+      "realWorld": "Caffeine (librería Java de caché) usa W-TinyLFU que outperforma LRU en la mayoría de workloads. Redis soporta múltiples policies: LRU, LFU, TTL, random. El Linux page cache usa CLOCK-Pro (variante de LRU eficiente). En interviews de Meta/Google, LRU Cache es el problema #146 de LeetCode — casi obligatorio.",
+      "tags": ["LRU", "cache", "HashMap + DLL", "diseño"],
+      "tech": ["LinkedHashMap", "Caffeine", "Redis"],
+      "references": [{ "title": "LeetCode 146 — LRU Cache" }, { "title": "Caffeine docs — 'Design'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "algorithms",
+      "topic": "Complejidad de operaciones distribuidas — factor red",
+      "difficulty": "staff",
+      "scenario": "Un endpoint hace: `users = getUsersFromDb(); for user in users: profile = getProfileFromMicroservice(user.id); enrich(user, profile);`. Con 500 usuarios, tarda 30 segundos. Local en dev, milisegundos.",
+      "question": "¿Cuál es el diagnóstico y las estrategias de fix aceptables? (marca todas las CORRECTAS)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Es el clásico 'N+1 problem' aplicado a red: 500 HTTP requests seriales × latencia RTT (~50ms típico) = 25 segundos solo en red. En dev, mock/localhost es ~0.1ms RTT — invisible.", "correct": true, "why": "Correcto. Big-O de red = latencia × número de round-trips. En sistemas distribuidos, cada llamada cross-service es un costo fijo grande. La complejidad efectiva de tu algoritmo depende MÁS del número de round-trips que del CPU." },
+        { "letter": "B", "text": "Batching: modificar el microservicio para soportar `POST /profiles/batch` con lista de IDs. 500 requests → 1 request. Latencia total: 1 RTT + processing.", "correct": true, "why": "Correcto y es la solución preferida cuando el microservicio la soporta. Reduce round-trips drásticamente. Todos los microservicios diseñados en scale (Stripe, Twilio, Google APIs) exponen batch endpoints." },
+        { "letter": "C", "text": "Paralelización: hacer las 500 requests en paralelo con thread pool o async (asyncio.gather, CompletableFuture.allOf). Latencia total: max(500 latencias) ≈ 1 latencia grande.", "correct": true, "why": "Correcto y es fix rápido cuando no puedes cambiar el microservicio. Debe hacerse con RATE LIMIT (semáforo, límite de concurrencia) para no saturar el downstream. Herramientas: aiohttp Semaphore, Java ExecutorService bounded." },
+        { "letter": "D", "text": "Caching: si los profiles cambian poco, memoize con TTL. En segundas requests, cero round-trips.", "correct": true, "why": "Correcto y ortogonal. Redis o local cache in-memory. Cuidado con invalidación: 'there are only two hard things in CS: cache invalidation and naming things' (Phil Karlton)." },
+        { "letter": "E", "text": "Data locality: mover el profile-service AL MISMO POD que el endpoint para eliminar red.", "correct": false, "why": "Va contra el diseño de microservicios (¿por qué son servicios separados si van a compartir pod?). Ademmás, no elimina red — TCP loopback tiene menor pero no cero latencia. Y viola independencia de deploy. Anti-arquitectural." }
+      ],
+      "explanation": "Diseño de sistemas distribuidos: la complejidad efectiva la mide el número de round-trips y el volumen de datos por la red. Modelo mental: cada llamada cross-service es como un 'sort' costoso — busca minimizarlas. Herramientas: (1) batching (colapsar N calls en 1); (2) paralelización (concurrent calls); (3) caching (evitar calls); (4) proximidad (mismo AZ, edge caching). GraphQL fue diseñado literalmente para resolver este problema (dataloader + un solo request agregado). Otro patrón: BFF (Backend for Frontend) que agrega llamadas del lado servidor.",
+      "realWorld": "El paper 'Latency Numbers Every Programmer Should Know' (Jeff Dean) es la biblia: L1 cache 0.5ns, RAM 100ns, disco 10ms, red round-trip 50-500ms. Netflix construyó su BFF (called 'Falcor') para resolver esto. Facebook creó GraphQL por la misma razón. En 2020, TikTok tuvo un incidente por N+1 en su feed generation que causó latencia p99 catastrófica.",
+      "tags": ["N+1", "distribuidos", "batching", "latencia", "async"],
+      "tech": ["GraphQL", "BFF", "Redis", "async"],
+      "references": [{ "title": "Jeff Dean — 'Latency Numbers Every Programmer Should Know'" }, { "title": "Kleppmann — 'Designing Data-Intensive Applications' Ch. 8" }]
+    }
+  ]
+}

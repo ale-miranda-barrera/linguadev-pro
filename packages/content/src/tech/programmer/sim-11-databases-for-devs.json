@@ -1,0 +1,415 @@
+{
+  "id": "programmer-sim-11-databases-for-devs",
+  "trackId": "programmer",
+  "order": 11,
+  "title": "Simulacro 11 — Bases de datos para developers (índices, EXPLAIN, aislamiento)",
+  "focus": "Lo que un DEV (no un DBA) debe dominar de la DB relacional: cómo funcionan los índices por dentro, leer EXPLAIN, evitar N+1, connection pooling, niveles de aislamiento y patrones para dormir tranquilo.",
+  "areaCoverage": ["apis", "fundamentals"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "fundamentals",
+      "topic": "B-tree vs Hash vs GIN — cuándo cada uno",
+      "difficulty": "senior",
+      "scenario": "Postgres. Tienes una tabla `articles(id BIGINT, tags TEXT[], search_vector TSVECTOR, category TEXT, created_at TIMESTAMPTZ)`. Cuatro queries frecuentes: (a) `WHERE category = 'news'`, (b) `WHERE tags @> ARRAY['ml']`, (c) `WHERE search_vector @@ to_tsquery('rust')`, (d) `WHERE created_at BETWEEN a AND b`. Un compañero propone un índice B-tree único que cubra todo.",
+      "question": "¿Qué combinación de tipos de índice es la correcta y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un solo B-tree compuesto sobre (category, tags, search_vector, created_at).", "correct": false, "why": "Falso por dos razones: (1) B-tree no soporta operadores de contenimiento en arrays (@>) ni full-text (@@); Postgres no lo usaría. (2) Un índice compuesto solo sirve para filtros que respetan el prefijo de columnas — una consulta por created_at sola lo ignoraría." },
+        { "letter": "B", "text": "B-tree en category y created_at (por separado), GIN en tags y en search_vector.", "correct": true, "why": "Correcto. B-tree es óptimo para igualdad y rangos escalares (category, created_at). GIN (Generalized Inverted Index) está diseñado exactamente para conjuntos: arrays, jsonb, tsvector. Usa una estructura de lista invertida (término → filas) — perfecto para @>, ?, @@. Postgres lo documenta explícitamente." },
+        { "letter": "C", "text": "Hash index en category (igualdad), B-tree en el resto.", "correct": false, "why": "Antes de Postgres 10, hash no era WAL-logged y estaba desaconsejado. Desde 10 es válido pero solo cubre igualdad exacta (=) y no soporta ordering, index-only scans ni multi-columna. En la práctica, B-tree para igualdad casi siempre iguala o supera y es más versátil. Además no ayuda con tags ni search_vector." },
+        { "letter": "D", "text": "BRIN en todas las columnas — es el más nuevo y eficiente en espacio.", "correct": false, "why": "BRIN (Block Range Index) es útil solo cuando los datos están físicamente ordenados por la columna (típicamente created_at con INSERT append-only). No sirve para tags ni tsvector. Confundir 'moderno' con 'universal' es un error clásico." }
+      ],
+      "explanation": "Los tipos de índice de Postgres no son intercambiables: cada uno se optimiza para un patrón de acceso. B-tree para orden total (=, <, >, BETWEEN, ORDER BY). Hash solo para igualdad y rara vez es preferible. GIN para muchos-valores-por-fila (arrays, jsonb, full-text). GiST para tipos geométricos y KNN. BRIN para tablas gigantes con orden natural (logs por fecha). SP-GiST para datos no balanceados. Elegir mal = seq scans en producción con timeouts.",
+      "realWorld": "El equipo de search de GitHub migró búsqueda de código de Solr a Elasticsearch en 2020 en parte por el modelo de inverted index (GIN es la versión Postgres). Para full-text moderado, Postgres + GIN sobre tsvector escala bastante bien — Discourse (foros) lo usa exactamente así.",
+      "tags": ["índices", "postgres", "GIN", "B-tree", "BRIN"],
+      "tech": ["PostgreSQL", "GIN", "B-tree"],
+      "references": [{ "title": "PostgreSQL Docs — Chapter 11: Indexes" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "apis",
+      "topic": "Leer EXPLAIN ANALYZE — señales de alarma",
+      "difficulty": "senior",
+      "scenario": "Un endpoint lento. Corres EXPLAIN ANALYZE y ves el nodo raíz:\n\n```\nSeq Scan on orders  (cost=0.00..245831.00 rows=1 width=132) \n                    (actual time=0.045..3421.223 rows=1 loops=1)\n  Filter: (customer_id = 42)\n  Rows Removed by Filter: 5842103\nPlanning Time: 0.412 ms\nExecution Time: 3421.301 ms\n```\n\nHay un índice en customer_id.",
+      "question": "¿Cuál es el diagnóstico y la acción inmediata más útil?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El planner cree que solo devolverá 1 fila (rows=1 estimado) pero la realidad es 1 fila real. Está bien. El lento viene del disco.", "correct": false, "why": "Confunde 'cost' con 'reality'. El síntoma real es que hizo Seq Scan pese a tener índice — el planner decidió no usarlo. Si de verdad devolviera 1 fila, la seek por índice sería trivialmente ganadora." },
+        { "letter": "B", "text": "El planner ignora el índice — casi siempre por estadísticas desactualizadas o por un cast implícito (columna BIGINT vs literal INTEGER). Correr `ANALYZE orders;` y verificar tipos.", "correct": true, "why": "Correcto. Un Seq Scan cuando existe índice suele indicar: (1) estadísticas viejas (pg_stat con distribución incorrecta), (2) cast implícito que rompe el uso del índice (`WHERE big_id = '42'` con big_id BIGINT — funciona pero muchas veces impide el índice), (3) función sobre la columna (`WHERE lower(email) = ...` sin índice funcional). ANALYZE actualiza estadísticas; revisar tipos con \\d+ evita el segundo caso." },
+        { "letter": "C", "text": "Hay que agregar más RAM al servidor — 5M rows filtradas son mucho para memoria.", "correct": false, "why": "El seq scan es I/O bound, sí, pero el fix no es hardware — es que la query use el índice existente. Es tirar dinero a un problema de configuración." },
+        { "letter": "D", "text": "Cambiar el índice a UNIQUE. Los índices únicos siempre ganan al planner.", "correct": false, "why": "UNIQUE no cambia la decisión del planner (solo agrega constraint). Si el planner ya sabe que la columna es cardinal alta y aun así hace seq scan, hay otro problema (estadísticas o cast)." }
+      ],
+      "explanation": "Leer EXPLAIN ANALYZE con calma revela mucho: (1) 'Seq Scan' con filtro alto = índice ausente o ignorado; (2) 'rows estimated' muy distinto de 'rows actual' = estadísticas malas → correr ANALYZE (o auto-analyze bien configurado); (3) 'Nested Loop' con muchas rows exteriores = a menudo mejor con Hash Join (aumentar work_mem); (4) 'Rows Removed by Filter' alto = filtro no cubierto por índice; (5) 'Buffers: shared read=X' con EXPLAIN (ANALYZE, BUFFERS) = cache miss, chequear shared_buffers.",
+      "realWorld": "Uber publicó en 2016 (con controversia) su migración de Postgres a MySQL: uno de los motivos citados fue la dificultad de razonar sobre planners cuando las tablas crecían. Independientemente de la decisión, el punto es real: nadie puede optimizar una query sin leer EXPLAIN.",
+      "tags": ["explain", "planner", "estadísticas", "postgres"],
+      "tech": ["PostgreSQL", "EXPLAIN ANALYZE"],
+      "references": [{ "title": "Use The Index, Luke! — Markus Winand" }, { "title": "PostgreSQL Docs — 14. Performance Tips" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "apis",
+      "topic": "N+1 queries — detección y solución",
+      "difficulty": "mid",
+      "scenario": "Endpoint `GET /users` que devuelve 100 usuarios con sus últimos 5 posts. En logs de DB ves 501 queries por request: 1 SELECT users + 500 SELECT posts. El ORM es SQLAlchemy.",
+      "question": "¿Cuál es la solución más idiomática al problema N+1?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Eager loading con `joinedload` o `selectinload`: `session.query(User).options(selectinload(User.posts))`. Genera 2 queries en lugar de 101.", "correct": true, "why": "Correcto. `selectinload` emite 2 queries: 1 para usuarios, 1 para posts con `WHERE user_id IN (…)`. `joinedload` emite 1 query con JOIN (mejor para 1:1, peor si el multiplicador es alto porque duplica columnas del padre). En Rails el equivalente es `includes(:posts)`; en Django `prefetch_related`; en Hibernate `@BatchSize` o fetch=SUBSELECT. Todos ORMs modernos ofrecen algún mecanismo." },
+        { "letter": "B", "text": "Meter todo en una sola SQL raw con GROUP_CONCAT.", "correct": false, "why": "Funciona en MySQL pero limita a strings, no maneja tipos complejos, se rompe con muchos posts y es ilegible. Salir del ORM es una escapatoria, no una solución." },
+        { "letter": "C", "text": "Añadir un caché Redis por usuario. Aunque N+1 exista, cachear evita las queries.", "correct": false, "why": "Confunde síntoma con causa. El caché ayuda al segundo request pero no al primero. Y añade problemas de invalidación. Fix primero el N+1, luego considera caché si aún hay latencia." },
+        { "letter": "D", "text": "Paginar con LIMIT 10. Menos usuarios → menos queries.", "correct": false, "why": "Baja el número absoluto pero no fixea el patrón. Además, cambia la semántica del endpoint (podría no ser aceptable). N+1 debe resolverse en el nivel de acceso, no ocultándose." }
+      ],
+      "explanation": "El N+1 es probablemente el bug de performance más común en aplicaciones ORM. Ocurre cuando iteras una colección y cada iteración dispara una query lazy. Detección: (1) contar queries por request en dev (django-debug-toolbar, SQLAlchemy echo, Bullet en Rails); (2) alerta en producción por 'queries por request > umbral'. Solución universal: cargar en batch — sea con IN () o con JOIN, según cardinalidades. Regla mental: en cualquier endpoint que retorne una colección con relaciones, revisa el log de SQL antes de mergear.",
+      "realWorld": "Shopify tuvo N+1 severos en la app admin — publicaron un artículo famoso sobre cómo usan Bullet + un linter propio para bloquear PRs con N+1. GitHub tiene una charla similar sobre GraphQL: DataLoader (Facebook) es literalmente una solución al N+1 en el nivel de GraphQL.",
+      "tags": ["N+1", "ORM", "SQLAlchemy", "performance"],
+      "tech": ["SQLAlchemy", "ActiveRecord", "Hibernate"],
+      "references": [{ "title": "SQLAlchemy Docs — Relationship Loading Techniques" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "apis",
+      "topic": "Connection pooling — números correctos",
+      "difficulty": "senior",
+      "scenario": "Una API Node.js corre en 4 pods; cada pod tiene una pool de conexiones de 50 hacia Postgres. En horas pico ves errores `remaining connection slots are reserved`. `max_connections` en Postgres = 100.",
+      "question": "¿Cuál es la explicación y solución más correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "4 × 50 = 200 conexiones pedidas, pero Postgres solo permite 100. Bajar pool a 20 por pod (4 × 20 = 80, dejando 20 para admin) O añadir un pooler externo tipo PgBouncer en modo transaction, que multiplexa 1000+ clientes lógicos sobre pocas conexiones físicas.", "correct": true, "why": "Correcto. Cada conexión Postgres consume ~10 MB RAM + procesos del OS; el sweet spot suele ser 2× núcleos + spindle count (~50-200 conexiones activas). Con más pods, la aritmética se rompe. PgBouncer en modo transaction es el estándar de la industria: la app abre 1000 sesiones lógicas, pero solo mantiene, por ejemplo, 20 físicas hacia Postgres." },
+        { "letter": "B", "text": "Subir `max_connections` a 500. Postgres soporta miles.", "correct": false, "why": "Postgres 'soporta' pero no está diseñado para esto — cada conexión es un proceso Unix con overhead significativo. Subir max_connections sin más suele empeorar performance (context switching, memoria). La recomendación oficial es: pooler, no más conexiones." },
+        { "letter": "C", "text": "Cambiar la pool a size=1000 en cada pod para que 'no falte'.", "correct": false, "why": "Empeora todo — más conexiones ociosas ocupando slots, más contención, más OOM. La pool debe ser pequeña y las conexiones muy usadas." },
+        { "letter": "D", "text": "Migrar a MongoDB. Su driver no tiene este problema.", "correct": false, "why": "MongoDB también tiene límites de conexiones y pools. La pregunta no es de motor, es de arquitectura de acceso." }
+      ],
+      "explanation": "Regla de connection pooling: (1) la DB tiene un cap absoluto (max_connections). (2) La app debe respetarlo entre todas sus instancias. Fórmula rápida: total_pool_size = max_connections × 0.8 / num_instances. (3) Cuando escalas horizontalmente, el pool por instancia baja o metes un pooler. (4) PgBouncer en modo transaction es fenomenal si no usas prepared statements de sesión, LISTEN/NOTIFY o SET LOCAL. (5) RDS Proxy, PgBouncer, Odyssey son opciones válidas. (6) En serverless (Lambda), pooling es especialmente crítico — RDS Proxy nació para eso.",
+      "realWorld": "El incidente famoso de GitLab en 2017 (base de datos borrada) empezó con un incidente de saturación de conexiones. Heroku documenta límites duros de conexiones por plan; muchos apps Rails han caído en producción por exhaust de pool.",
+      "tags": ["connection pool", "PgBouncer", "postgres", "capacity"],
+      "tech": ["PostgreSQL", "PgBouncer", "RDS Proxy"],
+      "references": [{ "title": "PgBouncer Docs" }, { "title": "Brandur Leach — 'The Right Way to Use Postgres in Production'" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "fundamentals",
+      "topic": "Isolation levels — dirty read, non-repeatable read, phantom",
+      "difficulty": "senior",
+      "scenario": "Postgres. Sesión A hace `BEGIN; SELECT balance FROM accounts WHERE id=1;` (obtiene 100). Sesión B hace `UPDATE accounts SET balance=50 WHERE id=1; COMMIT;`. Sesión A repite `SELECT balance FROM accounts WHERE id=1;` en la misma tx y obtiene 50.",
+      "question": "¿Qué anomalía es esta y qué nivel de aislamiento la previene?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dirty read. Se previene con READ COMMITTED.", "correct": false, "why": "Dirty read es leer datos NO COMMITTED. Aquí B ya hizo COMMIT antes de la segunda lectura de A. Y READ COMMITTED es exactamente lo que permite este comportamiento (que es el default de Postgres)." },
+        { "letter": "B", "text": "Non-repeatable read. Se previene con REPEATABLE READ (o superior).", "correct": true, "why": "Correcto. Non-repeatable read: dentro de una misma transacción, leer la misma fila dos veces da resultados distintos porque otra tx commiteó en el medio. REPEATABLE READ toma un snapshot al inicio y todas las lecturas ven ese snapshot (en Postgres implementado como snapshot isolation con MVCC). Nota: 'phantom read' es sobre CONJUNTOS de filas (nueva fila aparece); en Postgres, REPEATABLE READ también evita phantoms — solo SERIALIZABLE añade detección de anomalías de serialización." },
+        { "letter": "C", "text": "Phantom read. Solo se previene con SERIALIZABLE.", "correct": false, "why": "Phantom read es cuando una tx repite un query de rango y aparecen filas NUEVAS. Aquí no aparecen filas nuevas; cambia el valor de una fila existente. Confusión clásica entre phantom y non-repeatable." },
+        { "letter": "D", "text": "Lost update. Solo se resuelve con SELECT FOR UPDATE.", "correct": false, "why": "Lost update es cuando dos tx leen, modifican y escriben, y una sobreescribe a la otra. Aquí A solo lee — no hay update perdido. SELECT FOR UPDATE es la solución preventiva a lost update, no a non-repeatable read." }
+      ],
+      "explanation": "Los niveles ANSI SQL: READ UNCOMMITTED (permite dirty read; Postgres nunca lo hace, lo trata como READ COMMITTED), READ COMMITTED (default de Postgres/Oracle; previene dirty read; permite non-repeatable y phantom), REPEATABLE READ (snapshot al inicio; Postgres lo hace tan estricto que también evita phantoms), SERIALIZABLE (Postgres usa Serializable Snapshot Isolation SSI — detecta conflictos y aborta con serialization_failure; hay que reintentar la tx). En pagos y ledger: SERIALIZABLE o REPEATABLE READ con SELECT FOR UPDATE. En reporting: READ COMMITTED es suficiente.",
+      "realWorld": "El famoso post de Kyle Kingsbury (Jepsen) analiza cada motor con isolation levels. MongoDB en versiones tempranas prometía consistency que no cumplía. Postgres es de los mejores documentados y consistentes en este campo.",
+      "tags": ["isolation", "MVCC", "ACID", "snapshot"],
+      "tech": ["PostgreSQL", "ANSI SQL"],
+      "references": [{ "title": "PostgreSQL Docs — 13. Concurrency Control" }, { "title": "Jepsen — Isolation Levels" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "fundamentals",
+      "topic": "Deadlocks — causa raíz típica",
+      "difficulty": "senior",
+      "scenario": "Ocurren deadlocks intermitentes en un endpoint que transfiere dinero entre cuentas. Simplificado:\n\n```sql\nBEGIN;\nUPDATE accounts SET balance = balance - 100 WHERE id = $from;\nUPDATE accounts SET balance = balance + 100 WHERE id = $to;\nCOMMIT;\n```\n\nA veces Postgres aborta una tx con `deadlock detected`.",
+      "question": "¿Cuáles son mecanismos correctos para PREVENIR o MITIGAR este deadlock? (múltiples pueden aplicarse combinados)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ordenar la adquisición: dentro de la tx, bloquear siempre en orden ascendente de id — `SELECT ... FOR UPDATE WHERE id IN (from, to) ORDER BY id` antes de los UPDATEs. Cualquier orden total consistente funciona.", "correct": true, "why": "Correcto. La regla universal para prevenir deadlock es 'ordenar la adquisición de recursos globalmente'. Postgres detecta el ciclo y aborta una tx, pero es preferible evitarlo por diseño usando orden estable." },
+        { "letter": "B", "text": "Retry idempotente al detectar `deadlock_detected` (SQLSTATE 40P01), con backoff exponencial y jitter — como safety net complementaria al fix estructural.", "correct": true, "why": "Correcto como COMPLEMENTO al orden. Aunque prevengas la mayoría de deadlocks, siempre queda alguna condición rara — retry con backoff es defense-in-depth. Pero solo retry sin fix del orden = maquillar el síntoma con más latencia." },
+        { "letter": "C", "text": "Usar advisory locks (pg_advisory_xact_lock) para serializar el acceso a pares de cuentas antes de los UPDATEs, evitando el deadlock a nivel row-lock.", "correct": true, "why": "Correcto. Advisory locks permiten tomar un lock aplicativo antes que los locks row-level. Combinado con hash de min(from,to), max(from,to), garantiza que dos transferencias sobre el mismo par serializan sin deadlock." },
+        { "letter": "D", "text": "Falta un índice en accounts.id. Añadir uno.", "correct": false, "why": "El id primario ya tiene índice único. El deadlock no viene de falta de índice, viene de orden de locks. Sin índice sería más lento pero no explica el deadlock." },
+        { "letter": "E", "text": "Bajar el isolation level a READ UNCOMMITTED.", "correct": false, "why": "Postgres no implementa READ UNCOMMITTED (lo trata como READ COMMITTED). Y aunque lo hiciera, los locks de UPDATE son independientes del isolation de LECTURA. No resuelve." }
+      ],
+      "explanation": "Los deadlocks son inevitables en ciertos workloads y todo sistema tx-aware los detecta. Prevención: (1) adquirir recursos siempre en el mismo orden global; (2) transacciones cortas (menos ventana para conflicto); (3) usar SELECT FOR UPDATE explícito para forzar lock temprano; (4) considerar advisory locks (pg_advisory_xact_lock) para lógica no basada en rows. En MySQL/InnoDB los deadlocks son más frecuentes por gap locks — la regla del orden es aún más importante.",
+      "realWorld": "Stripe publica un post 'Online migrations at scale' donde describen cómo evitan deadlocks en migraciones online: chunking + orden estricto + retry idempotente. Es el patrón industrial.",
+      "tags": ["deadlock", "locks", "postgres", "transacciones"],
+      "tech": ["PostgreSQL", "MySQL/InnoDB"],
+      "references": [{ "title": "PostgreSQL Docs — 13.3. Explicit Locking" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "apis",
+      "topic": "JSONB indexes — cuándo y cómo",
+      "difficulty": "senior",
+      "scenario": "Tabla `events(id, payload JSONB)` con 500M rows. Query frecuente: `WHERE payload->>'user_id' = '123'`. Añaden un índice `CREATE INDEX ON events USING GIN(payload);` pero la query sigue haciendo seq scan.",
+      "question": "¿Por qué no se usa el índice y cuál sería el índice correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GIN sobre payload solo indexa los operadores de contenimiento (@>, ?, ?|, ?&), no la extracción escalar `->>`. El índice correcto es un B-tree funcional: `CREATE INDEX ON events ((payload->>'user_id'));`. O reescribir la query como `WHERE payload @> '{\"user_id\":\"123\"}'::jsonb` para usar el GIN.", "correct": true, "why": "Correcto. GIN indexa las CLAVES y VALORES del jsonb como conjuntos — funciona para @> y ? pero no para operadores de camino escalar como ->>. Dos opciones: (a) índice funcional B-tree sobre la expresión (rápido, small footprint, único camino); (b) reescribir queries a operadores contenimiento y aprovechar GIN. Para queries de único path, el B-tree funcional gana." },
+        { "letter": "B", "text": "GIN no funciona con jsonb — solo con arrays y tsvector. Cambiar a BRIN.", "correct": false, "why": "Falso. GIN sí soporta jsonb desde Postgres 9.4. BRIN no ayuda aquí porque los datos no están ordenados por user_id." },
+        { "letter": "C", "text": "Falta VACUUM. Correrlo y volver a probar.", "correct": false, "why": "VACUUM ayuda a mantener bloat, pero no cambia qué operadores soporta un índice. La query no coincide con el opclass de GIN." },
+        { "letter": "D", "text": "Postgres nunca usa índices en tablas > 100M rows.", "correct": false, "why": "Falso. Postgres usa índices en tablas de cualquier tamaño si el planner lo estima ventajoso. El problema es el opclass del índice frente al operador de la query." }
+      ],
+      "explanation": "JSONB es potente pero el indexing tiene sutilezas: (1) GIN default indexa {claves,valores} y sirve para ?, ?|, ?&, @>; (2) `jsonb_path_ops` opclass indexa solo los paths (más pequeño, más rápido para @> pero no soporta ? existencia); (3) para queries de un único path escalar (`->>'user_id'`), un B-tree funcional es más eficiente que GIN; (4) evitar JSONB para columnas 'siempre presentes y siempre consultadas' — mejor promover a columnas relacionales normales. jsonb_path_query y JSONPath (Postgres 12+) requieren pensar el índice para cada consulta.",
+      "realWorld": "Instagram documentó su uso de JSONB para metadata evolutiva. Pero también advirtió que campos consultados frecuentemente terminaron promovidos a columnas normales por costo de indexing. La regla: JSONB para lo esporádico, columnas para lo caliente.",
+      "tags": ["jsonb", "GIN", "índices funcionales", "postgres"],
+      "tech": ["PostgreSQL", "JSONB"],
+      "references": [{ "title": "PostgreSQL Docs — 8.14. JSON Types & 11.2. Index Types" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "apis",
+      "topic": "Partial indexes — el índice más barato",
+      "difficulty": "mid",
+      "scenario": "Tabla `orders(id, status, created_at, ...)` con 200M rows. El 98% son status='completed', 2% son 'pending'. La query caliente es `WHERE status='pending' ORDER BY created_at`. Un índice normal sobre (status, created_at) ocupa 8 GB.",
+      "question": "¿Cuál es el índice más adecuado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un índice parcial: `CREATE INDEX ON orders(created_at) WHERE status='pending';`. Solo indexa el 2% relevante — pesa ~160 MB en vez de 8 GB.", "correct": true, "why": "Correcto. Los partial indexes son ideales cuando una condición filtra la gran mayoría de rows. Ocupan menos disco, se actualizan más rápido, y el planner los usa cuando la query coincide con la condición del índice. Es una técnica de bajo costo y alto impacto que se subutiliza." },
+        { "letter": "B", "text": "Índice completo en (status, created_at). Solo 8 GB en disco moderno es despreciable.", "correct": false, "why": "8 GB extra en cada replica, más overhead de escrituras (UPDATE toca el índice), más tiempo de vacuum. Si el partial index cubre el caso, siempre gana." },
+        { "letter": "C", "text": "Índice sobre created_at solo. Postgres filtrará por status después.", "correct": false, "why": "Postgres escanearía todo el índice de created_at ordenado, filtrando por status en cada row. Con 200M rows y solo 2% match, es peor que el partial." },
+        { "letter": "D", "text": "Particionar la tabla por status.", "correct": false, "why": "Overkill para este caso. Particionar por un booleano de baja cardinalidad crea 2 particiones desbalanceadas y complejidad operacional. Partitioning es útil por rango de fecha o tenant, no por status enum." }
+      ],
+      "explanation": "Partial indexes son una de las herramientas más infrautilizadas de Postgres. Usar cuando: (1) una fracción pequeña matchea, (2) la fracción es la que se consulta, (3) la condición es determinística (no depende de now()). Ejemplos: `WHERE deleted_at IS NULL` (soft delete), `WHERE status IN ('pending', 'processing')` (queues), `WHERE email IS NOT NULL` (opcional). Ahorran espacio y aceleran queries. Ojo: la condición del WHERE del query DEBE encajar semánticamente con la del índice para que el planner lo elija.",
+      "realWorld": "Heap Analytics publicó un post 'Basic Performance Analysis Saved Us Millions' donde el 60% de las mejoras fueron partial indexes en columnas booleanas y estados. Baja fruta, alto impacto.",
+      "tags": ["partial index", "postgres", "optimización"],
+      "tech": ["PostgreSQL"],
+      "references": [{ "title": "PostgreSQL Docs — 11.8. Partial Indexes" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "apis",
+      "topic": "Transacciones largas y el bloat de MVCC",
+      "difficulty": "staff",
+      "scenario": "Un job de reporting corre `BEGIN` al inicio y `COMMIT` 4 horas después. Durante esas 4h, los DBAs reportan crecimiento anómalo del tamaño de tablas y baja performance de queries OLTP no relacionadas.",
+      "question": "¿Cuál es la explicación técnica más precisa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MVCC de Postgres necesita conservar versiones de fila que puedan ser visibles a alguna tx en curso. Mientras esta tx larga esté abierta, VACUUM no puede reciclar tuplas 'muertas' — resultado: bloat en tablas modificadas frecuentemente y planners que estiman mal.", "correct": true, "why": "Correcto. MVCC = cada UPDATE/DELETE marca la tupla vieja como 'muerta' pero no la borra hasta que ninguna tx en curso pueda verla. Una tx antigua bloquea la limpieza (retiene el xmin horizon). El resultado se llama 'bloat' — tablas e índices crecen mucho más allá del tamaño lógico, seq scans se vuelven caros, autovacuum no puede ayudar. Es una razón por la que 'nunca dejes transacciones abiertas' es un mantra." },
+        { "letter": "B", "text": "El job está haciendo table lock. Otras queries esperan.", "correct": false, "why": "Un SELECT no toma lock exclusivo. El problema descrito (crecimiento de tablas) es de bloat, no de locking." },
+        { "letter": "C", "text": "El WAL se llena. Aumentar wal_size.", "correct": false, "why": "El WAL crece por escrituras, no por una tx de lectura larga. Y aunque hubiera problema de WAL, no explica el crecimiento de las tablas base." },
+        { "letter": "D", "text": "Postgres tiene un bug en snapshot isolation. Reportar.", "correct": false, "why": "No es un bug, es el diseño MVCC. Todos los sistemas MVCC (Postgres, Oracle, MySQL InnoDB) tienen esta característica. La solución es diseñar batch jobs que no mantengan tx abiertas horas." }
+      ],
+      "explanation": "MVCC (Multi-Version Concurrency Control) permite lecturas sin bloquear escrituras — a costa de mantener versiones. La 'xmin horizon' (edad de la tx más vieja) determina qué se puede limpiar. Regla operacional: (1) transacciones cortas, siempre; (2) reportes largos → réplica de lectura o snapshot exportado (pg_export_snapshot); (3) monitorizar `pg_stat_activity` para tx antiguas; (4) autovacuum bien configurado; (5) VACUUM FULL solo en ventana de mantenimiento (bloquea la tabla). En MySQL, el 'purge lag' de InnoDB es análogo.",
+      "realWorld": "GitLab tiene documentado su 'long transaction alert' en producción con umbral de 15 minutos — a partir de ahí, alerta on-call. Es tan real que se automatiza la detección.",
+      "tags": ["MVCC", "vacuum", "bloat", "postgres"],
+      "tech": ["PostgreSQL", "MVCC"],
+      "references": [{ "title": "PostgreSQL Docs — 24.1. Routine Vacuuming" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "apis",
+      "topic": "Migraciones online sin lockeo largo",
+      "difficulty": "staff",
+      "scenario": "Necesitas añadir una columna `email_verified BOOLEAN NOT NULL DEFAULT false` a una tabla `users` de 100M rows en producción. Postgres 12+.",
+      "question": "¿Cuál sería el enfoque más seguro?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Un solo `ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false;` — en Postgres 11+ esto es metadata-only si el default es constante, sin reescribir la tabla. Toma un lock muy corto.", "correct": true, "why": "Correcto. Postgres 11 introdujo optimización: ADD COLUMN con default constante NO reescribe la tabla, solo modifica el catálogo. Toma ACCESS EXCLUSIVE lock brevísimo. Antes de 11, esto reescribía 100M rows — hora+ de downtime. La versión importa mucho aquí." },
+        { "letter": "B", "text": "Hacerlo en 3 pasos: (1) `ADD COLUMN email_verified BOOLEAN` (nullable, sin default); (2) backfill en chunks con `UPDATE ... WHERE id BETWEEN a AND b`; (3) `ALTER ... SET NOT NULL` con `ALTER ... SET DEFAULT false`.", "correct": true, "why": "Correcto para versiones antiguas o cuando el default NO es constante (una función). Chunking limita el lock time por chunk. El SET NOT NULL final toma AccessExclusive breve pero valida la columna — en Postgres 12+ se puede validar en dos pasos: agregar un CHECK NOT VALID + VALIDATE CONSTRAINT (que no bloquea reads/writes) + luego SET NOT NULL." },
+        { "letter": "C", "text": "Ejecutar la migración en horario pico con `LOCK TABLE users;` para asegurar consistencia.", "correct": false, "why": "LOCK TABLE bloquea TODO acceso — significa downtime intencional durante la migración. En una tabla de 100M en horario pico, es un incidente." },
+        { "letter": "D", "text": "Usar herramientas de migración online: gh-ost, pg_repack, o pt-online-schema-change.", "correct": true, "why": "Correcto para casos donde la operación reescribe la tabla (cambio de tipo, add column con default computed, cambio de PK). Estas herramientas crean tabla shadow, sincronizan con triggers o replicación lógica, y hacen swap final atómico. gh-ost es MySQL; en Postgres pg_repack sirve para reorg; para migraciones de esquema hay lolreplay o Reshape." },
+        { "letter": "E", "text": "Postgres nunca requiere pensar en esto — el motor lo hace transparente.", "correct": false, "why": "Falso. Muchas operaciones DDL toman ACCESS EXCLUSIVE lock (ADD COLUMN con default computed, ALTER TYPE, ADD CONSTRAINT sin NOT VALID). Ignorar esto causa incidentes reales." }
+      ],
+      "explanation": "Migraciones online en tablas grandes requieren conocimiento del motor: (1) qué operaciones son 'metadata-only' vs 'rewrite'; (2) niveles de lock que toma cada DDL; (3) cómo dividir cambios en pasos backward-compatible: add nullable → backfill → set not null → deploy code que lo usa → drop old. Regla: nunca cambiar esquema Y código en un solo deploy si la tabla es caliente. Postgres 11+ y 12+ mejoraron mucho, pero seguir la disciplina evita el 3am.",
+      "realWorld": "Stripe publicó 'Online migrations at scale' documentando cómo hacen esto: expand-migrate-contract, dual-write, backfills en chunks con retry, feature flags. GitHub tiene un patrón similar. Shopify mantiene 'lhm' (Large Hadron Migrator).",
+      "tags": ["migraciones", "DDL", "postgres", "zero-downtime"],
+      "tech": ["PostgreSQL", "gh-ost", "pg_repack"],
+      "references": [{ "title": "Stripe Engineering — Online migrations at scale" }, { "title": "PostgreSQL Wiki — Lock levels of DDL commands" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "fundamentals",
+      "topic": "Serializable isolation en Postgres (SSI)",
+      "difficulty": "staff",
+      "scenario": "Aplicación en SERIALIZABLE. Cliente reporta que ocasionalmente ve `ERROR: could not serialize access due to read/write dependencies`. El code path no cambió.",
+      "question": "¿Cuál es la respuesta correcta para manejar este error en producción?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es un bug de Postgres. Downgradear a REPEATABLE READ.", "correct": false, "why": "No es un bug — es el comportamiento correcto de Serializable Snapshot Isolation (SSI). Postgres DETECTA que si la tx commiteara, se violaría la serialización, y aborta preventivamente. Downgradear pierde garantías críticas para lógica financiera / inventario." },
+        { "letter": "B", "text": "SSI detecta anomalías de serialización y aborta una tx para preservar consistencia. La aplicación DEBE reintentar la tx completa (no solo la última operación) — retry con backoff. Es esperado bajo carga.", "correct": true, "why": "Correcto. SSI (Serializable Snapshot Isolation, desde Postgres 9.1) permite el equivalente semántico a un ejecución serial sin locks pesados. El precio: puede haber falsos positivos que aborten txs. Diseño canónico: envolver toda la tx en un retry loop con jitter (3-5 intentos, exponential backoff). Herramientas ORM permiten esto (SQLAlchemy `savepoint retry`, Rails `with_advisory_lock`)." },
+        { "letter": "C", "text": "Agregar SELECT FOR UPDATE en cada tx para evitar el error.", "correct": false, "why": "SELECT FOR UPDATE en Serializable es a menudo redundante y puede empeorar el problema con más conflictos de lock. Y hace la tx más pesada. En SSI, el retry es el mecanismo idiomático." },
+        { "letter": "D", "text": "Ignorar el error. Es transitorio.", "correct": false, "why": "Sin retry explícito, el error se propaga al cliente como fallo. El cliente HTTP no debería ver un error de aislamiento de DB — debe manejarse en el nivel de servicio." }
+      ],
+      "explanation": "SERIALIZABLE en Postgres es óptico: la mayoría de txs pasan, algunas se abortan cuando el sistema detecta que su combinación de reads y writes viola serialización. Es la única forma de tener 'as-if-serial' sin sacrificar concurrencia. Requisitos: (1) retry al ver serialization_failure (código 40001 en SQLSTATE); (2) tx idempotentes o con retry seguro; (3) NO usar prepared statements de sesión con SSI. Contraste con MySQL: SERIALIZABLE en InnoDB usa locks explícitos — no aborta, pero puede deadlockar más.",
+      "realWorld": "Amazon usa SSI para inventario en algunos servicios internos. Postgres es referencia académica: el algoritmo SSI fue publicado por Cahill et al. 2008. Se estudia en cursos de sistemas.",
+      "tags": ["SSI", "serializable", "retry", "postgres"],
+      "tech": ["PostgreSQL"],
+      "references": [{ "title": "Cahill, Röhm, Fekete — 'Serializable Isolation for Snapshot Databases' (SIGMOD 2008)" }, { "title": "PostgreSQL Docs — 13.2.3. Serializable Isolation Level" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "apis",
+      "topic": "Paginación — keyset vs offset",
+      "difficulty": "mid",
+      "scenario": "Endpoint `GET /events?page=1000&size=50`. Se implementó con `OFFSET 50000 LIMIT 50`. Con 100M rows, la query tarda 4 segundos y empeora con la página.",
+      "question": "¿Cuál es la solución más escalable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Keyset pagination (cursor-based): en vez de OFFSET, usar `WHERE (created_at, id) < (last_seen_created_at, last_seen_id) ORDER BY created_at DESC, id DESC LIMIT 50`. Complejidad O(log n) sin importar la página.", "correct": true, "why": "Correcto. OFFSET obliga a leer y descartar N rows antes de devolver — con OFFSET 1M es catastrófico. Keyset (cursor) usa el índice para posicionarse: siempre O(log n) para localizar el punto de continuación. Requiere ordering estable (típicamente created_at + id como tie-breaker para unicidad). Es el estándar en APIs de Twitter, Stripe, GitHub." },
+        { "letter": "B", "text": "Aumentar `work_mem` de Postgres a 1 GB.", "correct": false, "why": "work_mem afecta sorts y hashes en memoria, no cambia la mecánica de OFFSET. OFFSET seguiría leyendo y descartando rows." },
+        { "letter": "C", "text": "Cachear resultados por (page, size) en Redis por 1 hora.", "correct": false, "why": "Solo ayuda si la misma página se pide muchas veces (raro). No resuelve el patrón, invalidación compleja con dataset que muta." },
+        { "letter": "D", "text": "Solo permitir paginar hasta la página 100. Bloquear el resto.", "correct": false, "why": "Rompe funcionalidad. Y no resuelve la causa raíz — un usuario legítimo puede necesitar buscar en el histórico." }
+      ],
+      "explanation": "OFFSET es aceptable para las primeras páginas y datasets pequeños. Se vuelve tóxico con offsets grandes porque escala O(N) por página. Keyset pagination: (1) ordena por columna(s) con índice; (2) devuelve al cliente el 'cursor' (último id/timestamp); (3) siguiente request continúa desde ahí. Trade-offs: no permite 'ir a la página N directamente' (típicamente no se necesita); requiere orden estable (id como tie-breaker). Cursor puede ser opaco (base64 con timestamp+id) o transparente. GraphQL Relay estandariza esto con edges/nodes/cursors.",
+      "realWorld": "Twitter API v2 usa cursor-based paginación por defecto. Stripe usa 'starting_after' / 'ending_before' cursors. GraphQL Relay Pagination Spec formaliza el patrón. Migrar de OFFSET a keyset es una de las optimizaciones más rentables en APIs con historial.",
+      "tags": ["paginación", "keyset", "cursor", "performance"],
+      "tech": ["PostgreSQL", "GraphQL Relay"],
+      "references": [{ "title": "Markus Winand — 'We need tool support for keyset pagination'" }, { "title": "Slack Engineering — Evolving API Pagination at Slack" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "fundamentals",
+      "topic": "SELECT FOR UPDATE — SKIP LOCKED en queues",
+      "difficulty": "senior",
+      "scenario": "Estás construyendo una queue simple sobre Postgres: `jobs(id, status, payload)`. Múltiples workers deben tomar jobs con status='pending' y marcarlos 'processing'. Sin SKIP LOCKED, dos workers a veces intentan tomar el mismo job.",
+      "question": "¿Cuál es el patrón correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`SELECT * FROM jobs WHERE status='pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;` seguido de UPDATE en la misma tx.", "correct": true, "why": "Correcto. FOR UPDATE toma un row-level lock; SKIP LOCKED hace que otras sesiones ignoren rows ya bloqueados por otra tx en vez de esperar. Resultado: N workers pueden tomar N jobs distintos concurrentemente sin bloquearse. Es el patrón que usan Sidekiq (Ruby) para su variante SQL, Que (Ruby), pg-boss (Node.js)." },
+        { "letter": "B", "text": "`SELECT id FROM jobs WHERE status='pending' ORDER BY id LIMIT 1;` seguido de `UPDATE jobs SET status='processing' WHERE id=$found AND status='pending';` — chequear filas afectadas.", "correct": false, "why": "Optimistic locking; funciona pero deja rows a otros workers reintentando. Bajo alta contención genera muchos 'lost updates' benignos (rows_affected=0) que hay que reintentar. SKIP LOCKED es más eficiente." },
+        { "letter": "C", "text": "Envolver en SERIALIZABLE; el aislamiento resuelve.", "correct": false, "why": "SERIALIZABLE detectaría el conflicto y abortaría UNA tx — perdida de trabajo, retry inevitable. SKIP LOCKED es proactivo: no hay conflicto en primer lugar." },
+        { "letter": "D", "text": "Cambiar a Redis. Postgres no soporta queues bien.", "correct": false, "why": "Falso. Postgres soporta queues muy bien con SKIP LOCKED (desde 9.5). Y evita añadir infraestructura. Solo si el throughput excede varios miles/seg vale la pena Redis/Kafka." }
+      ],
+      "explanation": "SKIP LOCKED (SQL:2016, Postgres 9.5, MySQL 8) es la primitiva que hace viable usar la DB como queue. Sin él, los workers competirían por locks y serializarían. Con él, el throughput escala casi linealmente con workers. Otras piezas del patrón: (1) idempotencia (job puede ejecutarse 2 veces si crash entre UPDATE y COMMIT); (2) visibility timeout (worker crashed → job vuelve a pending); (3) dead-letter para jobs que fallan N veces. Postgres como queue es sorprendentemente potente para hasta ~10k jobs/seg.",
+      "realWorld": "River (Go), pg-boss (Node), Que (Ruby) son ejemplos de queues sobre Postgres que superan a Redis en durabilidad y consistencia. GitLab usa PgQ para procesar millones de jobs/día. Solo cuando escala a Kafka-territory se justifica.",
+      "tags": ["skip locked", "queue", "postgres", "workers"],
+      "tech": ["PostgreSQL", "MySQL 8", "SKIP LOCKED"],
+      "references": [{ "title": "PostgreSQL Docs — SELECT FOR UPDATE SKIP LOCKED" }, { "title": "Brandur Leach — Using Postgres for Queues" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "apis",
+      "topic": "Read replicas — consistencia y lag",
+      "difficulty": "senior",
+      "scenario": "Se agrega una read replica de Postgres y el driver enruta lecturas a ella para bajar carga del primary. Reportan un bug: usuario cambia su avatar (POST /avatar), y a los 100ms hace GET /profile — a veces ve el avatar viejo.",
+      "question": "¿Cuál es la causa y la solución más apropiada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Replication lag: el POST escribe en primary, el GET lee de replica, y la replica aún no aplicó el WAL. Solución típica: 'read your writes' → rutear las lecturas del mismo usuario al primary por N segundos después de un write; o usar sticky sessions al primary; o esperar sync con `pg_wal_replay_lsn()`.", "correct": true, "why": "Correcto. Es el problema clásico de consistencia eventual en réplicas asíncronas. Patrones para resolverlo: (1) 'read your writes' con session affinity temporal; (2) client hints en la cookie que fuerzan primary durante X segundos; (3) synchronous_commit=on con réplica síncrona (impacto en latencia de write); (4) lectura desde primary para queries críticas de consistencia (perfil propio) y replica para el resto (feed público)." },
+        { "letter": "B", "text": "Cache del navegador. Añadir Cache-Control: no-store.", "correct": false, "why": "Puede coexistir, pero el sync bug entre primary y replica sigue estando. La respuesta viene del servidor con el avatar viejo — no es cache del cliente." },
+        { "letter": "C", "text": "La replica está corrupta. Recrearla.", "correct": false, "why": "El comportamiento descrito es normal en replicación async, no corrupción. Recrear no cambia el hecho de que hay lag." },
+        { "letter": "D", "text": "Cambiar todos los reads al primary. La replica es innecesaria.", "correct": false, "why": "Anula el beneficio (offload). Solo lecturas que requieren consistencia estricta deberían ir al primary." }
+      ],
+      "explanation": "Replicación async es el default (mejor performance) pero introduce lag observable. Estrategias: (1) primary-only para lecturas críticas post-escritura; (2) session-based routing (afinidad temporal); (3) synchronous replication para writes críticos; (4) monitorear lag (`pg_stat_replication`) y alertar > umbral (típicamente 5-10s). AWS Aurora y otros managed dbs exponen lag como métrica. Casos donde la consistencia es no-negociable: pagos, permisos de seguridad — siempre al primary.",
+      "realWorld": "Facebook publicó un paper sobre 'cache and consistency' donde detallan cómo el session cache respeta 'read your writes'. Es un problema universal en sistemas con réplicas. Notion, Discord, todos han escrito sobre esto en sus blogs de ingeniería.",
+      "tags": ["replication lag", "read replica", "consistency", "postgres"],
+      "tech": ["PostgreSQL", "streaming replication"],
+      "references": [{ "title": "Facebook Engineering — Scaling Memcache at Facebook" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "apis",
+      "topic": "Transacciones distribuidas — 2PC y saga",
+      "difficulty": "staff",
+      "scenario": "Tu servicio de pedidos debe: (1) crear la orden en su DB Postgres, (2) reservar stock en el microservicio Inventory (HTTP), (3) cargar la tarjeta vía Stripe. Necesitas atomicidad conceptual: si algo falla, todo se revierte.",
+      "question": "¿Cuál es el patrón más adecuado en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "2-Phase Commit (XA) coordinado por un transaction manager que envuelva las 3 acciones.", "correct": false, "why": "2PC es teóricamente correcto pero prácticamente evitado en microservicios: (1) requiere que todos los participantes soporten XA (Stripe no lo hace); (2) bloquea recursos hasta que todos voten; (3) el coordinador es SPOF; (4) latencia y throughput bajos. Nadie lo usa en cross-service en 2026." },
+        { "letter": "B", "text": "Saga pattern con compensaciones: cada paso puede fallar y dispara acciones inversas explícitas (cancelar reserva, refund). Puede ser choreography (eventos) u orchestration (state machine central).", "correct": true, "why": "Correcto. Saga es el estándar de facto para 'atomicidad' cross-service. Cada paso es una tx local commited; si un paso falla, se ejecutan las compensaciones de los pasos previos en orden inverso. No hay locks globales. Herramientas: Temporal, Cadence, AWS Step Functions, Camunda Zeebe. Reto: compensaciones deben ser idempotentes y algunas 'no compensables' (email ya enviado) → diseñar el proceso para poner esos pasos al final." },
+        { "letter": "C", "text": "Un solo endpoint que abra 3 transacciones en 3 DBs distintas y las commit al final.", "correct": false, "why": "No hay 'commit atómico' entre DBs distintas sin 2PC. Si commit 1 pasa y commit 2 falla, ya perdiste. Es la razón por la que Saga existe." },
+        { "letter": "D", "text": "Eventual consistency sin compensaciones. Los usuarios se acostumbrarán.", "correct": false, "why": "Sin compensaciones, la orden queda en estado inconsistente permanente (cargo hecho, stock reservado, orden nunca creada). Es la peor experiencia UX." }
+      ],
+      "explanation": "Distributed transactions en microservicios: (1) 2PC (XA) — teóricamente perfecto, prácticamente no viable con recursos heterogéneos; (2) Saga — descomposición en pasos locales con compensaciones; (3) TCC (Try-Confirm-Cancel) — variante de saga con reserve explícito; (4) Outbox pattern — para no perder eventos entre DB local y broker. Saga tiene dos sabores: choreography (cada servicio publica eventos y otros reaccionan; low coupling pero difícil de razonar) y orchestration (un coordinador central; más claro pero centralizado). Temporal.io es actualmente el líder para saga orchestration.",
+      "realWorld": "Uber usa Cadence (open source ahora Temporal) para toda su lógica cross-service. Netflix construyó Conductor. AWS Step Functions es el equivalente serverless. Nadie usa 2PC en microservicios modernos.",
+      "tags": ["saga", "2PC", "distributed transactions", "temporal"],
+      "tech": ["Temporal", "Cadence", "AWS Step Functions"],
+      "references": [{ "title": "Chris Richardson — 'Microservices Patterns', Ch. 4 (Saga)" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "apis",
+      "topic": "Outbox pattern — dual-write correcto",
+      "difficulty": "senior",
+      "scenario": "Tu servicio, tras crear una orden en Postgres, publica un evento `OrderCreated` en Kafka. A veces la DB commitea pero Kafka falla, o al revés. Buscas garantía 'commit atómico' entre DB y broker.",
+      "question": "¿Cuál es el patrón que resuelve el dual-write?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Transactional Outbox: en la misma tx que crea la orden, INSERT en tabla `outbox_events`. Un proceso separado (relay) lee outbox y publica a Kafka con at-least-once, marcando enviado. Si el relay falla, reintenta. Consumers de Kafka son idempotentes.", "correct": true, "why": "Correcto. La clave es que la DB local es la única fuente de verdad transaccional; el outbox comparte tx con la orden — o ambos ocurren o ninguno. El relay puede ser un poller o Change Data Capture (Debezium leyendo el WAL). Es el estándar para 'exactly-once event publishing' desde DB." },
+        { "letter": "B", "text": "Publicar a Kafka PRIMERO, luego insertar en DB. Si Kafka falla, no se hace nada.", "correct": false, "why": "Si publish OK y DB falla, hay evento fantasma en Kafka sin registro. Los consumers actuarán sobre una orden que no existe. Peor caso que el original." },
+        { "letter": "C", "text": "Usar 2PC entre Postgres y Kafka.", "correct": false, "why": "Kafka soporta transacciones internas (transactional producer) pero no participa en XA con Postgres. Y aunque técnicamente hubiera integración, el costo de latencia es prohibitivo. Outbox es más simple y robusto." },
+        { "letter": "D", "text": "Ignorar la inconsistencia. Kafka es 'eventual consistency'.", "correct": false, "why": "Consistency eventual entre subsystems es diferente de perder eventos. Un evento perdido nunca se procesa. Outbox garantiza que ningún evento se pierda." }
+      ],
+      "explanation": "El dual-write problem (escribir a DB y a broker) no tiene solución atómica trivial. Outbox lo desacopla: DB tx incluye outbox, luego un proceso separado propaga. Variantes: (1) polling — sencillo pero latencia y overhead; (2) CDC con Debezium — lee el WAL/binlog, cero overhead sobre la app, latencia baja. Consumers debe ser idempotentes porque outbox garantiza 'at least once' — un evento puede publicarse dos veces si el relay crashea entre publish y mark-as-sent.",
+      "realWorld": "Debezium (Red Hat) es la herramienta CDC dominante para Postgres/MySQL → Kafka. Wix publicó cómo migraron a Debezium + outbox para eliminar dual-write bugs. Airbnb, Confluent tienen documentación extensa sobre el patrón.",
+      "tags": ["outbox", "dual-write", "CDC", "debezium", "kafka"],
+      "tech": ["Kafka", "Debezium", "PostgreSQL"],
+      "references": [{ "title": "microservices.io — Pattern: Transactional outbox" }, { "title": "Debezium — Reliable Microservices Data Exchange With the Outbox Pattern" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "fundamentals",
+      "topic": "Postgres vs MySQL — diferencias que importan al dev",
+      "difficulty": "mid",
+      "scenario": "Cambias de proyecto de Postgres a MySQL 8. Quieres saber qué diferencias operacionales / de comportamiento son relevantes para el DEV (no el DBA).",
+      "question": "¿Qué afirmaciones son ciertas sobre diferencias que impactan código de aplicación?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "El default isolation level: Postgres = READ COMMITTED, MySQL/InnoDB = REPEATABLE READ. Impacta cómo escribes lógica que asume el default.", "correct": true, "why": "Correcto. Es una diferencia sutil que sorprende. En MySQL default, un mismo SELECT dentro de una tx siempre devuelve lo mismo (snapshot); en Postgres default, puede cambiar entre lecturas. Código portado sin considerar esto tiene bugs sutiles." },
+        { "letter": "B", "text": "MySQL InnoDB tiene 'gap locks' que pueden bloquear rangos aún sin filas presentes; Postgres bajo REPEATABLE READ no. Esto cambia la probabilidad y forma de deadlocks.", "correct": true, "why": "Correcto. MySQL usa gap locks para prevenir phantom reads en REPEATABLE READ; Postgres usa MVCC snapshot. Los deadlocks en MySQL son más frecuentes en workloads con INSERT+SELECT en rangos; el patrón de detección y retry es más importante." },
+        { "letter": "C", "text": "Postgres soporta CTE recursivas, window functions, arrays y JSONB nativamente desde hace años; MySQL 8 añadió CTE/window pero no tiene arrays nativos ni JSONB con GIN comparable.", "correct": true, "why": "Correcto. Postgres tiene un modelo de tipos más rico. Para queries analíticas complejas o modelos con JSON denso, Postgres es más productivo. MySQL 8 acortó la brecha pero no la cerró en tipos y índices avanzados." },
+        { "letter": "D", "text": "MySQL soporta stored procedures y triggers, Postgres no.", "correct": false, "why": "Falso. Postgres soporta stored procedures (desde 11) y triggers desde siempre — de hecho con PL/pgSQL, PL/Python, PL/V8 (JavaScript). Es más rico en este aspecto." },
+        { "letter": "E", "text": "MySQL AUTO_INCREMENT y Postgres SERIAL/IDENTITY se comportan idénticamente frente a rollbacks.", "correct": false, "why": "Falso. Ambos 'gastan' números aunque la tx haga rollback (no reciclan), pero MySQL tiene modo `auto_increment_offset` con configuración distinta. Y las secuencias de Postgres pueden manipularse (setval, currval per-session). Detalles no idénticos." }
+      ],
+      "explanation": "MySQL y Postgres son los dos RDBMS open-source dominantes y tienen filosofías distintas: MySQL prioriza throughput y despliegue simple; Postgres prioriza features avanzados y correctness. Diferencias que impactan código: isolation defaults, gap locks, tipos nativos (arrays, jsonb, uuid, tsvector), índices avanzados (GIN, GiST, BRIN, partial, expression), CTEs, window functions, LATERAL joins, transactional DDL (Postgres commitea DDL en tx, MySQL no). En general Postgres es más 'programmer-friendly' para workloads complejos; MySQL brilla en OLTP simple de alto throughput.",
+      "realWorld": "GitHub, GitLab, Uber (después de volver a MySQL en algunos servicios), Facebook usan MySQL a escala masiva. Instagram, Reddit, Stripe, Discourse usan Postgres. La elección suele depender más del ecosistema y experiencia del equipo que de features técnicos.",
+      "tags": ["postgres", "mysql", "isolation", "diferencias"],
+      "tech": ["PostgreSQL", "MySQL", "InnoDB"],
+      "references": [{ "title": "MySQL vs PostgreSQL: A 360-degree Comparison (2ndQuadrant)" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "apis",
+      "topic": "Full-text search — Postgres vs Elasticsearch",
+      "difficulty": "mid",
+      "scenario": "Tienes que agregar búsqueda de artículos con relevancia (ranking por término), sinónimos y filtros. Los volúmenes son ~1M docs, crece 10%/año. Un compañero propone añadir Elasticsearch; otro dice 'usa tsvector de Postgres, ya lo tienes'.",
+      "question": "¿Cuál es la decisión más razonable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Empezar con Postgres tsvector + GIN. Cubre ranking (ts_rank_cd), stemming, weights, sinónimos vía dictionaries. Migrar a ES solo si necesidades superan lo que Postgres da (facetado complejo, geo, aggregations analíticos, escala 100M+).", "correct": true, "why": "Correcto. Postgres full-text es sorprendentemente capaz para volúmenes moderados. Elasticsearch añade una pieza operacional gigante (JVM, cluster, index management, sync con DB — otro dual-write problem). YAGNI aplica: no meter ES si Postgres cubre. Discourse, GitLab search interno, muchos SaaS usan Postgres FTS con éxito." },
+        { "letter": "B", "text": "Elasticsearch desde el día 1 — 'nunca vas a necesitar menos search'.", "correct": false, "why": "Especulación. Añade complejidad operacional (cluster de 3+ nodos), sync entre Postgres y ES (CDC o dual-write), coste operacional, y curva de aprendizaje. Justificable solo cuando necesidades reales existen." },
+        { "letter": "C", "text": "Meter LIKE '%term%' — sencillo y suficiente.", "correct": false, "why": "LIKE con leading wildcard no puede usar índice (salvo trigram indexes, pero limitado). Con 1M docs es lento y no da ranking. Es la solución más pobre." },
+        { "letter": "D", "text": "Usar SQL Server FTS.", "correct": false, "why": "Cambiar de motor completo por una feature es desproporcionado. Y no resuelve el problema — SQL Server FTS tiene sus propios trade-offs." }
+      ],
+      "explanation": "Postgres tsvector cubre: tokenización configurable, stemming por idioma, stop words, weights por campo (título=A > cuerpo=D), ranking ts_rank/ts_rank_cd, snippets/highlights (ts_headline), sinónimos via thesaurus dict. Índice GIN para queries rápidas. Elasticsearch añade: agregaciones complejas, geo-search, más flexibilidad de tokenización, escalado horizontal fácil. Regla: si tu única razón para ES es 'búsqueda con relevancia', prueba Postgres primero — te ahorrás mucho.",
+      "realWorld": "Discourse tuvo un post famoso sobre por qué migraron algo a Postgres FTS y ahorraron una Elasticsearch. GitLab busca issues con Postgres FTS. StackExchange usó Elasticsearch pero tras muchos años de escala. Los costos ocultos de ES son operacionales, no técnicos.",
+      "tags": ["full-text search", "tsvector", "elasticsearch", "postgres"],
+      "tech": ["PostgreSQL", "Elasticsearch"],
+      "references": [{ "title": "PostgreSQL Docs — Chapter 12: Full Text Search" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "fundamentals",
+      "topic": "UUID como PK — trade-offs",
+      "difficulty": "junior",
+      "scenario": "Un equipo decide usar UUID v4 como primary key de todas las tablas (en vez de BIGSERIAL). Argumento: 'evita conflictos si mergeamos DBs y no expone conteo de registros'. Un senior advierte sobre performance.",
+      "question": "¿Cuál es el trade-off más relevante y la mitigación conocida?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "UUID v4 es aleatorio → inserts en índices B-tree provocan mucho page splitting y baja localidad de disco. Mitigación: usar UUID v7 (ULID/timestamp-based) para mantener orden temporal similar a un serial.", "correct": true, "why": "Correcto. B-tree se mantiene ordenado; inserts aleatorios en un espacio muy grande fragmentan el árbol y bajan el fill factor. UUID v7 (RFC 9562, 2024) incorpora timestamp en los primeros bits, produce IDs monotónicos por tiempo, y elimina el problema de fragmentación manteniendo unicidad global. Es lo que usan la mayoría de sistemas modernos (Snowflake IDs, KSUID, ULID son variantes conceptualmente equivalentes)." },
+        { "letter": "B", "text": "UUID ocupa 16 bytes vs 8 de BIGSERIAL, no importa.", "correct": false, "why": "El costo de espacio (2x) es real pero secundario. El problema principal es fragmentación de índices, no bytes." },
+        { "letter": "C", "text": "UUID es lento porque no cabe en registro de CPU.", "correct": false, "why": "Argumento inventado. Un uuid comparación es 128 bits — 2 instrucciones. Rendimiento comparativo es imperceptible." },
+        { "letter": "D", "text": "UUID no funciona con foreign keys.", "correct": false, "why": "Falso. FK funciona con cualquier tipo. No es limitación." }
+      ],
+      "explanation": "UUID como PK tiene beneficios: (1) generación client-side sin round-trip; (2) globalmente único (merge de DBs, sharding); (3) no expone conteo. Costos: (1) más espacio (16 vs 8 bytes) — se multiplica en cada FK; (2) fragmentación de índices con UUID v4 aleatorio. UUID v7 (2024) resuelve el segundo problema al ordenar por tiempo. Alternativa: BIGSERIAL con ID público separado (hashid, nanoid). Regla 2026: si necesitas UUID, usa v7; si no, BIGSERIAL sigue siendo excelente.",
+      "realWorld": "Twitter Snowflake (2010) inventó el patrón timestamp+sequence+machine para IDs distribuidos ordenados. Discord usa Snowflakes. ULID y KSUID son variantes. UUID v7 estandarizó esto en RFC 9562. Instagram migró de BIGSERIAL a una variante Snowflake cuando escalaron.",
+      "tags": ["UUID", "primary key", "índices", "postgres"],
+      "tech": ["UUID v7", "PostgreSQL", "Snowflake ID"],
+      "references": [{ "title": "RFC 9562 — Universally Unique IDentifiers (UUIDs)" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "apis",
+      "topic": "Backup y restore — probar el restore",
+      "difficulty": "junior",
+      "scenario": "El equipo tiene backups diarios automatizados de Postgres a S3 durante 3 años. Nadie ha probado nunca a restaurarlos en un entorno separado.",
+      "question": "¿Cuál es la advertencia crítica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "'Un backup que no se ha restaurado no es un backup — es esperanza.' Se debe automatizar un restore periódico a un entorno de staging, verificar tamaños/checksums e idealmente correr smoke tests. Corrupción de backups, cambios de formato de pg_dump entre versiones, credenciales expiradas — todo se descubre solo restaurando.", "correct": true, "why": "Correcto. Es un mantra de operations. Backups fallan silenciosamente: pg_dump que aborta a mitad, S3 lifecycle que borra por error, credenciales rotadas, cambios de versión del motor que hacen incompatible el dump. La única forma de saber que el backup funciona es restaurarlo. Automatizar el 'restore test' es tan importante como el backup mismo." },
+        { "letter": "B", "text": "S3 tiene 11 nueves de durabilidad. Los backups están seguros.", "correct": false, "why": "S3 protege contra pérdida del bit — no protege contra: (1) un backup corrupto SUBIDO ese día; (2) borrado accidental por lifecycle policy; (3) credenciales o cifrado sin recuperación; (4) formato incompatible con versión futura del motor. Durabilidad ≠ recuperabilidad." },
+        { "letter": "C", "text": "Basta con verificar que el archivo tiene tamaño > 0 diariamente.", "correct": false, "why": "Un pg_dump interrumpido produce un archivo parcial que 'pesa'. Solo el restore end-to-end lo detecta." },
+        { "letter": "D", "text": "Los managed services (RDS) hacen esto automáticamente.", "correct": false, "why": "RDS hace backups automáticos pero NO prueba automáticamente el restore. La responsabilidad del test de restore sigue siendo del equipo — RDS solo garantiza que los snapshots existen y son restaurables en teoría." }
+      ],
+      "explanation": "Backup strategy correcto: (1) frecuencia acorde al RPO (recovery point objective); (2) retention acorde al negocio (algunos requieren 7 años); (3) offsite (no en la misma región/cuenta); (4) cifrados; (5) probados regularmente — restore mensual a staging, ideal con checksums o smoke test; (6) documentado el procedimiento de recovery (RTO en un runbook). En 2026, herramientas como pgBackRest, WAL-G, Barman ofrecen backup incremental + PITR (point-in-time recovery). Managed services (RDS, Cloud SQL) simplifican pero no eximen de probar.",
+      "realWorld": "GitLab 2017: el incidente famoso donde un ingeniero borró la DB primaria y descubrieron que 5 mecanismos de backup habían fallado o estaban desactualizados. Salvaron el día con un snapshot manual de 6h antes. El post-mortem público es lectura obligada. Ejemplo de por qué se debe probar restore.",
+      "tags": ["backup", "restore", "postgres", "disaster recovery"],
+      "tech": ["PostgreSQL", "pg_dump", "pgBackRest", "WAL-G"],
+      "references": [{ "title": "GitLab.com Database Incident (2017) — Postmortem" }, { "title": "PostgreSQL Docs — Chapter 25: Backup and Restore" }]
+    }
+  ]
+}

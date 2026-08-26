@@ -1,0 +1,430 @@
+{
+  "id": "devops-sim-38-chaos-engineering-in-practice",
+  "trackId": "devops",
+  "order": 38,
+  "title": "Simulacro 38 — Chaos Engineering en producción",
+  "focus": "Chaos Engineering en la práctica: principios (principlesofchaos.org), Netflix Simian Army (Chaos Monkey/Kong/Gorilla), plataformas modernas (Gremlin, LitmusChaos, Chaos Mesh, AWS FIS), diseño de experimentos hipótesis-driven, blast radius control, game days, cuándo NO hacer chaos, inyección de fallos (network, CPU, memoria, pod/node/AZ/region), Toxiproxy, dependency failure injection.",
+  "areaCoverage": ["reliability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "reliability",
+      "topic": "¿Qué ES Chaos Engineering?",
+      "difficulty": "junior",
+      "scenario": "Un manager dice: 'quiero hacer Chaos Engineering, vamos a apagar servidores random en producción a ver qué pasa'. Otro dice: 'eso es sabotaje, no ingeniería'.",
+      "question": "¿Cuál es la definición correcta de Chaos Engineering según principlesofchaos.org?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chaos Engineering es la disciplina de EXPERIMENTAR sobre un sistema distribuido para generar CONFIANZA en su capacidad de resistir condiciones turbulentas en producción. Es hipótesis-driven: formulas una hipótesis sobre steady state, introduces un fallo controlado (variable), y verificas si el sistema sigue en steady state. NO es apagar cosas al azar — es experimentación científica sobre resiliencia.", "correct": true, "why": "Correcto. principlesofchaos.org (Netflix, 2015) define chaos como experimentación disciplinada: hypothesis → experiment → verify. Sin hipótesis clara ni definición de steady state, apagar cosas es sabotaje, no chaos engineering." },
+        { "letter": "B", "text": "Chaos Engineering es apagar servidores random en producción.", "correct": false, "why": "Caricatura común. Chaos Monkey hace eso pero es UNA herramienta, no la disciplina. Sin hipótesis, steady state definido, blast radius controlado y observabilidad, apagar cosas es simplemente causar incidents." },
+        { "letter": "C", "text": "Chaos Engineering es lo mismo que testing de resiliencia en staging.", "correct": false, "why": "Testing tradicional verifica escenarios KNOWN. Chaos engineering descubre UNKNOWN unknowns — comportamientos emergentes en sistemas distribuidos que no puedes predecir con tests unitarios." },
+        { "letter": "D", "text": "Chaos Engineering es un tipo de load testing.", "correct": false, "why": "Load testing verifica capacity bajo carga. Chaos engineering verifica behavior bajo FALLOS (nodo caído, red particionada, dependency lenta). Diferentes objetivos, complementarios." }
+      ],
+      "explanation": "Chaos Engineering nació en Netflix (2010-2011) cuando migraron de datacenter a AWS. Se dieron cuenta de que en un sistema distribuido con cientos de servicios, los fallos son INEVITABLES y hay que diseñar para ellos. En vez de esperar el fallo real, lo introducen deliberadamente en un entorno controlado para APRENDER cómo reacciona el sistema. Los 5 Principios Avanzados (principlesofchaos.org): (1) Build hypothesis around steady state behavior; (2) Vary real-world events; (3) Run experiments in production; (4) Automate experiments to run continuously; (5) Minimize blast radius. Sin estos principios, 'chaos' = sabotaje.",
+      "realWorld": "Netflix formalizó chaos engineering en 2011 con Simian Army. En 2015 publicaron principlesofchaos.org como manifiesto de la disciplina. Casey Rosenthal y Nora Jones (ex-Netflix) escribieron 'Chaos Engineering' (O'Reilly 2020). Amazon, Google (DiRT), Microsoft, LinkedIn, Facebook adoptaron variaciones. Casey Rosenthal fundó Verica y luego Gremlin popularizó chaos-as-a-service.",
+      "tags": ["chaos engineering", "principlesofchaos", "resilience", "distributed systems"],
+      "tech": ["Netflix", "Simian Army"],
+      "references": [{ "title": "principlesofchaos.org" }, { "title": "Rosenthal & Jones — Chaos Engineering (O'Reilly)" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "reliability",
+      "topic": "Netflix Simian Army — lineage",
+      "difficulty": "junior",
+      "scenario": "Netflix creó una familia de herramientas de chaos con nombres de monos. Cada una ataca un nivel diferente del stack.",
+      "question": "¿Qué hace cada miembro clásico del Simian Army?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chaos Monkey mata INSTANCIAS (EC2) individuales al azar durante horas laborales. Chaos Gorilla simula la caída de una AVAILABILITY ZONE completa. Chaos Kong simula la caída de una REGIÓN AWS entera. Latency Monkey inyecta latencia en llamadas. Conformity Monkey detecta instancias que no siguen best practices. Security Monkey detecta vulnerabilidades.", "correct": true, "why": "Correcto. La escalera de blast radius del Simian Army va de menor (instance) a mayor (region). Netflix ejecuta Chaos Kong regularmente para validar que puede sobrevivir la pérdida de us-east-1 entera failovering a otra región." },
+        { "letter": "B", "text": "Todos hacen lo mismo pero con nombres distintos.", "correct": false, "why": "Falso. Cada mono tiene un scope específico y ataca un nivel diferente del stack (instance, AZ, region, network, security)." },
+        { "letter": "C", "text": "Chaos Monkey mata regiones enteras.", "correct": false, "why": "Confusión de escalas. Chaos MONKEY = instancias. Chaos KONG = regiones. La escalera importa porque el blast radius crece exponencialmente." },
+        { "letter": "D", "text": "Solo existió Chaos Monkey; los demás son mito.", "correct": false, "why": "Falso. Netflix publicó blog posts detallados sobre cada miembro y open-sourceó varios (Chaos Monkey en GitHub, Security Monkey también). Simian Army es historia documentada." }
+      ],
+      "explanation": "El Simian Army (2011-2016) fue una progresión: (1) Chaos Monkey (2011) — mata EC2 instances durante horas laborales para forzar diseño resiliente a fallo de instancia; (2) Latency Monkey — introduce delays y timeouts en llamadas RPC; (3) Conformity Monkey — detecta drift de best practices; (4) Doctor Monkey — health checks profundos; (5) Janitor Monkey — cleanup de recursos huérfanos; (6) Security Monkey — vulnerability scanning; (7) Chaos Gorilla (2012) — mata AZ completas; (8) Chaos Kong (2013+) — mata regiones AWS enteras. Netflix ejecuta Chaos Kong con frecuencia real y ha probado failover cross-region en vivo múltiples veces.",
+      "realWorld": "Netflix ejecutó Chaos Kong real durante interrupciones AWS us-east-1 (2015, 2017, 2021) y sobrevivió con failover automático. En Christmas Eve 2012 AWS ELB outage tumbó Netflix; después de eso escalaron a Chaos Kong regular. Chaos Monkey open-sourced en 2012 en GitHub (Netflix/chaosmonkey). Simian Army sirvió de inspiración a Google DiRT, Facebook Storm testing, y las plataformas modernas Gremlin/LitmusChaos.",
+      "tags": ["Simian Army", "Chaos Monkey", "Chaos Kong", "Chaos Gorilla", "Netflix"],
+      "tech": ["Chaos Monkey", "AWS", "Netflix"],
+      "references": [{ "title": "Netflix Tech Blog — The Netflix Simian Army" }, { "title": "GitHub — Netflix/chaosmonkey" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "reliability",
+      "topic": "Los 5 Principios Avanzados",
+      "difficulty": "mid",
+      "scenario": "Tu equipo quiere empezar chaos engineering. Un ingeniero senior dice: 'antes de tirar cosas, hay 5 principios que hay que respetar según principlesofchaos.org, o vamos a hacer más daño que bien'.",
+      "question": "¿Cuáles son los 5 Principios Avanzados de Chaos Engineering?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Build a Hypothesis around Steady State Behavior: define QUÉ es 'normal' en tu sistema (throughput, latencia, tasa de error, KPIs de negocio como stream starts/sec en Netflix). Sin steady state medible, no puedes saber si el experimento causó desvío.", "correct": true, "why": "Correcto. Principio 1. Sin métricas de steady state, el experimento no tiene señal. Netflix usa 'SPS' (stream starts per second) como su steady state — si cae >5% durante el experimento, la hipótesis se rechaza." },
+        { "letter": "B", "text": "Vary Real-World Events: simula fallos que REALMENTE ocurren en producción — hardware failures, network issues, spikes de tráfico, dependency slowdown. No simules fallos ficticios que no pasan nunca.", "correct": true, "why": "Correcto. Principio 2. La utilidad del experimento depende de que el fallo simulado sea representativo. Simular 'servidor explota' es útil (pasa); simular 'todos los discos se llenan simultáneamente y el CPU llega a 200°C' no es realista." },
+        { "letter": "C", "text": "Run Experiments in Production: los sistemas de staging JAMÁS reproducen las condiciones reales de producción (tráfico real, datos reales, cascading dependencies reales). Solo experimentar en prod da confianza real. En staging es 'juguetear'.", "correct": true, "why": "Correcto. Principio 3, y el más controversial. Netflix insiste: chaos en staging es de valor limitado porque el sistema de staging tiene tráfico sintético, datos limpios y menos dependencies. Solo prod te da la verdad." },
+        { "letter": "D", "text": "Automate Experiments to Run Continuously: chaos manual una vez al mes no descubre regresiones. Automatiza para ejecutar constantemente (Chaos Monkey opera 24/7 en Netflix), integrado con CI/CD.", "correct": true, "why": "Correcto. Principio 4. Cada deploy puede introducir regresión en resiliencia. Solo chaos continuo detecta que el equipo X añadió un timeout de 300s que rompe el circuit breaker." },
+        { "letter": "E", "text": "Minimize Blast Radius: aunque experimentes en prod, contén el daño potencial. Empieza con 1% del tráfico, un solo servicio, una AZ pequeña. Si el experimento causa daño real, el impacto debe ser mínimo y reversible.", "correct": true, "why": "Correcto. Principio 5. Sin blast radius control, chaos = sabotaje. Empieza pequeño, verifica, escala. Ten kill switch. Ten rollback automático." },
+        { "letter": "F", "text": "Maximize Downtime During Business Hours to Force Engineers to Fix Bugs Fast.", "correct": false, "why": "Falso. Chaos engineering NO es hostilidad hacia engineers ni maximizar daño. Es aprendizaje controlado. Maximizar downtime en business hours es el ANTI-principio." }
+      ],
+      "explanation": "Los 5 principios de principlesofchaos.org son la brújula. Sin (1) steady state definido, no sabes si tu experimento causó daño. Sin (2) eventos reales, aprendes sobre escenarios imposibles. Sin (3) producción, aprendes sobre un sistema distinto del real. Sin (4) automatización, tu conocimiento decae con cada deploy. Sin (5) blast radius control, causas incidents en vez de aprender. Chaos Engineering es una PRÁCTICA científica, no un ejercicio de destrucción. Requiere disciplina, observabilidad, y buy-in organizacional. Sin observability decente, ni empieces — chaos sin métricas es sabotaje ciego.",
+      "realWorld": "Netflix opera Chaos Monkey 24/7 en producción desde 2011. Su steady state es 'stream starts per second' (SPS) — si el experimento causa >5% dip en SPS, se aborta. Gremlin (fundada por ex-Netflix Kolton Andrus) construyó su plataforma alrededor de estos principios. AWS FIS (Fault Injection Simulator, 2021) implementa 'stop conditions' (CloudWatch alarms) como blast radius control automático.",
+      "tags": ["principios de chaos", "steady state", "blast radius", "hypothesis-driven"],
+      "tech": ["principlesofchaos.org"],
+      "references": [{ "title": "principlesofchaos.org" }, { "title": "Rosenthal & Jones — Chaos Engineering (O'Reilly 2020)" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "reliability",
+      "topic": "Steady State e hipótesis",
+      "difficulty": "mid",
+      "scenario": "Tu equipo quiere ejecutar el primer experimento: 'matar 10% de pods del servicio de checkout en producción'. Un ingeniero dice: 'necesitamos definir la hipótesis y el steady state antes'.",
+      "question": "¿Cómo se formula una hipótesis correcta de chaos engineering?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Steady state: 'el servicio de checkout procesa >99% de requests con latencia p99 <500ms y tasa de éxito >99.5%'. Hipótesis: 'si matamos 10% de pods de checkout, el sistema seguirá cumpliendo el steady state gracias al HPA que escala nuevos pods y al load balancer que redistribuye tráfico'. Éxito = steady state se mantiene. Fallo = steady state se rompe → aprendemos que la resiliencia no es la que asumíamos.", "correct": true, "why": "Correcto. Estructura canónica: steady state MEDIBLE + hipótesis FALSABLE. Si matas 10% pods y la latencia p99 sube a 2s, el experimento REVELÓ una debilidad (HPA lento, load balancer con sticky sessions, etc.). Ese es el aprendizaje." },
+        { "letter": "B", "text": "'Vamos a matar pods y a ver qué pasa'.", "correct": false, "why": "Sin hipótesis ni steady state, no hay experimento — hay sabotaje. Puedes matar pods y no saber si el sistema 'funciona bien' o 'está degradado disimuladamente'." },
+        { "letter": "C", "text": "'La hipótesis es que el sistema NO se caerá'.", "correct": false, "why": "Muy vago. '¿No se caerá' hasta cuándo? ¿Con qué latencia aceptable? ¿Con qué tasa de error? El steady state debe ser cuantitativo y medible en tiempo real durante el experimento." },
+        { "letter": "D", "text": "La hipótesis es 'todo va a fallar y demostraremos que el sistema es frágil'.", "correct": false, "why": "Chaos engineering no busca DEMOSTRAR fragilidad — busca DESCUBRIR debilidades. Si tu hipótesis es 'todo se cae', ni siquiera necesitas el experimento; tienes un problema anterior." }
+      ],
+      "explanation": "La estructura hipótesis-driven: (1) DEFINE steady state en términos operativos: métricas medibles del sistema (SLIs: latencia, throughput, error rate) y del negocio (checkouts/min, stream starts/sec). (2) FORMULA hipótesis falsable: 'si inyecto X, el steady state se mantendrá porque Y'. (3) EJECUTA con blast radius controlado y stop conditions. (4) OBSERVA en dashboards en tiempo real. (5) SI se rompe steady state → aborta y aprende. Este método es lo que separa chaos engineering de sabotaje. Toda plataforma seria (Gremlin, FIS, LitmusChaos) permite integrar métricas de observabilidad como abort triggers.",
+      "realWorld": "Netflix: steady state = 'SPS dentro de ±5% del baseline'. Amazon Prime Video: 'errores 5xx <0.1% en checkout'. Google DiRT: define OKRs de negocio como steady state (búsquedas/seg en Google Search). En AWS FIS puedes definir CloudWatch alarms como 'stop conditions' — si latencia sube > threshold, el experimento se aborta automáticamente. Sin este auto-abort, un experimento mal calibrado puede convertirse en incident real.",
+      "tags": ["hipótesis", "steady state", "SLI", "experiment design"],
+      "tech": ["CloudWatch", "AWS FIS"],
+      "references": [{ "title": "principlesofchaos.org — Steady State Hypothesis" }, { "title": "AWS FIS — Stop Conditions Documentation" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "reliability",
+      "topic": "Blast radius control",
+      "difficulty": "mid",
+      "scenario": "Un ingeniero propone: 'para el primer experimento vamos a matar TODOS los pods de checkout en producción para ver si failover funciona'. Otro ingeniero dice: 'eso es una malísima idea, empecemos con blast radius mínimo'.",
+      "question": "¿Cómo se controla el blast radius correctamente en un primer experimento?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Empezar en STAGING primero para validar el mecanismo del experimento. Aunque staging no reproduce prod, verifica que la herramienta hace lo que crees.", "correct": true, "why": "Correcto. 'Prod-only chaos' es principio ideal, pero PRAGMÁTICAMENTE haces smoke test en staging primero para verificar que Chaos Monkey/FIS/Gremlin están configurados correctamente. Luego escalas a prod con blast radius mínimo." },
+        { "letter": "B", "text": "En producción, empezar con 1 pod, 1% del tráfico, 1 AZ, 1 región. Duración corta (5 min). Observar. Si steady state se mantiene, escalar a 5%, luego 10%, luego 25%. Cada expansión es un experimento independiente.", "correct": true, "why": "Correcto. Escalada gradual (blast radius doubling) es el patrón estándar. Cada nivel te da confianza para el siguiente. Si el sistema falla a 5%, aprendes ANTES de escalar a 50% y causar incident real." },
+        { "letter": "C", "text": "Configurar STOP CONDITIONS automáticas: si latencia p99 > 1s, o tasa de error > 1%, o alertas críticas se disparan, el experimento se aborta automáticamente. NUNCA ejecutar chaos sin abort automático conectado a observabilidad.", "correct": true, "why": "Correcto. Sin stop conditions, el chaos engineer humano tiene que estar mirando dashboards y reaccionar rápido — poco confiable. AWS FIS, Gremlin, LitmusChaos permiten stop conditions basadas en métricas Prometheus/CloudWatch." },
+        { "letter": "D", "text": "Ejecutar durante HORAS LABORALES cuando el equipo puede responder, NUNCA a las 3 AM. Chaos Monkey de Netflix ejecuta 9AM-3PM lunes-jueves por esta razón.", "correct": true, "why": "Correcto. Si el experimento causa incident real, quieres al equipo despierto y presente. Chaos que estalla a las 3AM despierta a on-call — mal ROI de aprendizaje. Netflix Chaos Monkey ejecuta 09:00-15:00 lunes a viernes por diseño." },
+        { "letter": "E", "text": "Matar todo simultáneamente para ver el peor caso posible.", "correct": false, "why": "Sabotaje disfrazado de chaos. El peor caso convierte experimento en incident real. Escalada gradual descubre las debilidades ANTES de llegar al peor caso." },
+        { "letter": "F", "text": "Notificar solo al equipo ejecutor, no al resto de la empresa.", "correct": false, "why": "Peligroso. Otros equipos pueden ver alertas y pensar que hay incident real, disparando respuesta innecesaria. Comunicar experimento a stakeholders (SRE, on-call, customer support) es parte del protocolo." }
+      ],
+      "explanation": "Blast radius control = principio 5 de principlesofchaos.org. Elementos: (1) SCOPE limitado (pocos pods, poco tráfico, una AZ); (2) DURACIÓN limitada (minutos, no horas); (3) STOP CONDITIONS automáticas via métricas; (4) HORARIO adecuado (equipo presente); (5) COMUNICACIÓN al resto de la organización; (6) KILL SWITCH manual siempre disponible; (7) ROLLBACK plan claro. Los 'chaos engineers' expertos dedican tiempo a diseñar el blast radius ANTES de ejecutar. Sin esto, chaos = incidents auto-inflingidos. Regla de oro: 'if you can't confidently abort in 30 seconds, you're not ready to run the experiment'.",
+      "realWorld": "Netflix Chaos Monkey opera 09-15h lunes-jueves. Amazon (Prime Day chaos) requiere aprobación de VP para experimentos con blast radius > threshold. Google DiRT tiene playbooks con blast radius escalation graduales. Gremlin platform ofrece 'blast radius' controls nativos: número de targets, % de infra, duración, y 'halt' button. AWS FIS integra CloudWatch alarms como stop conditions automáticas.",
+      "tags": ["blast radius", "stop conditions", "kill switch", "gradual rollout"],
+      "tech": ["AWS FIS", "Gremlin", "Chaos Monkey"],
+      "references": [{ "title": "Netflix — Chaos Monkey Whitepaper" }, { "title": "AWS FIS — Stop Conditions" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "reliability",
+      "topic": "Chaos en producción vs staging",
+      "difficulty": "mid",
+      "scenario": "Un CTO dice: 'chaos en producción es demasiado arriesgado, hagámoslo solo en staging'. Un chaos engineer responde: 'staging no reproduce la realidad — el aprendizaje será limitado'.",
+      "question": "¿Cuál es el trade-off real entre chaos en producción vs staging?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "STAGING útil para validar mecánica del experimento (¿la herramienta funciona?) y descubrir bugs obvios. PROD es donde ocurre el aprendizaje real: tráfico real, datos reales, dependencies reales, cascading failures reales, 3rd-party APIs reales, DNS/CDN reales. El plan maduro es: (1) diseñar en staging, (2) validar mecánica en staging, (3) ejecutar con blast radius mínimo en prod, (4) escalar gradualmente en prod. El chaos 100% staging es 'chaos teatro' — se siente seguro pero enseña poco.", "correct": true, "why": "Correcto. Este es el pragmatismo maduro. Netflix, Amazon, Google usan AMBOS pero el valor real está en prod. Staging chaos protege contra los errores tontos del experimento; prod chaos descubre las verdades incómodas del sistema real." },
+        { "letter": "B", "text": "Chaos en staging es equivalente a chaos en producción.", "correct": false, "why": "Falso. Staging típicamente: (a) tráfico sintético mucho menor, (b) datos limpios sin edge cases, (c) menos servicios integrados, (d) sin 3rd-party APIs reales, (e) sin CDN/DNS/global routing. Muchos fallos EMERGENTES no aparecen en staging." },
+        { "letter": "C", "text": "Chaos en prod siempre es irresponsable; chaos serio es solo en staging.", "correct": false, "why": "Contradice la práctica de Netflix, Amazon, LinkedIn, Facebook. Todos ejecutan chaos en prod porque staging no da la confianza necesaria. Con blast radius control adecuado, prod chaos es seguro Y valioso." },
+        { "letter": "D", "text": "Chaos en prod es igual de seguro que en staging.", "correct": false, "why": "No. Prod tiene mayor riesgo (impacto a users reales, revenue real). Por eso principio 5 (blast radius) es crítico. Pero el mayor riesgo se compensa con mayor VALOR de aprendizaje." }
+      ],
+      "explanation": "La razón por la que staging chaos es limitado: sistemas distribuidos tienen comportamiento EMERGENTE — el todo es más que la suma de las partes. Un fallo en producción cascadea por cientos de servicios de formas que staging no reproduce. Ejemplos: (1) retries que amplifican load causando thundering herd; (2) circuit breakers que se abren en cascada; (3) sticky sessions que concentran tráfico en pods vivos causando OOM; (4) DNS TTLs que retrasan failover; (5) caches CDN con datos stale. Estos comportamientos SOLO se observan con tráfico real y arquitectura real. Chaos maduro: usa staging para mecánica, prod para aprendizaje real.",
+      "realWorld": "Netflix ejecuta Chaos Monkey en prod desde 2011. Chaos Kong en prod desde 2013. Amazon ejecuta 'GameDays' en prod y en staging. Google DiRT ejecuta ejercicios de disaster recovery en prod real (con approval de VP). LinkedIn creó 'Waterbear' — chaos en prod. Facebook (Meta) publicó 'Storm' — infra chaos platform que corre en prod. La comunidad chaos engineering es unánime: prod es el objetivo, staging es entrenamiento.",
+      "tags": ["chaos en producción", "staging", "emergent behavior", "cascading failures"],
+      "tech": ["Chaos Monkey", "Chaos Kong"],
+      "references": [{ "title": "Netflix Tech Blog — Chaos Engineering Upgraded" }, { "title": "AWS re:Invent 2019 — Chaos Engineering with AWS" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "reliability",
+      "topic": "Cuándo NO hacer chaos",
+      "difficulty": "mid",
+      "scenario": "Un manager ambicioso quiere lanzar chaos engineering la próxima semana. El equipo tiene: no observabilidad decente, no runbooks, no on-call rotation formal, sin SLIs/SLOs definidos, y el último incident sigue sin postmortem.",
+      "question": "¿Cuándo NO deberías hacer chaos engineering?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Si no tienes OBSERVABILIDAD madura (métricas, logs, traces, dashboards en tiempo real). Sin ver qué pasa durante el experimento, es sabotaje ciego. Antes de chaos: invierte en Prometheus, Grafana, distributed tracing.", "correct": true, "why": "Correcto. Sin observability, ni sabes cuándo abortar ni qué aprendiste. Chaos + no observability = incidents sin diagnóstico." },
+        { "letter": "B", "text": "Si el sistema tiene KNOWN FRAGILITIES sin arreglar. Chaos revela unknown unknowns; si tienes known unknowns pendientes (bug de production reportado hace 3 meses), arréglalos PRIMERO. Sin arreglar los conocidos, chaos solo confirma lo obvio.", "correct": true, "why": "Correcto. Regla común: 'don't run chaos if you already know it's broken'. Arreglar known issues primero maximiza el ROI del chaos experiment." },
+        { "letter": "C", "text": "Durante FREEZE periods críticos (Black Friday, Prime Day, Christmas retail, TAX filing deadline, elections). El costo del incident supera el aprendizaje. Netflix pausa chaos durante lanzamientos de series importantes.", "correct": true, "why": "Correcto. Business criticality trumps chaos schedule. Todos los equipos maduros de chaos tienen 'freeze calendars' que pausan experimentos en fechas críticas." },
+        { "letter": "D", "text": "Si el equipo no tiene ON-CALL rotation formal ni runbooks. Si un experimento causa incident real, alguien debe responder rápido con contexto. Chaos sin on-call maduro = pánico distribuido.", "correct": true, "why": "Correcto. Prerrequisito operativo. Si no sabes a quién llamar cuando falla, no ejecutes chaos." },
+        { "letter": "E", "text": "Si el postmortem del último incident sigue pendiente. Aprender de fallos ya ocurridos > provocar nuevos. Postmortem culture es prerequisito de chaos culture.", "correct": true, "why": "Correcto. Blameless postmortem es un pilar cultural. Sin capacidad de aprender de fallos reales, chaos experiments no producirán aprendizaje tampoco." },
+        { "letter": "F", "text": "NUNCA hay razón para NO hacer chaos — siempre añade valor.", "correct": false, "why": "Peligrosamente ingenuo. Chaos sin prerrequisitos (observability, on-call, runbooks, cultura blameless, business timing) causa daño neto. Casey Rosenthal (padrino del chaos) advierte esto explícitamente." }
+      ],
+      "explanation": "Casey Rosenthal y Nora Jones ('Chaos Engineering' O'Reilly) enumeran prerrequisitos: (1) observability madura; (2) SLIs/SLOs definidos como steady state; (3) on-call rotation formal; (4) runbooks para incidents comunes; (5) cultura blameless con postmortems; (6) buy-in ejecutivo (chaos causará incidents ocasionales y hay que aceptarlo). Sin estos, chaos genera daño neto: causas incidents que no puedes diagnosticar, sin equipo que responda, sin capacidad organizacional de aprender. Regla: 'chaos amplifica la madurez organizacional — buena cultura amplificada = mejores sistemas; mala cultura amplificada = caos real'. Empieza por los prerrequisitos, luego experimentos.",
+      "realWorld": "Netflix construyó su cultura de resiliencia y observability ANTES de chaos (años). Amazon Prime Day tiene freeze de cambios semanas antes. Google DiRT requiere aprobación formal por VP y firma de runbook. Empresas que fracasaron en chaos suelen haberlo hecho antes de invertir en observability — resultado: chaos causa incidents que nadie sabe diagnosticar, se cancela el programa, cultura queda dañada.",
+      "tags": ["prerequisites", "cuando no hacer chaos", "observability", "runbooks", "freeze"],
+      "tech": [],
+      "references": [{ "title": "Rosenthal & Jones — Chaos Engineering (O'Reilly 2020)" }, { "title": "Casey Rosenthal — When Not to Do Chaos Engineering" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "reliability",
+      "topic": "Game Days",
+      "difficulty": "senior",
+      "scenario": "Tu VP de engineering pregunta: '¿qué es un Game Day y cómo se ejecuta correctamente?'. Quiere hacer uno el próximo mes.",
+      "question": "¿Qué es un Game Day y cuáles son sus elementos clave?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Game Day = ejercicio COORDINADO donde un equipo simula un incident deliberadamente (inyección de fallo, disaster scenario) para practicar respuesta operativa: detección, comunicación, escalación, mitigación, resolución. Es chaos engineering pero con foco en el TEAM RESPONSE, no solo en el sistema.", "correct": true, "why": "Correcto. Origen: Jesse Robbins, 'Master of Disaster' en Amazon (2000s). Game Days entrenan al equipo humano, no solo verifican el sistema. Un buen game day revela debilidades en runbooks, comunicación, y escalación." },
+        { "letter": "B", "text": "Estructura clásica: (1) planning weeks ahead con hipótesis y scenario; (2) diseño del scenario (qué fallo se inyectará, cuándo, por cuánto tiempo); (3) roles definidos (incident commander, communicator, responders, observers); (4) ejecución con timing formal; (5) debrief inmediato con lessons learned; (6) action items con owners.", "correct": true, "why": "Correcto. Un Game Day no es 'reunión donde matamos servers'. Es ejercicio estructurado con planning, roles claros y follow-up. Google DiRT y Amazon GameDays siguen esta estructura." },
+        { "letter": "C", "text": "Simulaciones incluyen: 'la región primaria AWS se cae', 'la base de datos primary se corrompe', 'el key vendor de payment está down 4 horas', 'un ingeniero rogue borra la tabla users', 'un DDoS mata el CDN'. Cada scenario entrena diferentes músculos: technical failover, vendor comms, security response, disaster recovery.", "correct": true, "why": "Correcto. Los scenarios reales importan. Game Days aburridos ('un pod se cae') no enseñan mucho; scenarios ambiciosos ('region entera cae en Black Friday') revelan gaps críticos." },
+        { "letter": "D", "text": "El VALOR principal es el DEBRIEF — qué runbooks estaban desactualizados, qué comunicación falló, qué métricas estaban ausentes, quién no sabía a quién escalar. Este aprendizaje genera action items que hacen al equipo genuinamente más preparado. Sin debrief serio, el Game Day fue solo entretenimiento.", "correct": true, "why": "Correcto. Sin debrief, aprendizaje se pierde. Un Game Day sin action items ejecutados en las siguientes semanas fue una pérdida de tiempo. La ejecución del scenario es solo el vehículo del aprendizaje." },
+        { "letter": "E", "text": "Game Days son solo para infra teams; no involucran producto ni support.", "correct": false, "why": "Falso. Game Days maduros involucran customer support (¿cómo respondemos a users durante el outage?), producto (¿qué features degradar?), comms (¿qué decimos en el status page?), legal (¿comunicación regulatoria?). Es ejercicio organizacional." }
+      ],
+      "explanation": "Game Days originaron en Amazon con Jesse Robbins ('Master of Disaster') en 2004-2006. Formaron la base cultural de la disciplina de chaos engineering. Un Game Day típico: (1) 2-4 semanas de planning con scenario claro; (2) 2-4 horas de ejecución en día laboral con equipo presente; (3) 1 hora de debrief inmediato; (4) postmortem escrito en la semana siguiente con action items; (5) follow-up en 30-60 días verificando que action items se completaron. Google DiRT (Disaster Recovery Testing) ejecuta ejercicios de una semana entera, con VP approval, con scenarios ambiciosos (imagina 'un datacenter entero deja de funcionar durante 5 días'). Amazon ejecuta 'GameDays' regulares como cultura.",
+      "realWorld": "Jesse Robbins acuñó el término en Amazon (2004-2006). Google DiRT ejecuta ejercicios de disaster recovery a escala corporativa varias veces al año — scenarios como 'la oficina central pierde conectividad 24h' o 'el sistema de payroll no funciona'. Amazon ejecuta GameDays durante entrenamiento pre-Prime Day. Netflix, Etsy, Uber, LinkedIn adoptaron game days. Verica, Gremlin y AWS FIS ofrecen tooling para game days.",
+      "tags": ["game day", "DiRT", "disaster recovery", "team response", "debrief"],
+      "tech": ["Google DiRT", "Amazon GameDays"],
+      "references": [{ "title": "Jesse Robbins — GameDay: Creating Resiliency Through Destruction" }, { "title": "Google SRE Book — Disaster Recovery Testing" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "reliability",
+      "topic": "AWS Fault Injection Simulator (FIS)",
+      "difficulty": "senior",
+      "scenario": "Tu empresa está en AWS y quiere hacer chaos sin instalar Gremlin. Te preguntan sobre AWS FIS lanzado en re:Invent 2020.",
+      "question": "¿Qué es AWS FIS y qué puede hacer?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "AWS FIS es un servicio managed de AWS (lanzado 2021) que ejecuta experimentos de chaos sobre recursos AWS: EC2 (stop instance, reboot, network latency), ECS/EKS (stop task, kill pod), RDS (reboot DB, failover), Lambda, EBS, y networking (packet loss, latency, blackhole). Integra IAM para permisos, CloudWatch para stop conditions, EventBridge para triggers, y templates JSON reusables.", "correct": true, "why": "Correcto. FIS fue el 'entry into managed chaos' de AWS después de años observando a Gremlin dominar el mercado. Su ventaja: nativo en AWS, sin agents que instalar, IAM para governance, integración con CloudWatch para stop conditions automáticas." },
+        { "letter": "B", "text": "Los STOP CONDITIONS son la killer feature: puedes vincular el experimento a una CloudWatch alarm (ej: 'si latencia p99 > 500ms, aborta'). Cuando la alarma dispara, FIS aborta el experimento en segundos y restaura el estado. Esto es blast radius control automatizado.", "correct": true, "why": "Correcto. Sin stop conditions automáticas, chaos manual requiere humano vigilando 24/7. Con stop conditions vinculadas a SLIs, el sistema se auto-protege. Es lo que Netflix hacía manualmente con scripts internos por años; FIS lo comoditizó." },
+        { "letter": "C", "text": "FIS soporta AWS Systems Manager (SSM) para inyectar fallos DENTRO de EC2 instances: CPU stress, memory pressure, IO stress, kill process — usando SSM documents. No requiere agents adicionales si SSM ya está en las instancias.", "correct": true, "why": "Correcto. FIS reutiliza SSM para exec-in-instance chaos. Esto reduce fricción (no agent nuevo) pero limita a instancias con SSM configurado." },
+        { "letter": "D", "text": "FIS puede inyectar network latency y packet loss usando 'aws:network:*' actions, simulando congestión de red o particiones a nivel de VPC/subnet.", "correct": true, "why": "Correcto. Un uso común: simular latencia entre regiones para verificar timeouts y circuit breakers. FIS integra con EC2 y ECS para network chaos." },
+        { "letter": "E", "text": "FIS solo funciona en producción, no en cuentas de desarrollo.", "correct": false, "why": "Falso. FIS funciona en cualquier cuenta AWS. La recomendación es empezar en dev/staging para validar experiment templates antes de prod." }
+      ],
+      "explanation": "AWS FIS (Fault Injection Simulator, lanzado GA marzo 2021) tiene componentes: (1) Experiment Templates — JSON reusable con actions, targets, stop conditions; (2) Actions — 'aws:ec2:stop-instances', 'aws:ec2:reboot-instances', 'aws:ssm:send-command' (para CPU/mem/IO stress via SSM), 'aws:rds:reboot-db-instances', 'aws:eks:pod-network-latency', 'aws:network:disrupt-connectivity'; (3) Targets — recursos por tags/IDs; (4) Stop Conditions — CloudWatch alarms que abortan; (5) IAM roles para governance. Ventajas sobre Gremlin: nativo AWS, sin costo de licencia adicional (paga por uso), integración perfecta con CloudWatch/EventBridge. Desventajas: solo AWS (no funciona en on-prem, GCP, Azure), UX menos pulida que Gremlin, menos scenarios pre-built.",
+      "realWorld": "AWS FIS anunciado en re:Invent 2020, GA marzo 2021. Casos de uso publicados por AWS: Capital One usando FIS para validar failover multi-región; Autodesk usando FIS para game days regulares; empresas de trading para validar circuit breakers. AWS Well-Architected Framework (Reliability Pillar) recomienda chaos engineering; FIS es la implementación oficial. Pricing: pagas por hora de experiment ejecutándose (fracción de dólar).",
+      "tags": ["AWS FIS", "Fault Injection Simulator", "CloudWatch", "SSM", "stop conditions"],
+      "tech": ["AWS FIS", "CloudWatch", "SSM"],
+      "references": [{ "title": "AWS — Fault Injection Simulator User Guide" }, { "title": "AWS re:Invent 2020 — Introducing AWS FIS" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "reliability",
+      "topic": "Chaos Mesh vs LitmusChaos",
+      "difficulty": "senior",
+      "scenario": "Tu empresa está full Kubernetes y quiere una plataforma open-source de chaos. Los candidatos son Chaos Mesh (PingCAP/CNCF) y LitmusChaos (MayaData/CNCF).",
+      "question": "¿Cuáles son las características de Chaos Mesh y LitmusChaos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Chaos Mesh (creado por PingCAP para probar TiDB, CNCF incubating) es nativo Kubernetes con CRDs para cada tipo de chaos: PodChaos, NetworkChaos, IOChaos, StressChaos, TimeChaos, DNSChaos, HTTPChaos, KernelChaos. Filosofía: 'declara el chaos como YAML como si fuera un Deployment'. Dashboard web para diseñar experimentos.", "correct": true, "why": "Correcto. Chaos Mesh es 'chaos as YAML' — encaja perfectamente en workflows GitOps con ArgoCD/Flux. PingCAP lo construyó porque necesitaban probar la resiliencia de TiDB (distributed SQL) y lo open-sourced." },
+        { "letter": "B", "text": "LitmusChaos (creado por MayaData, ahora CNCF incubating) tiene el 'ChaosHub' — biblioteca de experimentos pre-construidos (pod-delete, node-cpu-hog, disk-fill, network-loss) compartidos por la comunidad. Modelo Chaos Workflows (Argo Workflows-based) para orquestrar experimentos multi-paso.", "correct": true, "why": "Correcto. LitmusChaos apuesta por el 'ecosistema abierto de experimentos' y workflows complejos. ChaosHub es como Docker Hub pero para experimentos de chaos." },
+        { "letter": "C", "text": "Ambos son nativos Kubernetes (CRDs, controllers), open-source (Apache 2.0), y CNCF projects. Ambos pueden inyectar pod-kill, network faults, CPU stress, IO stress. La elección es de tooling preference: Chaos Mesh tiene mejor dashboard, LitmusChaos tiene ChaosHub y workflows más maduros.", "correct": true, "why": "Correcto. Son competidores directos con overlaps mayores que diferencias. Ambos maduros para producción Kubernetes." },
+        { "letter": "D", "text": "Ninguno funciona fuera de Kubernetes. Si tienes VMs en on-prem o Nomad, necesitas otra herramienta (Gremlin, AWS FIS, Chaos Toolkit).", "correct": true, "why": "Correcto. Chaos Mesh y Litmus son Kubernetes-first. Para heterogéneo (K8s + VMs + serverless), Gremlin o Chaos Toolkit son mejores opciones." },
+        { "letter": "E", "text": "Chaos Mesh y LitmusChaos son productos comerciales de pago.", "correct": false, "why": "Falso. Ambos son 100% open-source Apache 2.0 y CNCF projects. Sí existen productos comerciales alrededor (Harness Chaos, Verica), pero los core proyectos son gratis." }
+      ],
+      "explanation": "Chaos Mesh y LitmusChaos son las dos plataformas open-source dominantes para chaos en Kubernetes, ambas en CNCF Incubating status. Chaos Mesh (creado 2019 por PingCAP para testing de TiDB): CRDs tipados por dominio (PodChaos, NetworkChaos), dashboard bonito, buen para 'chaos as YAML' en GitOps. Su NetworkChaos usa iptables/tc para latencia, packet loss, corruption. LitmusChaos (creado 2018 por MayaData): ChaosHub (biblioteca de experimentos reutilizables), Argo-based ChaosWorkflows para orquestar multi-step experiments, ChaosCenter (UI para gestión). Ambos manejan pod-delete, container-kill, node-taint, CPU/memory/IO stress, network chaos. Chaos Mesh tiene ventaja en polish; Litmus en workflows complejos y comunidad.",
+      "realWorld": "PingCAP usa Chaos Mesh para probar TiDB en cada release. Empresas usando Chaos Mesh: NetEase, Xpeng Motors, Meituan. Litmus adoption: Intuit, Orange, IBM. Ambos con miles de stars en GitHub. Diferencias: Chaos Mesh entró CNCF Sandbox 2020, Incubating 2022. LitmusChaos: Sandbox 2020, Incubating 2022. CNCF landscape los lista como las opciones open-source K8s-native más maduras.",
+      "tags": ["Chaos Mesh", "LitmusChaos", "Kubernetes", "CNCF", "CRDs"],
+      "tech": ["Chaos Mesh", "LitmusChaos", "Kubernetes", "CNCF"],
+      "references": [{ "title": "chaos-mesh.org" }, { "title": "litmuschaos.io" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "reliability",
+      "topic": "Gremlin platform",
+      "difficulty": "senior",
+      "scenario": "Un director de engineering quiere pagar por chaos-as-a-service en vez de gestionar herramientas open-source. Le hablan de Gremlin.",
+      "question": "¿Qué es Gremlin y qué ofrece que las OSS tools no?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Gremlin (fundada 2016 por Kolton Andrus, ex-Netflix Chaos Team) es la plataforma comercial líder de chaos engineering. Ofrece: (1) agent multi-cloud/multi-OS (K8s, VMs, on-prem, Windows, Linux, ARM); (2) scenarios pre-construidos con best practices (test de zone failure, DNS failure, dependency failure); (3) blast radius controls granulares con GUI; (4) 'Reliability Score' que rankea servicios; (5) integraciones con Datadog, PagerDuty, Slack; (6) soporte comercial 24/7 con SREs experimentados. El pitch: 'operar chaos internamente cuesta más que pagar Gremlin — deja que expertos operen la plataforma mientras tu equipo se enfoca en aprender'.", "correct": true, "why": "Correcto. Gremlin es el líder comercial del espacio. Fundada por Kolton Andrus (ex-Netflix Chaos Engineering) y Matt Fornaciari (ex-Salesforce SRE). Su value prop: enterprise-grade UX + soporte + best practices embebidos + heterogéneo (no solo K8s como Chaos Mesh)." },
+        { "letter": "B", "text": "Gremlin es una herramienta open-source competidora de Chaos Mesh.", "correct": false, "why": "Falso. Gremlin es producto comercial SaaS con pricing enterprise. Tienen una versión 'Gremlin Free' limitada pero el core es pago." },
+        { "letter": "C", "text": "Gremlin solo funciona en AWS.", "correct": false, "why": "Falso. Gremlin es multi-cloud (AWS, GCP, Azure), on-prem (bare metal, VMware), y multi-OS (Linux, Windows, ARM). Es su fortaleza vs FIS (solo AWS)." },
+        { "letter": "D", "text": "Gremlin fue creado por Google.", "correct": false, "why": "Falso. Kolton Andrus fundó Gremlin en 2016 después de trabajar en Netflix Chaos Team y previamente en Amazon en resiliencia." }
+      ],
+      "explanation": "Gremlin lidera el mercado comercial de chaos engineering. Fundadores con experiencia real: Kolton Andrus (Netflix Chaos Team, Amazon), Matt Fornaciari (Salesforce SRE). Diferenciadores frente a OSS: (1) UX pulida para non-experts; (2) biblioteca de scenarios validados (basados en incidents reales de Fortune 500); (3) 'Reliability Score' — métrica agregada de resiliencia por servicio; (4) 'Detected Risks' — análisis pasivo que detecta configuraciones frágiles antes de experimentar; (5) integraciones con incident tooling; (6) soporte de expertos. Costo: enterprise pricing (miles a decenas de miles USD/año dependiendo de scale). Competencia: AWS FIS (barato y nativo AWS), Chaos Mesh/Litmus (gratis, K8s-only), Harness Chaos (adquirida ChaosNative/LitmusChaos).",
+      "realWorld": "Gremlin clientes públicos: Twilio, Expedia, JPMorgan Chase, Under Armour, Walmart, IBM. Casey Rosenthal (co-founder de Verica, ex-Netflix Chaos Team lead) también publica extensamente sobre chaos. Gremlin publica el 'State of Chaos Engineering' report anual. Chaos Conf (Gremlin's conference) fue el evento comunitario principal 2018-2021.",
+      "tags": ["Gremlin", "chaos-as-a-service", "commercial", "reliability score"],
+      "tech": ["Gremlin"],
+      "references": [{ "title": "gremlin.com" }, { "title": "Kolton Andrus talks — QCon, SREcon" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "reliability",
+      "topic": "Toxiproxy — network chaos",
+      "difficulty": "senior",
+      "scenario": "Tu equipo quiere probar cómo reacciona su servicio cuando la base de datos tiene latencia alta, packet loss, o conexiones que se cortan a la mitad de una query. Alguien menciona Toxiproxy de Shopify.",
+      "question": "¿Qué es Toxiproxy y para qué se usa?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Toxiproxy (Shopify, open-source 2014) es un TCP proxy programable que se coloca entre tu app y una dependencia (DB, cache, API). Configuras 'toxics' vía API HTTP: latency (añadir X ms), bandwidth (throttle), slow_close (cerrar conexión lentamente), timeout (nunca responder), reset_peer (RST), slicer (splitear packets). Ideal para reproducir problemas de red específicos en dev/staging/prod.", "correct": true, "why": "Correcto. Toxiproxy es la herramienta clásica para 'network chaos' en el nivel TCP. Shopify la usa extensamente para probar resiliencia de sus servicios ante DB slow, Redis lento, etc." },
+        { "letter": "B", "text": "Toxiproxy sirve para TESTING de resilience patterns: verificar que retries, timeouts, circuit breakers y bulkheads funcionan correctamente ante condiciones de red específicas. Por ejemplo: 'si añado 500ms de latency a MySQL, ¿mi timeout de 300ms dispara y el circuit breaker se abre correctamente?'", "correct": true, "why": "Correcto. Testing con hipótesis específicas de red. Sin Toxiproxy, verificar timeout+retry+circuit breaker requiere trucos complicados; con Toxiproxy es una llamada a API." },
+        { "letter": "C", "text": "Toxiproxy es útil en INTEGRATION TESTS (CI/CD) donde puedes automatizar escenarios como 'DB latency spike' y verificar que la app degrada gracefully. También sirve en desarrollo local para reproducir bugs difíciles.", "correct": true, "why": "Correcto. En CI, un integration test puede iniciar Toxiproxy, añadir latency, ejecutar test, verificar behavior. Reproducible y automatizable." },
+        { "letter": "D", "text": "Toxiproxy opera a nivel TCP (L4), no HTTP (L7). Para chaos HTTP específico (5xx, response body corrupto) necesitas otras herramientas como Chaos Mesh HTTPChaos o mitmproxy.", "correct": true, "why": "Correcto. Toxiproxy es L4. Si necesitas 'devolver 500 al 10% de requests' o 'corromper JSON body', usas herramientas L7." },
+        { "letter": "E", "text": "Toxiproxy es un producto comercial de pago.", "correct": false, "why": "Falso. Toxiproxy es open-source (MIT license) mantenido por Shopify. Gratis en GitHub." }
+      ],
+      "explanation": "Toxiproxy (Shopify, 2014) llenó un gap: en microservicios, gran parte del failure mode viene de la RED entre servicios, no de los servicios en sí. Testing tradicional no reproduce latencia, packet loss, half-closed connections, o slow reads. Toxiproxy actúa como proxy programable: configuras 'toxics' via HTTP API (proxies + toxics como JSON) y el tráfico TCP entre tu app y la dependencia sufre las condiciones. Casos: (1) verificar timeout de query DB dispara correctamente; (2) simular Redis con latency spikes; (3) validar circuit breaker se abre después de N failures; (4) probar retry con exponential backoff; (5) reproducir bugs de connection pool exhaustion. Uso típico: en CI cada commit prueba resilience patterns; en dev cuando reproduces un bug 'que solo pasa en prod'.",
+      "realWorld": "Shopify open-sourceó Toxiproxy en 2014, GitHub Shopify/toxiproxy con miles de stars. Usado por Shopify internamente para probar resilience de todo su stack. Adoptado por muchas empresas Rails/Ruby (pero funciona con cualquier stack — es TCP proxy). Alternativas: tc/netem para chaos a nivel kernel (más bajo nivel), Chaos Mesh NetworkChaos para K8s. Toxiproxy sigue siendo referencia en testing de resilience patterns.",
+      "tags": ["Toxiproxy", "network chaos", "TCP proxy", "resilience testing"],
+      "tech": ["Toxiproxy", "Shopify"],
+      "references": [{ "title": "GitHub — Shopify/toxiproxy" }, { "title": "Shopify Engineering — Toxiproxy: A TCP Proxy for Simulating Network Conditions" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "reliability",
+      "topic": "Kill process, pod, node, AZ, region",
+      "difficulty": "senior",
+      "scenario": "Tu equipo está diseñando la escalada de chaos experiments. Un ingeniero senior dibuja una pirámide: 'empezamos matando process, luego pod, luego node, luego AZ, luego region'.",
+      "question": "¿Por qué esta escalera de blast radius y qué se aprende en cada nivel?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "KILL PROCESS (dentro de un pod/VM): verifica que el proceso reinicia correctamente (supervisor/systemd/liveness probe), que reconecta a dependencies, y que no pierde estado. Blast radius mínimo — un solo proceso. Ideal para primer experimento.", "correct": true, "why": "Correcto. Nivel más bajo, aprendizaje sobre single-process resilience: PID 1 handling, graceful shutdown, connection reestablishment. Kubernetes liveness probes hacen esto continuamente; chaos lo prueba deliberadamente." },
+        { "letter": "B", "text": "KILL POD (Kubernetes): verifica que ReplicaSet/Deployment recrea el pod, que el servicio siguiente descubre el nuevo pod (service discovery), que el load balancer redistribuye tráfico. Verifica PodDisruptionBudgets y readiness probes. Blast radius pequeño pero mayor que process — un servicio entero podría degradarse brevemente.", "correct": true, "why": "Correcto. Nivel de Kubernetes, prueba control-plane response. Chaos Monkey de Kubernetes (kube-monkey, PowerfulSeal) opera aquí." },
+        { "letter": "C", "text": "KILL NODE (VM/worker): verifica que cluster reprograma pods, que persistent volumes se recuperan (o se pierden), que node autoscaler añade nueva capacidad. Blast radius mayor — TODOS los pods en el nodo se caen simultáneamente, incluye pods stateful.", "correct": true, "why": "Correcto. Kill node prueba cluster-level resilience: taint/drain, PV/PVC handling, cluster autoscaler. Es donde muchos sistemas fallan por primera vez (StatefulSets, node-affinity, etc.)." },
+        { "letter": "D", "text": "KILL AZ (Availability Zone): verifica multi-AZ resilience — que replicas cross-AZ toman el tráfico, que RDS Multi-AZ failovers, que ELB detecta AZ down. Este es el nivel de Chaos Gorilla. Verifica que tu diseño multi-AZ REALMENTE funciona (muchos equipos asumen que sí sin probarlo).", "correct": true, "why": "Correcto. AZ-level chaos revela dependencies ocultas en una AZ (ej: NAT Gateway single-AZ, cross-AZ latency inesperada, sticky sessions concentradas). Muchos incidents reales son 'una AZ tuvo un problema'." },
+        { "letter": "E", "text": "KILL REGION (Chaos Kong): el nivel máximo. Verifica multi-region failover: DNS failover (Route53 health checks), data replication cross-region, CDN failover, comms con vendors si están en otra región. Netflix es (era) el único ejecutando esto regularmente en prod. Blast radius máximo pero también aprendizaje máximo.", "correct": true, "why": "Correcto. Chaos Kong revela que MUCHAS empresas creen ser multi-region cuando en realidad tienen dependencies single-region ocultas (secrets vault en una región, DNS provider en una región, third-party API en una región)." },
+        { "letter": "F", "text": "Debes empezar directamente por kill region — el resto son pérdida de tiempo.", "correct": false, "why": "Falso. Empezar por region-level chaos sin haber validado process/pod/node/AZ = incident garantizado. La escalera existe porque cada nivel valida asunciones antes del siguiente." }
+      ],
+      "explanation": "La escalada de blast radius es principio 5 (minimize blast radius) aplicado a la práctica. Cada nivel entrena diferentes músculos: process → intra-pod; pod → K8s control plane; node → cluster autoscaler + stateful workloads; AZ → cross-AZ replication + LB; region → cross-region failover + external dependencies. Empezar por el nivel más bajo permite validar que las asunciones básicas funcionan antes de escalar. Netflix tardó AÑOS en llegar a Chaos Kong regular — primero Chaos Monkey (instancias), luego Chaos Gorilla (AZ), finalmente Chaos Kong (region). Cada nivel expone diferentes fallos: kill pod expone PDBs mal configurados, kill node expone StatefulSets frágiles, kill AZ expone NAT Gateway single-AZ, kill region expone secrets/DNS/CDN single-region.",
+      "realWorld": "Netflix Chaos Monkey (kill instance) opera desde 2011. Chaos Gorilla (kill AZ) desde 2012. Chaos Kong (kill region) desde 2013+, con simulacros anuales y varios REALES sobreviviendo a outages de us-east-1 (2015 DynamoDB outage, 2017 S3 outage). Amazon Prime Video ejecutó experimentos multi-región después del incident de 2021 us-east-1. Google DiRT simuló pérdida total de un datacenter durante una semana entera. Facebook ejecuta 'Storm' para simular pérdidas de datacenter.",
+      "tags": ["blast radius escalation", "kill pod", "kill node", "kill AZ", "kill region", "Chaos Kong"],
+      "tech": ["Kubernetes", "AWS", "Chaos Kong"],
+      "references": [{ "title": "Netflix — Chaos Kong Blog Post" }, { "title": "Google SRE — Disaster Testing" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "reliability",
+      "topic": "Network partitions",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene un sistema distribuido con Cassandra multi-DC. Un ingeniero pregunta: '¿cómo probamos qué pasa si la red se particiona entre datacenters?'.",
+      "question": "¿Cómo se prueban network partitions correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Herramientas: (1) iptables DROP para simular partition total; (2) Chaos Mesh NetworkChaos con action 'partition' que aísla pods por selectors; (3) tc/netem para packet loss parcial; (4) Toxiproxy con toxic 'timeout' para blackhole; (5) AWS FIS 'aws:network:disrupt-connectivity' para particiones cross-subnet. Objetivo: verificar comportamiento CAP — ¿el sistema prefiere consistency (AP frozen) o availability (split brain risk)?", "correct": true, "why": "Correcto. Network partition es EL fallo clásico de sistemas distribuidos (CAP theorem). Sin probar particiones, tu 'multi-region resilience' es teoría. Cassandra con consistency level QUORUM puede quedar bloqueada durante partition; con LOCAL_QUORUM sigue local. Solo experimentando descubres el comportamiento real." },
+        { "letter": "B", "text": "Las network partitions no son testables — son eventos raros.", "correct": false, "why": "Falso. Las partitions son MÁS comunes de lo que la gente cree en cloud (network congestion, security group changes, VPC issues). Netflix, Google reportan partitions regularmente. No probarlas = fallar en producción." },
+        { "letter": "C", "text": "Basta con matar un nodo — es equivalente a partition.", "correct": false, "why": "Falso. Nodo muerto ≠ partition. Un nodo muerto es detectado (no responde ni a heartbeats ni a queries). Una partition PERMITE que el nodo esté vivo pero UNREACHABLE, causando split brain, doble master, inconsistencia de estado. Comportamiento distinto." },
+        { "letter": "D", "text": "Solo AWS FIS puede simular partitions.", "correct": false, "why": "Falso. iptables, tc/netem, Chaos Mesh, Chaos Toolkit, Toxiproxy, Gremlin — todas pueden simular partitions. FIS es una opción más." }
+      ],
+      "explanation": "Network partitions son el fallo distribuido más complejo. Consecuencias: (1) SPLIT BRAIN en sistemas que eligen leaders (etcd, ZooKeeper, MongoDB replica set — necesitan quorum para evitar); (2) DIVERGENCIA de datos en sistemas eventually consistent (Cassandra, DynamoDB — reconciliar via LWW o vector clocks); (3) FAILOVER incorrecto si el health check ve el otro lado como 'down' (ej: DB failover innecesario). Pruebas necesarias: (a) partition total entre 2 DCs; (b) partition parcial (50% packet loss); (c) partition asimétrica (A ve a B pero B no ve a A — común con security groups); (d) partition intermitente (flapping). Cada uno estresa diferentes asunciones. Jepsen (Kyle Kingsbury) es el framework de referencia para verificar consistency guarantees bajo partitions.",
+      "realWorld": "Jepsen tests (Kyle Kingsbury) han revelado bugs de consistency en MongoDB, Cassandra, etcd, Elasticsearch, RabbitMQ. Aphyr's blog es lectura obligada sobre distributed systems failures. AWS partitions reales: 2011 us-east-1 EBS partition, 2017 S3 (no partition pero similar impact), 2021 Kinesis. Cassandra bajo partition puede quedar 'stuck' esperando quorum; muchos ops descubren esto por primera vez con Jepsen o chaos experiments. Chaos Mesh NetworkChaos permite 'partition' action nativo.",
+      "tags": ["network partition", "split brain", "CAP theorem", "Jepsen", "consistency"],
+      "tech": ["Chaos Mesh", "iptables", "Jepsen"],
+      "references": [{ "title": "Kyle Kingsbury — Jepsen.io" }, { "title": "Chaos Mesh — NetworkChaos" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "reliability",
+      "topic": "CPU y memory pressure",
+      "difficulty": "senior",
+      "scenario": "Un ingeniero pregunta: 'quiero simular que un pod consume mucho CPU o memoria — no matarlo sino DEGRADARLO. Quiero ver cómo reacciona el HPA, el scheduler, y otros pods en el mismo nodo'.",
+      "question": "¿Cómo se inyectan CPU y memory pressure y qué se aprende?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Herramientas: 'stress-ng' (Linux) para CPU/mem/IO stress; Chaos Mesh StressChaos con 'stressors'; LitmusChaos node-cpu-hog y node-memory-hog experiments; AWS FIS via SSM Run Command con stress scripts. Configurables por porcentaje de CPU, MB de memoria, número de workers.", "correct": true, "why": "Correcto. stress-ng es el estándar de facto para stress testing en Linux. Chaos Mesh y Litmus lo envuelven en CRDs Kubernetes." },
+        { "letter": "B", "text": "Aprendizajes clave: (1) ¿el HPA scale-out reacciona a tiempo? Si el pod está a 95% CPU 5 minutos antes de que HPA reaccione, tienes latency alto; (2) ¿los NOISY NEIGHBORS afectan pods en el mismo nodo? Si CPU limits no están configurados, un pod hambriento starves a otros; (3) ¿el liveness probe falla por CPU starvation? Muchos pods son killed por 'unhealthy' cuando solo estaban lentos.", "correct": true, "why": "Correcto. Estos son aprendizajes clásicos. Sin pruebas, asumes que HPA reacciona rápido, que resource limits están bien, que liveness probes son inmunes a starvation. Chaos revela las verdades." },
+        { "letter": "C", "text": "Memory pressure enseña: (1) OOMKiller de Linux termina el proceso más pesado; (2) si el pod tiene memory limit, cgroup lo mata; (3) swap (si habilitado) causa performance degradation antes de OOM; (4) Java/Node/Python garbage collectors se enloquecen bajo pressure. Chaos revela si tu app tiene memory leaks visibles solo bajo presión.", "correct": true, "why": "Correcto. Memory chaos es específicamente útil para descubrir memory leaks, GC misbehavior, y OOM handling. Kubernetes recomienda desactivar swap; muchos equipos lo tienen activo por accidente." },
+        { "letter": "D", "text": "Regla importante: CPU/mem stress puede afectar NODOS ENTEROS, no solo el pod objetivo. En Kubernetes, stress dentro de un pod SIN limits puede consumir el nodo entero y afectar todos los otros pods. Antes de inyectar stress, verifica que resource limits están configurados o el blast radius será mayor de lo esperado.", "correct": true, "why": "Correcto. Sin limits, el stress se propaga fuera del pod objetivo. Chaos maduro requiere primero que limits estén configurados; sino, el 'experimento controlado' se sale de control." },
+        { "letter": "E", "text": "El stress test es equivalente al load test.", "correct": false, "why": "Falso. Load test = simular tráfico normal aumentado; stress test/chaos = degradar recursos artificialmente. El load test dice '¿aguanta 10x tráfico?', el chaos dice '¿qué pasa si CPU está al 100% por razones ajenas al tráfico?'. Complementarios." }
+      ],
+      "explanation": "CPU/memory pressure chaos revela problemas invisibles bajo condiciones normales: (1) HPA response time (frecuentemente 3-5 min por defecto — demasiado lento para spikes); (2) resource limits ausentes o mal configurados; (3) noisy neighbors starving otros pods; (4) liveness/readiness probes que fallan por starvation en vez de por bugs; (5) memory leaks visibles solo bajo presión; (6) GC behavior degradado (Java Old Gen, Node V8 heap); (7) OOMKiller decisions no obvias. Herramientas: stress-ng (baseline), Chaos Mesh StressChaos, LitmusChaos, AWS FIS via SSM. Blast radius: EMPIEZA con pods aislados y resource limits configurados; NUNCA hagas stress sin limits — puede tumbar nodos enteros.",
+      "realWorld": "Kubernetes CPU throttling (con CPU limits) causa problemas de latencia observados en Adidas, Buffer, y muchas empresas — chaos experiments revelaron esto. Netflix documentó cómo memory pressure en JVM causaba latency spikes de segundos. Amazon Prime Video encontró en chaos experiments que HPA reaccionaba 4 min tarde a spikes de CPU — cambiaron a KEDA con custom metrics.",
+      "tags": ["CPU stress", "memory pressure", "OOMKiller", "HPA", "noisy neighbors"],
+      "tech": ["stress-ng", "Chaos Mesh", "Kubernetes"],
+      "references": [{ "title": "Chaos Mesh — StressChaos" }, { "title": "Linux stress-ng Documentation" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "reliability",
+      "topic": "Dependency failure injection",
+      "difficulty": "senior",
+      "scenario": "Tu servicio depende de: Stripe (payments), Twilio (SMS), Datadog (metrics), un vendor de email marketing, y una API interna del equipo B. Un chaos engineer dice: 'tenemos que probar qué pasa si CADA dependency falla independientemente'.",
+      "question": "¿Cómo se inyectan fallos de dependencies correctamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Simulate DNS resolution failure: bloquea la resolución del hostname del vendor a nivel iptables o DNS chaos (Chaos Mesh DNSChaos). Verifica que tu app maneja NXDOMAIN gracefully — muchas apps hacen crash o retry loops infinitos.", "correct": true, "why": "Correcto. DNS failures son MÁS comunes de lo que la gente cree (DNS provider issues, DNS cache poisoning, TTL misconfigurations). Aplicaciones que no manejan NXDOMAIN suelen entrar en retry storms." },
+        { "letter": "B", "text": "Simulate LATENCY spike: añade 5s, 10s, 30s de latency a llamadas al vendor. Verifica que timeouts están configurados (default HTTP client es INFINITO en muchos lenguajes), que circuit breakers se abren, que threads no se agotan esperando. Toxiproxy es ideal para esto.", "correct": true, "why": "Correcto. Latency injection revela la fragilidad más común: falta de timeouts. Sin timeout, threads/connections se acumulan esperando el vendor lento, agotando pools y tumbando el servicio propio." },
+        { "letter": "C", "text": "Simulate 5xx errors: usa un proxy L7 (mitmproxy, Chaos Mesh HTTPChaos, Envoy fault injection) para retornar 500/503 al 50% de requests. Verifica retry con exponential backoff, fallback a modo degradado, circuit breaker, y experiencia de usuario aceptable.", "correct": true, "why": "Correcto. 5xx injection prueba resilience patterns (retry, circuit breaker, fallback). Envoy y Istio soportan fault injection nativo — muy útil en service meshes." },
+        { "letter": "D", "text": "Simulate BLACKHOLE: la request nunca recibe respuesta (no error, no timeout — cuelga). Simula el peor caso de red donde packets se pierden silenciosamente. Sin timeout configurado, tu app cuelga indefinidamente.", "correct": true, "why": "Correcto. Blackhole reveal código sin timeout. En muchos lenguajes, HTTP client por default no tiene timeout — descubrirlo en prod es doloroso; en chaos es aprendizaje." },
+        { "letter": "E", "text": "El objetivo es verificar que tu servicio DEGRADA GRACEFULLY: si Twilio falla, muestras 'SMS temporalmente no disponible' pero el resto funciona; si Datadog falla, sigues operando (metrics no son core business); si Stripe falla, encolas el pago para retry. Sin fallback plans, cada dependency es SPOF.", "correct": true, "why": "Correcto. El aprendizaje central: cada dependency debe tener un fallback plan explícito. Chaos experiments identifican qué dependencies son SPOFs y forzan al equipo a diseñar degradación graceful." },
+        { "letter": "F", "text": "Solo se pueden inyectar fallos de dependencies INTERNAS. Vendors externos como Stripe no se pueden probar.", "correct": false, "why": "Falso. Se prueba interceptando el tráfico ANTES de que llegue al vendor: proxy L7 (mitmproxy), service mesh (Istio fault injection), Toxiproxy en la conexión TCP, o sidecar chaos. El vendor real nunca es tocado; se simula su fallo desde tu lado." }
+      ],
+      "explanation": "Dependency failure injection es el corazón del chaos moderno porque los microservicios modernos tienen 50-500 dependencies (internas + vendors + APIs + DBs + caches + queues). Sin probar failure modes, cada dependency es SPOF potencial. Escenarios estándar: (1) DNS unresolvable (NXDOMAIN); (2) TCP connection refused; (3) TCP timeout (blackhole); (4) HTTP 5xx (server error); (5) HTTP 4xx (rate limit, auth failure); (6) high latency (5s, 30s, 60s); (7) slow response body (send response header pero body a 1KB/s); (8) partial data (JSON truncado). Cada escenario prueba diferentes resilience patterns: timeout, retry, circuit breaker, bulkhead, fallback, cache stale. Herramientas: Envoy fault injection, Istio VirtualService fault, Chaos Mesh HTTPChaos, Toxiproxy, LitmusChaos, Chaos Toolkit.",
+      "realWorld": "Netflix Hystrix (deprecated) popularizó circuit breaker + fallback pattern; su reemplazo resilience4j (Java) es standard. Envoy fault injection widely used en service meshes. Amazon documentó cómo dependency chaos experiments revelaron que su servicio de recomendaciones era SPOF de checkout (fallback ausente). Twilio, Stripe publican best practices para clientes: retry, timeout, circuit breaker. AWS FIS puede injectar 5xx a llamadas API vía SSM proxy scripts.",
+      "tags": ["dependency injection", "fallback", "circuit breaker", "SPOF", "graceful degradation"],
+      "tech": ["Envoy", "Istio", "Chaos Mesh", "Toxiproxy"],
+      "references": [{ "title": "Envoy — Fault Injection" }, { "title": "resilience4j Documentation" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "reliability",
+      "topic": "Chaos maturity model",
+      "difficulty": "senior",
+      "scenario": "Un director te pregunta: '¿cómo mido si estamos maduros en chaos engineering? Quiero benchmarks concretos'.",
+      "question": "¿Cuáles son los niveles de madurez de chaos engineering?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Modelo (Rosenthal/Jones): (1) NIVEL 1 - AD-HOC — game days ocasionales, chaos manual, poca automatización, sin métricas de resiliencia; (2) NIVEL 2 - PLANNED — experimentos con hipótesis, blast radius controlado, ejecutados en staging + prod ocasional; (3) NIVEL 3 - AUTOMATED — chaos continuo en prod (Chaos Monkey style), integrado con CI/CD, stop conditions automáticas; (4) NIVEL 4 - EVERYONE — cada equipo diseña sus propios chaos experiments, chaos como parte de definition-of-done, reliability score visible. Netflix, Amazon están en nivel 4; la mayoría de empresas en nivel 1-2.", "correct": true, "why": "Correcto. Rosenthal & Jones publican este modelo en 'Chaos Engineering' (O'Reilly 2020). El progreso no es lineal — muchas empresas se estancan en nivel 2 porque no invierten en automatización o buy-in ejecutivo." },
+        { "letter": "B", "text": "El nivel de madurez se mide por número de tools instaladas.", "correct": false, "why": "Falso. Instalar Chaos Mesh no te hace maduro. Madurez es cultural + operacional: hipótesis explícitas, steady states medibles, chaos continuo, aprendizaje distribuido, cada equipo diseñando sus experiments." },
+        { "letter": "C", "text": "Todas las empresas deberían estar en nivel 4 desde el día 1.", "correct": false, "why": "Falso. Saltar niveles causa daño. Nivel 4 requiere prerequisites (observability, on-call, cultura blameless) que se construyen gradualmente. Netflix tardó 5+ años en llegar." },
+        { "letter": "D", "text": "No existe modelo de madurez formal.", "correct": false, "why": "Falso. Existen varios modelos: el de Rosenthal/Jones (más citado), el de Gremlin (5 niveles), el de AWS Well-Architected. Todos coinciden en la trayectoria ad-hoc → planned → automated → widespread." }
+      ],
+      "explanation": "Madurez de chaos engineering se mide en dimensiones múltiples: (1) SCOPE — de dev → staging → prod; (2) AUTOMATION — de manual → scripted → continuous; (3) OWNERSHIP — de team dedicado → cada equipo; (4) HYPOTHESIS DRIVEN — de 'a ver qué pasa' → hipótesis rigurosa; (5) BLAST RADIUS — de manual → automático con stop conditions; (6) METRICS — de anecdotal → SLIs medibles; (7) INTEGRATION — separado → parte de CI/CD y definition-of-done. Progresar requiere invertir en cada eje. Cortoplacismo (comprar Gremlin y no cambiar cultura) falla; largoplacismo (build cultura antes de tooling) triunfa.",
+      "realWorld": "Netflix nivel 4: cada team dueño de sus servicios diseña sus chaos experiments. Amazon nivel 3-4 dependiendo de team. Google DiRT nivel 3-4 pero enfoque diferente (game days corporate-wide). Gremlin State of Chaos Engineering Report 2021: 34% de empresas encuestadas ejecutan chaos en prod, 60% quieren pero no lo hacen por falta de buy-in ejecutivo. La mayoría de empresas está en nivel 1-2.",
+      "tags": ["chaos maturity", "adoption", "levels", "organizational"],
+      "tech": [],
+      "references": [{ "title": "Rosenthal & Jones — Chaos Engineering (O'Reilly 2020)" }, { "title": "Gremlin — State of Chaos Engineering Report" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "reliability",
+      "topic": "Facebook mata 30% de servers monthly",
+      "difficulty": "staff",
+      "scenario": "Alguien en la sala menciona: 'Facebook mata el 30% de sus servers cada mes deliberadamente. ¿Es cierto? ¿Por qué?'.",
+      "question": "¿Qué hace Facebook/Meta con su chaos y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Facebook (Meta) ejecuta ejercicios masivos regulares donde deliberadamente reduce capacidad de datacenters completos o mata porcentajes altos de servidores para validar que sus sistemas resistan pérdidas grandes. La razón: Facebook opera al filo del capacity — su modelo es 'run hot' con poca capacidad idle. Necesitan estar SEGUROS de que puede sobrevivir pérdidas grandes sin cascadas. Su plataforma interna 'Storm' orquesta estos ejercicios. Un DC entero puede ser 'apagado' virtualmente por horas.", "correct": true, "why": "Correcto. Facebook publicó papers y talks sobre 'Storm' y sus 'infra chaos' regulares. La motivación: capacity planning tight + necesidad de resilience genuina. Empresas que operan 'run hot' NECESITAN chaos porque el margen de error es bajo." },
+        { "letter": "B", "text": "Es un mito, nadie mata así de agresivamente su infra.", "correct": false, "why": "Falso. Facebook publicó extensamente. Kripa Krishnan de Google presentó DiRT que también ejecuta pérdidas grandes. Netflix mata AZs y regiones enteras. La agresividad varía por empresa pero la práctica existe." },
+        { "letter": "C", "text": "Facebook solo hace chaos en staging.", "correct": false, "why": "Falso. Los ejercicios de Storm y las simulaciones de pérdida de DC son en INFRA REAL con USERS REALES. Es lo que hace las cifras impresionantes y las lecciones reales." },
+        { "letter": "D", "text": "Facebook usa Gremlin.", "correct": false, "why": "Falso. Facebook construyó Storm internamente. Al escala de Meta, plataformas de terceros no funcionan; construir custom es la única opción." }
+      ],
+      "explanation": "Facebook/Meta representa el extremo de chaos engineering. Su motivación técnica: (1) operan cientos de datacenters con capacity muy ajustada — no pueden permitirse el lujo de 50% idle capacity 'por si acaso'; (2) sus sistemas (News Feed, Messenger, Instagram) tienen dependencies masivas; (3) sin chaos regular, la resiliencia degrada con cada deploy. La cadencia (30% monthly quoted) es aproximación — la realidad es continuous 'storm' exercises que simulan pérdidas de varios %. Kripa Krishnan (ex-Google DiRT lead, ahora Google Cloud) publicó papers similares sobre Google DiRT: ejercicios donde 'un DC entero desaparece durante 5 días' — comm papers como 'Weathering the Unexpected' (ACM 2012).",
+      "realWorld": "Facebook Storm: presentaciones internas y talks públicos (SREcon, QCon) discuten la plataforma. Google DiRT: papers académicos ('Weathering the Unexpected' 2012, Kripa Krishnan). Netflix Chaos Kong: blog posts detallados. La lección: escala Fortune 50 requiere chaos agresivo porque el costo del incident real es orders of magnitude mayor que el costo del experimento. Empresas más pequeñas pueden ser menos agresivas pero deben adoptar los principios.",
+      "tags": ["Facebook", "Meta", "Storm", "Google DiRT", "large-scale chaos"],
+      "tech": ["Meta Storm", "Google DiRT"],
+      "references": [{ "title": "Kripa Krishnan — Weathering the Unexpected (ACM 2012)" }, { "title": "Meta Engineering — Infrastructure Chaos" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "reliability",
+      "topic": "Chaos Engineering + Continuous Verification",
+      "difficulty": "staff",
+      "scenario": "Casey Rosenthal escribió sobre la evolución de chaos hacia 'Continuous Verification'. Un ingeniero pregunta: '¿qué es eso y cómo se diferencia de chaos tradicional?'.",
+      "question": "¿Qué es Continuous Verification y cómo evoluciona chaos engineering?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Continuous Verification (CV) generaliza chaos engineering: en vez de solo experimentos ad-hoc, integra VERIFICACIÓN continua de que el sistema cumple sus SLOs bajo condiciones adversas. Cada deploy dispara automáticamente experimentos de chaos + observabilidad + verificación. Si el deploy degrada resilience, se bloquea antes de llegar a full rollout.", "correct": true, "why": "Correcto. CV es la evolución natural: no solo hacer chaos, sino AUTOMATIZAR la verificación como parte del pipeline. Casey Rosenthal (Verica) es el principal proponente. Similar a como CI verifica correctness y CD verifica delivery, CV verifica resilience." },
+        { "letter": "B", "text": "CV requiere formal verification techniques adaptadas: TLA+ para modelar behavior esperado, chaos experiments como 'model checking en runtime', property-based testing para invariantes. Va más allá de 'kill pod y ver qué pasa' hacia 'prove that the system holds invariant X under condition Y'.", "correct": true, "why": "Correcto. Verica (fundada por Rosenthal) usa formal methods + chaos. TLA+ (Leslie Lamport) modela invariantes; chaos verifica que se mantienen. Amazon usó TLA+ para modelar DynamoDB, S3. La convergencia formal methods + chaos es tendencia clara." },
+        { "letter": "C", "text": "Herramientas emergentes: Verica Continuous Verification Platform, Reliably, Steadybit. Integran con CI/CD para que cada commit dispare experimentos de chaos + verificación de invariantes + análisis de blast radius. Chaos deja de ser evento y se vuelve continuo.", "correct": true, "why": "Correcto. El mercado post-2020 está migrando hacia CV. Verica, Reliably, Steadybit son entrants nuevos. Gremlin también se mueve en esta dirección con 'Reliability Management'." },
+        { "letter": "D", "text": "El objetivo final: 'reliability como métrica de producto', tan monitored como uptime o latency. Cada servicio tiene un 'Reliability Score' basado en chaos experiments continuos. Deploys que reducen score son rechazados. Reliability se vuelve responsabilidad de PRODUCT, no solo de SRE.", "correct": true, "why": "Correcto. La visión: reliability es feature del producto, medible, gestionable, mejorable. No es 'the SRE team's problem'. Es el paso natural después de 'you build it you run it'." },
+        { "letter": "E", "text": "Continuous Verification reemplaza Chaos Engineering por completo.", "correct": false, "why": "Falso. CV EXTIENDE chaos, no lo reemplaza. Los experimentos individuales siguen siendo necesarios (game days, exploration de nuevos failure modes); CV los integra en un framework continuo con automation + verification." }
+      ],
+      "explanation": "Continuous Verification (CV) es la próxima frontera post-chaos. Rosenthal y Verica argumentan: el conocimiento aislado de chaos experiments es valioso pero efímero — cada deploy puede introducir regresión invisible. CV integra chaos + observability + formal invariants en el pipeline: (1) cada commit dispara mini-experimentos; (2) invariantes ('el checkout siempre completa < 2s con success rate > 99.5%') se verifican bajo condiciones adversas; (3) violaciones bloquean deploy; (4) reliability trends se visualizan como métrica de producto. Similitud con Formal Methods (TLA+, model checking) pero aplicado en runtime, no solo pre-deploy. Amazon usó TLA+ para diseño de S3, DynamoDB — CV es el complemento runtime. Herramientas: Verica, Reliably, Steadybit. Tendencia: chaos se vuelve reliability engineering, no evento aislado.",
+      "realWorld": "Casey Rosenthal fundó Verica (2019) para construir CV platform después de liderar Chaos Team en Netflix. Amazon usa TLA+ extensamente para services críticos (papers públicos). Leslie Lamport (Turing Award, TLA+ creator) presentó en SREcon sobre formal methods + reliability. La convergencia formal methods + chaos define la próxima década de reliability engineering. Casos de uso: bancos usan CV para regulatory compliance de resilience; empresas SaaS para SLA guarantees.",
+      "tags": ["Continuous Verification", "TLA+", "formal methods", "Verica", "reliability"],
+      "tech": ["Verica", "TLA+", "Reliably"],
+      "references": [{ "title": "Casey Rosenthal — Continuous Verification" }, { "title": "Amazon — Use of Formal Methods at Amazon Web Services" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "reliability",
+      "topic": "Anti-patterns y lecciones",
+      "difficulty": "staff",
+      "scenario": "Un CTO quiere lanzar chaos engineering pero teme el 'chaos teatro' donde se hace por moda sin valor real. Pregunta: '¿cuáles son los anti-patterns que debo evitar?'.",
+      "question": "¿Cuáles son los anti-patterns más comunes de chaos engineering?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "'CHAOS EN STAGING PARA SIEMPRE': el equipo hace chaos solo en staging por temor. Aprendizaje limitado; falsa sensación de resilience. Después de 6-12 meses de chaos exitoso en staging, se debe escalar a prod con blast radius mínimo. Sin este paso, chaos es teatro.", "correct": true, "why": "Correcto. Muchas empresas hacen 'chaos safety theater' — hacen ruido sobre chaos pero solo en staging. El día que hay outage real, descubren que su chaos no reveló las verdaderas fragilidades." },
+        { "letter": "B", "text": "'CHAOS SIN OBSERVABILITY': ejecutar experimentos sin métricas para verificar steady state. Sin ver qué pasa, no aprendes; solo causas incidents. Prerequisito absoluto: observability madura (Prometheus, Grafana, tracing, dashboards en tiempo real).", "correct": true, "why": "Correcto. Chaos ciego es sabotaje. Sin observability, no puedes definir steady state, no puedes verificar hipótesis, no puedes abortar automáticamente. Invierte en observability primero." },
+        { "letter": "C", "text": "'CHAOS SIN BUY-IN EJECUTIVO': el equipo hace chaos sin comunicar a leadership. Cuando causa un incident (inevitable), leadership entra en pánico y prohíbe chaos. Programa cancelado. Fix: comunicar VALOR de chaos a leadership ANTES de empezar, con expectativas realistas ('causaremos algunos incidents controlados a cambio de descubrir fragilidades antes de que causen incidents reales').", "correct": true, "why": "Correcto. Buy-in ejecutivo es crítico porque chaos causará incidents ocasionales. Sin buy-in, el primer incident termina el programa. Casey Rosenthal enfatiza esto en múltiples talks." },
+        { "letter": "D", "text": "'CHAOS COMO BLAME EXERCISE': el equipo usa chaos para culpar a otros ('mira, tu servicio no aguantó nuestro experimento'). Genera cultura defensiva; equipos ocultan fragilidades en vez de exponerlas. Chaos requiere cultura BLAMELESS: hallazgos son oportunidades de aprendizaje, no ammunition.", "correct": true, "why": "Correcto. Cultura blameless es prerequisito. Sin ella, los equipos temen chaos porque revelará que su servicio 'está mal'. Con cultura blameless, celebran los hallazgos como aprendizaje." },
+        { "letter": "E", "text": "'CHAOS COMO CHECKBOX': ejecutar experimentos para poder decir 'hacemos chaos' sin diseñar hipótesis serias ni actuar sobre hallazgos. Los reports muestran que 'ejecutamos 500 experiments este trimestre' pero nada mejora. Fix: métrica no es cantidad de experiments, es acción sobre findings — 'lessons learned + fixes shipped'.", "correct": true, "why": "Correcto. Chaos por chaos = teatro. Métrica correcta: findings actionables + fixes deployed. Netflix mide 'improvements shipped from chaos findings', no 'experiments executed'." },
+        { "letter": "F", "text": "'CHAOS AS A DEDICATED TEAM' es siempre el mejor modelo — nunca democratizar.", "correct": false, "why": "Anti-patrón sutil. Un chaos team dedicado es útil inicialmente para construir plataforma y expertise; pero el objetivo final es DEMOCRATIZAR — cada equipo diseña sus propios chaos experiments (nivel 4 de madurez). Si el chaos team se vuelve permanente, se vuelve nuevo silo." }
+      ],
+      "explanation": "Anti-patrons clave: (1) CHAOS TEATRO — hacer por moda sin valor real; (2) CHAOS SIN OBSERVABILITY — sabotaje ciego; (3) CHAOS SIN BUY-IN — muerte al primer incident; (4) CHAOS COMO BLAME — cultura defensiva; (5) CHAOS COMO CHECKBOX — métricas de vanity; (6) CHAOS EN STAGING PARA SIEMPRE — falsa seguridad; (7) CHAOS TEAM COMO SILO — reproduce dev/ops divide; (8) CHAOS SIN ACTION ITEMS — findings olvidados; (9) CHAOS AGRESIVO SIN GRADUALIDAD — incidents auto-inflingidos. La fórmula para el éxito: prerequisites organizacionales (observability, on-call, cultura blameless, buy-in) + gradualidad (staging → prod pequeño → prod escalado) + acción sobre findings + democratización eventual (cada equipo diseña chaos) + métrica correcta (fixes shipped, no experiments run).",
+      "realWorld": "Casey Rosenthal y Nora Jones publicaron 'Chaos Engineering' (O'Reilly 2020) documentando anti-patterns observados. Gremlin State of Chaos Report identifica 'lack of executive buy-in' como el bloqueador #1 de adopción (60% de encuestados). Empresas que fracasaron en chaos suelen haber intentado sin prerequisites — construyen plataforma, ejecutan experiments, causan incidents, leadership cancela programa. Empresas exitosas (Netflix, Amazon, Google, LinkedIn) invirtieron en cultura y observability ANTES de chaos.",
+      "tags": ["anti-patterns", "chaos teatro", "buy-in", "blameless", "democratization"],
+      "tech": [],
+      "references": [{ "title": "Rosenthal & Jones — Chaos Engineering (O'Reilly 2020)" }, { "title": "Gremlin — State of Chaos Engineering Report 2021" }]
+    }
+  ]
+}

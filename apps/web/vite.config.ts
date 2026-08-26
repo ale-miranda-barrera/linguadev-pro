@@ -13,8 +13,8 @@ export default defineConfig({
         // No cachear API ni data dinámica.
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
-        // 250 packs CEFR + 40 sims AWS = bundle grande. Subimos límite a 8 MB.
-        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+        // 250 packs CEFR + 40 AWS + 60+ sims tech = bundle grande. Subimos límite a 16 MB.
+        maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/[^/]+\/(assets|icons)\/.*/i,

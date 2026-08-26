@@ -1,0 +1,457 @@
+{
+  "id": "ai-programming-sim-16-ai-infra-aws-bedrock-sagemaker",
+  "trackId": "ai-programming",
+  "order": 16,
+  "title": "Simulacro 16 — Infra IA en AWS: Bedrock, SageMaker, vLLM, GPUs serverless",
+  "focus": "Deployment de IA en AWS: Bedrock (modelos manejados) vs SageMaker (custom + hosting) vs auto-hosted en EC2/EKS con vLLM/TGI. Cuotas, latencia, seguridad (PrivateLink, IAM, Guardrails), costo, Inferentia/Trainium.",
+  "areaCoverage": ["ai-infra-aws", "cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "ai-infra-aws",
+      "topic": "Bedrock vs SageMaker",
+      "difficulty": "junior",
+      "scenario": "Un dev nuevo en AWS pregunta la diferencia entre Bedrock y SageMaker para hostear un modelo.",
+      "question": "¿Cuál es la distinción clave entre Bedrock y SageMaker?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bedrock es managed API para modelos foundation seleccionados (Claude, Llama, Titan, Mistral, Cohere, Stability, Nova) — no gestionas GPUs, solo llamas al API. SageMaker es plataforma ML/MLOps completa: puedes entrenar modelos custom, hostear cualquier modelo (open-source, propio) en endpoints con control total sobre instancia/red/scaling. Bedrock para foundation models como servicio; SageMaker para custom deployment y training.", "correct": true, "why": "Correcto. Bedrock: serverless-ish, catálogo curado, pay-per-token, mínima ops. SageMaker: infra ML managed, tú eliges modelo/container/instancia, pagas por GPU-hora. Regla: si necesitas Claude/Llama base para chat/RAG → Bedrock. Si necesitas modelo custom, o fine-tune deep, o hostear cualquier modelo de Hugging Face → SageMaker. Ambos pueden coexistir." },
+        { "letter": "B", "text": "Bedrock y SageMaker son productos idénticos con distinto nombre.", "correct": false, "why": "Falso. Modelos operacionales distintos: Bedrock managed API por tokens; SageMaker infra ML por horas." },
+        { "letter": "C", "text": "SageMaker es solo para entrenamiento.", "correct": false, "why": "Falso. SageMaker incluye training + hosting (Real-time, Serverless, Async, Batch Transform)." },
+        { "letter": "D", "text": "Bedrock solo soporta modelos de Amazon (Titan).", "correct": false, "why": "Falso. Catálogo incluye Anthropic Claude, Meta Llama, Mistral, Cohere, Stability, Nova de Amazon, AI21, etc." }
+      ],
+      "explanation": "Landscape AWS AI infra: (1) Bedrock — modelos foundation como servicio (managed, per-token); (2) SageMaker — plataforma ML end-to-end (JumpStart, Studio, Training Jobs, Endpoints, Pipelines, HyperPod); (3) EC2 con GPU — self-managed máximo control; (4) EKS/ECS — orquestación de containers para modelos self-hosted con vLLM/TGI; (5) Lambda — inferencia CPU-only para modelos chicos o llamadas a otras APIs. Combinaciones típicas: Bedrock para chat/RAG, SageMaker para modelos custom, EKS con vLLM para volumen enorme.",
+      "realWorld": "AWS re:Invent cada año expande Bedrock y SageMaker. Casos: Perplexity usa Bedrock; Adept, Anthropic y muchos labs usan SageMaker HyperPod; Ramp y Descript combinan ambos.",
+      "tags": ["Bedrock", "SageMaker", "managed vs custom"],
+      "tech": ["AWS Bedrock", "AWS SageMaker"],
+      "references": [
+        { "title": "AWS — Bedrock overview" },
+        { "title": "AWS — SageMaker overview" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "ai-infra-aws",
+      "topic": "Modelos disponibles en Bedrock",
+      "difficulty": "junior",
+      "scenario": "Un CTO pregunta qué modelos puede usar hoy en Bedrock.",
+      "question": "¿Cuál es la lista más precisa de familias de modelos en Bedrock a 2025-2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Anthropic (Claude 3/3.5/3.7 Haiku/Sonnet/Opus), Meta Llama 3/3.1/3.2/3.3, Mistral (Large, Small, Mixtral), Cohere (Command R/R+, Embed, Rerank), Amazon Titan/Nova (Nova Micro/Lite/Pro/Premier, Titan Embeddings/Image), AI21 Jamba, Stability AI (SD3, SDXL), y modelos custom importados. Los IDs y versiones exactas se actualizan constantemente.", "correct": true, "why": "Correcto. Bedrock ha expandido agresivamente el catálogo desde 2023. Amazon Nova (dic 2024) es la familia nueva de Amazon. Verificar disponibilidad por región y quotas específicas por modelo. Custom Model Import (2024) permite traer Llama/Mistral/Flan-T5 fine-tuned externamente." },
+        { "letter": "B", "text": "Solo GPT-4 y modelos de OpenAI.", "correct": false, "why": "Falso. OpenAI no está en Bedrock (compite con Amazon)." },
+        { "letter": "C", "text": "Solo Titan de Amazon.", "correct": false, "why": "Falso. Multi-vendor con Anthropic, Meta, Mistral, Cohere, Amazon y otros." },
+        { "letter": "D", "text": "Solo modelos open-source.", "correct": false, "why": "Falso. Anthropic Claude es proprietary, disponible en Bedrock por partnership." }
+      ],
+      "explanation": "Foundation models en Bedrock (2025): Anthropic (partnership fuerte AWS/Anthropic), Meta Llama, Mistral, Cohere, Amazon (Titan y Nova), AI21, Stability. IDs incluyen prefix de región/inference profile: 'us.anthropic.claude-...', 'anthropic.claude-3-5-sonnet-20241022-v2:0', etc. Custom Model Import permite Llama/Mistral/Flan-T5 fine-tuneados externamente. Cada modelo tiene sus propios pricing, quotas, features (streaming, tools, guardrails compatibility). Verificar disponibilidad regional.",
+      "realWorld": "AWS re:Invent 2024 anunció Amazon Nova. Anthropic partnership con AWS (multi-billion $ investment 2023-2024). Bedrock Marketplace añadió modelos comunitarios de Hugging Face en 2024.",
+      "tags": ["Bedrock models", "Claude", "Llama", "Nova", "catalog"],
+      "tech": ["Bedrock", "Claude", "Llama", "Nova", "Mistral", "Cohere"],
+      "references": [
+        { "title": "AWS Bedrock — Supported foundation models" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "ai-infra-aws",
+      "topic": "Bedrock Knowledge Bases (RAG managed)",
+      "difficulty": "mid",
+      "scenario": "Un equipo quiere implementar RAG rápido sin gestionar vector DB, chunking, ingestion. Un solutions architect menciona Bedrock Knowledge Bases.",
+      "question": "¿Qué hace Bedrock Knowledge Bases y qué trade-offs tiene?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RAG managed end-to-end: apuntas S3/Confluence/Sharepoint/webcrawler como datasource; Bedrock hace chunking, embedding (Titan/Cohere), storage (OpenSearch Serverless / Aurora pgvector / Pinecone / Redis Enterprise), retrieval, prompt augmentation. API RetrieveAndGenerate hace la orquestación. Trade-offs: menos control sobre chunking/retrieval fino que rolling-your-own con LangChain/LlamaIndex, pero mucho menos ops. Ideal para RAG estándar corporativo.", "correct": true, "why": "Correcto. Bedrock Knowledge Bases (GA 2023, evolucionado desde) automatiza el pipeline RAG completo. Soporta multiple datasources y vector stores. Devuelve respuesta + citations. Ahorra ops enormes vs pipeline custom. Trade-off: retrieval fino (hybrid search, reranking custom, jerárquico) puede requerir stack propio. Para muchos casos empresariales, Knowledge Bases es 'good enough' y ships rápido." },
+        { "letter": "B", "text": "Es un servicio de wiki interna.", "correct": false, "why": "Falso. Es infraestructura RAG managed." },
+        { "letter": "C", "text": "Requiere que tú gestiones el vector database.", "correct": false, "why": "Falso. Provisiona OpenSearch Serverless por default y gestiona el índice." },
+        { "letter": "D", "text": "Sólo funciona con Titan embeddings.", "correct": false, "why": "Falso. Titan y Cohere embeddings soportados." }
+      ],
+      "explanation": "Pipeline Knowledge Bases: (1) datasource (S3, Confluence, Sharepoint, Salesforce, web crawler); (2) ingestion: chunking configurable (fixed/hierarchical/semantic), embedding con Titan v2/Cohere; (3) storage: OpenSearch Serverless (default), Aurora PostgreSQL con pgvector, Pinecone, Redis Enterprise, MongoDB Atlas; (4) retrieval API con filters; (5) RetrieveAndGenerate combina retrieval + LLM. Custom parsing con Foundation Model Parsing (usa LLM para parsear PDFs complejos). Alternativa custom: LangChain/LlamaIndex + Pinecone/Weaviate + código propio.",
+      "realWorld": "AWS re:Invent 2023 y 2024 expansiones. Casos: Kone (elevadores), Rocket Mortgage, PGA Tour usan Knowledge Bases. AWS Documentation Q integra Knowledge Bases sobre docs AWS.",
+      "tags": ["Bedrock Knowledge Bases", "RAG managed", "OpenSearch Serverless"],
+      "tech": ["Bedrock KB", "OpenSearch Serverless", "Aurora pgvector"],
+      "references": [
+        { "title": "AWS Bedrock — Knowledge Bases" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "ai-infra-aws",
+      "topic": "Bedrock Agents",
+      "difficulty": "mid",
+      "scenario": "Un equipo quiere agent que llame APIs internas y consulte Knowledge Base. Van a construir orquestación custom con LangGraph.",
+      "question": "¿Qué es Bedrock Agents y cuándo compite con LangGraph/custom?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bedrock Agents es orquestador managed: defines instrucciones + action groups (APIs/Lambdas invocables) + Knowledge Bases; Agent planifica llamadas de tools y consultas al KB automáticamente. Multi-agent collaboration (2024) permite supervisor + sub-agents. Trade-offs vs LangGraph/custom: menos control fino (prompts internos opinated), lock-in AWS, pero mucho menos código y ops. Nuevos features (return of control, guardrails integration, streaming) reducen gap.", "correct": true, "why": "Correcto. Bedrock Agents (2023, mejorado 2024 con multi-agent) compete directo con LangGraph/CrewAI para casos AWS-centric. Ventajas: integración nativa con Lambda/KB/Guardrails/IAM, sin ops. Desventajas: menos flexibilidad de planning, prompts internos que no ves, lock-in. Para agents complejos con orquestación no-standard, LangGraph/custom sigue ganando." },
+        { "letter": "B", "text": "Bedrock Agents solo hace chat sin tools.", "correct": false, "why": "Falso. Su core es tool calling + planning." },
+        { "letter": "C", "text": "No soporta multi-agent.", "correct": false, "why": "Falso. Multi-agent collaboration lanzado 2024." },
+        { "letter": "D", "text": "Requiere entrenar el agent con datos propios.", "correct": false, "why": "Falso. Es agent framework, no requiere training. Solo prompts y action definitions." }
+      ],
+      "explanation": "Bedrock Agents anatomía: (1) instruction (system prompt del agent); (2) action groups (Lambda con OpenAPI spec o inline; agents llaman como tools); (3) knowledge bases (RAG); (4) prompt override templates (customizar prompts internos); (5) session management (multi-turn). Multi-agent collaboration: agent supervisor delega a sub-agents. Integra con Guardrails, IAM, PrivateLink. Alternativas: LangGraph, CrewAI, Autogen, custom con Anthropic tool_use directo. Elegir Bedrock Agents si stack ya está en AWS y complejidad de agent es moderada.",
+      "realWorld": "AWS Bedrock Agents en producción en Deloitte, LexisNexis, Merck y más. re:Invent 2024 anunció multi-agent collaboration GA. Comparaciones con LangGraph en blogs AWS/Anthropic.",
+      "tags": ["Bedrock Agents", "multi-agent", "tool use", "action groups"],
+      "tech": ["Bedrock Agents", "Lambda", "Knowledge Bases"],
+      "references": [
+        { "title": "AWS Bedrock — Agents overview" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "security",
+      "topic": "Bedrock Guardrails",
+      "difficulty": "mid",
+      "scenario": "Un banco requiere que el chatbot NUNCA hable de temas de inversión no autorizados, filtre PII, y bloquee prompt injection.",
+      "question": "¿Qué son Bedrock Guardrails y qué protecciones ofrecen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Guardrails managed que se aplican pre/post inferencia (input filtering y output filtering) y funcionan across models (Claude, Llama, Titan, etc.). Categorías: (1) denied topics (defines temas prohibidos); (2) content filters (hate, insults, sexual, violence, misconduct, prompt attacks); (3) sensitive information (PII detection/redaction); (4) word filters (blocklist); (5) contextual grounding (verifica respuesta vs contexto RAG); (6) automated reasoning checks (2024, verificación lógica).", "correct": true, "why": "Correcto. Bedrock Guardrails (GA 2024) es capa de safety declarativa aplicable a cualquier modelo de Bedrock. Se define una vez y se referencia en cada InvokeModel/Converse call. Reduce implementación custom de safety. Automated reasoning (feature nueva) verifica statements contra reglas formales. Retorna 'intervened' cuando bloquea, con acción configurable." },
+        { "letter": "B", "text": "Es solo un content filter simple estilo blacklist de palabras.", "correct": false, "why": "Es mucho más rico: topics, categorías semánticas, PII, grounding, reasoning." },
+        { "letter": "C", "text": "Solo funciona con Titan.", "correct": false, "why": "Falso. Model-agnostic dentro de Bedrock (Claude, Llama, Titan, etc.)." },
+        { "letter": "D", "text": "Guardrails son deprecated.", "correct": false, "why": "Falso. Activamente expandidos con nuevas features (reasoning checks, tiered configurations)." }
+      ],
+      "explanation": "Guardrails aplicables: pre-input (bloquear antes de mandar al modelo), post-output (filtrar respuesta), o ambos. Configuración por Guardrail ID + version. Uso: parameter 'guardrailIdentifier' en InvokeModel. En caso de intervención: retorna 'stopReason: guardrail_intervened' + acción custom (mensaje sanitizado, fallback, log). Complementa con: safety prompts en system, tool use validation, output validation post-generación. Alternativas open source: Nvidia NeMo Guardrails, Guardrails AI (github), Meta Llama Guard, Prompt Guard.",
+      "realWorld": "AWS re:Invent 2024 expandió Guardrails con Automated Reasoning. Bancos, healthcare y govs usan Guardrails para compliance. AWS publicó comparativa con NeMo Guardrails.",
+      "tags": ["Bedrock Guardrails", "safety", "PII", "prompt injection", "content filter"],
+      "tech": ["Bedrock Guardrails", "NeMo Guardrails", "Llama Guard"],
+      "references": [
+        { "title": "AWS Bedrock — Guardrails" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "ai-infra-aws",
+      "topic": "Provisioned Throughput vs on-demand",
+      "difficulty": "mid",
+      "scenario": "El equipo estima 10M tokens/día en Claude 3.5 Sonnet via Bedrock. On-demand cuesta ~$X pero hay throttling. Analizan Provisioned Throughput.",
+      "question": "¿Cómo se calcula el break-even entre on-demand y Provisioned Throughput?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "On-demand: pay-per-token, sujeto a quotas regionales y throttling en picos. Provisioned: compras 'Model Units' (MU) — capacidad dedicada con SLA de throughput, commitment 1 o 6 meses (6 más barato). Cada MU tiene throughput fijo (tokens/segundo variables por modelo). Break-even: on-demand $/MTok * uso_mensual vs 730h * $/MU-hora * n_MUs. Regla: utilization sostenida >60-70% del MU capacity = Provisioned probablemente gana. Considerar mix: Provisioned baseline + on-demand burst.", "correct": true, "why": "Correcto. Provisioned Throughput compra capacidad; on-demand paga uso. En modelos como Claude 3.5 Sonnet, 1 MU cuesta aproximadamente $32/hora (1 mes commitment) o $22/hora (6 meses). Analizar: tokens/día promedio, throughput por MU (Anthropic publica), utilization esperada. AWS Pricing Calculator tiene sección Bedrock específica." },
+        { "letter": "B", "text": "Provisioned siempre es más caro.", "correct": false, "why": "Falso. Con utilization alta sostenida, Provisioned puede ganar significativamente." },
+        { "letter": "C", "text": "On-demand no tiene quotas.", "correct": false, "why": "Falso. Quotas regionales por modelo; cross-region inference profiles aumentan pero no infinito." },
+        { "letter": "D", "text": "Provisioned requiere commitment de 3 años como EC2 RIs.", "correct": false, "why": "Falso. Bedrock Provisioned: 1 mes o 6 meses solamente." }
+      ],
+      "explanation": "Bedrock Provisioned Throughput: (1) elige modelo y commitment (1m o 6m); (2) elige n MUs (cada MU tiene throughput fijo tokens/min in/out); (3) pagas $/hora del MU garantizado incluso si no lo usas; (4) SLA de disponibilidad; (5) sin throttling within MU capacity. Complemento: cross-region inference profiles no requieren commitment y aumentan quotas on-demand. Mix híbrido: Provisioned para baseline, on-demand cross-region para burst. Herramienta: AWS Pricing Calculator Bedrock.",
+      "realWorld": "Casos documentados en AWS blog de compañías con >$100k/mes migrando a Provisioned. Anthropic + AWS publicaron guías de sizing.",
+      "tags": ["Provisioned Throughput", "Model Units", "on-demand", "break-even"],
+      "tech": ["Bedrock Provisioned Throughput", "AWS Pricing Calculator"],
+      "references": [
+        { "title": "AWS Bedrock — Provisioned Throughput pricing" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "security",
+      "topic": "PrivateLink para Bedrock",
+      "difficulty": "senior",
+      "scenario": "El equipo de seguridad exige que las llamadas a Bedrock NO salgan de la VPC (no traffic through internet gateway).",
+      "question": "¿Cómo se logra que Bedrock sea accesible sin salir de VPC?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Crear VPC Endpoint (Interface Endpoint) para com.amazonaws.<region>.bedrock-runtime (y bedrock, bedrock-agent-runtime, bedrock-agent para features respectivas). Traffic al API va vía PrivateLink dentro de AWS network — no cruza internet. Requiere: security group del endpoint, resolución de DNS privada, y IAM policies que restrinjan calls a través del endpoint (aws:SourceVpce).", "correct": true, "why": "Correcto. Bedrock soporta VPC Endpoints (PrivateLink) desde GA. Endpoints separados: bedrock (control plane), bedrock-runtime (inference), bedrock-agent-runtime (agents), bedrock-agent (agent management). Configuración: crear endpoint en subnets privadas + security group + DNS privada. Condición IAM aws:SourceVpce previene calls fuera del endpoint. Complementa con SCPs organizacionales." },
+        { "letter": "B", "text": "Bedrock no soporta VPC endpoints.", "correct": false, "why": "Falso. Sí soporta desde el inicio." },
+        { "letter": "C", "text": "Requiere Direct Connect obligatoriamente.", "correct": false, "why": "Falso. Direct Connect es para on-prem → AWS; para VPC → Bedrock basta PrivateLink." },
+        { "letter": "D", "text": "Solo funciona en us-east-1.", "correct": false, "why": "Falso. Disponible en todas las regiones donde Bedrock está." }
+      ],
+      "explanation": "Setup PrivateLink completo: (1) VPC Endpoint tipo Interface para bedrock-runtime; (2) Security Group con inbound 443 desde workloads; (3) Enable Private DNS (resuelve el endpoint público automáticamente al privado); (4) IAM policy con Condition aws:SourceVpce == vpce-xxx; (5) SCP a nivel organización para prohibir Bedrock desde fuera del endpoint. Adicionales: CloudTrail para auditar, GuardDuty para detección de abuso, AWS Config para compliance del endpoint. Similar setup aplica para Bedrock Agents y Knowledge Bases.",
+      "realWorld": "AWS Financial Services blog documenta arquitecturas Bedrock + PrivateLink para bancos. Prisma Cloud, Wiz, Palo Alto publican guías de securización.",
+      "tags": ["PrivateLink", "VPC Endpoint", "network security"],
+      "tech": ["VPC Endpoint", "PrivateLink", "Bedrock Runtime"],
+      "references": [
+        { "title": "AWS Bedrock — VPC endpoints" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "security",
+      "topic": "IAM para Bedrock",
+      "difficulty": "mid",
+      "scenario": "Un dev quiere permitir que una Lambda llame Claude 3.5 Sonnet en Bedrock pero no otros modelos ni operaciones administrativas.",
+      "question": "¿Qué IAM policy es correcta para least privilege?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Policy con Action 'bedrock:InvokeModel' y 'bedrock:InvokeModelWithResponseStream' limitada a Resource ARN específico del modelo (arn:aws:bedrock:<region>::foundation-model/anthropic.claude-3-5-sonnet-...). Denegar bedrock:CreateModelCustomizationJob, bedrock:DeleteFoundationModelAgreement, y otras admin. Considerar cross-region inference profile ARNs también.", "correct": true, "why": "Correcto. Least privilege: solo InvokeModel y InvokeModelWithResponseStream sobre el ARN específico. Bedrock ARNs de foundation models tienen formato conocido; permite whitelisting granular. NO usar '*' en Resource. Para cross-region: incluir ARNs de las regiones del profile. Complementar con Condition (aws:SourceVpce si aplica, aws:RequestTag, etc.)." },
+        { "letter": "B", "text": "bedrock:* con Resource '*' es fine.", "correct": false, "why": "Antipatrón. Permite acceso a todos los modelos, admin, marketplace, custom models. Rompe least privilege." },
+        { "letter": "C", "text": "IAM no aplica a Bedrock.", "correct": false, "why": "Falso. Todo Bedrock requiere IAM auth." },
+        { "letter": "D", "text": "Bedrock usa solo API keys custom, no IAM.", "correct": false, "why": "Falso. IAM es el sistema de auth." }
+      ],
+      "explanation": "IAM Bedrock best practices: (1) Actions específicas (InvokeModel, InvokeModelWithResponseStream, Retrieve, RetrieveAndGenerate); (2) Resources específicos por modelo ARN; (3) Conditions (SourceVpce, RequestTag, aws:PrincipalTag); (4) SCPs a nivel org para prohibir modelos no aprobados o regiones no permitidas; (5) permission boundaries para roles. Para Bedrock Agents: bedrock:InvokeAgent con Resource del agent ARN. Para Guardrails: bedrock:ApplyGuardrail. Documentación AWS lista todas las actions.",
+      "realWorld": "AWS Prescriptive Guidance y Security Blog publican patterns. Herramientas: IAM Access Analyzer, AWS Config rules para bedrock, Prowler, Wiz.",
+      "tags": ["IAM", "least privilege", "Bedrock", "policies"],
+      "tech": ["IAM", "Bedrock", "SCP", "IAM Access Analyzer"],
+      "references": [
+        { "title": "AWS Bedrock — IAM policies" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "ai-infra-aws",
+      "topic": "SageMaker endpoint types",
+      "difficulty": "mid",
+      "scenario": "Un equipo debate cómo hostear un modelo custom en SageMaker. Ven las opciones: Real-time, Serverless, Async, Batch Transform.",
+      "question": "¿Cuándo usar cada tipo de endpoint SageMaker?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Real-time: baja latencia, always-on, para APIs sync interactivas — pagas por instancia-hora. (2) Serverless Inference: pay-per-request, cold starts, para tráfico esporádico modelos <10GB. (3) Async Inference: request encolado, respuesta en S3, para inferencia larga (>60s) o inputs grandes (~1GB). (4) Batch Transform: procesar dataset completo offline, sin endpoint persistente, para jobs one-shot masivos.", "correct": true, "why": "Correcto. Elección por perfil de uso: (a) chat/APIs sync → Real-time; (b) tráfico bursty poco frecuente → Serverless; (c) inference de larga duración o async → Async; (d) processar millones offline → Batch Transform. Cada uno con pricing distinto. Serverless tiene cold starts significativos para modelos LLM." },
+        { "letter": "B", "text": "Solo hay un tipo de endpoint (Real-time).", "correct": false, "why": "Falso. 4 tipos con casos distintos." },
+        { "letter": "C", "text": "Serverless es siempre la mejor opción.", "correct": false, "why": "Falso. Modelos grandes y sostenidos, cold starts la hacen inviable." },
+        { "letter": "D", "text": "Batch Transform requiere endpoint always-on.", "correct": false, "why": "Falso. Es one-shot; SageMaker provisiona compute solo durante el job." }
+      ],
+      "explanation": "SageMaker Hosting matrix: Real-time (always-on, sync, <60s), Serverless (scale to zero, cold starts, model <10GB), Async (queued, output a S3, hasta 1h, input grande), Batch Transform (offline, sin endpoint, todo un dataset). Precios distintos. Para LLMs grandes (Llama-70B+) casi siempre Real-time con GPU. Multi-model endpoints (varios modelos en 1 endpoint) y multi-container endpoints reducen costo compartiendo instancia. Inference recommender ayuda a right-sizing.",
+      "realWorld": "AWS SageMaker docs 'Deploy models for inference' detalla los 4 tipos. Casos: Roblox usa Real-time; muchos ETLs de ML usan Batch Transform.",
+      "tags": ["SageMaker endpoints", "Real-time", "Serverless", "Async", "Batch Transform"],
+      "tech": ["SageMaker Real-time", "SageMaker Serverless", "SageMaker Async"],
+      "references": [
+        { "title": "AWS SageMaker — Deploy models for inference" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "ai-infra-aws",
+      "topic": "SageMaker JumpStart",
+      "difficulty": "junior",
+      "scenario": "Un dev quiere hostear Llama-3.1 70B rápido sin escribir Dockerfile ni configurar vLLM.",
+      "question": "¿Qué es SageMaker JumpStart y cuándo se usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Model hub managed dentro de SageMaker: catálogo de modelos pre-empaquetados (Llama, Mistral, Falcon, Stable Diffusion, embeddings, y más) con deployment 1-click a un endpoint SageMaker configurado (container HF TGI/DJL Serving/vLLM, instancia recomendada, artefactos). Ahorra días de setup vs armar container/config desde cero. Trade-off: menos control fino que build-your-own.", "correct": true, "why": "Correcto. JumpStart es 'Hugging Face + AWS pack': modelos con Docker container correcto, instancia recomendada y deploy button. Ideal para prototypado y muchas producciones. Puedes customizar (fine-tune) desde JumpStart también. Para máxima customization: crear tu propio SageMaker Model con container custom." },
+        { "letter": "B", "text": "Es un servicio de billing.", "correct": false, "why": "Falso. Es model hub y deployment simplificado." },
+        { "letter": "C", "text": "Solo tiene modelos de Amazon.", "correct": false, "why": "Falso. Multi-vendor incluyendo Meta, Mistral, Cohere, HF." },
+        { "letter": "D", "text": "Requiere Kubernetes.", "correct": false, "why": "Falso. Usa infraestructura SageMaker managed." }
+      ],
+      "explanation": "JumpStart features: (1) catálogo con filtros (task, framework, license); (2) deploy 1-click a endpoint (elige instancia); (3) fine-tuning simplificado en JumpStart Models; (4) notebooks con ejemplos; (5) integración con SageMaker Studio; (6) private hubs para modelos internos. Alternativas: Bedrock (managed, per-token), Bedrock Marketplace (JumpStart-like para Bedrock), SageMaker con container custom (máximo control), EKS + vLLM (self-managed).",
+      "realWorld": "SageMaker JumpStart lanzado 2020, expandido continuamente. re:Invent 2024 introdujo mejoras. Bedrock Marketplace (nov 2024) trajo experiencia similar a Bedrock.",
+      "tags": ["SageMaker JumpStart", "model hub", "deployment"],
+      "tech": ["SageMaker JumpStart", "HF TGI", "DJL Serving"],
+      "references": [
+        { "title": "AWS SageMaker — JumpStart docs" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "ai-infra-aws",
+      "topic": "SageMaker HyperPod",
+      "difficulty": "senior",
+      "scenario": "Un lab pequeño quiere entrenar un modelo desde cero (~7B parameters) durante semanas. Necesitan cluster resiliente porque los training runs fallan por node failures.",
+      "question": "¿Qué es SageMaker HyperPod?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SageMaker HyperPod (GA 2023-2024) es cluster managed persistente para large-scale training/fine-tuning: (1) provisiona instancias GPU (P5, P5e, Trn1/Trn2) en formación optimizada; (2) auto-recovery de node failures (health checks, replacement automático); (3) checkpoint automático; (4) reduce time-to-recover de fallos; (5) EKS-based (HyperPod EKS) o Slurm; (6) integrado con Nemo, PyTorch, JAX. Ahorra ops enorme vs armar cluster EC2 propio.", "correct": true, "why": "Correcto. HyperPod aborda el problema de que training runs largos (días/semanas) en clusters GPU inevitablemente sufren fallos de nodo. Auto-recovery + checkpointing reduce el 'thrashing' de training runs abortados. Usado por Stability AI, AI21, Perplexity y muchos labs. Opción EKS (2024) integra con Kubernetes." },
+        { "letter": "B", "text": "Es una versión reducida de SageMaker.", "correct": false, "why": "Falso. Es cluster training para escala grande." },
+        { "letter": "C", "text": "Es solo para inference.", "correct": false, "why": "Falso. Diseñado para training/fine-tuning largo." },
+        { "letter": "D", "text": "Requiere hardware on-prem.", "correct": false, "why": "Falso. Managed en AWS con instancias GPU AWS." }
+      ],
+      "explanation": "HyperPod features: (1) instancia types P4d, P5, P5e (H100), Trn1/Trn2 (Trainium); (2) EFA networking para inter-node; (3) FSx for Lustre para datasets; (4) auto-recovery workflow: detección de fallo → replacement de nodo → resume desde checkpoint; (5) HyperPod recipes (2024): configuraciones probadas para Llama, Mistral training; (6) task governance (compartir cluster entre teams). Alternativa: SageMaker Training Jobs (más simple, sin persistencia de cluster) para runs cortos.",
+      "realWorld": "AWS re:Invent 2023 lanzó HyperPod. re:Invent 2024 mejoró con EKS support y recipes. Casos: Stability AI, AI21, Perplexity, Articul8. AWS blog 'Train foundation models faster'.",
+      "tags": ["SageMaker HyperPod", "training clusters", "large-scale training"],
+      "tech": ["SageMaker HyperPod", "P5 instances", "EFA", "FSx Lustre"],
+      "references": [
+        { "title": "AWS SageMaker — HyperPod" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "ai-infra-aws",
+      "topic": "vLLM y throughput-oriented serving",
+      "difficulty": "senior",
+      "scenario": "Auto-hosteas Llama-3.1 70B en EKS. Un dev usa HuggingFace transformers directo y logras 3 requests/segundo. Un colega menciona vLLM.",
+      "question": "¿Qué es vLLM y por qué mejora throughput?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "vLLM (UC Berkeley, 2023) es motor de inference optimizado con: (1) PagedAttention (gestión de KV cache paginada estilo virtual memory) — permite batching dinámico eficiente; (2) continuous batching (nuevos requests entran mientras otros generan); (3) tensor parallelism y pipeline parallelism; (4) quantization support (AWQ, GPTQ, FP8); (5) prefix caching; (6) OpenAI-compatible API. Puede dar 5-20x más throughput que HF transformers naïve.", "correct": true, "why": "Correcto. vLLM es el estándar de facto para self-hosting LLMs a escala. PagedAttention resuelve el problema principal (KV cache fragmentado desperdiciando VRAM). Continuous batching permite altísima utilización. Alternativas competitivas: TensorRT-LLM (NVIDIA, más rápido pero más complejo), TGI (HuggingFace), SGLang, LMDeploy. Todos superan a inference naïve en órdenes de magnitud." },
+        { "letter": "B", "text": "vLLM es un wrapper de HF transformers.", "correct": false, "why": "Falso. Reimplementa el inference desde cero con optimizaciones." },
+        { "letter": "C", "text": "vLLM solo funciona con OpenAI models.", "correct": false, "why": "Falso. Open source, soporta Llama, Mistral, Qwen, DeepSeek, cientos más." },
+        { "letter": "D", "text": "vLLM no soporta multi-GPU.", "correct": false, "why": "Falso. Tensor parallel para modelos que no caben en 1 GPU." }
+      ],
+      "explanation": "vLLM anatomía: (1) LLMEngine central; (2) KV cache paginada en bloques; (3) scheduler continuous batching; (4) sampling params por request; (5) API server OpenAI-compatible. Deployment: docker vllm/vllm-openai, expone port 8000, API OpenAI. En EKS con GPU nodes, escalable con HPA. Métricas: prometheus exportadas (throughput, latency, cache usage). Alternativas: TensorRT-LLM (mejor performance en H100 con setup complejo), TGI (HF, alternativa madura), SGLang (RadixAttention innovation), Ollama (para dev local, no prod).",
+      "realWorld": "vLLM adoptado por Anthropic (para investigación interna, según papers), OpenAI (parcialmente), y muchas hosting providers (Together, Fireworks, Anyscale). Papers 'Efficient Memory Management for Large Language Model Serving with PagedAttention' (SOSP 2023).",
+      "tags": ["vLLM", "PagedAttention", "continuous batching", "throughput"],
+      "tech": ["vLLM", "PagedAttention", "TensorRT-LLM", "TGI", "SGLang"],
+      "references": [
+        { "title": "vLLM — GitHub and docs" },
+        { "title": "PagedAttention paper — SOSP 2023" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "ai-infra-aws",
+      "topic": "Inferentia y Trainium",
+      "difficulty": "senior",
+      "scenario": "El CTO evalúa costo/perf de hostear Llama-3 70B. Un solutions architect propone usar Inferentia (Inf2) en vez de A100/H100.",
+      "question": "¿Qué son Inferentia y Trainium y cuándo usarlos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chips ML custom de AWS Annapurna. Inferentia (Inf1, Inf2) optimizado para inference; Trainium (Trn1, Trn2) para training. Ventajas: mejor $/token vs GPU NVIDIA equivalent (~40-50% ahorro típico), disponibilidad de cuota mejor que H100. Trade-offs: requiere Neuron SDK (soporte creciente pero no universal — algunos modelos y features no compilados), ecosistema menor que CUDA. Ideal si el modelo target está soportado (Llama, Mistral, Stable Diffusion, muchos otros) y priorizas costo.", "correct": true, "why": "Correcto. Inferentia/Trainium diseñados por AWS para ML at scale. Ventajas económicas reales pero requieren adaptación (compilar con Neuron SDK). Soporte: Llama-3, Mistral, muchos modelos populares. Casos: Adept, Snap, Anthropic (para algunos workloads, Anthropic + AWS anunciaron collaboration usando Trainium)." },
+        { "letter": "B", "text": "Son GPUs NVIDIA rebranded.", "correct": false, "why": "Falso. Son chips custom de Annapurna Labs (adquirida por AWS)." },
+        { "letter": "C", "text": "Solo funcionan con Titan de Amazon.", "correct": false, "why": "Falso. Amplio soporte de modelos open (Llama, Mistral, SD, etc.)." },
+        { "letter": "D", "text": "Neuron SDK es incompatible con PyTorch.", "correct": false, "why": "Falso. Neuron soporta PyTorch y TensorFlow con adaptación." }
+      ],
+      "explanation": "AWS custom chips: Inferentia1 (2019), Inferentia2 (2022) — más memoria y bandwidth, targets inference eficiente; Trainium1 (2022), Trainium2 (2024) — targets training a escala. Instancias: Inf2 (inference), Trn1/Trn2 (training). Neuron SDK: compile modelo (torch.compile con backend Neuron o transformers-neuronx), deploy. Bedrock también usa Trainium internamente para algunos modelos. Anthropic + AWS: multi-billion investment incluye uso de Trainium para Claude training/inference.",
+      "realWorld": "Anthropic + AWS anunció que Claude 3.5 Haiku entrenó parcialmente en Trainium2 (nov 2024). Snap, Airbnb, Adept en Inferentia. re:Invent 2024 lanzó Trainium2 UltraServer.",
+      "tags": ["Inferentia", "Trainium", "Neuron SDK", "custom silicon"],
+      "tech": ["Inferentia", "Trainium", "Inf2", "Trn2", "Neuron SDK"],
+      "references": [
+        { "title": "AWS Neuron — SDK docs" },
+        { "title": "AWS re:Invent 2024 — Trainium2 announcement" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "ai-infra-aws",
+      "topic": "EKS + Karpenter para GPU",
+      "difficulty": "senior",
+      "scenario": "Un equipo quiere self-host modelos en EKS. La disponibilidad de H100/A100 en cuota es limitada y cambia por región. Nodegroups fijos no escalan bien.",
+      "question": "¿Cómo Karpenter ayuda a manejar GPU nodes en EKS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Karpenter (open source AWS) es autoscaler de nodos más flexible que Cluster Autoscaler: (1) elige instance type óptimo por pod (respeta requests GPU, memoria); (2) soporta múltiples instance types y AZs en un solo NodePool (mejora disponibilidad de GPU si un tipo está agotado); (3) provisiona nodos on-demand o spot; (4) consolidation (deprovisiona nodos underused); (5) sin depender de ASG pre-configurados. Para GPUs escasas, define NodePool con familia flexible (p5.48xlarge OR p4de.24xlarge OR g5.48xlarge) y Karpenter toma lo que hay.", "correct": true, "why": "Correcto. Karpenter es el estándar moderno para autoscaling en EKS, especialmente crítico para GPU workloads donde la disponibilidad es errática. NodePool con instance types flexibles y multi-AZ maximiza probability de conseguir GPU. Combinar con Spot para workloads tolerantes. GPU node bootstrap: nvidia-device-plugin daemonset para exponer GPU a pods." },
+        { "letter": "B", "text": "Karpenter es sinónimo de Cluster Autoscaler.", "correct": false, "why": "Falso. Karpenter es alternativa más flexible, elige instance types dinámicamente." },
+        { "letter": "C", "text": "Karpenter no soporta GPU nodes.", "correct": false, "why": "Falso. Soporta y es común para workloads GPU." },
+        { "letter": "D", "text": "Karpenter requiere pagar licencia.", "correct": false, "why": "Falso. Open source (Apache 2.0)." }
+      ],
+      "explanation": "Setup EKS GPU: (1) Karpenter con NodePool que declara instanceTypes flexibles (p5.*, p4de.*, g5.*, g6e.*) y AZs; (2) nvidia-device-plugin daemonset; (3) taints/tolerations para pods GPU; (4) HPA para pod scaling; (5) storage: EBS/EFS/FSx Lustre para modelos grandes. Cargos: GPU nodes son caros; consolidation crítico. Multi-tenant: usar namespaces + resource quotas. GPU quotas: solicitar aumentos a AWS Support proactivamente. Alternative a Karpenter: Cluster Autoscaler + Cluster Overprovisioner, o EKS Auto Mode (2024) que incluye Karpenter managed.",
+      "realWorld": "Karpenter creado en AWS 2021, madurado a v1 en 2024. Casos: Anthropic, Perplexity, Bytedance TikTok usan EKS con Karpenter. AWS re:Invent 2024 lanzó EKS Auto Mode con Karpenter built-in.",
+      "tags": ["EKS", "Karpenter", "GPU nodes", "autoscaling"],
+      "tech": ["EKS", "Karpenter", "H100", "nvidia-device-plugin"],
+      "references": [
+        { "title": "Karpenter — docs" },
+        { "title": "EKS — Auto Mode" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "ai-infra-aws",
+      "topic": "GPU quotas y disponibilidad",
+      "difficulty": "mid",
+      "scenario": "Un equipo intenta lanzar p5.48xlarge (8x H100) en us-east-1. AWS retorna 'insufficient capacity'.",
+      "question": "¿Qué realidad enfrentan al provisionar GPUs de alta gama y cómo se mitiga?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "H100/A100 son extremadamente escasos en cloud (2023-2026). AWS gestiona con service quotas por instance family (default 0 para nuevas cuentas) y disponibilidad regional variable. Mitigaciones: (1) solicitar aumento de cuota con lead time; (2) usar Capacity Reservations o Savings Plans para reservar; (3) SageMaker HyperPod tiene mejor asignación para training; (4) EC2 Capacity Blocks for ML (2023) permite reservar por 1-14 días con antelación; (5) flexibilidad de región (probar us-west-2, eu-west-1); (6) considerar Trainium/Inferentia (mejor disponibilidad); (7) usar Bedrock si el modelo target lo tiene (elimina el problema).", "correct": true, "why": "Correcto. Escasez de GPUs H100 es realidad de la industria 2023-2026. AWS lanzó Capacity Blocks precisamente para dar reservabilidad predecible en ML. Empresas maduras planifican capacidad con meses de antelación. Bedrock evita el problema (managed) pero limitado a modelos del catálogo." },
+        { "letter": "B", "text": "AWS tiene GPUs infinitas disponibles siempre.", "correct": false, "why": "Falso. Constrained supply desde 2023." },
+        { "letter": "C", "text": "Solo se pueden lanzar GPUs en us-east-1.", "correct": false, "why": "Falso. Multiple regions con disponibilidad variable; a menudo us-west-2, us-east-2, eu-west-1 tienen buena disponibilidad." },
+        { "letter": "D", "text": "Los service quotas se aumentan automáticamente sin request.", "correct": false, "why": "Falso. Requiere request explícito por support case, sujeto a review." }
+      ],
+      "explanation": "Estrategia de capacity planning ML en AWS: (1) provisar cuotas por adelantado (Service Quotas → Request); (2) EC2 Capacity Reservations para producción estable; (3) Capacity Blocks para training específico; (4) Savings Plans/RIs para reducir costo del commitment; (5) multi-region setup para fallback; (6) diversificar (mixed instance types P5, P4, G5, G6e); (7) considerar Trainium/Inferentia si soportan tu modelo; (8) Bedrock para elasticidad total en modelos del catálogo. AWS Trusted Advisor y Service Quotas dashboard ayudan a track.",
+      "realWorld": "GPU shortage 2023-2024 público (Sam Altman, Elon Musk hablaron de 'chip diet'). AWS lanzó Capacity Blocks re:Invent 2023. Empresas negocian year-long commitments con AWS para asegurar supply.",
+      "tags": ["GPU quotas", "Capacity Blocks", "H100 shortage"],
+      "tech": ["Service Quotas", "Capacity Blocks", "Capacity Reservations", "P5"],
+      "references": [
+        { "title": "AWS — EC2 Capacity Blocks for ML" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "ai-infra-aws",
+      "topic": "Auto-host vs Bedrock cost break-even",
+      "difficulty": "senior",
+      "scenario": "Análisis de costos: Llama-3.1 70B en Bedrock cuesta $X/MTok on-demand; auto-hostear en EKS con vLLM en p5.48xlarge cuesta $Y/hora.",
+      "question": "¿Cómo se calcula break-even entre Bedrock y auto-hosting?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Break-even = punto donde (Bedrock $/MTok * MTok_por_mes) = (instance $/hora * 720h * factor_utilización). Considerar: (a) instance cost include GPU + storage + networking; (b) ops overhead (2-3x el infra cost en engineers-hora si es pequeño team); (c) idle time (auto-host paga aunque no uses); (d) escalado (auto-host requiere buffer, Bedrock elastic); (e) throughput real por instancia (Llama-70B en p5.48xlarge da ~X tokens/segundo con vLLM). Bedrock suele ganar hasta ~10-50M tokens/día por modelo; auto-host escala mejor a partir de ahí.", "correct": true, "why": "Correcto. La ventaja de Bedrock es elasticidad + zero ops; el break-even se cruza cuando volumen justifica compute dedicado + team para operar. Empresas maduras publican análisis: e.g. Perplexity mueve carga high-volume a self-hosted; Notion queda en Bedrock para muchos casos. Nunca ignorar el ops cost (SRE, security, capacity planning) que puede duplicar el TCO real." },
+        { "letter": "B", "text": "Auto-hosting siempre es más barato.", "correct": false, "why": "Falso. A volumen bajo/medio Bedrock gana por elasticidad." },
+        { "letter": "C", "text": "Bedrock siempre es más barato.", "correct": false, "why": "Falso. A volumen enorme y utilization alta, self-hosting bien operado gana." },
+        { "letter": "D", "text": "El costo del engineering time es irrelevante.", "correct": false, "why": "Falso. Ops de LLM infra puede requerir 1-3 SREs/MLOps engineers; su costo puede exceder el infra." }
+      ],
+      "explanation": "Framework de decisión: (1) volumen sostenido conocido → considerar auto-host; (2) volumen variable/incierto → Bedrock por elasticidad; (3) modelo NO en Bedrock catálogo → auto-host (o Bedrock Custom Model Import); (4) compliance/latencia especial → auto-host o Bedrock según requirement; (5) team ops capability → auto-host requiere capacidad real. Herramientas: AWS Pricing Calculator para ambos, plus estimaciones de utilization real. Considerar híbrido: auto-host baseline + Bedrock burst.",
+      "realWorld": "Perplexity documentó su migración parcial a self-hosted. Character AI construyó infra propia por volumen enorme. Descript se mantiene mayormente en Bedrock por eficiencia. AWS blog compara TCO.",
+      "tags": ["cost break-even", "TCO", "auto-host vs Bedrock"],
+      "tech": ["Bedrock", "EKS + vLLM", "AWS Pricing Calculator"],
+      "references": [
+        { "title": "AWS Bedrock — Pricing" },
+        { "title": "AWS EC2 — GPU instance pricing" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "ai-infra-aws",
+      "topic": "Bedrock Studio y Bedrock Marketplace",
+      "difficulty": "junior",
+      "scenario": "Un equipo escucha en re:Invent sobre 'Bedrock Studio' y 'Bedrock Marketplace'.",
+      "question": "¿Qué son cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bedrock Studio: workspace para builders sin código donde crean apps AI (agents, RAG, prompts) con UI, comparten con equipo, prototipan rápido. Bedrock Marketplace: catálogo expandido de modelos, incluyendo modelos de Hugging Face y comunidad además de los foundation models base de Bedrock — deploy directo a Bedrock endpoints o SageMaker.", "correct": true, "why": "Correcto. Ambos son features expandidos en 2024. Studio democratiza el building de apps AI para non-devs y team collaboration. Marketplace agrega catálogo (2024) permitiendo modelos beyond los AWS partner base (Llama, Claude, etc.) — modelos comunitarios de HF, especializados, verticales. Complementan la oferta core de Bedrock." },
+        { "letter": "B", "text": "Studio y Marketplace son productos deprecated.", "correct": false, "why": "Falso. Lanzados en 2024, activos y expandidos." },
+        { "letter": "C", "text": "Ambos son solo para admins de AWS.", "correct": false, "why": "Falso. Studio target builders/citizen developers; Marketplace target model consumers." },
+        { "letter": "D", "text": "No se integran con el resto de Bedrock.", "correct": false, "why": "Falso. Integración nativa con Bedrock endpoints, Guardrails, KB." }
+      ],
+      "explanation": "Bedrock Studio (preview → GA): entorno colaborativo con proyectos, prompt playgrounds, chat interfaces sobre KBs y modelos, sharing con team. Reduce barrera para non-engineers. Bedrock Marketplace (re:Invent 2024): catálogo con >100 modelos adicionales (HF, especialistas). Deploy con 1-click. Combinado, expanden significativamente la accesibilidad y variedad de modelos en Bedrock. Alternatives: SageMaker JumpStart (más orientado data scientist), Amazon Q (asistente end-user).",
+      "realWorld": "AWS re:Invent 2024 detalló ambos. Casos temprano: partners como PwC, Deloitte usan Studio para prototipos con clientes.",
+      "tags": ["Bedrock Studio", "Bedrock Marketplace", "no-code"],
+      "tech": ["Bedrock Studio", "Bedrock Marketplace"],
+      "references": [
+        { "title": "AWS Bedrock — Studio and Marketplace" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "ai-infra-aws",
+      "topic": "Observability para LLM en AWS",
+      "difficulty": "mid",
+      "scenario": "Deployeaste Claude via Bedrock. El PM quiere ver latencia, error rate, cost por endpoint, requests por usuario.",
+      "question": "¿Qué stack de observability aplicar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) CloudWatch Metrics: Bedrock emite Invocations, InvocationLatency, InputTokenCount, OutputTokenCount, InvocationClientErrors, ServerErrors por modelo; (2) CloudWatch Logs con model invocation logging (logs completos de input/output opcional); (3) X-Ray para tracing distributed; (4) plus observability específica LLM (Langfuse, Helicone, Datadog LLM Obs, Braintrust) que expone métricas por feature/tenant/user; (5) OpenTelemetry GenAI conventions para instrumentation; (6) CloudWatch Alarms para SLOs.", "correct": true, "why": "Correcto. CloudWatch cubre observability infra-level de Bedrock. Model Invocation Logging opcional guarda inputs/outputs completos en S3/CloudWatch (útil para debugging y compliance, pero cuidado con PII). Para atribución por feature/tenant/user hace falta capa aplicativa (Langfuse, Helicone, OTel). Datadog LLM Observability integra con CloudWatch y añade views LLM-specific." },
+        { "letter": "B", "text": "Bedrock no emite métricas.", "correct": false, "why": "Falso. CloudWatch Metrics detalladas." },
+        { "letter": "C", "text": "CloudWatch no soporta logs de Bedrock.", "correct": false, "why": "Falso. Model Invocation Logging feature explícita." },
+        { "letter": "D", "text": "Solo hace falta X-Ray.", "correct": false, "why": "X-Ray es solo tracing. Se necesita metrics + logs + tracing + LLM-specific." }
+      ],
+      "explanation": "Stack completo Bedrock observability: (1) CloudWatch Metrics namespace AWS/Bedrock; (2) Model Invocation Logging → S3/CloudWatch (opcional); (3) X-Ray tracing (integración con Bedrock); (4) CloudWatch Alarms sobre error rate, latency p95; (5) capa aplicativa con Langfuse/Helicone/Datadog LLM Obs para atribución por feature/user; (6) OTel GenAI conventions para portabilidad. Costos observability: logging completo puede ser caro si volumen alto — usar sampling o solo errors.",
+      "realWorld": "AWS blog 'Monitor Amazon Bedrock' publica dashboards template. Datadog LLM Observability GA 2024 con integración Bedrock. Casos: Deloitte, Vodafone monitor via Datadog + CloudWatch combined.",
+      "tags": ["observability", "CloudWatch", "Model Invocation Logging", "Datadog LLM Obs"],
+      "tech": ["CloudWatch", "X-Ray", "Datadog LLM Obs", "Langfuse", "OpenTelemetry"],
+      "references": [
+        { "title": "AWS Bedrock — Monitoring with CloudWatch" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "ai-infra-aws",
+      "topic": "Cross-region Inference profiles",
+      "difficulty": "senior",
+      "scenario": "Un equipo enfrenta throttling constante en Claude 3.5 Sonnet on-demand en us-east-1. En re:Invent 2024 escucharon 'cross-region inference'.",
+      "question": "¿Cómo funcionan los cross-region inference profiles y qué considerar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En 2024 AWS introdujo inference profiles que enrutan requests entre múltiples regiones geográficamente relacionadas (us.*, eu.*, apac.*) para el mismo modelo. Uso: modelId con prefijo 'us.anthropic.claude-...'. Beneficios: quotas efectivas más altas (suma), menos throttling, mejor availability. Consideraciones: data residency (los datos pueden procesarse en cualquier región del profile — verificar compliance); IAM policy debe permitir ARNs de todas las regiones del profile; pricing igual que on-demand regional; compatible con streaming y Guardrails.", "correct": true, "why": "Correcto. Cross-region inference profiles (feature clave 2024) resuelve throttling manteniendo pricing on-demand. Trade-off principal es data residency: si tu compliance requires processing en región específica, verificar si el profile 'eu.*' o 'us.*' cumple, o usar modelId regional. IAM debe listar ARNs de todas las regiones del profile para InvokeModel." },
+        { "letter": "B", "text": "Requiere pagar premium adicional por cross-region.", "correct": false, "why": "Falso. Mismo pricing on-demand." },
+        { "letter": "C", "text": "No hay implicaciones de data residency.", "correct": false, "why": "Falso. Los datos van a cualquier región del profile — sí importa para GDPR/HIPAA/otros." },
+        { "letter": "D", "text": "Solo funciona en us-east-1.", "correct": false, "why": "Falso. Profiles 'us.*', 'eu.*', 'apac.*' con múltiples regiones cada uno." }
+      ],
+      "explanation": "Configuración cross-region inference: (1) usar modelId prefijado ('us.anthropic.claude-3-5-sonnet-20241022-v2:0'); (2) IAM policy con Resource incluyendo ARNs de todas las regiones del profile; (3) el request se hace desde una región source (típica de tu app) y AWS enruta; (4) network transfer entre regiones es managed y gratis dentro del profile; (5) compatible con features: streaming, Guardrails, tool use, prompt caching. Compliance: verificar si 'eu.*' o regional específico cumple.",
+      "realWorld": "AWS blog 'Amazon Bedrock cross-region inference' (2024). Anthropic recomienda su uso para producción. Casos: muchas empresas migrando profiles regionales pura on-demand a 'us.*' para absorber throttling picos.",
+      "tags": ["cross-region inference", "inference profiles", "throttling"],
+      "tech": ["Bedrock", "cross-region profiles"],
+      "references": [
+        { "title": "AWS Bedrock — Cross-region inference" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "ai-infra-aws",
+      "topic": "Custom Model Import",
+      "difficulty": "senior",
+      "scenario": "Un equipo fine-tuneó Llama-3-8B con LoRA externamente en Predibase. Quieren servir el modelo customizado en Bedrock para no gestionar infra.",
+      "question": "¿Qué es Bedrock Custom Model Import y qué modelos soporta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Custom Model Import (GA 2024) permite subir modelos custom (fine-tuned externamente o pre-trained propios) a Bedrock y servirlos vía la misma API. Arquitecturas soportadas: Llama 2/3/3.1/3.2, Mistral, Mixtral, Flan-T5 (verificar lista actualizada). Upload de weights a S3 → crear Custom Model en Bedrock → invocación normal via InvokeModel. Pricing con Provisioned Throughput (no on-demand). Alternativa a mantener SageMaker Endpoint self-hosted.", "correct": true, "why": "Correcto. Custom Model Import cierra el gap entre 'quiero fine-tuning propio' y 'quiero infra managed'. Soporta arquitecturas populares (Llama, Mistral, Flan-T5). Fine-tune externo (Predibase, HuggingFace, propio) → S3 → import → served en Bedrock. Requiere Provisioned Throughput para pricing. Ideal si quieres delegar ops de serving a AWS pero necesitas modelo custom no del catálogo." },
+        { "letter": "B", "text": "Bedrock solo sirve modelos del catálogo — no acepta customs.", "correct": false, "why": "Falso desde 2024 con Custom Model Import." },
+        { "letter": "C", "text": "Custom Model Import soporta cualquier arquitectura.", "correct": false, "why": "Falso. Lista limitada; verificar actualmente." },
+        { "letter": "D", "text": "Custom Model Import usa on-demand pricing.", "correct": false, "why": "Falso. Requiere Provisioned Throughput." }
+      ],
+      "explanation": "Workflow Custom Model Import: (1) fine-tunear modelo externamente (Predibase, Together, propia infra); (2) exportar weights compatible con arquitectura soportada; (3) subir a S3; (4) crear Custom Model en Bedrock (API o consola) especificando arquitectura y ubicación S3; (5) provisionar Model Units (Provisioned Throughput); (6) invocar con modelId del custom. Ventajas: sin ops de serving, integración con Guardrails/Agents/KB, IAM/CloudWatch/PrivateLink incluidos. Alternativa: SageMaker Endpoint con vLLM (más control, más ops).",
+      "realWorld": "AWS re:Invent 2024 destacó Custom Model Import como feature bridge para fine-tuning workflows. Predibase, Fireworks, OctoAI partnerships. Casos: enterprises que mantienen fine-tunes de dominio (medical, legal) y quieren servirlos en Bedrock.",
+      "tags": ["Custom Model Import", "Bedrock", "fine-tuned models"],
+      "tech": ["Bedrock Custom Model Import", "Llama fine-tuned", "Provisioned Throughput"],
+      "references": [
+        { "title": "AWS Bedrock — Custom Model Import" }
+      ]
+    }
+  ]
+}

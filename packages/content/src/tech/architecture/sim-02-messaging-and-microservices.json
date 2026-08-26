@@ -1,0 +1,422 @@
+{
+  "id": "architecture-sim-02-messaging-and-microservices",
+  "trackId": "architecture",
+  "order": 2,
+  "title": "Simulacro 02 — Mensajería, eventos y microservicios",
+  "focus": "Cuándo un event bus vs REST síncrono, SQS vs Kafka vs SNS, sagas, cuándo microservicios y cuándo NO, distributed transactions.",
+  "areaCoverage": ["messaging", "microservices", "resilience"],
+  "timeLimitMin": 60,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "messaging",
+      "topic": "Vocabulario básico — queue vs topic",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr te pregunta la diferencia entre una 'queue' (SQS) y un 'topic' (SNS/Kafka).",
+      "question": "¿Cuál es la distinción CORRECTA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Queue: un mensaje es consumido por UN consumer (competing consumers). Topic: un mensaje se entrega a TODOS los suscriptores (fan-out).", "correct": true, "why": "Correcto. Queue = distribución de trabajo (1 mensaje → 1 worker). Topic = broadcasting (1 mensaje → N listeners). SQS es queue. SNS es topic. Kafka es topic (múltiples consumer groups, cada grupo compite dentro pero recibe todo)." },
+        { "letter": "B", "text": "Queue es sincrónica; topic es asincrónica.", "correct": false, "why": "Ambos son asíncronos. La diferencia es la SEMÁNTICA de entrega, no la temporalidad." },
+        { "letter": "C", "text": "Queue tiene orden; topic no.", "correct": false, "why": "Depende. SQS Standard no garantiza orden estricto (FIFO sí). Kafka topics sí ordenan dentro de una partition. No es la distinción clave." },
+        { "letter": "D", "text": "Queue es local; topic es distribuido.", "correct": false, "why": "Ambos pueden ser distribuidos o locales según implementación. No es una propiedad definitoria." }
+      ],
+      "explanation": "Los dos modelos de messaging: Point-to-point (queue) — un mensaje al primer consumer disponible; Publish-subscribe (topic) — un mensaje a todos los suscriptores. AWS: SQS = queue, SNS = topic, EventBridge = event bus (routing avanzado). Kafka: topics con consumer groups (cada grupo recibe todo; miembros del grupo se reparten). Regla: 'evento' (algo pasó) → topic; 'comando/tarea' (haz esto) → queue.",
+      "realWorld": "Amazon usó SNS + SQS combinado (fan-out to queues) desde ~2004, un patrón hoy universal. RabbitMQ tiene ambos modelos vía exchange types. Kafka unificó: topics con consumer groups son ambos según se configuren.",
+      "tags": ["queue", "topic", "pub/sub", "vocabulario"],
+      "tech": ["SQS", "SNS", "Kafka", "RabbitMQ"],
+      "references": [{ "title": "Enterprise Integration Patterns (Hohpe/Woolf)" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "messaging",
+      "topic": "At-least-once vs exactly-once — la verdad incómoda",
+      "difficulty": "mid",
+      "scenario": "Un vendor te vende su cola como 'exactly-once delivery'. Suena maravilloso. Un colega senior dice: 'eso no existe realmente, o está mintiendo'.",
+      "question": "¿Cuál es la verdad técnica sobre exactly-once?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Exactly-once delivery es imposible en general en sistemas distribuidos (two generals problem). Lo que sistemas como Kafka o SQS FIFO ofrecen es 'exactly-once PROCESSING' via idempotency: el mensaje puede entregarse varias veces, pero el efecto es aplicado una sola vez.", "correct": true, "why": "Correcto. La distinción es sutil pero crucial. 'Delivery' (llegada del mensaje) puede duplicarse siempre — un ACK perdido en la red → el broker reenvía → tienes duplicado. 'Processing' (efecto) puede ser exactly-once si tu handler es idempotente (dedupe por message ID, transacción con outbox, etc.). Kafka EOS (Exactly Once Semantics) hace esto dentro de una transacción Kafka-to-Kafka pero requiere condiciones específicas." },
+        { "letter": "B", "text": "Exactly-once existe si usas SQS FIFO.", "correct": false, "why": "SQS FIFO ofrece 'exactly-once delivery' dentro de ventana de 5 min de dedupe, pero solo bajo condiciones (mismo MessageDeduplicationId, mismo group). Fuera de la ventana o entre distintos sistemas, no hay garantía. Y el CONSUMER puede fallar tras ACK → mensaje se reprocesa." },
+        { "letter": "C", "text": "En 2026 con QUIC y HTTP/3 sí es posible.", "correct": false, "why": "Los protocolos de transporte no cambian el teorema fundamental — dos partes distribuidas no pueden acordar universalmente que algo se hizo 'una vez'." },
+        { "letter": "D", "text": "Exactly-once = at-most-once + at-least-once combinados.", "correct": false, "why": "No es una combinación aritmética. Son garantías distintas. At-most-once (no duplicados, puede perderse) + at-least-once (todos llegan, pueden duplicar) = la unión no da exactly-once." }
+      ],
+      "explanation": "Tres garantías de entrega: (1) At-most-once: mensaje puede perderse, no se duplica. Fire-and-forget. Para telemetría no crítica. (2) At-least-once: mensaje siempre llega, puede duplicarse. Default de la mayoría de brokers (SQS Standard, Kafka, RabbitMQ). (3) Exactly-once: mensaje llega y se procesa una vez. En la práctica se logra combinando at-least-once + idempotencia del consumer. Idempotencia: dedupe key por mensaje, upsert en vez de insert, transaction ID en operaciones. Kafka EOS: transacciones producer↔consumer↔producer solo funcionan dentro de Kafka (no cuando consumes y llamas a una API externa). El diseño defensivo: 'asumo que todo mensaje puede llegar 0, 1, o N veces; hago que N veces sea equivalente a 1'.",
+      "realWorld": "Kafka EOS es genuine pero limitado. Confluent tiene blog posts detallados sobre limitaciones. Uber y LinkedIn diseñan con idempotency-first porque saben que exactly-once no es universal. Toda API de pagos (Stripe, Paypal) usa Idempotency-Key headers precisamente porque duplicados son inevitables.",
+      "tags": ["exactly-once", "at-least-once", "idempotencia", "delivery guarantees"],
+      "tech": ["SQS", "Kafka", "RabbitMQ"],
+      "references": [{ "title": "Confluent — 'Exactly-Once Semantics Are Possible' (nuanced)" }, { "title": "Two Generals Problem" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "messaging",
+      "topic": "Dead Letter Queue — para qué sirve",
+      "difficulty": "mid",
+      "scenario": "Un mensaje en SQS causa una excepción en tu handler. El mensaje vuelve a la queue, se reintenta, falla otra vez, y así infinitamente. La queue se llena de 'poison messages'.",
+      "question": "¿Cómo se resuelve con DLQ y cómo se opera correctamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Configurar la cola principal con `maxReceiveCount: 5` y una DLQ asociada. Tras 5 intentos fallidos, SQS mueve el mensaje a la DLQ. La cola principal sigue procesando otros mensajes; los tóxicos quedan aislados para inspección.", "correct": true, "why": "Correcto. Es el patrón estándar. maxReceiveCount define cuándo un mensaje se considera 'no procesable'. Sin DLQ, un poison message ata un worker indefinidamente (o degrada el throughput). Con DLQ, ese mensaje se aparta y otros siguen fluyendo." },
+        { "letter": "B", "text": "MONITOREAR la DLQ es obligatorio: alertas cuando llegan mensajes (indica bug o data corrupta). Tener un runbook para: inspeccionar, arreglar el bug, y RE-DRIVE (mover de vuelta) los mensajes válidos a la cola principal.", "correct": true, "why": "Correcto. DLQ sin monitoring es un cementerio de mensajes olvidados. AWS console tiene función 'Start DLQ redrive' desde 2021. El proceso: (1) alerta se dispara; (2) investigas el error; (3) arreglas el código; (4) re-drives los mensajes; (5) siguen procesando normalmente. Sin esto, DLQ se convierte en 'agujero negro' donde datos se pierden silenciosamente." },
+        { "letter": "C", "text": "En Kafka no existe DLQ nativa — se implementa con un topic auxiliar y consumer que redirige mensajes fallidos.", "correct": true, "why": "Correcto. Kafka no tiene DLQ built-in (el modelo pull con offsets es distinto). Se implementa manualmente: consumer captura excepción → produce a `topic.dlq` con headers de contexto (original topic, offset, error). Herramientas como Kafka Connect Sink DLQ, Confluent Cloud DLT (Dead Letter Topic) automatizan." },
+        { "letter": "D", "text": "Si el consumer no puede procesar, debe cerrar y no hacer nada — el mensaje volverá a la queue.", "correct": false, "why": "Es exactamente el problema del enunciado. Sin DLQ, el poison message causa fallo infinito. Mala estrategia." },
+        { "letter": "E", "text": "DLQ debe tener TTL corto (1 día) para no acumular.", "correct": false, "why": "Anti-patrón: TTL corto en DLQ = datos que se perdieron sin oportunidad de recovery. DLQ debe tener retention alta (14 días típico en SQS, más si tu equipo tarda en responder). Es un safety net, no debe autodestruirse." }
+      ],
+      "explanation": "DLQ pattern (Enterprise Integration Patterns): (1) main queue → intentos limitados; (2) tras max intentos, mensaje va a DLQ; (3) DLQ tiene monitoring/alertas; (4) proceso operacional para inspeccionar y re-drive. Buenas prácticas: (a) incluir contexto en el error (trace ID, timestamp, error type); (b) redriving DEBE ser reversible (después del bugfix); (c) medir 'DLQ arrival rate' como SLI (crecimiento = problema); (d) diseñar handlers idempotentes para que re-drive no cause efectos duplicados. AWS SQS tiene DLQ nativa, SNS tiene DLQ desde 2020, Lambda tiene DLQ/OnFailure, EventBridge tiene DLQ, Kafka Connect también.",
+      "realWorld": "Netflix tiene sofisticado DLQ tooling para su Kafka. Airbnb documenta patterns de re-drive con dashboards. Un incidente famoso: una startup perdió TBs de eventos porque su DLQ tenía TTL 24h y nadie miraba las alertas.",
+      "tags": ["DLQ", "poison message", "reliability", "operations"],
+      "tech": ["SQS", "SNS", "Kafka", "RabbitMQ"],
+      "references": [{ "title": "AWS SQS docs — Dead Letter Queues" }, { "title": "Enterprise Integration Patterns — Dead Letter Channel" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "microservices",
+      "topic": "Bounded contexts — dividir por dominio, no por capa",
+      "difficulty": "mid",
+      "scenario": "Un equipo divide su monolito en microservicios: `user-service`, `database-service`, `notification-service`, `api-service`. Cada uno gestiona una CAPA del sistema.",
+      "question": "¿Qué está mal con esta descomposición y cuál es el criterio correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "División por CAPAS técnicas (DB, API, notification) crea acoplamiento cruzado: cada feature requiere cambio en múltiples servicios. Peor: `database-service` es un antipattern — hace de la base de datos un servicio, forzando serialización de todo acceso a datos.", "correct": true, "why": "Correcto. La descomposición correcta es por BOUNDED CONTEXT (DDD): cada servicio dueño de un dominio de negocio completo (usuarios, pagos, catálogo, órdenes). Cada servicio tiene su DB propia (o schema separado). Servicios se comunican por eventos o APIs, no comparten DB. Un cambio de feature toca 1 servicio idealmente. Layered decomposition es el error clásico." },
+        { "letter": "B", "text": "Está bien: separar por capas facilita reutilización.", "correct": false, "why": "Reutilización teórica se paga con acoplamiento real. Cambiar el schema de user requiere coordinar database-service, api-service, user-service — perdiste la 'independencia' que motivaba microservicios." },
+        { "letter": "C", "text": "El problema es que faltan servicios: agregar `logging-service`, `auth-service`.", "correct": false, "why": "Peor. Añadir más servicios técnicos multiplica el acoplamiento. Auth como servicio dedicado tiene sentido (cross-cutting concern real), logging típicamente no." },
+        { "letter": "D", "text": "Está mal porque son pocos servicios. Debería haber 20+.", "correct": false, "why": "Número no es el criterio. Cada microservicio bien definido representa un dominio con owner claro. 4 servicios bien alineados > 20 servicios acoplados." }
+      ],
+      "explanation": "Domain-Driven Design (Eric Evans, 2003) introduce 'Bounded Context': un modelo del dominio coherente, con vocabulary consistente. Microservicios modernos se alinean 1:1 con bounded contexts. Cada servicio: (a) dueño de sus datos (DB privada); (b) expone API bien definida (contract); (c) minimiza dependencies con otros servicios; (d) puede evolucionar independientemente. Anti-patterns: shared database (dos servicios leyendo/escribiendo la misma tabla = coupling escondido); layered decomposition (DB-service, API-service — coupling por capa); nano-services (servicios tan pequeños que overhead network > lógica). El libro 'Team Topologies' complementa: services should reflect team structure (Conway's Law).",
+      "realWorld": "Amazon 'two-pizza teams' cada uno con servicios que poseen. Netflix cientos de microservicios alineados a dominios (recommendations, viewing history, encoding). Segment famosamente REGRESÓ a monolito porque su descomposición era demasiado granular. La regla de Sam Newman: 'services should be small enough to be maintainable, large enough to be meaningful'.",
+      "tags": ["bounded context", "DDD", "microservicios", "descomposición"],
+      "tech": [],
+      "references": [{ "title": "Eric Evans — 'Domain-Driven Design'" }, { "title": "Sam Newman — 'Building Microservices'" }, { "title": "Skelton/Pais — 'Team Topologies'" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "microservices",
+      "topic": "Service-to-service auth",
+      "difficulty": "mid",
+      "scenario": "Servicio A llama a servicio B (interno). Actualmente A envía un `?apiKey=SHARED_SECRET`. Se filtra el key en logs. Un incidente ocurre.",
+      "question": "¿Cuál es la forma correcta de autenticar entre servicios internos en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "API key en header custom — más seguro que en query string.", "correct": false, "why": "Mejor que query string (no se logea igual), pero sigue siendo un secret compartido: leak una vez, comprometido todo. Rotación es difícil. No hay identity per-caller." },
+        { "letter": "B", "text": "mTLS (mutual TLS): cada servicio tiene un certificado. El TLS handshake verifica AMBAS partes. Combinado con service mesh (Istio, Linkerd) o AWS App Mesh, la infraestructura maneja rotación y no toca el código.", "correct": true, "why": "Correcto para service-to-service en 2026. mTLS da: (1) identidad verificable de ambas partes; (2) encriptación en tránsito; (3) no shared secrets. Service mesh automatiza certificados (SPIFFE/SPIRE, cert-manager). Zero-Trust architecture asume la red no es confiable — cada request se autentica." },
+        { "letter": "C", "text": "OAuth 2.0 client credentials flow: cada servicio tiene client_id/secret, obtiene JWT del identity provider, presenta al llamar.", "correct": false, "why": "Válido, especialmente cuando servicio B es 'API pública interna' o cross-organization. Trade-off: más complejidad (auth server), más latencia (fetch token). Para SERVICIO A SERVICIO dentro de la misma red, mTLS es preferible por simplicidad de rotación y no need de auth server intermedio." },
+        { "letter": "D", "text": "Whitelisting de IP internas.", "correct": false, "why": "Débil: dentro de la red, cualquier pod comprometido puede impersonar. No hay identity per-service, solo per-network. Failure mode: attacker con foothold puede llamar todo. Es defensa en profundidad, no primary auth." }
+      ],
+      "explanation": "Evolución de service-to-service auth: (1) shared API key: simple, terrible security; (2) IP whitelist: 'network as identity' — falla en compromised networks; (3) OAuth client credentials: JWT-based, con auth server; (4) mTLS: cryptographic identity, no shared secrets; (5) Zero Trust + Service Mesh: mTLS automatizado con SPIFFE identity per-workload. Estándares: SPIFFE (Secure Production Identity Framework For Everyone) da identidades verificables a workloads. SPIRE es la implementación. Istio, Linkerd, Consul lo usan. AWS IAM roles for service accounts (IRSA en EKS) es la version cloud-native. Regla: 'no shared secrets between services in 2026'.",
+      "realWorld": "Google BeyondCorp introdujo Zero Trust en 2014, sin firewall interno — cada request autenticada. Netflix usa mTLS con service mesh. Cloudflare Access, Tailscale ofrecen esto sin infrastructure heavy. Kubernetes moderno con Istio da mTLS 'gratis' por diseño.",
+      "tags": ["mTLS", "service mesh", "zero trust", "auth"],
+      "tech": ["Istio", "Linkerd", "SPIFFE", "SPIRE"],
+      "references": [{ "title": "SPIFFE spec" }, { "title": "Google — BeyondCorp papers" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "messaging",
+      "topic": "SNS/SQS vs Kafka — cuándo cada uno",
+      "difficulty": "senior",
+      "scenario": "Diseñas un sistema donde: cuando un usuario compra, hay que (1) enviar email, (2) generar factura, (3) actualizar inventario, (4) notificar al warehouse. Estimación: 100 compras/segundo pico. Los 4 procesos son INDEPENDIENTES y algunos pueden fallar sin bloquear el checkout.",
+      "question": "¿Cuál combinación arquitectural es la MÁS adecuada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SNS topic 'purchase.completed' con 4 subscribers (uno por proceso). Cada subscriber puede ser una Lambda o un SQS + worker.", "correct": true, "why": "Correcto. SNS = publish/subscribe fan-out. Un evento se distribuye a N consumidores desacoplados. Añadir un 5to consumer no requiere tocar el publisher. SQS por consumer da retry + DLQ automáticos. Es el patrón AWS canónico para eventos. Escala fácil, cuesta poco a este volumen." },
+        { "letter": "B", "text": "SQS colas separadas, el checkout escribe en las 4 colas.", "correct": false, "why": "Acopla el publisher a los consumers: si añades un nuevo proceso (métricas, analytics) hay que modificar el checkout. Además hay riesgo de escritura parcial (2 de 4 colas fallan) sin coordinación. SNS→SQS lo resuelve." },
+        { "letter": "C", "text": "Kafka con topic 'purchase.completed', 4 consumer groups.", "correct": false, "why": "Correcto TÉCNICAMENTE pero over-kill para 100 rps y 4 consumidores simples. Kafka brilla en throughput masivo (>50k msg/s) y retención larga para stream processing. Aquí introduce ops (Zookeeper/KRaft, brokers, tuning). SNS es sirve el caso con 5% del costo operacional." },
+        { "letter": "D", "text": "REST síncrono: checkout llama a los 4 servicios en secuencia dentro del mismo request.", "correct": false, "why": "Anti-patrón grave: (1) latencia del checkout = suma de los 4; (2) si email falla, ¿fallamos la compra?; (3) acopla los 4 servicios al ciclo de vida del checkout. Los eventos deben ser async cuando el fallo NO debería bloquear el flujo principal." }
+      ],
+      "explanation": "Guía: SNS para pub/sub fan-out (1→N). SQS para work queue (1→1 con retry). Kafka para streams alto throughput con retención (event sourcing, analytics, replay). EventBridge para routing basado en patrones + integración a SaaS. Regla del oro: si tu evento es 'cosa que pasó' y cualquiera puede escucharlo, es pub/sub. Si es 'trabajo que alguien debe hacer', es queue. Kafka solo cuando el volumen o la retención lo justifican; para casos comunes, SNS+SQS es 10x más simple.",
+      "realWorld": "Netflix construyó Keystone (Kafka) para stream processing masivo. Airbnb tiene una capa 'Jitney' (Kafka) para eventos. Pero para el 90% de casos 'evento simple', SNS+SQS o EventBridge es la elección correcta. Meter Kafka sin necesidad es el error #1 de arquitectos junior queriendo aparentar seniority.",
+      "tags": ["SNS", "SQS", "Kafka", "pub/sub", "event-driven"],
+      "tech": ["SNS", "SQS", "Kafka", "EventBridge"],
+      "references": [{ "title": "AWS — 'Building event-driven architectures'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "microservices",
+      "topic": "Cuándo NO dividir en microservicios",
+      "difficulty": "senior",
+      "scenario": "Startup de 8 ingenieros, aplicación web con 3 módulos principales (auth, catálogo, pedidos). El CTO quiere dividir en microservicios 'porque escalamos mejor'.",
+      "question": "¿Cuál es el CRITERIO correcto para responder al CTO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, dividir. Los microservicios son la práctica moderna y facilitan escalar equipos.", "correct": false, "why": "Con 8 ingenieros, cada microservicio deja de tener owner claro. Y a este tamaño, los COSTOS de microservicios (network latency, distributed tracing, deployment complexity, consistency headaches) superan los beneficios." },
+        { "letter": "B", "text": "No. Con 8 ingenieros, monolito modular (buen module boundaries) es óptimo. Microservicios se justifican cuando: (a) equipos independientes >10-20 personas requieren autonomía; (b) escalabilidad heterogénea (un módulo necesita 100x más recursos); (c) ciclos de release muy distintos. Ninguno aplica aquí.", "correct": true, "why": "Correcto. Sam Newman, DHH y otros han pivotado el discurso: 'majestic monolith first'. Microservicios pagan sus costos con la moneda de 'coordinación entre equipos'. Con 8 ingenieros no hay equipos que coordinar — hay una silla. Monolito modular te da el beneficio (código separado por dominio) sin los costos operacionales." },
+        { "letter": "C", "text": "Sí, pero solo 2 microservicios: uno de auth y uno del resto.", "correct": false, "why": "Compromiso arbitrario. La pregunta 'cuántos' no es la correcta — es 'por qué'. Y siempre hay un costo fijo de red y ops que no vale la pena a esta escala." },
+        { "letter": "D", "text": "Sí, para poder desplegar cada uno independientemente.", "correct": false, "why": "Argumento débil: puedes desplegar un monolito varias veces al día con CI/CD moderno. La 'independencia de deploy' se paga con complejidad de compatibilidad de contratos entre servicios, versionado y migraciones distribuidas." }
+      ],
+      "explanation": "Microservicios existen por 2 razones reales: (1) Conway's Law — equipos independientes necesitan servicios independientes para no bloquearse; (2) escalabilidad heterogénea. Los beneficios teóricos ('mejor código', 'mejor testing') no son gratis — pagan la moneda de complejidad distribuida (network, monitoring, security, transactions). Regla: NUNCA empezar con microservicios. Comienza con monolito modular. Divide SOLO cuando la fricción de equipos y escala lo exija.",
+      "realWorld": "Amazon migró a microservicios ~2005 no porque estaban de moda, sino porque tenían 5000+ ingenieros bloqueándose. Basecamp (DHH) sigue en monolito con 60+ ingenieros — 'Majestic Monolith'. Segment famosamente REGRESÓ de microservicios a monolito por costos de ops.",
+      "tags": ["microservicios", "monolito", "YAGNI arquitectural", "Conway's Law"],
+      "tech": [],
+      "references": [{ "title": "Sam Newman — 'Monolith to Microservices'" }, { "title": "Segment — 'Goodbye Microservices'" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "resilience",
+      "topic": "Distributed transaction — saga vs 2PC",
+      "difficulty": "senior",
+      "scenario": "Sistema de reservas de viajes: para reservar un paquete debes coordinar (1) vuelo, (2) hotel, (3) coche — 3 servicios distintos, cada uno con su DB. Necesitas ATOMICIDAD: o todo se reserva o nada. ¿Cómo lo diseñas?",
+      "question": "¿Cuál es la mejor arquitectura en 2026 y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Two-Phase Commit (2PC) coordinado por un TransactionManager global.", "correct": false, "why": "2PC era la solución teórica pero en la práctica se abandonó: (1) bloqueante — todos los recursos quedan lockeados hasta el commit del coordinador; (2) el coordinador es SPOF; (3) no funciona con servicios REST/HTTP; (4) no escala. Casi ningún sistema moderno lo usa entre servicios (sí dentro de una DB con XA, y con problemas)." },
+        { "letter": "B", "text": "Saga pattern: secuencia de transacciones locales con acciones compensatorias. Si el paso 3 falla, ejecutar rollback lógico de 1 y 2 (cancel booking).", "correct": true, "why": "Correcto. Saga es la solución idiomática moderna. Cada servicio hace su transacción local. Si un paso falla, el orquestador (o coreografía por eventos) ejecuta compensaciones. No hay locks distribuidos, cada servicio decide su propia consistencia. Trade-off: NO tiene aislamiento (otro lector puede ver el estado intermedio). Debes diseñar compensaciones idempotentes." },
+        { "letter": "C", "text": "Poner todos los datos en la misma DB y usar transacción ACID.", "correct": false, "why": "Elimina la distribución pero elimina también los servicios independientes. Es válido a veces (revertir a monolito), pero no es 'coordinar servicios'. Cambia el problema." },
+        { "letter": "D", "text": "Event Sourcing + CQRS con Kafka. Cada servicio publica eventos, el consumidor decide la consistencia eventual.", "correct": false, "why": "Válido pero es un cambio arquitectural masivo que va MUY más allá del problema. Event Sourcing tiene su lugar (auditoría, replay) pero introduce complejidad enorme (eventual consistency, schema evolution, replay lag). Overkill para este caso; Saga es la elección conservadora y correcta." }
+      ],
+      "explanation": "Sagas se implementan de 2 formas: (1) orquestación — un servicio central dirige la secuencia (más explícito, tolerante a fallos); (2) coreografía — cada servicio publica eventos y los demás reaccionan (menos acoplado pero difícil de trazar). Cada paso hacia adelante necesita su compensación (BookFlight → CancelFlight). Idempotencia es CRÍTICA: los reintentos son inevitables. Estado del saga debe persistir. Frameworks: Temporal, AWS Step Functions, Camunda son orquestadores de saga.",
+      "realWorld": "Uber usa Cadence/Temporal para orquestar sagas de reserva. Booking.com maneja miles de sagas concurrentes. Airbnb tiene 'Workflow' para el mismo patrón. Sin sagas o algo equivalente, coordinación distribuida se rompe silenciosamente en producción.",
+      "tags": ["saga", "distributed transaction", "2PC", "compensación", "eventual consistency"],
+      "tech": ["Temporal", "AWS Step Functions", "Camunda", "Cadence"],
+      "references": [{ "title": "Garcia-Molina, Salem — 'Sagas', 1987" }, { "title": "Chris Richardson — 'Microservices Patterns'" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "microservices",
+      "topic": "API Gateway — patrones y anti-patrones",
+      "difficulty": "senior",
+      "scenario": "Sistema con 15 microservicios. Frontend web + mobile app + partner APIs. Un ingeniero propone: 'un solo API Gateway al frente que hace todo — routing, auth, transformación, agregación'.",
+      "question": "¿Cuál es el patrón correcto para API Gateways?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Patrón BFF (Backend for Frontend): un gateway por CLIENT type (web-bff, mobile-bff, partner-api). Cada uno agrega y adapta datos para su cliente específico. Web puede requerir 20 fields, mobile 5 (bandwidth), partner formato distinto.", "correct": true, "why": "Correcto. BFF (introducido por SoundCloud, popularizado por ThoughtWorks) resuelve el problema de un gateway 'universal' que satisface a todos → satisface a nadie. Cada BFF puede evolucionar con las necesidades de su cliente. Reduce over-fetching (mobile) y under-fetching (partner APIs). Trade-off: más servicios que mantener, pero cada uno más focused." },
+        { "letter": "B", "text": "El gateway debe ser 'thin': routing, auth, rate limiting, observability. NO debe contener lógica de negocio ni transformaciones pesadas.", "correct": true, "why": "Correcto. Anti-pattern conocido: 'god gateway' que crece con cada requirement hasta convertirse en un monolito por si mismo. Regla: gateway hace cosas cross-cutting (auth, logging, throttling); lógica de negocio en los servicios. Kong, Envoy, AWS API Gateway se diseñan alrededor de esto." },
+        { "letter": "C", "text": "Rate limiting, auth centralized, request routing, response transformation son responsabilidades APROPIADAS del gateway.", "correct": true, "why": "Correcto. Estas son 'cross-cutting concerns' que tiene sentido centralizar. Auth: verificar token una vez en el edge, propagar identidad a downstream services. Rate limiting: proteger backend de abuse. Transformación: adaptar formatos (REST↔GraphQL, versionado)." },
+        { "letter": "D", "text": "Todos los servicios internos DEBEN pasar por el gateway, incluso service-to-service.", "correct": false, "why": "Anti-patrón: gateway se vuelve SPOF y bottleneck para tráfico interno que no lo necesita. Service-to-service usa service mesh (Istio) o llamadas directas con service discovery. Gateway es para EDGE (entrada desde clientes externos)." },
+        { "letter": "E", "text": "El gateway debe hacer database queries directas.", "correct": false, "why": "Absoluto anti-patrón: acopla gateway a schema de DB, viola boundaries de servicios, causa SPOF." }
+      ],
+      "explanation": "API Gateway patterns: (1) Edge gateway: single entry point para clients externos, cross-cutting concerns. (2) BFF: gateway per client type, agregación específica. (3) Aggregation gateway: combina responses de múltiples services (útil pero cuidado con acoplar). (4) Facade: hide internal complexity behind stable API. Herramientas: Kong (Nginx-based), Envoy (Lyft, base de Istio), AWS API Gateway, Google Apigee, Zuul (Netflix). Anti-patterns: (a) god gateway con business logic; (b) gateway para service-to-service (use service mesh); (c) gateway sin observability (black box); (d) gateway sync bloqueante para aggregation (should be async).",
+      "realWorld": "Netflix Zuul (open source) fue pionero. SoundCloud publicó posts fundamentales sobre BFF. Amazon usa distintos gateways por client. GraphQL puede reemplazar aggregation gateway (Apollo Federation). Kong y Envoy son los gateways más adoptados en 2026.",
+      "tags": ["API Gateway", "BFF", "edge patterns"],
+      "tech": ["Kong", "Envoy", "AWS API Gateway", "Zuul"],
+      "references": [{ "title": "Sam Newman — 'Building Microservices' Ch. 5" }, { "title": "SoundCloud — 'BFFs at SoundCloud'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "messaging",
+      "topic": "Kafka partitions — el corazón del throughput",
+      "difficulty": "senior",
+      "scenario": "Kafka topic con 3 partitions. Producer envía mensajes con key=user_id. Consumer group con 10 consumers. Notas que solo 3 consumers están activos, 7 están idle.",
+      "question": "¿Por qué? ¿Cómo escalar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bug del consumer — los 10 deberían estar activos.", "correct": false, "why": "No es bug: es diseño de Kafka. Un consumer group asigna UN consumer por partition. Con 3 partitions, máximo 3 consumers activos; el resto en standby (asumen partition si un active falla)." },
+        { "letter": "B", "text": "El paralelismo máximo de un consumer group = número de partitions. Para escalar, DEBES aumentar partitions (10+ para usar 10 consumers). Trade-off: más partitions = más overhead (metadata, more file handles, más rebalancing time), y no puedes REDUCIR partitions después.", "correct": true, "why": "Correcto. Es el modelo fundamental de Kafka. Partitions son la unidad de paralelismo Y de ordenamiento (dentro de una partition hay orden estricto, entre partitions no). Al diseñar un topic decides el número de partitions esperando el peak throughput futuro. Aumentar es fácil, reducir NO es posible directamente (requiere crear topic nuevo y migrar)." },
+        { "letter": "C", "text": "Reducir consumers a 3.", "correct": false, "why": "Válido operacionalmente (no idle consumers), pero no 'escala' — sigues con throughput limitado por 3 partitions." },
+        { "letter": "D", "text": "Cambiar la partition strategy a round-robin.", "correct": false, "why": "Cambia asignación key → partition, pero no aumenta el número de partitions ni el paralelismo. Además pierdes ordering guarantees (el mismo user_id puede ir a partitions distintas)." }
+      ],
+      "explanation": "Kafka fundamentals: (1) Topic = stream lógico; (2) Partition = shard físico del topic — unidad de paralelismo, replicación y ordenamiento; (3) Consumer group = conjunto de consumers cooperativos; asignación 1 partition ↔ 1 consumer dentro del group. Consecuencias: (a) throughput por group = throughput por partition × num_partitions; (b) ordering solo dentro de partition (usa key para 'sticky' partitioning); (c) rebalancing cuando cambia membership (pausa breve del consumo); (d) hot partition = mismo problema que en DBs, si key distribuye mal. Configuración típica: num_partitions = 2-3x peak consumers estimados. Confluent recomienda: partitions ≤ 100 por broker, ≤ 4000 por cluster.",
+      "realWorld": "LinkedIn (creadores de Kafka) tiene topics con miles de partitions. Netflix documenta patterns de partitioning para diferentes casos. Uber tuvo issues con hot partitions en su Kafka de rides (celebrity users). Confluent tiene deep dives sobre partition strategy.",
+      "tags": ["Kafka", "partitions", "consumer group", "paralelismo"],
+      "tech": ["Kafka"],
+      "references": [{ "title": "Confluent — 'How to choose the number of partitions'" }, { "title": "Kreps — 'The Log' post" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "messaging",
+      "topic": "Idempotency — el patrón universal en eventos",
+      "difficulty": "senior",
+      "scenario": "Consumer procesa evento `purchase.completed` que carga la tarjeta del usuario. Debido a retries y at-least-once delivery, el mismo evento puede llegar 2-3 veces. Sin protección: el usuario se queja de doble cobro.",
+      "question": "¿Cuál es el patrón correcto de idempotency?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cada mensaje tiene un idempotency_key único (event ID). Antes de procesar, verifica en una tabla `processed_events(key, processed_at)`. Si existe: skip. Si no: procesa Y INSERT en la misma transacción. Garantiza exactly-once effect a pesar de at-least-once delivery.", "correct": true, "why": "Correcto. Es el patrón canónico. La INSERT + procesamiento deben ser atómicos (misma transacción SQL). Si el proceso muere entre 'procesar' y 'commit', al retry se detecta como 'ya procesado' o no (según el momento del crash). Con constraints unique en la key, dobles no son posibles." },
+        { "letter": "B", "text": "Idempotency puede lograrse también con upserts: `INSERT ... ON CONFLICT DO NOTHING` o design que el efecto neto sea el mismo aplicado N veces (SET status='paid' es idempotente; balance -= 100 no).", "correct": true, "why": "Correcto. Idempotency tiene dos flavors: (1) dedup por ID (rechaza duplicados); (2) operaciones inherentemente idempotentes (SET status = 'paid' es igual aplicado 1 o N veces; balance -= 100 no). Diseño defensivo: prefiere operaciones idempotentes cuando posible (asignaciones absolutas > deltas)." },
+        { "letter": "C", "text": "Idempotency-Key debe tener TTL (típicamente 24h-7d) para evitar que la tabla crezca infinita. Trade-off: si un mensaje reintenta después del TTL, se re-procesará.", "correct": true, "why": "Correcto detalle operacional. TTL alineado con el retry policy del broker (SQS: 14 días max retention → TTL de idempotency ≥ 14d). Alternativas: partitioning + drop old partitions; TTL con Redis (más rápido pero volátil). Stripe usa 24h TTL en su Idempotency-Key." },
+        { "letter": "D", "text": "Poner un mutex distribuido por evento.", "correct": false, "why": "Sobre-ingeniería y frágil. La solución con dedupe table + transacción es más simple y robusta. Distributed locks tienen sus propios problemas (fencing, lock leases)." },
+        { "letter": "E", "text": "Confiar en que el broker es exactly-once.", "correct": false, "why": "Discutido anteriormente: no existe exactly-once real. Diseña como si duplicados fueran inevitables." }
+      ],
+      "explanation": "Idempotency es la base de sistemas event-driven robustos. Todas las APIs serias exponen Idempotency-Key: Stripe, PayPal, GitHub, Shopify. Implementación patterns: (1) dedupe table (persistent, transactional); (2) event sourcing (event ID como natural key); (3) operations naturally idempotent (upserts, set state to X). Consideraciones: (a) TTL para bounded storage; (b) index on key para lookup rápido; (c) transaction que engloba check + do + record. Anti-pattern: check idempotency luego procesar luego record (race window). Debe ser atomic. En sistemas modernos: HTTP PUT es semánticamente idempotente, POST no — respeta la semántica en tus API designs.",
+      "realWorld": "Stripe pioneering paper 'Designing robust and predictable APIs with idempotency'. Shopify blog sobre idempotency-key. Kafka EOS confía internamente en idempotent producers (misma idea aplicada a producer→broker). Diseñar sin idempotency es aceptar bugs en producción por inevitables retries.",
+      "tags": ["idempotency", "at-least-once", "dedupe", "exactly-once effect"],
+      "tech": ["Kafka", "SQS", "Stripe API"],
+      "references": [{ "title": "Stripe — 'Designing robust and predictable APIs with idempotency'" }, { "title": "Shopify — 'Idempotent APIs'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "microservices",
+      "topic": "Contract testing — el problema silencioso",
+      "difficulty": "senior",
+      "scenario": "Microservicio A consume la API de servicio B. B hace un cambio 'menor' (renombra un field). A rompe en producción. Los tests unitarios de ambos pasaron.",
+      "question": "¿Qué tipo de testing previene esto y por qué integration tests no bastan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Integration tests con un ambiente completo — deploya todo y prueba.", "correct": false, "why": "Ambiente compartido es lento, frágil (cualquiera puede romperlo), difícil de setup. Además: no captura el problema en el momento del PR de B — solo cuando alguien deploya. Feedback loop lento." },
+        { "letter": "B", "text": "Contract testing (Pact, Spring Cloud Contract): A define un CONSUMER CONTRACT ('espero endpoint X que devuelve field Y'). En CI de B, el contract se verifica: si B rompe el contrato, CI falla ANTES de merge. Los tests corren en CI de cada servicio independientemente.", "correct": true, "why": "Correcto. Contract testing es el patrón que permite microservicios evolucionar independientemente sin acoplarse en tests. Consumer-driven contracts: los consumers definen qué esperan. Provider verifica que sigue cumpliendo. Pact es el estándar open source. Ventajas: (1) fail fast en CI del provider; (2) cada servicio corre sus tests aislado; (3) documenta expectativas cross-service; (4) prevención de breaking changes en el momento correcto." },
+        { "letter": "C", "text": "Solo E2E tests son válidos.", "correct": false, "why": "E2E tests son lentos, flaky, difíciles de mantener. Sirven para 'happy path' pero no escalan a decenas de servicios. Contract testing es más específico y rápido." },
+        { "letter": "D", "text": "Documentar el contrato en un wiki.", "correct": false, "why": "Documentación pasiva se desactualiza. La ventaja del contract testing es que es EJECUTABLE — CI lo verifica automáticamente." }
+      ],
+      "explanation": "Test pyramid en microservicios: (1) unit tests (mucho, rápido, aislado); (2) integration tests (con DB, servicios mocked); (3) CONTRACT TESTS (verifican contratos consumer↔provider); (4) E2E tests (pocos, lentos, en staging). Contract testing herramientas: Pact (más popular, multi-language), Spring Cloud Contract (Java), OpenAPI-based (verifica que la API implementada matchea el schema). Consumer-driven vs Provider-driven: el consumer sabe qué usa, el provider promete cumplirlo. Alternativa: schema registries (Kafka + Confluent Schema Registry para eventos Avro/Protobuf) — enforce compatibility en el broker.",
+      "realWorld": "PayPal, Google, Netflix usan contract testing en escala. GitHub GraphQL API tiene deprecation tracking sistemático. Pact tiene broker centralizado para compartir contratos entre teams. Sin contract testing, cambios 'inocentes' rompen producción constantemente — cada equipo mantiene múltiples versiones 'por si acaso'.",
+      "tags": ["contract testing", "Pact", "consumer-driven contracts"],
+      "tech": ["Pact", "Spring Cloud Contract", "OpenAPI"],
+      "references": [{ "title": "Pact docs" }, { "title": "Martin Fowler — 'Consumer-Driven Contracts'" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "microservices",
+      "topic": "Service discovery — cómo se encuentran",
+      "difficulty": "senior",
+      "scenario": "50 microservicios, cada uno con varias instancias que suben/bajan constantemente. ¿Cómo sabe A la IP de B?",
+      "question": "¿Cuáles son los patterns válidos de service discovery?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "DNS-based: cada servicio tiene un DNS name interno (`orders.internal`). Kubernetes CoreDNS o AWS Cloud Map lo resuelven a IPs de pods sanos. Cliente hace lookup DNS estándar. Simple, universal, funciona con cualquier lenguaje.", "correct": true, "why": "Correcto. Es el pattern más común en Kubernetes (Service objects → DNS). Ventajas: transparente al código, cache DNS reduce lookups, load balancing round-robin básico. Limitaciones: DNS TTL puede causar cache issues durante scaling; no health-checking sofisticado (Kubernetes maneja eso vía Service+Endpoints)." },
+        { "letter": "B", "text": "Client-side discovery: el cliente consulta un service registry (Consul, Eureka), obtiene lista de instances sanas, elige una (round-robin, weighted, latency-based). Netflix Ribbon fue pionero. Ventaja: routing decisions sofisticadas del cliente.", "correct": true, "why": "Correcto. Client-side load balancing es más flexible: latency-based routing, canary deployment (10% traffic al nuevo), circuit breaking. Trade-off: complejidad en el cliente (biblioteca por lenguaje). Netflix usó Ribbon + Eureka a escala." },
+        { "letter": "C", "text": "Server-side discovery: cliente llama a un load balancer que enruta al backend. AWS ALB, Envoy proxy, Kubernetes Service (kube-proxy). Cliente no sabe de instances, solo del LB.", "correct": true, "why": "Correcto. Es el pattern más simple para clientes (no requiere biblioteca especial). Trade-off: extra hop de red, LB puede ser SPOF (aunque HA). En Kubernetes, kube-proxy hace este role a nivel de IP tables/IPVS." },
+        { "letter": "D", "text": "Service mesh (Istio, Linkerd) da service discovery + load balancing + mTLS + observability transparente al código de la app. Sidecar (Envoy proxy) por pod intercepta traffic. La app llama a 'localhost:port' y el sidecar hace el resto.", "correct": true, "why": "Correcto. Es la evolución moderna. Service mesh separa concerns network del código de la app. Costo: sidecar proxy por pod consume memoria y CPU, y añade latencia. Ganancias: uniformidad de mTLS, routing, telemetría, retry policies — sin cambiar código." },
+        { "letter": "E", "text": "Hardcoding IPs en config files.", "correct": false, "why": "Anti-patrón: en cloud, IPs cambian constantemente. Debes redeployear apps al escalar. No soporta health checking." }
+      ],
+      "explanation": "Service discovery evolución: (1) hardcoded IPs → (2) config files (etcd, Consul) → (3) DNS-based → (4) client-side (Eureka, Ribbon) → (5) server-side (load balancers) → (6) service mesh (Istio, Linkerd). En 2026: DNS-based (Kubernetes) para 90% de casos, service mesh cuando necesitas mTLS/observability/routing avanzado. AWS App Mesh, GCP Traffic Director, Consul Connect son alternativas managed. Zero-touch service discovery (Kubernetes + DNS + Service) es el default de facto.",
+      "realWorld": "Netflix Eureka fue pionero (2012). Kubernetes DNS es el default 2026. Istio ganó tracción para requirements avanzados. Consul de HashiCorp popular en híbrido (VMs + containers). Envoy proxy es la base de Istio y otros meshes.",
+      "tags": ["service discovery", "load balancing", "service mesh"],
+      "tech": ["Kubernetes", "Consul", "Eureka", "Istio", "Envoy"],
+      "references": [{ "title": "Chris Richardson — 'Microservices Patterns' Ch. 3" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "resilience",
+      "topic": "Choreography vs Orchestration — la decisión clave",
+      "difficulty": "senior",
+      "scenario": "Sistema de e-commerce con eventos: OrderPlaced → (PaymentService, InventoryService, ShippingService, EmailService). Debate: cada servicio reacciona a eventos (choreography) vs un servicio central dirige el flujo (orchestration).",
+      "question": "¿Cuáles son los trade-offs y cuándo cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Choreography: cada servicio suscribe a eventos y publica los suyos. Alto desacoplamiento. Problema: es difícil VER el flujo — necesitas distributed tracing para entender qué pasó. Añadir un paso nuevo puede tener side effects impredecibles. 'Nadie ve el bosque'.", "correct": true, "why": "Correcto. Choreography es simple para 2-3 servicios, se vuelve caótico con 10+. Ventaja: minimum coupling. Desventaja: debugging complicado, hard to reason about, business logic distribuida sin owner claro. Para casos donde el flujo es simple y estable, funciona bien." },
+        { "letter": "B", "text": "Orchestration: un orquestador central (Temporal, Step Functions, Camunda) dirige la secuencia. El flujo está explícito en un solo lugar. Trade-off: el orquestador es más acoplamiento (conoce los servicios), pero es 'un lugar' donde ver el proceso completo, retries, timeouts, compensations.", "correct": true, "why": "Correcto. Orchestration escala mejor a flujos complejos. Temporal/Step Functions permiten workflows con retries automáticos, versionado, replay para debugging. La visibilidad es enorme (UI de ejecuciones). Trade-off: orquestador es una dependency más, puede ser SPOF si mal diseñado (Temporal es HA)." },
+        { "letter": "C", "text": "Híbrido: choreography para eventos simples (notifications, analytics), orchestration para flujos complejos con estado (order fulfillment, KYC).", "correct": true, "why": "Correcto y pragmático. No es un all-or-nothing. Reglas heurísticas: si el flujo tiene >3 pasos con dependencias, orchestrar. Si son 'notifications' (fire and forget), choreograph. Cada workflow decides su modelo apropiado." },
+        { "letter": "D", "text": "Choreography es siempre mejor porque es 'más microservicios-native'.", "correct": false, "why": "Dogma. Ambos son válidos. La visibilidad y control del orchestration en workflows complejos supera al 'purismo' del acoplamiento mínimo." },
+        { "letter": "E", "text": "Orchestration reintroduce monolito.", "correct": false, "why": "Confusión: el orquestador contiene el FLUJO, no la lógica de negocio. Cada servicio sigue siendo independiente. El orquestador es 'workflow engine', no 'business logic monolith'." }
+      ],
+      "explanation": "Choreography vs Orchestration en microservicios: análogo a diferencia entre baile improvisado (choreography) y ballet dirigido (orchestration). Herramientas de orchestration: Temporal (Uber-origen, workflows durables, replay), AWS Step Functions (serverless, state machines), Camunda (BPMN), Netflix Conductor. Choreography típicamente en event brokers (Kafka, SNS+SQS, EventBridge). Regla del arquitecto: para 'happy paths simples' choreography. Para 'flujos con estado, retries complejos, compensations, timeouts, visibility crítica' orchestration. Ambos coexisten en sistemas reales.",
+      "realWorld": "Uber creó Cadence (ahora Temporal) precisamente porque choreography no escaló en sus workflows de rides. Netflix Conductor tiene miles de workflows. AWS Step Functions integra con toda la plataforma. Zeebe (Camunda cloud-native) para BPMN. Los sistemas con flujos complejos casi siempre acaban con orchestration explícita.",
+      "tags": ["orchestration", "choreography", "saga", "workflow"],
+      "tech": ["Temporal", "AWS Step Functions", "Camunda", "Conductor"],
+      "references": [{ "title": "Chris Richardson — 'Microservices Patterns' Ch. 4" }, { "title": "Temporal blog — 'Choreography vs Orchestration'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "messaging",
+      "topic": "Backpressure — cuando el consumer no puede",
+      "difficulty": "senior",
+      "scenario": "Publisher escribe a Kafka a 100k msg/s. Consumers pueden procesar 20k msg/s. Sin acción, la queue crece indefinidamente hasta llenar el disco.",
+      "question": "¿Qué mecanismos de backpressure aplican?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Kafka tiene retention configurable (time-based o size-based). Cuando se llena, los mensajes viejos se descartan (no backpressure real al producer, pero contiene el problema en almacenamiento).", "correct": true, "why": "Correcto pero peligroso: descartar mensajes = data loss. Retention es una defensa de último recurso, no una estrategia de backpressure verdadera. Sirve para prevenir 'disk full disaster' pero no resuelve el imbalance." },
+        { "letter": "B", "text": "Escalar consumers horizontalmente (más pods/machines) hasta que el consumer rate ≥ producer rate. Requiere que haya suficientes partitions (recordamos: paralelismo consumer ≤ partitions).", "correct": true, "why": "Correcto. Es la solución 'natural': si el sistema tiene capacidad, úsala. Autoscaling basado en consumer lag (KEDA para Kubernetes es popular). Necesitas partitions suficientes upfront (por eso overprovision de partitions al diseñar topic)." },
+        { "letter": "C", "text": "Backpressure verdadera: publisher SLOW DOWN cuando el broker señala carga alta. En Kafka: producer se bloquea cuando `buffer.memory` está lleno. En sistemas reactivos (RxJava, Project Reactor, Akka): la abstracción de backpressure es first-class.", "correct": true, "why": "Correcto. Backpressure REAL propaga la señal hacia arriba: si consumer no puede, producer debe reducir. Kafka producer tiene buffer.memory + max.block.ms — bloquea el producer cuando el broker está saturado. Reactive Streams spec (Java) define contratos formales de backpressure." },
+        { "letter": "D", "text": "Dead Letter Queue para mensajes que no se procesan.", "correct": false, "why": "DLQ es para POISON MESSAGES (que fallan al procesarse), no para volumen (throughput mismatch). No resuelve backpressure — solo cambia dónde se acumulan." },
+        { "letter": "E", "text": "Rate limiting en el producer.", "correct": true, "why": "Correcto. Si el producer tiene una fuente de eventos que puede reducirse (batch jobs, non-critical writes), aplicar rate limiting arriba en la cadena. Ejemplo: user-triggered events se aceptan siempre, batch analytics se envía a throttled rate." }
+      ],
+      "explanation": "Backpressure: mecanismo para propagar 'consumidor está saturado' hacia el productor. Sin backpressure, sistemas colapsan por exhaustion de memoria, disco, o infinite queues. Estrategias: (1) elastic scaling (autoscale consumers); (2) buffer + drop policies (retention, TTL); (3) reactive backpressure (Reactive Streams, Akka Streams); (4) throttle producer (rate limiting, batching); (5) admission control (rechazar requests cuando sobre capacidad — 503 responses). Herramientas: KEDA (Kubernetes autoscaling basado en Kafka lag), Prometheus + HPA para métricas de queue, RxJava/Reactor para reactive backpressure. En microservicios síncronos (REST): responder 429 Too Many Requests + Retry-After header — cliente hace backoff.",
+      "realWorld": "LinkedIn tiene sofisticados sistemas de backpressure en Kafka a escala. Netflix usa reactive libraries extensivamente (RxJava). Discord procesa millones de mensajes/día con careful backpressure design. Un sistema sin backpressure explícito acabará descubriendo por qué la necesita en el peor momento.",
+      "tags": ["backpressure", "throughput", "consumer lag", "scaling"],
+      "tech": ["Kafka", "KEDA", "Reactive Streams", "RxJava"],
+      "references": [{ "title": "Reactive Streams spec" }, { "title": "Kafka docs — Producer configs (buffer.memory)" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "microservices",
+      "topic": "Distributed monolith — el peor de dos mundos",
+      "difficulty": "staff",
+      "scenario": "Sistema migrado a microservicios hace 2 años. Cada deploy requiere coordinar 8 servicios en orden específico. Un bug en uno rompe los otros. La productividad del equipo bajó vs cuando era monolito.",
+      "question": "¿Qué es un 'distributed monolith' y cómo se detecta?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Distributed monolith = múltiples servicios físicos pero fuertemente acoplados: (a) deploys deben ser coordinados; (b) shared database (o schemas cruzados); (c) breaking changes constantes en contratos; (d) un servicio caído colapsa muchos; (e) requiere ambiente completo para testing. Perdes independent deployability sin ganar isolation.", "correct": true, "why": "Correcto. Es el peor resultado posible de una migración a microservicios: multiplicas los costos operacionales de distributed system sin ganar los beneficios (independencia, isolation, autonomy). Suele ser resultado de: descomposición mal hecha (por capas, no por dominios), shared DB, sync REST calls sin resilience, contract testing ausente." },
+        { "letter": "B", "text": "Síntomas: (1) 'no puedo probar A sin levantar todo'; (2) 'este PR requiere deploy simultáneo de 3 servicios'; (3) 'B se cayó, A también aunque técnicamente no lo llama directamente'; (4) 'no puedo cambiar la API de X porque todos dependen'.", "correct": true, "why": "Correcto. Estos son red flags concretos. Cada uno indica coupling que microservicios prometían eliminar. Si aparecen múltiples, probablemente tienes distributed monolith." },
+        { "letter": "C", "text": "Solución: (a) audit shared databases → dar cada servicio su propia DB; (b) async communication donde posible (eventos > REST sync); (c) contract testing para detectar breaking changes en CI; (d) circuit breakers/bulkheads para isolation; (e) rediseñar boundaries si están mal (algunos servicios deben fusionarse, otros dividirse).", "correct": true, "why": "Correcto. Es un proyecto de rearquitectura, no un fix rápido. A veces la solución más honesta es CONSOLIDAR de vuelta a monolito modular (Segment lo hizo). No hay vergüenza en 'undo microservices' si no funcionan." },
+        { "letter": "D", "text": "Añadir más microservicios para resolver el problema.", "correct": false, "why": "Anti-patrón: cada nuevo servicio multiplica coupling si la descomposición sigue mal. Fixing distributed monolith no es 'más microservicios', es 'mejor boundaries'." },
+        { "letter": "E", "text": "Es normal en el año 1 de microservicios; se resuelve solo con tiempo.", "correct": false, "why": "No se resuelve solo. Cada release refuerza los patterns existentes. Requires deliberate rearchitecture." }
+      ],
+      "explanation": "Distributed monolith syndrome es el fracaso más común de migraciones a microservicios. Causas raíz: (a) 'lift and shift' — dividir código sin repensar boundaries; (b) shared database persistente; (c) sync REST first, event-driven never; (d) equipos organizados por función (frontend, backend, DB team) en vez de por producto (Conway's Law). Detección: (1) deploy dependency graph; (2) deploy frequency por servicio (todos igual = coordinado); (3) incident correlation (fallos en cascada). Fix: aplicar refactoring principios (Strangler Fig pattern) para desacoplar gradualmente; establecer explicit contracts; adoptar async communication; considerar consolidación si dividir fue prematuro.",
+      "realWorld": "Segment famoso post 'Goodbye Microservices' (2018) — regresaron a monolito por costos operacionales. Etsy escribió sobre 'monolith is fine'. Facebook mantiene monolito PHP masivo. Muchas startups en 2018-2020 saltaron a microservicios sin necesidad y sufrieron. La lección: microservicios son solución, no cool factor.",
+      "tags": ["distributed monolith", "anti-patterns", "microservicios"],
+      "tech": [],
+      "references": [{ "title": "Sam Newman — 'Monolith to Microservices'" }, { "title": "Segment — 'Goodbye Microservices'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "messaging",
+      "topic": "Schema evolution — compatibilidad hacia atrás",
+      "difficulty": "staff",
+      "scenario": "Kafka topic con eventos `UserCreated` (Avro schema). Producer version 1 escribe el evento con 5 fields. Consumers v1 leen esos 5 fields. Necesitas añadir un 6to field. Sin coordinar downtime, cómo evolucionas?",
+      "question": "¿Cuáles son las reglas de compatibility para evolucionar schemas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Backward compatible: consumers NEW pueden leer eventos OLD. Añadir un field con DEFAULT valor es backward compatible (consumer nuevo tiene el default si el field falta). Eliminar un field NO es backward compatible.", "correct": true, "why": "Correcto. Backward compatibility permite hacer rolling upgrade de consumers primero (deploy v2 consumer que lee eventos v1 y v2), y luego actualizar producers. Es el default recomendado en Confluent Schema Registry." },
+        { "letter": "B", "text": "Forward compatible: consumers OLD pueden leer eventos NEW. Añadir un field es forward compatible (consumer viejo lo IGNORA). Requiere que el schema esté diseñado permisivamente (Avro con defaults funciona bien).", "correct": true, "why": "Correcto. Forward compatibility permite deploy de PRODUCERS primero (nuevos eventos), consumers viejos siguen funcionando (ignoran field nuevo). Útil cuando no puedes controlar deploy order." },
+        { "letter": "C", "text": "Full compatible = ambas direcciones (backward + forward). Es el gold standard pero restringe cambios: solo añadir/quitar fields OPCIONALES con defaults. Cambios de tipo, rename, mandatory fields NO son full compatible.", "correct": true, "why": "Correcto. Full compatibility es la única forma de deploy sin orden coordinated. Trade-off: schema muy restringido. Cambios drásticos requieren version bump del EVENT NAME o del topic, no del schema in-place." },
+        { "letter": "D", "text": "Herramientas: Confluent Schema Registry (Avro/Protobuf/JSON Schema) enforces compatibility en broker — rechaza publicar si viola la policy configurada. Buf (Protobuf) hace lo mismo en CI.", "correct": true, "why": "Correcto. Schema Registry no es opcional en Kafka productivo. Sin él, un producer bug puede corromper el stream y romper consumers en producción. Confluent es el estándar; también AWS Glue Schema Registry, Karapace (open source), Buf para Protobuf." },
+        { "letter": "E", "text": "Cambiar el nombre de un field es backward compatible.", "correct": false, "why": "Incorrecto. Rename = drop + add, rompe backward compat porque consumers viejos buscan el nombre viejo. Alternativa: añadir el nuevo field, migrar consumers, luego drop del viejo (expand-and-contract)." }
+      ],
+      "explanation": "Schema evolution en event-driven systems es DIFÍCIL porque eventos son IMMUTABLES en el log — un evento escrito hace 6 meses debe seguir siendo leído. Compatibility modes (Confluent Schema Registry): NONE, BACKWARD, FORWARD, FULL, BACKWARD_TRANSITIVE, FORWARD_TRANSITIVE, FULL_TRANSITIVE. Reglas Avro: (a) añadir optional field con default = OK; (b) eliminar optional field = requires forward compat only; (c) rename = never compat (use aliases); (d) tipo change = casi nunca compat. Reglas Protobuf: (a) tags únicos son sagrados — nunca reutilices tag; (b) required fields prohibited (siempre optional en proto3). Buenas prácticas: default a BACKWARD compat, aliases para renames, incremental changes, version explícito en el topic para breaking changes ('user.v2' vs 'user').",
+      "realWorld": "LinkedIn desarrolló Confluent Schema Registry por necesidad — eventos rotos causaron incidentes. Uber usa Buf para gobernanza de Protobuf. Netflix documenta patterns de schema evolution en producción. En eventos vs REST APIs: REST puedes deprecar endpoints, eventos son inmortales — schema discipline es más crítica.",
+      "tags": ["schema evolution", "compatibility", "Avro", "Protobuf", "Schema Registry"],
+      "tech": ["Kafka", "Confluent Schema Registry", "Avro", "Protobuf"],
+      "references": [{ "title": "Confluent — 'Schema Evolution and Compatibility'" }, { "title": "Buf — 'Best practices for Protobuf'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "microservices",
+      "topic": "Sync vs Async — la decisión más importante",
+      "difficulty": "staff",
+      "scenario": "Cada llamada entre servicios puede ser síncrona (REST/gRPC) o asíncrona (event/queue). Un arquitecto propone: 'todo async por default, sync solo cuando el usuario espera respuesta'.",
+      "question": "¿Es correcto? Cuáles son los trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Async por default reduce coupling temporal (A no espera a B), aumenta resiliencia (si B está caído, A no falla — el evento espera), y permite escalar cada servicio independientemente. Cuando A necesita respuesta INMEDIATA, sync.", "correct": true, "why": "Correcto. Es la tendencia moderna. Sync crea 'cadenas de disponibilidad': si A depende sync de B y C, availability de A = availability(A) × availability(B) × availability(C). Con 99.9% cada uno y 5 dependencies: 99.5% availability total. Async rompe esta cadena." },
+        { "letter": "B", "text": "Async introduce complexity: eventual consistency, retries, dedupe, ordering, debugging distribuido. No es 'gratis'. Debe justificarse. Herramientas (Kafka, EventBridge, Temporal) añaden ops burden.", "correct": true, "why": "Correcto. Async no es un free lunch. Debugging 'user compró pero no llegó el email' en async requiere seguir eventos por múltiples sistemas. Testing asíncrono es más difícil. Consistency eventual complica UX (user no ve cambios inmediatos). Trade-offs reales." },
+        { "letter": "C", "text": "Regla práctica: (a) sync para queries y respuestas al usuario (GET data); (b) async para side effects (notificaciones, integraciones, agregaciones); (c) sync para transacciones críticas donde ambos deben confirmar (pagos con external gateway); (d) async para todo lo que 'puede esperar 1-5 segundos'.", "correct": true, "why": "Correcto. La regla no es dogmática 'todo async' o 'todo sync' — es contextual. Async donde el usuario no espera (write-heavy flows). Sync donde el usuario espera (read-heavy, forms). Ejemplos: /login = sync; /orders POST = puede ser sync respondiendo orderId, con procesamiento async downstream." },
+        { "letter": "D", "text": "gRPC es siempre mejor que REST para sync.", "correct": false, "why": "Depende. gRPC: HTTP/2 (multiplex, header compression), Protobuf (binario, schema-first), streaming bidirectional, mejor para service-to-service en la misma organización. REST: simplicidad, tooling ubiquitous, mejor para APIs públicas. Ambos válidos según contexto." },
+        { "letter": "E", "text": "Sync siempre porque es simple.", "correct": false, "why": "Simplicidad en el codigo, complejidad en producción: cascading failures, coupling temporal, disponibilidad compuesta. Sync-everywhere fue el paradigma pre-2010 y muchos incidents modernos vienen de él." }
+      ],
+      "explanation": "El eje sync-async es una de las decisiones más importantes en microservicios. Sync (REST, gRPC): request-response, coupling temporal (ambos disponibles), latency = suma de la cadena. Async (events, queues): fire-and-forget o request-reply eventual, decoupled temporal, latency percibida menor (return rápido al user), consistency eventual. Patrones híbridos: (a) 'command with async processing' — accept POST → return 202 + jobId → cliente polls status; (b) websockets/SSE para push results; (c) BFF que agrega múltiples async calls. Herramientas: gRPC (sync moderno con streaming), REST (sync clásico), Kafka/EventBridge/SNS (async), Temporal (workflows con retries automáticos).",
+      "realWorld": "Amazon regla interna: 'default async, sync justified'. Netflix async event-driven en su core. Uber, Airbnb documentan cómo migraron sync a async para resilience. Stripe hace async para webhooks pero sync para /charges. La mayoría de sistemas maduros son híbrido, no puros.",
+      "tags": ["sync vs async", "REST", "gRPC", "events", "coupling temporal"],
+      "tech": ["gRPC", "REST", "Kafka", "EventBridge", "Temporal"],
+      "references": [{ "title": "Sam Newman — 'Building Microservices' Ch. 4" }, { "title": "AWS — 'Event-driven architecture'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "microservices",
+      "topic": "Versioning APIs — el eterno debate",
+      "difficulty": "staff",
+      "scenario": "API pública v1 tiene 500 clientes. Necesitas hacer breaking changes. Debates: URL versioning (`/v1/users`, `/v2/users`), header (`Accept: application/vnd.myapi.v2+json`), o rolling changes (deprecar fields sin bump).",
+      "question": "¿Cuál es el approach correcto en 2026 y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "URL versioning (/v1, /v2). Simple, visible, fácil de deprecar el URL entero.", "correct": false, "why": "Popular pero tiene problemas: (a) versionamos el ENDPOINT no el RECURSO — /v1/users y /v2/users teóricamente son cosas distintas, causando split del ecosistema; (b) URLs de recursos deberían ser estables (Cool URIs don't change - Tim Berners-Lee); (c) migrar clients es todo-o-nada por versión." },
+        { "letter": "B", "text": "Estrategia moderna: (1) EVOLVE without versioning cuando posible (add optional fields, deprecar con warning headers); (2) usar Accept header o custom versioning header cuando necesario (más granular); (3) URL versioning como último recurso para BREAKING CHANGES masivos (rewrite total).", "correct": true, "why": "Correcto. GraphQL popularizó la idea de 'evolve, don't version' (Facebook API GraphQL nunca ha versionado en 10+ años). REST puede seguir el mismo principio: add fields no rompe consumers bien diseñados; deprecar con `Deprecation` header y `Sunset` header (RFC 8594); breaking changes reales son raros si diseñas bien. Cuando ocurren, header versioning es más granular que URL." },
+        { "letter": "C", "text": "Nunca deprecar nada — mantén todas las versiones para siempre.", "correct": false, "why": "Costo operacional insostenible. Cada versión adicional = más superficie a mantener, testear, documentar. Debe haber deprecation policy clara (ej. 12-24 meses sunset)." },
+        { "letter": "D", "text": "Query parameter versioning (?version=2).", "correct": false, "why": "Anti-patrón: query params son para filtering/paging, no version selection. Además caches HTTP puede ignorarlos causando cache pollution." }
+      ],
+      "explanation": "API versioning es tema controvertido. Filosofías: (1) 'evolve, don't version' — Facebook GraphQL, Stripe (add fields, mark old ones deprecated, sunset après long lead time); (2) URL versioning (/v1, /v2) — simple pero rigid; (3) header versioning — granular, invisible en URL, complicated caching; (4) media type versioning (Accept: application/vnd.api.v2+json) — RESTful puro, hard to use. Best practices modernas: (a) minimize breaking changes con diseño defensivo (nullable fields, feature flags server-side); (b) explicit deprecation con Sunset headers (RFC 8594); (c) versioning explícito solo en breaking changes reales; (d) documentation de deprecation timelines (12-24 meses típico); (e) tracking client usage para saber cuándo es seguro remove. GraphQL/gRPC (con Protobuf) reducen la necesidad de versioning gracias a schema evolution robusto.",
+      "realWorld": "Stripe API deprecated features tras 3+ años, tracking por account. GitHub tiene v3 REST + v4 GraphQL. Twitter API v1 → v2 causó migration painful. Google Maps API múltiples versiones simultáneas. La discipline de 'evolve when possible' produce APIs longevas; la disciplina de 'version early' produce fragmentación.",
+      "tags": ["API versioning", "backward compatibility", "deprecation"],
+      "tech": ["REST", "GraphQL", "gRPC"],
+      "references": [{ "title": "Roy Fielding — 'REST APIs must be hypertext-driven'" }, { "title": "RFC 8594 — Sunset HTTP Header" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "microservices",
+      "topic": "Framework de decisión — cuándo microservicios",
+      "difficulty": "staff",
+      "scenario": "Como arquitecto, debes evaluar si un proyecto justifica microservicios. Presenta un framework de decisión que puedas aplicar consistently.",
+      "question": "¿Cuál es el framework mental correcto?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Regla #1: microservicios PAGAN con complejidad distribuida. Solo se justifican si BENEFICIOS > COSTOS. Beneficios reales: independent deployability (equipos independientes), heterogeneous scaling (un servicio 100x más carga), technology diversity (diferentes stacks por dominio). Costos: network latency, distributed tracing, distributed transactions, deployment complexity, monitoring.", "correct": true, "why": "Correcto. La lente costo/beneficio es el frame correcto. Si tu equipo no tiene los 'costos' resueltos (observability, CI/CD maduro, service mesh), microservicios amplificarán problemas existentes." },
+        { "letter": "B", "text": "Regla #2: empezar SIEMPRE con monolito modular bien diseñado (bounded contexts en módulos, DB privada por módulo si es posible). Dividir cuando el equipo crezca >20 personas coordinándose, o cuando un módulo tenga necesidades de escalabilidad radicalmente distintas.", "correct": true, "why": "Correcto. 'Monolith first' (Fowler) es la doctrina moderna. Modular monolith te da 80% de los beneficios (código por dominio, testing rápido, deploy independiente si arquitectura lo permite) con 20% del costo (una DB, una deploy pipeline, network trivial). La transición a microservicios es más fácil desde monolito bien modular." },
+        { "letter": "C", "text": "Regla #3: si migras a microservicios, hazlo con Strangler Fig pattern: extrae UN servicio a la vez, valida, aprende. NUNCA big-bang rewrite.", "correct": true, "why": "Correcto. Big-bang rewrites a microservicios casi siempre fracasan (proyectos de años que no llegan a producción). Strangler Fig (Fowler) permite: (1) validar approach con bajo riesgo; (2) aprender los tooling gaps en vivo; (3) ROI incremental; (4) rollback fácil si un servicio falla." },
+        { "letter": "D", "text": "Regla #4: prerequisitos ANTES de microservicios: (a) CI/CD maduro (deploys automáticos, rollbacks rápidos); (b) observability (metrics, logs, tracing); (c) infrastructure as code; (d) service discovery; (e) equipo con experiencia distribuida. Si faltan, microservicios harán todo peor.", "correct": true, "why": "Correcto. Es la trampa: startups adoptan microservicios sin tener el tooling maduro. Cada deploy es dolor. Cada bug es incident por horas. Netflix, Amazon tenían décadas construyendo su platform ANTES de escalar microservicios. Copiar la arquitectura sin la fundación es cargo culting." },
+        { "letter": "E", "text": "Microservicios son inevitables — todos los sistemas grandes los adoptan.", "correct": false, "why": "Falso. Shopify, Basecamp, GitHub, Stack Overflow, Instagram (por mucho tiempo) han operado escala masiva con monolitos. La escala NO fuerza microservicios; la ESTRUCTURA DE EQUIPOS y necesidades específicas sí." }
+      ],
+      "explanation": "Framework de decisión completo para microservicios: (1) Analiza si tu problema tiene características que microservicios resuelven bien (autonomy de equipos, heterogeneous scaling, technology diversity). Si no, no. (2) Empieza con monolito modular bien diseñado — bounded contexts, dependency management, testing por módulo. (3) Identifica el módulo con mayor 'pain point' (bottleneck de scaling, team coordination pain, technology mismatch) y extráelo primero. (4) Establece platform capabilities antes de escalar: observability, CI/CD, service mesh, contract testing. (5) Aplica Strangler Fig incrementalmente. (6) Mide continuously: si microservicios NO están dando beneficios reales, consolida (Segment style). La sabiduría 2026: 'microservicios son una solución a problemas específicos, no la arquitectura por defecto'.",
+      "realWorld": "Shopify: monolito Rails masivo, escala a millones de merchants sin microservicios. GitHub: MySQL + Rails monolito. Amazon: microservicios por escala real de equipos (5000+). Netflix: microservicios por necesidad de resilience distribuida. Segment: rolled back microservicios. Basecamp: 'majestic monolith'. Cada caso es contextual — no hay respuesta universal.",
+      "tags": ["framework decisión", "monolito vs microservicios", "arquitectura"],
+      "tech": [],
+      "references": [{ "title": "Martin Fowler — 'MonolithFirst'" }, { "title": "Sam Newman — 'Monolith to Microservices'" }, { "title": "Basecamp — 'Majestic Monolith'" }]
+    }
+  ]
+}

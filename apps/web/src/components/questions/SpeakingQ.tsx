@@ -4,9 +4,11 @@ import { wordMatchStats } from '@linguadev/shared';
 import type { QuestionComponentProps } from './types.js';
 import { QuestionShell } from './QuestionShell.js';
 import {
+  ensureMicPermission,
   hasSpeechRecognition,
   hasTts,
   humanizeSpeechError,
+  isSecureContextForMic,
   recognizeOnce,
   speak,
   stopSpeaking,
@@ -21,47 +23,82 @@ export function SpeakingQ({
 }: QuestionComponentProps<SpeakingQuestion>) {
   const [srSupported, setSrSupported] = useState<boolean | null>(null);
   const [ttsSupported, setTtsSupported] = useState<boolean | null>(null);
-  const [listening, setListening] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'requesting-mic' | 'starting' | 'listening'>('idle');
+  const listening = status !== 'idle';
   const [partial, setPartial] = useState('');
   const [transcript, setTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recogRef = useRef<RecordHandle | null>(null);
+  const safetyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setSrSupported(hasSpeechRecognition());
     setTtsSupported(hasTts());
     return () => {
       recogRef.current?.stop();
+      if (safetyTimerRef.current) window.clearTimeout(safetyTimerRef.current);
       stopSpeaking();
     };
   }, []);
 
-  function start() {
+  useEffect(() => {
+    if (safetyTimerRef.current) window.clearTimeout(safetyTimerRef.current);
+    if (status === 'requesting-mic' || status === 'starting') {
+      safetyTimerRef.current = window.setTimeout(() => {
+        setError('Tiempo agotado esperando el micrófono. Toca "Saltar" y sigue.');
+        recogRef.current?.stop();
+        setStatus('idle');
+      }, 8000);
+    } else if (status === 'listening') {
+      safetyTimerRef.current = window.setTimeout(() => {
+        recogRef.current?.stop();
+        setStatus('idle');
+      }, 20000);
+    }
+    return () => {
+      if (safetyTimerRef.current) window.clearTimeout(safetyTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  async function start() {
     if (listening || revealed) return;
     setError(null);
     setTranscript('');
     setPartial('');
-    setListening(true);
+    if (!isSecureContextForMic()) {
+      setError('Necesitas HTTPS o localhost para acceder al micrófono.');
+      return;
+    }
+    setStatus('requesting-mic');
+    const ok = await ensureMicPermission();
+    if (!ok) {
+      setError('Permiso de micrófono denegado. Actívalo en la barra de dirección.');
+      setStatus('idle');
+      return;
+    }
+    setStatus('starting');
     recogRef.current = recognizeOnce({
+      onStart: () => setStatus('listening'),
       onPartial: (t) => setPartial(t),
       onFinal: (t) => {
         setTranscript(t);
-        setListening(false);
+        setStatus('idle');
         const stats = wordMatchStats(question.target, t);
         const score = stats.total ? stats.matched / stats.total : 0;
         onResult({ correct: score >= 0.8, score01: score, userAnswer: t });
       },
       onError: (err) => {
         setError(humanizeSpeechError(err.message));
-        setListening(false);
+        setStatus('idle');
       },
-      onEnd: () => setListening(false),
+      onEnd: () => setStatus('idle'),
     });
   }
 
   function stop() {
     recogRef.current?.stop();
-    setListening(false);
+    setStatus('idle');
   }
 
   const stats = transcript ? wordMatchStats(question.target, transcript) : null;
@@ -87,17 +124,26 @@ export function SpeakingQ({
       ) : (
         <div className="mt-4 flex flex-col items-center gap-2">
           <button
-            onClick={() => (listening ? stop() : start())}
+            onClick={() => (listening ? stop() : void start())}
+            disabled={status === 'requesting-mic' || status === 'starting'}
             className={`grid h-20 w-20 place-items-center rounded-full text-white shadow-pop transition ${
-              listening
+              status === 'listening'
                 ? 'animate-pulse bg-gradient-to-br from-pink-500 to-flame-500'
+                : status === 'requesting-mic' || status === 'starting'
+                ? 'bg-gradient-to-br from-slate-400 to-slate-500'
                 : 'bg-gradient-to-br from-brand-500 to-pink-500 hover:scale-105 active:scale-95'
             }`}
           >
-            {listening ? '■' : <IconMic size={28} />}
+            {status === 'listening' ? '■' : status === 'requesting-mic' || status === 'starting' ? '◌' : <IconMic size={28} />}
           </button>
           <p className="min-h-[1.25rem] text-center text-xs italic text-slate-500">
-            {partial || (listening ? 'Escuchando…' : 'Toca para grabar')}
+            {status === 'requesting-mic'
+              ? 'Pidiendo permiso…'
+              : status === 'starting'
+              ? 'Iniciando…'
+              : status === 'listening'
+              ? '🎙️ Grabando · habla ahora'
+              : partial || 'Toca para grabar'}
           </p>
         </div>
       )}
@@ -119,6 +165,26 @@ export function SpeakingQ({
             ) : null}
           </div>
           <p className="mt-1 text-sm italic">"{transcript}"</p>
+        </div>
+      ) : null}
+
+      {/* Botón Saltar siempre visible — nunca dejar al usuario atrapado */}
+      {!revealed ? (
+        <div className="mt-3 flex gap-2">
+          {listening ? (
+            <button
+              onClick={stop}
+              className="rounded-lg border border-danger-500/50 bg-danger-500/10 px-3 py-1.5 text-xs font-bold text-danger-600"
+            >
+              Cancelar
+            </button>
+          ) : null}
+          <button
+            onClick={() => onResult({ correct: false, score01: 0, userAnswer: '' })}
+            className="flex-1 rounded-lg border border-slate-300/70 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100/50 dark:border-slate-700 dark:text-slate-400"
+          >
+            ⏭️ Saltar pregunta
+          </button>
         </div>
       ) : null}
     </QuestionShell>

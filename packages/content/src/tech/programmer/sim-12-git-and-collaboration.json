@@ -1,0 +1,416 @@
+{
+  "id": "programmer-sim-12-git-and-collaboration",
+  "trackId": "programmer",
+  "order": 12,
+  "title": "Simulacro 12 — Git avanzado y colaboración",
+  "focus": "Herramientas de git más allá de add/commit/push: rebase interactivo, cherry-pick, bisect, hooks, estrategias de merge, reflog para rescates y worktrees para monorepos.",
+  "areaCoverage": ["refactor", "testing"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "refactor",
+      "topic": "Rebase interactivo — squash y edit",
+      "difficulty": "mid",
+      "scenario": "En tu rama feature tienes 12 commits del tipo 'wip', 'fix typo', 'address review', 'more fixes'. El equipo pide que la PR quede con 2-3 commits lógicos antes de mergear.",
+      "question": "¿Cuál es la secuencia correcta con rebase interactivo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git rebase -i origin/main` → marcar 'pick' el primero de cada bloque lógico y 'squash' (o 's') los que colapsan a él; opcionalmente 'reword' para editar mensajes; luego `git push --force-with-lease`.", "correct": true, "why": "Correcto. Rebase interactivo permite reordenar (mover líneas), colapsar (squash: mantiene mensajes; fixup: descarta mensajes del squasheado), editar contenido (edit) y editar mensajes (reword). `--force-with-lease` es la versión SEGURA de `--force`: falla si alguien más pusheó a la misma rama desde tu último fetch, evitando pisar trabajo ajeno." },
+        { "letter": "B", "text": "`git merge --squash main` colapsa todos los commits en uno. Es la forma correcta de reducir historia.", "correct": false, "why": "Confusión: `merge --squash` colapsa cambios ENTRANTES de una rama en tu working tree como un solo commit; no reduce historia de tu propia rama. Además colapsa a UN commit, no a los 2-3 lógicos que pide el enunciado." },
+        { "letter": "C", "text": "`git reset --soft HEAD~12` + hacer un `git commit` grande. Historia quedó limpia.", "correct": false, "why": "Colapsa a UN commit, no 2-3 lógicos. Y pierde metadata (autores intermedios, timestamps). Rebase interactivo permite estructura fina." },
+        { "letter": "D", "text": "Amend cada commit anterior con --amend hasta reducirlos.", "correct": false, "why": "--amend solo modifica el ÚLTIMO commit. No sirve para reestructurar 12. Rebase interactivo es la herramienta específica." }
+      ],
+      "explanation": "Rebase interactivo es esencial para higiene de historia. Comandos comunes: pick (mantener), reword (cambiar mensaje), edit (pausar para editar el contenido), squash (unir al anterior y editar mensaje combinado), fixup (unir descartando mensaje), drop (eliminar). Truco: usar autosquash — commits con mensaje 'fixup! <hash>' se posicionan y marcan automáticamente con `git rebase -i --autosquash`. Regla oro colaborativa: NUNCA reescribir historia de ramas COMPARTIDAS (main, develop); reescribir libremente en ramas propias.",
+      "realWorld": "El repo del kernel de Linux exige historia limpia en cada patch series — Linus rechaza PRs con historia caótica. GitHub, GitLab, la mayoría de proyectos serios piden squash o rebase antes de merge. Google internamente colapsa a 1 commit por PR ('squash and merge').",
+      "tags": ["rebase interactivo", "squash", "historia", "git"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — 7.6 Rewriting History" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "refactor",
+      "topic": "Cherry-pick — usar y no abusar",
+      "difficulty": "mid",
+      "scenario": "Descubres un bug de seguridad. El fix está en la rama `develop` (commit abc123) pero necesitas llevarlo a la rama `release/2.4` para hotfix. Solo ese commit, no todo lo demás.",
+      "question": "¿Cuál es el enfoque correcto y sus advertencias?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git checkout release/2.4 && git cherry-pick abc123`. Advertencia: si el commit depende de cambios previos de develop no presentes en release/2.4, habrá conflictos; el commit resultante tendrá HASH DISTINTO — futuros merges pueden traer duplicados si no se maneja con --no-commit y merge propio, o si no se marca con -x para trazabilidad.", "correct": true, "why": "Correcto. Cherry-pick es la herramienta específica para portar commits entre ramas. Detalles importantes: (1) el commit se aplica como un patch — si depende de contexto no presente, conflictos; (2) el nuevo commit tiene hash distinto (mismo diff pero distinto padre y timestamp); (3) `-x` añade 'cherry-picked from <hash>' al mensaje para rastreabilidad; (4) para múltiples commits, `cherry-pick abc..def` o rangos con --no-commit + un solo commit final." },
+        { "letter": "B", "text": "Merge develop en release/2.4 y descartar los cambios no deseados.", "correct": false, "why": "Trae toda la historia de develop a release/2.4 — puede incluir cambios inestables, features incompletas. Es exactamente lo que cherry-pick evita." },
+        { "letter": "C", "text": "Copiar y pegar el diff manualmente con git diff | git apply.", "correct": false, "why": "Funciona pero pierde autor, mensaje, metadata. Cherry-pick es el equivalente idiomático que preserva todo." },
+        { "letter": "D", "text": "Rebasear develop sobre release/2.4.", "correct": false, "why": "Reescribiría toda la historia de develop encima de release/2.4 — completamente inverso a lo pedido. Y rompería develop para todos los que la comparten." }
+      ],
+      "explanation": "Cherry-pick es potente pero conlleva coste: dos commits con el mismo diff pero hash distinto pueden crear duplicados o conflictos en merges futuros. Estrategias para minimizar: (1) siempre usar -x para trazabilidad; (2) para hotfixes, considerar 'commit primero en release/2.4 y luego merge upstream a develop' — evita el fork; (3) para port de features grandes, mejor rebase interactivo de una rama; (4) para múltiples commits mantener orden con `cherry-pick a b c` (una lista). Herramientas modernas (git rerere, git-imerge) ayudan con conflictos repetitivos.",
+      "realWorld": "Muchos proyectos con release branches (Chromium, Firefox, Kubernetes) tienen 'cherry-pick bots' y procesos formales de backport. Kubernetes tiene documentado el proceso 'cherry-pick approval' para hotfixes en LTS.",
+      "tags": ["cherry-pick", "backport", "hotfix", "git"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — git-cherry-pick manual" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "testing",
+      "topic": "git bisect — encontrar el commit que rompió algo",
+      "difficulty": "senior",
+      "scenario": "Test que pasaba en el release v2.3 falla en HEAD. Entre v2.3 y HEAD hay 400 commits. No sabes cuál lo rompió y hacer bisección manual es tedioso.",
+      "question": "¿Cuál es el flujo correcto con git bisect y qué requisito debes cumplir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git bisect start`, `git bisect bad HEAD`, `git bisect good v2.3`. Git checkoutea el commit medio; corres el test; si pasa `git bisect good`, si falla `git bisect bad`. Continúa hasta que git identifica el commit culpable. Requisito: el test debe ser reproducible en cada commit (no depender de estado externo mutable). Automatizable con `git bisect run [script.sh]` que retorna 0 (good) o 1-127 (bad), 125 (skip).", "correct": true, "why": "Correcto. Bisect hace búsqueda binaria — con 400 commits, ~9 iteraciones (log2(400)). Automatizar con `bisect run` es donde brilla: dejas corriendo y en minutos tienes el commit. Requisitos clave: (1) test determinístico; (2) cada commit debe compilar y correr — usar 'skip' para commits rotos; (3) revisar dependencias que podrían cambiar entre commits (lockfiles, migraciones)." },
+        { "letter": "B", "text": "Ir uno por uno con git log y probar cada commit hasta encontrar el bug.", "correct": false, "why": "Búsqueda lineal — 400 commits en el peor caso. Bisect es la razón por la que existe: log2 en vez de N." },
+        { "letter": "C", "text": "Revertir todos los commits sospechosos y probar.", "correct": false, "why": "Adivinación. Sin datos, cualquier commit podría ser el culpable. Bisect da certeza matemática." },
+        { "letter": "D", "text": "Bisect solo funciona en repos pequeños.", "correct": false, "why": "Falso. Bisect funciona en cualquier tamaño de repo. El kernel de Linux lo usa a diario con miles de commits/mes." }
+      ],
+      "explanation": "git bisect es la herramienta canónica de debugging temporal. Flujo automatizado: (1) escribe script que retorna exit 0 si el commit es 'bueno' y 1 si es 'malo'; (2) `git bisect start HEAD v2.3`; (3) `git bisect run ./script.sh`; (4) git converge al commit culpable en O(log n). Tips: (1) `git bisect skip` para commits que no compilan; (2) recordar `git bisect reset` al final para volver a HEAD; (3) para bisect en ramas mergeadas, comprender que puede aterrizar en un merge commit — a veces conviene primero linearizar. Combinar bisect con test unitario específico es una superpotencia de debugging.",
+      "realWorld": "El kernel de Linux usa bisect constantemente. Reportes de bugs en LKML piden 'please bisect' como primer paso. Linus escribió una charla famosa sobre bisect. Es también estándar en debugging de performance regressions (Google, Meta).",
+      "tags": ["bisect", "debugging", "búsqueda binaria", "git"],
+      "tech": ["git bisect"],
+      "references": [{ "title": "Pro Git — 7.10 Debugging with Git (bisect)" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "testing",
+      "topic": "Hooks — pre-commit vs pre-push",
+      "difficulty": "mid",
+      "scenario": "Tu equipo quiere garantizar que: (1) el código pase linter antes de que se cree el commit; (2) los tests unitarios pasen antes de push a origin.",
+      "question": "¿Cuál es la configuración correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "pre-commit hook para linter (rápido, se ejecuta en cada commit); pre-push hook para tests (más lento, se ejecuta al push). Distribuir con herramientas como pre-commit (Python), Husky (Node), lefthook (multilenguaje) o git config core.hooksPath para versionar los hooks en el repo.", "correct": true, "why": "Correcto. Los hooks locales NO se versionan por defecto (viven en .git/hooks, no en el working tree). Herramientas como Husky, pre-commit, lefthook crean hooks versionados. Distinción clave: pre-commit debe ser RÁPIDO (segundos, no minutos) porque bloquea el flow del dev; los tests unitarios lentos van en pre-push (menos frecuente) o en CI. Los hooks NO reemplazan CI — son safety net local, no autoridad." },
+        { "letter": "B", "text": "Poner linter Y tests en pre-commit para máxima seguridad.", "correct": false, "why": "Bloquea cada commit por N minutos → dev deshabilita hooks (--no-verify) → seguridad de teatro. La regla es: pre-commit rápido; slow checks en pre-push o CI." },
+        { "letter": "C", "text": "Confiar solo en CI (GitHub Actions, etc.), no usar hooks.", "correct": false, "why": "Válido pero desperdicia oportunidad de dar feedback local instantáneo. Un lint fail en tu máquina en 1 segundo es mejor que descubrirlo en CI en 3 minutos. Ambos capas son complementarias." },
+        { "letter": "D", "text": "Los hooks son solo del server-side (pre-receive).", "correct": false, "why": "Falso. Git tiene hooks client-side (pre-commit, pre-push, commit-msg, etc.) y server-side (pre-receive, update, post-receive). Ambos son útiles." }
+      ],
+      "explanation": "Hooks git son scripts en .git/hooks/ (o donde apunte core.hooksPath). Client-side: pre-commit (antes de crear commit), commit-msg (validar formato), pre-push (antes de subir), post-checkout, post-merge. Server-side: pre-receive (rechazar push por reglas), update (por rama), post-receive (dispara CI/CD). Herramientas modernas: Husky (Node), pre-commit (Python; muy potente con ecosystem enorme), lefthook (Go, rápido). Buena práctica: hooks rápidos, versionados, autoinstalados en `npm install`. Los hooks nunca deben ser la única línea de defensa — son mejora de UX del dev.",
+      "realWorld": "Airbnb, Shopify, la mayoría de OSS usan pre-commit hooks para format+lint. GitLab tiene commit-msg hooks para validar convenios (conventional commits). Google internamente tiene 'presubmit checks' equivalentes.",
+      "tags": ["hooks", "pre-commit", "husky", "linter"],
+      "tech": ["git", "Husky", "pre-commit"],
+      "references": [{ "title": "Pro Git — 8.3 Git Hooks" }, { "title": "pre-commit.com" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "refactor",
+      "topic": "Merge strategies — fast-forward, merge commit, squash",
+      "difficulty": "senior",
+      "scenario": "Discusión en el equipo: cuál estrategia usar para mergear PRs a main. Alternativas: (a) merge commit siempre (--no-ff), (b) fast-forward cuando posible, rebase antes si no, (c) squash and merge (colapsar la PR a 1 commit).",
+      "question": "¿Qué afirmaciones son correctas sobre trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Merge commit (--no-ff) preserva historia real de la rama feature; útil para trazabilidad forense (git log --graph muestra ramas). Contra: historia más 'ruidosa' con commits WIP.", "correct": true, "why": "Correcto. --no-ff crea SIEMPRE un merge commit incluso si podría hacer fast-forward. Preserva el 'contexto' de que estos N commits vinieron juntos como una PR. Útil en proyectos donde la genealogía importa. Contra: la historia global es un grafo, no una línea." },
+        { "letter": "B", "text": "Squash and merge produce historia lineal y limpia (1 PR = 1 commit); ideal cuando cada PR representa una unidad lógica. Contra: pierdes granularidad de bisect dentro de la PR y autoría intermedia.", "correct": true, "why": "Correcto. Squash es el default de muchos proyectos por su cleanliness. Cada commit en main = 1 feature/fix atómico. Facilita revert (revertir 1 commit). Contra: si la PR tenía 5 commits lógicos internos (cada uno bisectable), los pierdes; y autoría múltiple se representa con Co-Authored-By en el mensaje." },
+        { "letter": "C", "text": "Fast-forward requiere que la rama feature esté rebased sobre main; produce historia lineal preservando commits originales.", "correct": true, "why": "Correcto. FF simplemente avanza el puntero de main a la punta de la feature — sin merge commit. Requiere que main no haya avanzado o rebasear la feature. Preserva commits individuales de la feature. Contra: si haces rebase, los hashes cambian — no reescribir ramas compartidas." },
+        { "letter": "D", "text": "La estrategia elegida solo importa por estética; git log es igual funcionalmente.", "correct": false, "why": "Falso. Cambia bisect, revert (revert de merge commit vs revert de squash), lectura de historia, herramientas de análisis. Elección con consecuencias." },
+        { "letter": "E", "text": "GitHub y GitLab solo soportan una estrategia. Debes elegir la del provider.", "correct": false, "why": "Falso. Ambas plataformas ofrecen las tres opciones configurables por repo y por PR (típicamente admin fija cuál se permite)." }
+      ],
+      "explanation": "Estrategia recomendada depende del contexto: (1) OSS con muchos contribuidores → squash and merge (1 PR = 1 commit, limpia historia); (2) proyectos internos donde la genealogía por-feature es útil → merge commit (--no-ff); (3) proyectos pequeños con commits ya limpios → rebase + fast-forward. Regla híbrida usada por muchos: rebase la feature sobre main + squash o rebase antes de mergear + merge commit final. Github/GitLab permiten configurar la estrategia por repo — decidir en equipo temprano evita conflictos de estilo.",
+      "realWorld": "Kubernetes: rebase + merge commit. React: squash and merge. Linux kernel: rebase + fast-forward. GitLab: fast-forward. La elección refleja filosofía del proyecto sobre historia.",
+      "tags": ["merge", "squash", "fast-forward", "estrategia"],
+      "tech": ["git", "GitHub", "GitLab"],
+      "references": [{ "title": "Pro Git — 3.6 Rebasing (y trade-offs con merge)" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "refactor",
+      "topic": "git reflog — el salvavidas",
+      "difficulty": "senior",
+      "scenario": "Un compañero hizo `git reset --hard HEAD~5` por error, perdiendo 5 commits de trabajo del día. Ya cerró la terminal. No hay push del trabajo perdido. Pide ayuda pánico.",
+      "question": "¿Cómo se recuperan los commits?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git reflog` muestra el historial de MOVIMIENTOS de HEAD (checkouts, resets, commits, merges) local, incluso los que ya no están en ninguna rama. Identificar el hash previo al reset y `git reset --hard <hash>` (o `git branch rescue <hash>`) recupera el estado.", "correct": true, "why": "Correcto. reflog es un log local por-repo (no se pushea) que registra cada cambio del HEAD por 30-90 días default. Los commits 'perdidos' no se borran inmediatamente — están 'huérfanos' y accesibles por hash. Solo cuando `git gc` corre (auto cada ~14 días o manual) se limpian los objetos inalcanzables realmente. Ventana de rescate típica: 30 días. Comando exacto: `git reflog` → encontrar entrada `HEAD@{N}` antes del reset → `git reset --hard HEAD@{N}` o mejor crear una rama de rescate primero." },
+        { "letter": "B", "text": "Los commits sin push están perdidos permanentemente.", "correct": false, "why": "Falso — el reflog local los preserva por defecto 30-90 días. Este es el escenario canónico donde reflog salva el día." },
+        { "letter": "C", "text": "Ejecutar `git fsck --lost-found` es la única forma.", "correct": false, "why": "fsck sirve para casos aún más extremos (sin reflog o después de gc). Reflog es más rápido y preciso para este caso donde la operación fue reciente." },
+        { "letter": "D", "text": "Pedir al hosting (GitHub) que restaure.", "correct": false, "why": "El trabajo nunca fue pusheado. GitHub no tiene los commits. Recuperación es 100% local vía reflog." }
+      ],
+      "explanation": "reflog es el 'undo' de git. Registra cada operación que mueve HEAD (o cualquier ref con `git reflog show <branch>`): commits, checkouts, resets, merges, rebases, cherry-picks. Los objetos permanecen alcanzables desde reflog hasta que gc corre — gc solo purga objetos inalcanzables MÁS VIEJOS que gc.reflogExpire (default 90 días) o gc.reflogExpireUnreachable (30 días). Comandos vitales cuando algo sale mal: `git reflog`, `git reflog show <branch>`, `git fsck --lost-found` (para dangling commits sin reflog entry). Mantra: 'con reflog, en git casi todo se recupera'.",
+      "realWorld": "Jon Loeliger tiene la frase famosa: 'In git nothing is ever lost, except by explicit garbage collection'. Es el consuelo mental del dev que acaba de hacer un reset dramático. Tutoriales de OSS suelen tener sección 'help I lost my work' dirigida a reflog.",
+      "tags": ["reflog", "recuperación", "reset", "git"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — 7.9 Data Recovery" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "refactor",
+      "topic": "Worktrees — trabajar en múltiples ramas sin stash",
+      "difficulty": "senior",
+      "scenario": "Estás profundo en una feature con muchos archivos modificados. Te piden URGENTE un hotfix en main. No quieres perder el estado ni hacer stash+revert de 30 archivos. Además tu build (webpack) tarda 3 min en volver a warmup.",
+      "question": "¿Cuál es la solución con git worktree?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git worktree add ../hotfix main` crea un checkout independiente de main en un directorio hermano. Puedes abrirlo en otra terminal / IDE, hacer el hotfix, mergear, y volver a tu feature sin haber tocado tu working tree original. `git worktree remove ../hotfix` al terminar.", "correct": true, "why": "Correcto. Worktrees permiten múltiples working trees del mismo repo (comparten .git central, ahorran espacio). Cada worktree puede estar en ramas distintas. Ideal para: hotfixes urgentes sin perder contexto, correr tests en una branch mientras editas en otra, comparar visualmente dos branches. Cada worktree tiene su propio node_modules, build cache — lo cual también soluciona el problema del webpack warmup." },
+        { "letter": "B", "text": "`git stash` + checkout main + fix + checkout feature + `git stash pop`.", "correct": false, "why": "Funciona pero rompe tu contexto: pierdes el estado abierto del IDE, el build cache, tests en curso. Y stash puede tener conflictos al pop si main modifica archivos comunes." },
+        { "letter": "C", "text": "Clonar el repo en otra carpeta con `git clone`.", "correct": false, "why": "Consume espacio extra (repo completo, node_modules extra si no comparte), es más lento (fetch de todo), y los commits necesitan push+pull entre clones para propagarse. Worktree es infinitamente más eficiente." },
+        { "letter": "D", "text": "Hacer commit de todo en feature aunque esté incompleto para 'guardar el estado'.", "correct": false, "why": "Ensucia la historia. Aunque puedas amend/fixup después, contamina el reflog y la revisión. Worktree evita esta necesidad." }
+      ],
+      "explanation": "git worktree (introducido en 2.5, maduro desde ~2.20) permite N working trees del mismo repo. Un worktree = un directorio con su HEAD, index y working files, apuntando al mismo .git subyacente. Comandos: `git worktree add <path> <branch>`, `git worktree list`, `git worktree remove <path>`, `git worktree prune` (limpia refs a directorios eliminados manualmente). Casos de uso: (1) hotfix sin perder contexto; (2) revisar PR de otro mientras trabajas; (3) comparar builds de dos ramas simultáneamente; (4) en monorepos, worktree por sub-proyecto activo. Trade-off: cada worktree tiene su node_modules — más espacio en disco a cambio de aislamiento.",
+      "realWorld": "GitHub CLI (`gh`), Neovim y muchos editores modernos tienen integración con worktrees. Frontend teams en proyectos grandes los usan para trabajar en features paralelas con builds independientes.",
+      "tags": ["worktree", "productividad", "git", "hotfix"],
+      "tech": ["git worktree"],
+      "references": [{ "title": "Pro Git — git-worktree manual" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "testing",
+      "topic": "Conflictos de merge — resolución sistemática",
+      "difficulty": "mid",
+      "scenario": "Rebase sobre main da 15 conflictos. Cada archivo muestra `<<<<<<< HEAD ... ======= ... >>>>>>> feature`. Un jr te pregunta cuál lado 'es el correcto' y qué significa cada marcador.",
+      "question": "¿Cuál es la explicación correcta de los marcadores en un rebase?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Durante rebase, HEAD (arriba de =======) es la rama sobre la que rebaseás (ej. main); abajo (después de =======) es tu commit que se está reaplicando. Nota: durante merge la convención es la OPUESTA (HEAD es tu rama actual). El aprendizaje mental: en rebase, tu código 'entra al final'; en merge, tu código 'ya estaba'.", "correct": true, "why": "Correcto y es la fuente #1 de confusión. En rebase interactivo, git ha hecho checkout del target (main) y aplica tus commits uno a uno — por eso HEAD = main y el commit siendo rebased está 'abajo'. Es la inversa de merge, donde HEAD = tu rama y el otro lado es lo que traes. Los DIFFtools (VSCode, IntelliJ) etiquetan bien 'incoming' vs 'current' y son más fáciles de leer que los marcadores brutos." },
+        { "letter": "B", "text": "HEAD siempre representa tu rama personal. No cambia entre merge y rebase.", "correct": false, "why": "Falso. HEAD durante rebase representa el commit sobre el que estás reaplicando (target del rebase). Confundir esto lleva a resolver conflictos al revés — bug real y frecuente." },
+        { "letter": "C", "text": "======= es solo un separador visual, no importa el orden.", "correct": false, "why": "El orden importa porque HEAD (arriba) y otra rama (abajo) tienen semánticas específicas. Confundirlas es aplicar el cambio del lado equivocado." },
+        { "letter": "D", "text": "Aceptar siempre HEAD (`git checkout --ours`) es lo más seguro.", "correct": false, "why": "En rebase --ours = main, --theirs = tu rama — invertido respecto a merge. Y decidir por convención automática puede aceptar los cambios EQUIVOCADOS." }
+      ],
+      "explanation": "Resolución sistemática de conflictos: (1) `git status` para ver la lista; (2) usar mergetool (`git mergetool` con VSCode/IntelliJ configurado — cliente 3-way muestra base+ambos lados); (3) leer cuidadosamente qué lado quieres o combinar; (4) `git add <archivo>` marca resolved; (5) `git rebase --continue` (o `git merge --continue`). Herramientas: `git rerere` (reuse recorded resolution) memoriza tus resoluciones y las aplica si el mismo conflicto vuelve — útil en rebases largos. `git checkout --conflict=diff3` muestra la BASE común además de ambos lados — infinitamente más útil para entender el conflicto.",
+      "realWorld": "Grandes rebases en monorepos son un dolor conocido. Google internamente usa herramientas propias (Copybara) para minimizar rebases. Facebook con Sapling. En OSS, rerere y mergetool bien configurado es lo mejor.",
+      "tags": ["conflictos", "merge", "rebase", "mergetool"],
+      "tech": ["git", "mergetool"],
+      "references": [{ "title": "Pro Git — 7.8 Advanced Merging" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "refactor",
+      "topic": "git blame y git log -S — arqueología de código",
+      "difficulty": "senior",
+      "scenario": "Encuentras código sospechoso: `if (user.isAdmin) { skipValidation = true; }`. Quieres saber: (1) quién y cuándo lo escribió; (2) en qué contexto (qué PR/issue). Además `git blame` muestra a un committer que solo hizo formato — no fue el autor real del código.",
+      "question": "¿Qué herramientas debes usar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "`git blame -w -M -C archivo` — -w ignora whitespace changes, -M detecta líneas movidas dentro del archivo, -C entre archivos. Salta cambios cosméticos y encuentra al autor real.", "correct": true, "why": "Correcto. Blame básico atribuye al último tocador — si alguien reformateó, aparece él. -w salta el ruido, -M/-C sigue el rastro hasta el origen real. Es la forma correcta de hacer arqueología cuando hay commits de format/refactor por medio." },
+        { "letter": "B", "text": "`git log -S 'skipValidation'` — 'pickaxe' — busca commits que añadieron o eliminaron la string. Encuentras el commit donde apareció esa lógica por primera vez.", "correct": true, "why": "Correcto. -S busca cambios en la CANTIDAD de ocurrencias de una string entre estados de un archivo — te da directamente el commit que introdujo la línea. Complementario a blame: blame te dice quién, pickaxe te dice cuándo y en qué commit contextual." },
+        { "letter": "C", "text": "`git log -G 'regex'` — variante que usa regex y detecta cambios en líneas que MATCHEAN el patrón.", "correct": true, "why": "Correcto. -G es más laxo que -S: cualquier commit que toque una línea matcheando el regex (aún si no cambia el conteo). Útil para patrones más amplios." },
+        { "letter": "D", "text": "`git log --follow` sobre el archivo para rastrear renames.", "correct": true, "why": "Correcto. --follow sigue el historial a través de renames de archivo. Sin él, log corta en el rename. Muy útil cuando el archivo cambió de nombre a lo largo del tiempo." },
+        { "letter": "E", "text": "Es imposible saber quién escribió realmente el código si hay reformateos.", "correct": false, "why": "Falso — precisamente para eso existen -w, -M, -C. Con ellos casi siempre se llega al autor real." }
+      ],
+      "explanation": "Herramientas de arqueología en git: (1) `git blame` con flags (-w -M -C) para autor real; (2) `git log -S 'texto'` para encontrar cuándo apareció/desapareció una string; (3) `git log -G 'regex'` para pattern matching; (4) `git log --follow archivo` para seguir renames; (5) `git log -L :function:file` para historia de una función específica; (6) integraciones con GitHub/GitLab: click 'Blame' → 'View blame prior to this change' — permite retroceder capas de blame. Para contexto de PR: si commits tienen 'Fixes #123' o el hash está mergeado en un PR, GitHub linkea automáticamente.",
+      "realWorld": "Cuando un CVE aparece, la primera acción de forensics es git blame + log -S para encontrar cuándo entró el bug. Log4Shell (2021) fue rastreado a un commit de 2013 usando esta técnica.",
+      "tags": ["blame", "arqueología", "log", "git"],
+      "tech": ["git blame", "git log -S"],
+      "references": [{ "title": "Pro Git — git-blame manual" }, { "title": "Pro Git — 7.2 Searching (pickaxe)" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "refactor",
+      "topic": "Force push — cuándo y cómo con seguridad",
+      "difficulty": "senior",
+      "scenario": "Rebaseaste tu rama feature (compartida con 1 compañero) sobre main. Ahora `git push` falla con 'non-fast-forward'. Piensas hacer `git push --force`.",
+      "question": "¿Qué debes hacer para no destruir trabajo del compañero?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar `git push --force-with-lease` (o `--force-if-includes` desde git 2.30). Falla si el remoto tiene commits que tú no has fetched — evita pisar trabajo ajeno silenciosamente. Coordinar con el compañero avisando del rebase.", "correct": true, "why": "Correcto. `--force-with-lease` compara el remoto contra tu conocimiento local (último fetch); si difiere, aborta. Es la diferencia entre 'sobreescribo lo que crea el server' vs 'sobreescribo solo lo que yo pensé que había en el server'. `--force-if-includes` (2.30+) es aún más estricto: exige que tus commits locales incluyan la punta remota. Bonus: comunicación humana es tan importante — mensaje al compañero antes de rebasear rama compartida." },
+        { "letter": "B", "text": "`git push --force` sin flags adicionales. Es más rápido.", "correct": false, "why": "Peligroso. Sobreescribe el remoto sin chequear. Si el compañero pusheó desde tu último fetch, esos commits desaparecen del remoto (aunque siguen en su reflog). Es la causa #1 de trabajo perdido en equipos." },
+        { "letter": "C", "text": "Hacer merge en vez de rebase para evitar force push.", "correct": false, "why": "Válido como estrategia, pero el enunciado ya hizo rebase. La pregunta es cómo hacer el push seguro, no cómo evitarlo." },
+        { "letter": "D", "text": "Deshabilitar en el server las force pushes.", "correct": false, "why": "Buena idea para rama main/develop (branch protection), no para ramas feature — bloquearía rebases legítimos. La respuesta correcta es --force-with-lease en feature branches." }
+      ],
+      "explanation": "Force push destructivo es una de las mayores fuentes de bugs en equipos. Reglas: (1) NUNCA force push a main/develop (rama compartida crítica) — usar branch protection en GitHub/GitLab; (2) en ramas feature con múltiples autores, siempre --force-with-lease + comunicación; (3) en ramas propias, --force-with-lease sigue siendo mejor default que --force. Alias útil: `git config alias.pushf 'push --force-with-lease'`. GitHub y GitLab permiten configurar branch protection: bloquear force push, requerir PR, requerir reviews.",
+      "realWorld": "GitHub introdujo branch protection tras muchos incidentes de OSS donde maintainers hacían force push por error. Kubernetes prohíbe force push a master. Airbnb tiene documentado su 'never force push to shared branches' internally.",
+      "tags": ["force push", "force-with-lease", "colaboración", "git"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — git-push manual" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "refactor",
+      "topic": "Sub-modules vs sub-trees vs monorepo",
+      "difficulty": "staff",
+      "scenario": "Discusión de arquitectura: quieres compartir una librería propia entre 3 proyectos. Alternativas propuestas: (a) git submodule; (b) git subtree; (c) monorepo con pnpm/nx/turborepo; (d) publicar la lib a npm privado.",
+      "question": "¿Qué es cierto sobre trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "git submodule mantiene refs a hashes específicos de un repo externo — actualización requiere `git submodule update`. Frágil con clones (olvidar --recurse-submodules), difícil de razonar en CI, y modificar la lib desde el proyecto padre es engorroso.", "correct": true, "why": "Correcto. Submodules son la solución tradicional pero notoriamente friccional: clones a medias, resolución de conflictos en refs de submodule, versionado por SHA (no semver) confunde al equipo. Válido en casos muy específicos (vendor libs read-only) pero mayoría de teams los evitan." },
+        { "letter": "B", "text": "git subtree mergea el contenido del sub-repo INTO tu repo — no requiere clones especiales, pero el histórico se mezcla y hacer 'push back' de cambios al upstream es complejo (`git subtree push`).", "correct": true, "why": "Correcto. Subtree es más amigable para clones (todo está en un solo repo) pero más pesado para el maintainer que debe hacer subtree push para propagar cambios upstream. Mejor que submodule en muchos casos pero aún tiene fricción bidireccional." },
+        { "letter": "C", "text": "Monorepo con pnpm workspaces + nx/turborepo permite iterar library + consumers atómicamente en un solo commit, con builds/tests incrementales. Mejor DX para equipos que iteran juntos.", "correct": true, "why": "Correcto. Monorepo elimina el problema de 'change lib → publish → bump version → update consumers' — todo en un commit atómico. Herramientas modernas (pnpm workspaces, Nx, Turborepo, Bazel) hacen builds incrementales viables. Google y Facebook operan monorepos gigantes. Trade-off: requiere infra (build cache, CI selectivo, code owners)." },
+        { "letter": "D", "text": "Publicar a npm privado (o registry equivalente) es la opción más independiente: cada proyecto elige su versión con semver, upgrade explícito, mejor para libs realmente independientes con múltiples consumers externos.", "correct": true, "why": "Correcto. Publish-to-registry es el modelo estándar de OSS. Ventaja: independencia total, semver explícito, versión pinning. Desventaja: friction para iterar juntos (bump version cada cambio, actualizar consumers). Ideal cuando la lib tiene ciclo de vida propio o consumers externos al equipo." },
+        { "letter": "E", "text": "Submodules es siempre la mejor opción para cualquier caso.", "correct": false, "why": "Falso. Submodules es una de las opciones más criticadas — muchos teams las evitan. La 'mejor opción' depende del contexto: independencia de ciclos vs velocidad de iteración conjunta." }
+      ],
+      "explanation": "Estrategia depende del contexto: (1) lib independiente con consumers externos → npm privado + semver; (2) lib compartida por un solo equipo que itera junto → monorepo; (3) vendor library read-only → subtree (submodule solo si tienes buena razón); (4) OSS con contribución bidireccional → publish + fork tradicional. Herramientas monorepo 2026: pnpm workspaces (base), Turborepo (Vercel; task orchestration + cache remoto), Nx (más features, más pesado), Bazel (Google-scale, curva empinada), Rush (Microsoft), Moon (Rust-based). Para librerías cross-team dentro de una empresa, monorepo es la tendencia dominante.",
+      "realWorld": "Google, Facebook, Uber, Airbnb usan monorepos internos. Angular, Babel, Jest, React viven en monorepos OSS con Lerna/Nx/pnpm workspaces. Kubernetes usa múltiples repos pero con herramientas de sincronización. Cada opción tiene famosos que la validan.",
+      "tags": ["monorepo", "submodule", "subtree", "arquitectura"],
+      "tech": ["pnpm", "nx", "turborepo", "git submodule"],
+      "references": [{ "title": "Pro Git — 7.11 Submodules & 7.12 Subtrees" }, { "title": "monorepo.tools" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "testing",
+      "topic": "Conventional commits + changelog automatizado",
+      "difficulty": "mid",
+      "scenario": "Tu equipo publica releases 2 veces por semana y el changelog se escribe a mano. Un miembro propone adoptar Conventional Commits (`feat:`, `fix:`, `chore:`) para generar changelog y bumps semver automáticamente.",
+      "question": "¿Qué es cierto sobre este workflow?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Conventional Commits + herramientas como semantic-release, changesets, release-please o standard-version generan changelog automáticamente Y determinan el bump de versión según tipos (`fix:` → patch, `feat:` → minor, `feat!:` o `BREAKING CHANGE:` → major). Requisito: enforcer del formato en commit-msg hook o CI.", "correct": true, "why": "Correcto. Es el flujo estándar OSS moderno. Conventional Commits (spec estable desde 2019) define el formato: `type(scope): description`. Types comunes: feat, fix, docs, style, refactor, perf, test, chore, ci. Herramientas parsean commits desde el último tag, agrupan por type en el changelog, calculan next version. Enforcement con commitlint + Husky (pre-commit-msg), o en CI con Danger/GitHub Actions." },
+        { "letter": "B", "text": "Conventional Commits es solo estético y no aporta valor automatizable.", "correct": false, "why": "Falso. Todo el ecosistema semantic-release, release-please, changesets depende exactamente del formato. Sin él, esa automatización es imposible." },
+        { "letter": "C", "text": "Hay que reescribir toda la historia previa al adoptarlo.", "correct": false, "why": "Falso. Se adopta desde un punto en el tiempo — commits antiguos siguen como estaban. Solo commits nuevos siguen el formato." },
+        { "letter": "D", "text": "Solo funciona en repos JavaScript.", "correct": false, "why": "Falso. Conventional Commits es agnostic de lenguaje. Herramientas existen para todos: release-please (multi-lang), semantic-release (JS pero configurable), git-cliff (Rust), release-plz (Rust)." }
+      ],
+      "explanation": "Conventional Commits: convención de mensajes que habilita tooling. Formato: `<type>[optional scope]: <description>` + optional body/footer. Tipos estándar y su impacto semver: fix (patch), feat (minor), BREAKING CHANGE en footer o ! después de type (major). Beneficios: (1) changelog automatizado; (2) versionado semver determinístico; (3) fácil búsqueda por tipo (`git log --grep 'feat:'`); (4) mejor comunicación con usuarios sobre naturaleza de cambios. Combinar con release-please o semantic-release para releases 100% automatizados desde main.",
+      "realWorld": "Angular, Vue, Nx, muchos proyectos de Google (via release-please) siguen Conventional Commits. Los ChangeLog generados de kubectl, prettier, eslint son producidos por este flow. Reduce dramáticamente el trabajo del maintainer.",
+      "tags": ["conventional commits", "changelog", "semver", "release"],
+      "tech": ["semantic-release", "release-please", "changesets"],
+      "references": [{ "title": "conventionalcommits.org" }, { "title": "release-please (GitHub Action)" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "testing",
+      "topic": "Signed commits — GPG y SSH signing",
+      "difficulty": "senior",
+      "scenario": "Se detecta que un commit atribuido al CTO en realidad fue subido por un atacante que conocía su nombre y email de git (fáciles de spoofear en git config). El equipo quiere impedirlo a futuro.",
+      "question": "¿Cuál es la solución técnica correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Signed commits con GPG o SSH signing (git 2.34+). Configurar `commit.gpgsign true` y una llave. GitHub/GitLab verifican firma y muestran badge 'Verified'. Añadir branch protection que REQUIERA commits firmados. Un atacante sin la llave privada del CTO no puede simular firma válida.", "correct": true, "why": "Correcto. La única defensa criptográfica es la firma. `user.name` y `user.email` son libres — cualquiera puede escribir 'Linus Torvalds <linus@kernel.org>' y hacer commits. La firma (GPG o SSH desde 2.34) demuestra posesión de la llave. GitHub verifica: si la llave pública está en el perfil del usuario, aparece 'Verified'. Branch protection puede exigir 'Require signed commits'. Es lo que usa el kernel de Linux para releases." },
+        { "letter": "B", "text": "Habilitar 2FA en GitHub — suficiente.", "correct": false, "why": "2FA protege el LOGIN a la plataforma, pero cualquiera con acceso local a un repo puede escribir commits con cualquier autor. La firma es lo único que ata criptográficamente el commit al autor." },
+        { "letter": "C", "text": "Restringir push a IPs específicas.", "correct": false, "why": "Solo protege el vector de push, no la autoría del commit. Un colaborador puede seguir spoofeando authorship en su propio push válido." },
+        { "letter": "D", "text": "Confiar en que git registra IP y timestamp.", "correct": false, "why": "Git no registra IP en el commit (solo timestamp local, manipulable con --date). GitHub/GitLab pueden loggear IPs de push pero eso no valida authorship." }
+      ],
+      "explanation": "Autoría en git es honor system por default. Signed commits añaden pruebas criptográficas. Opciones: (1) GPG signing (tradicional; keys en keyservers o GitHub); (2) SSH signing (git 2.34+, más simple: reusa tu SSH key); (3) S/MIME (menos común). Setup GPG: crear key, `git config user.signingkey`, `git config commit.gpgsign true`. Setup SSH: `git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`. Verificar: `git log --show-signature`. Enforcement en server: GitHub branch protection 'Require signed commits'. Kernel de Linux, muchos proyectos de seguridad exigen firma.",
+      "realWorld": "En 2019 se descubrió un supply chain attack en npm donde commits maliciosos aparecían firmados por maintainers legítimos. Después de eso, muchos proyectos añadieron signing como requisito. Sigstore + gitsign son iniciativas modernas para firma zero-trust más sencilla.",
+      "tags": ["signing", "GPG", "SSH sign", "seguridad", "git"],
+      "tech": ["GPG", "SSH signing", "sigstore"],
+      "references": [{ "title": "Pro Git — 7.4 Signing Your Work" }, { "title": "GitHub Docs — About commit signature verification" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "refactor",
+      "topic": "Sparse checkout y partial clone",
+      "difficulty": "staff",
+      "scenario": "Repo monorepo de 15 GB con historia larga. Un dev que solo trabaja en un sub-proyecto se queja: el clone tarda 20 minutos, ocupa 15 GB, y solo necesita un directorio.",
+      "question": "¿Qué características de git 2.19+ resuelven esto?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "`git clone --filter=blob:none` (partial clone): no descarga blobs, solo commits + trees; descarga blobs on-demand cuando se accedan.", "correct": true, "why": "Correcto. Partial clone descarga metadata (~100x más pequeño que blobs) y descarga contenido de archivos on-demand al hacer checkout o leer. Requiere server que lo soporte (GitHub, GitLab modernos sí). Combinable con --depth para shallow clone." },
+        { "letter": "B", "text": "`git sparse-checkout set <path>` restringe el working tree a directorios específicos — no descargas ni checkoutas el resto.", "correct": true, "why": "Correcto. sparse-checkout permite trabajar solo con parte del árbol. Combinado con partial clone es el 'partial clone experience' definitivo: solo bajas y ves lo que necesitas. Modernizado desde git 2.25 con `git sparse-checkout` command friendly (antes había que editar .git/info/sparse-checkout a mano)." },
+        { "letter": "C", "text": "`git clone --depth 1` para shallow clone.", "correct": true, "why": "Correcto para casos donde no necesitas historia (CI, deployments). Contra: no puedes hacer merges/rebases completos, blame limitado. Combinable con partial y sparse pero incompatible con algunos flujos (unshallow requiere fetch adicional)." },
+        { "letter": "D", "text": "Nada — git no soporta clones parciales por diseño.", "correct": false, "why": "Falso. git 2.19 (2018) introdujo partial clone. Estable y en producción en GitHub, GitLab, Google, Microsoft. Es una de las mejoras más importantes de git en años." },
+        { "letter": "E", "text": "VFS for Git (Microsoft) o Scalar hacen esto transparente a scale de Google/Microsoft.", "correct": true, "why": "Correcto. Scalar (Microsoft, ahora open source y parte de git) automatiza partial clone + sparse checkout + prefetch + FS monitor. Microsoft usa esto en el monorepo Windows (>300 GB). Ideal para repos gigantes que exceden lo que sparse+partial puros manejan cómodamente." }
+      ],
+      "explanation": "Para monorepos grandes: (1) partial clone (--filter=blob:none o tree:0) reduce lo bajado inicialmente 10-100x; (2) sparse-checkout restringe el working tree; (3) shallow (--depth) para casos sin necesidad de historia; (4) Scalar / VFS for Git para repos gigantes con automation. Combinar: `git clone --filter=blob:none --sparse <url>` y luego `git sparse-checkout set src/mi-proyecto`. Fetch on-demand carga blobs cuando los necesitas — puede sorprender en operaciones grandes (blame, log -p) si no tienes conexión.",
+      "realWorld": "Microsoft VFS for Git nació del reto de operar el monorepo de Windows (~3.5M archivos, 300+ GB). Migraron internamente y luego open-sourceron. Google usa Piper (propio) que es aún más agresivo. GitHub oficialmente recomienda partial clone para repos > 5 GB.",
+      "tags": ["partial clone", "sparse checkout", "monorepo", "scale"],
+      "tech": ["git", "Scalar", "VFS for Git"],
+      "references": [{ "title": "GitHub Blog — Get up to speed with partial clone and shallow clone" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "testing",
+      "topic": ".gitignore vs .git/info/exclude vs skip-worktree",
+      "difficulty": "mid",
+      "scenario": "Tres necesidades: (a) ignorar `node_modules` para todo el equipo; (b) ignorar tu `.vscode/notes.md` personal sin ensuciar el .gitignore compartido; (c) evitar que git muestre cambios en `config/prod.env` (que necesitas modificar localmente pero nunca commitear).",
+      "question": "¿Qué mecanismo para cada caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(a) .gitignore versionado en el repo; (b) .git/info/exclude local no versionado; (c) `git update-index --skip-worktree config/prod.env` (o --assume-unchanged) — ignora cambios locales en archivo tracked.", "correct": true, "why": "Correcto. Tres capas: (1) .gitignore es COMPARTIDO — para archivos que ningún colaborador debe versionar; (2) .git/info/exclude es LOCAL — para tus preferencias personales; (3) skip-worktree marca un archivo tracked como 'no me muestres sus cambios' — útil para configs locales que se derivan de un template en el repo. Advertencia: skip-worktree puede confundir en pulls (git no aplica cambios upstream a archivos skip-worktree por defecto — hay que --no-skip antes)." },
+        { "letter": "B", "text": "Todo en .gitignore.", "correct": false, "why": "(b) contaminaría el archivo compartido con preferencias personales. (c) no funciona con .gitignore porque .gitignore no ignora archivos YA tracked." },
+        { "letter": "C", "text": "Borrar los archivos y confiar.", "correct": false, "why": "No resuelve nada — necesitas el archivo local sin trackearlo." },
+        { "letter": "D", "text": "Usar --assume-unchanged en todos los casos.", "correct": false, "why": "--assume-unchanged es un OPTIMIZATION hint (git puede asumir que el archivo no cambió para no chequear stat) — no debe usarse como mecanismo de ignore. skip-worktree es la primitiva correcta para 'no me muestres cambios en este archivo tracked'." }
+      ],
+      "explanation": "Sistema de ignore multi-capa en git: (1) .gitignore (versionado, compartido) — patrón estándar; (2) .git/info/exclude (local, no versionado) — tus preferencias sin afectar al equipo; (3) core.excludesFile (global; ~/.gitignore_global) — para editor swap files, DS_Store, etc.; (4) skip-worktree/assume-unchanged — archivos YA tracked que quieres 'esconder'. Regla: para archivos aún NO tracked usar .gitignore o .git/info/exclude; para archivos YA tracked que quieres desligar, mejor `git rm --cached` + gitignore. skip-worktree es último recurso porque puede confundir pulls.",
+      "realWorld": "El bug clásico: 'git no ignora mi archivo!' — respuesta: porque ya estaba tracked. Solución: git rm --cached + .gitignore + commit. Documentado en cada FAQ de git.",
+      "tags": ["gitignore", "exclude", "skip-worktree", "git"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — gitignore manual & 2.2 Recording Changes" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "refactor",
+      "topic": "Detached HEAD — qué significa y cómo salir",
+      "difficulty": "junior",
+      "scenario": "Un jr hizo `git checkout abc1234` para inspeccionar un commit viejo. Ahora ve un warning 'You are in detached HEAD state'. Está confundido y quiere seguir trabajando sin perder nada.",
+      "question": "¿Cuál es la explicación y la salida segura?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Detached HEAD significa que HEAD apunta a un commit específico, no a una rama. Los commits nuevos NO pertenecen a ninguna rama y son 'huérfanos' — se pueden perder cuando cambies de rama. Salida segura: si no hiciste commits nuevos, `git checkout main`. Si hiciste commits nuevos, `git branch nueva-rama` primero para persistirlos, luego `git checkout nueva-rama`.", "correct": true, "why": "Correcto. HEAD apunta normalmente a una rama (ref); en detached apunta directamente a un hash. No es un bug — es útil para inspección o operaciones como bisect. El riesgo es hacer commits sin nombre de rama: quedan alcanzables solo por hash, y sin rama son candidatos a gc. La salida es siempre crear una rama antes si quieres persistir." },
+        { "letter": "B", "text": "Es un error — reclonar el repo.", "correct": false, "why": "Innecesariamente destructivo. Detached HEAD no daña nada, solo requiere entender qué hacer. Reclonar destruye cualquier cambio local." },
+        { "letter": "C", "text": "Hacer commit y push. Git creará automáticamente una rama.", "correct": false, "why": "Falso. git no crea ramas automáticamente. El commit quedaría huérfano y el push fallaría (no hay rama a la que push). Hay que crear la rama explícitamente." },
+        { "letter": "D", "text": "Detached HEAD es un modo read-only del repo.", "correct": false, "why": "Falso. Puedes hacer commits, edits, etc. — todo funciona. Lo único es que los commits no pertenecen a ninguna rama." }
+      ],
+      "explanation": "HEAD en git: normalmente es una ref simbólica que apunta a una rama (`ref: refs/heads/main`); detached = apunta directo a un hash. Casos donde ocurre naturalmente: `git checkout <hash>`, `git checkout <tag>`, durante rebase, durante bisect. Trabajo detached es válido pero no persistente sin rama. Si accidentalmente perdiste commits detached: reflog los recupera durante ~30 días. Comando útil: `git switch -c nueva-rama` es el moderno equivalente a `git checkout -b`, más claro semánticamente.",
+      "realWorld": "El estado detached asusta a principiantes pero es esencial para muchas herramientas. CI/CD pipelines a menudo operan en detached HEAD al checkoutear commits específicos.",
+      "tags": ["detached HEAD", "ramas", "git", "principiante"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — 3.1 Branches in a Nutshell" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "testing",
+      "topic": "Revert vs Reset — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Un commit malo llegó a main y afecta usuarios. Necesitas 'deshacerlo'. Dos opciones sobre la mesa: `git reset --hard <hash-anterior> && git push --force` vs `git revert <hash-malo> && git push`.",
+      "question": "¿Cuál usar y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git revert`: crea un nuevo commit que INVIERTE los cambios del malo. Historia se preserva, no requiere force push, seguro en rama compartida. `reset --hard` reescribiría historia — inaceptable en main. Regla: reset para historial local no publicado, revert para historial público.", "correct": true, "why": "Correcto. En ramas COMPARTIDAS (main, develop), la historia es un contrato con el equipo — cambiarla implica force push que destruye trabajo/references en máquinas de otros. Revert añade un commit que anula el efecto pero preserva el registro histórico. Reset --hard elimina commits — solo válido en tu rama personal aún no pushead." },
+        { "letter": "B", "text": "reset --hard + force push. Historia más limpia.", "correct": false, "why": "Rompe repos de todo el equipo — su main local diverge del remoto, deben rebasear y perder trabajo. En repos con branch protection típicamente ni siquiera se permite. Es la forma incorrecta de rollback en producción." },
+        { "letter": "C", "text": "Ambas son equivalentes.", "correct": false, "why": "Falso — semántica y consecuencias completamente distintas. reset elimina; revert añade una inversión." },
+        { "letter": "D", "text": "Hacer un nuevo commit manual con los cambios inversos.", "correct": false, "why": "Es lo que revert hace automáticamente. Manual sería redundante y propenso a error (podrías olvidar líneas)." }
+      ],
+      "explanation": "reset vs revert vs restore: (1) `git reset` mueve el puntero de rama (--soft mantiene staged, --mixed unstaged, --hard descarta) — reescribe historia local, peligroso en compartidas; (2) `git revert <commit>` crea un nuevo commit que aplica el diff inverso — historia preservada, seguro en cualquier rama; (3) `git restore` (git 2.23+, moderno) para restaurar archivos del working tree o del index sin afectar HEAD. Regla mental: para RAMAS PÚBLICAS usa revert; para tu rama personal aún no publicada, cualquiera. Revert de merge commits requiere -m para especificar el 'mainline' (padre a preservar).",
+      "realWorld": "Todos los rollbacks de producción en repos con GitOps (ArgoCD, Flux) se hacen con revert — el pipeline detecta el nuevo commit y deploya el rollback automáticamente. Rollback via reset no es opción en flujos modernos.",
+      "tags": ["revert", "reset", "rollback", "git"],
+      "tech": ["git"],
+      "references": [{ "title": "Pro Git — 7.7 Reset Demystified" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "refactor",
+      "topic": "git rerere — recordar resoluciones de merge",
+      "difficulty": "staff",
+      "scenario": "Estás manteniendo una rama long-lived (fork con customizaciones). Cada semana rebaseás sobre upstream y siempre aparecen los MISMOS 10 conflictos, siempre con la misma resolución. Es doloroso repetir.",
+      "question": "¿Qué feature de git ayuda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git config rerere.enabled true` activa 'reuse recorded resolution'. La primera vez resuelves manualmente y git graba el patrón (pre-image + post-image). En futuros conflictos idénticos, aplica automáticamente. Guardado en .git/rr-cache (local, no compartido). Ideal para rebases repetitivos.", "correct": true, "why": "Correcto. rerere es una de las features menos conocidas pero más útiles para maintainers de forks. Cada vez que resuelves un conflicto, graba la resolución; si el mismo conflicto vuelve, la aplica sin preguntar. Es transparente. Trade-off: es local (no compartido) — cada dev debe activarlo. Y si tu resolución fue mala, la aplicará mal en el futuro también (revisar con `git rerere status`)." },
+        { "letter": "B", "text": "Automatizar con scripts que hagan sed/awk sobre los archivos en conflicto.", "correct": false, "why": "Frágil, específico, requiere mantenimiento. rerere es built-in y contextual." },
+        { "letter": "C", "text": "Hacer squash de tu fork sobre upstream cada vez.", "correct": false, "why": "Cambia semántica del fork y pierde granularidad de la historia. No resuelve el problema recurrente de conflictos." },
+        { "letter": "D", "text": "No hay solución — rebases repetitivos son inherentemente dolorosos.", "correct": false, "why": "Falso — rerere existe exactamente para esto y funciona bien." }
+      ],
+      "explanation": "rerere = Reuse REcorded REsolution. Funciona en 2 fases: (1) pre-image: guarda el estado del conflicto (antes de resolver); (2) post-image: guarda tu resolución. Cuando el pre-image vuelve, aplica el post-image automáticamente. Comandos útiles: `git rerere status` (conflictos actuales), `git rerere diff` (qué se resolvería), `git rerere forget <path>` (olvidar una resolución mala). Bonus: comparte tu rr-cache entre worktrees o incluso backup — algunos teams lo comparten via un side channel. Alternativa moderna: git imerge (incremental merge) para merges muy conflictivos con bisect-style resolución.",
+      "realWorld": "Kernel maintainers de subsistemas usan rerere religiosamente cuando rebasean patch series sobre linux-next. Distros (Debian, Fedora) mantienen forks patched y dependen de rerere para no volverse locos.",
+      "tags": ["rerere", "rebases", "conflictos", "git"],
+      "tech": ["git rerere"],
+      "references": [{ "title": "Pro Git — 7.13 Rerere" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "testing",
+      "topic": "Trailers en commits — Signed-off-by, Co-authored-by",
+      "difficulty": "mid",
+      "scenario": "Trabajaste en un fix con un compañero (pair programming). Quieres que el commit refleje autoría compartida. También el proyecto exige `Signed-off-by:` en cada commit (DCO - Developer Certificate of Origin).",
+      "question": "¿Cuál es la forma correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Añadir trailers al final del mensaje: `Co-authored-by: Name <email>` (GitHub reconoce y muestra ambos autores en la UI); `Signed-off-by: Tu Nombre <email>` (auto-generable con `git commit -s`). Los trailers son metadata estructurada al final del mensaje.", "correct": true, "why": "Correcto. Trailers son 'headers-like' al final del mensaje separados por línea en blanco. GitHub parsea Co-authored-by y muestra multi-author (útil para pair programming, contribution stats). Signed-off-by es el mecanismo DCO — attestación legal que dice 'tengo derecho a contribuir este código'. `git commit -s` lo añade automáticamente. Otros trailers: Reviewed-by, Tested-by, Reported-by, Fixes." },
+        { "letter": "B", "text": "Escribir 'Hecho con Nombre' en el mensaje libre.", "correct": false, "why": "GitHub no lo detecta ni le da crédito de autoría. Los trailers estructurados son parseables por herramientas." },
+        { "letter": "C", "text": "Hacer dos commits: uno con cada autor.", "correct": false, "why": "Confuso, duplica cambios, no refleja el trabajo conjunto. Trailers son la solución idiomática." },
+        { "letter": "D", "text": "Los trailers son solo estéticos.", "correct": false, "why": "Falso. GitHub UI, herramientas de release notes (release-please usa Co-authored-by), y sistemas legales (DCO) los parsean estructuralmente." }
+      ],
+      "explanation": "Trailers estándar en commits: (1) Signed-off-by: <name> <email> — DCO / attestación; obligatorio en kernel, Docker, muchos OSS. Añadido con `git commit -s`; (2) Co-authored-by: <name> <email> — pair programming, GitHub muestra ambos autores; (3) Fixes: <bug-id> o Closes #123 — auto-cierra issue al mergear; (4) Reviewed-by, Tested-by — más usados en kernel/qemu. Formato: línea vacía separadora entre body y trailers; cada trailer en una línea `Key: value`. `git interpret-trailers` puede añadir/parsear programáticamente.",
+      "realWorld": "Kubernetes exige DCO en cada commit — bot valida y bloquea PR si falta. Docker introdujo DCO en 2014 tras controversia legal. GitHub Co-authored-by es especialmente popular en Mob Programming.",
+      "tags": ["trailers", "co-authored", "DCO", "commits"],
+      "tech": ["git", "GitHub"],
+      "references": [{ "title": "GitHub Docs — Creating a commit with multiple authors" }, { "title": "developercertificate.org" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "testing",
+      "topic": "Git como herramienta de forensics — CVE arqueología",
+      "difficulty": "junior",
+      "scenario": "Se descubre CVE en tu librería. La security team pregunta: (1) en qué versión se introdujo el bug; (2) qué versiones están afectadas; (3) commit exacto que introdujo la vulnerabilidad.",
+      "question": "¿Qué comandos de git son útiles para responder?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`git log -S 'código-vulnerable'` para encontrar el commit que introdujo la string; `git describe --contains <hash>` para saber en qué tag/versión aparece; `git tag --contains <hash>` para listar todas las versiones afectadas; `git blame -w -M -C` para autor real. Combinar con `git bisect` si el bug es de comportamiento (no de código string-searchable).", "correct": true, "why": "Correcto. Es un cocktail estándar en response de seguridad: pickaxe (-S) o bisect (para bugs de comportamiento) → hash culpable → describe/tag para versiones afectadas → blame para contexto histórico. Esta información va al CVE advisory. La gente subestima git como herramienta forense; con estos comandos se resuelven investigaciones en minutos que sin ellos tardarían días." },
+        { "letter": "B", "text": "Solo se puede saber revisando manualmente cada tag.", "correct": false, "why": "Falso — todas las herramientas mencionadas están diseñadas exactamente para esto y son mucho más rápidas." },
+        { "letter": "C", "text": "Pedir a GitHub que investigue.", "correct": false, "why": "GitHub Security Advisories te ayuda a PUBLICAR el CVE, pero la investigación técnica es tuya. Git es la herramienta directa." },
+        { "letter": "D", "text": "git no guarda información suficiente para forensics.", "correct": false, "why": "Al contrario: git preserva TODO el historial de cambios linea-por-linea desde el inicio. Es una de las mejores herramientas forenses disponibles." }
+      ],
+      "explanation": "Response de seguridad con git: (1) identificar código vulnerable; (2) `git log -S 'string' <archivo>` → commit introductor (o bisect si no hay string exacta); (3) `git tag --contains <hash>` → versiones afectadas; (4) `git describe --contains <hash>` → versión precisa; (5) generar patch: `git format-patch <hash>~..<hash>` → apply a versiones no-EOL; (6) publicar CVE con GitHub Security Advisories con toda esta metadata. Bonus: `git log --follow --patch` te da toda la evolución de un archivo (útil para entender cómo el bug persistió).",
+      "realWorld": "Log4Shell (CVE-2021-44228): investigadores usaron git blame + log -S para rastrear la introducción del bug a un commit de 2013 en Log4j. Similar en Heartbleed (OpenSSL, 2014). Es el flujo estándar de post-mortem de seguridad.",
+      "tags": ["forensics", "seguridad", "CVE", "log", "blame"],
+      "tech": ["git", "CVE"],
+      "references": [{ "title": "Pro Git — 7.2 Searching" }, { "title": "GitHub Security Advisories" }]
+    }
+  ]
+}

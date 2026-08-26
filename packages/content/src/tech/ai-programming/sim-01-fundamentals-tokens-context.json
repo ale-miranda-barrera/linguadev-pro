@@ -1,0 +1,473 @@
+{
+  "id": "ai-programming-sim-01-fundamentals-tokens-context",
+  "trackId": "ai-programming",
+  "order": 1,
+  "title": "Simulacro 01 — Fundamentos IA para devs: tokens, ventana de contexto, latencia",
+  "focus": "Fundamentos que TODO dev que use LLMs debe dominar: qué es un token realmente, cómo se factura, ventana de contexto, temperatura, top-p, latencia vs streaming, diferencias entre modelos base y instruction-tuned.",
+  "areaCoverage": ["context-engineering", "cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "cost-inference",
+      "topic": "Qué es realmente un token (BPE)",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr te dice: 'Le pasé al LLM un texto de 500 palabras y me cobró casi 700 tokens. La factura debería ser por palabras, no por tokens; parece un error del proveedor.' Está a punto de abrir un ticket de soporte.",
+      "question": "¿Cuál es la explicación técnica correcta que le darías antes de que abra el ticket?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El proveedor cuenta también los espacios como tokens, por eso la cifra crece un 40%.", "correct": false, "why": "Los espacios habitualmente se absorben dentro del token vecino (BPE los codifica como prefijo `▁` o similar). Contarlos aparte no es la razón del ratio 1.4x." },
+        { "letter": "B", "text": "Los LLMs no tokenizan por palabras, sino con Byte-Pair Encoding (BPE) o similar. Una palabra puede partirse en varios sub-tokens, especialmente si es rara, técnica, o está en un idioma distinto al mayoritario del entrenamiento (inglés). Ratio típico en español: 1.3–1.7 tokens por palabra.", "correct": true, "why": "Correcto. BPE parte por subpalabras frecuentes en el corpus. Palabras comunes en inglés = 1 token; palabras raras, código, JSON, emojis o texto no-inglés se fragmentan más. Regla mental: en inglés ~0.75 palabras/token; en español ~0.6." },
+        { "letter": "C", "text": "El modelo cuenta cada carácter individual como un token separado.", "correct": false, "why": "Sería tokenización por caracteres — inviable en producción por longitud. Los LLMs modernos usan BPE/WordPiece/SentencePiece, que producen un vocabulario de 32k–200k sub-tokens." },
+        { "letter": "D", "text": "El proveedor infla artificialmente la cuenta para cobrar más.", "correct": false, "why": "Puedes verificar la tokenización localmente con `tiktoken` (OpenAI) o el tokenizer público de Anthropic/Google. La factura coincide con lo que produce el tokenizer oficial." }
+      ],
+      "explanation": "BPE construye un vocabulario fusionando pares de bytes/caracteres más frecuentes hasta un tamaño target. Como los corpus están dominados por inglés, palabras en español, alemán o coreano se fragmentan más. Impacto práctico: (1) tu factura en español es ~30–40% más cara por palabra que en inglés, (2) el context window efectivo es menor si trabajas en no-inglés, (3) el código y JSON son especialmente ineficientes (llaves, puntuación, indentación se comen tokens). Usa siempre el tokenizer del modelo destino para presupuestar.",
+      "realWorld": "OpenAI publicó un análisis en 2023 mostrando que el tokenizer de GPT-4 usa 2–3x más tokens en birmano o telugu que en inglés, generando una brecha de precio para hablantes de lenguas de bajos recursos. Anthropic y Google han ampliado vocabularios (Claude 3 y Gemini con tokenizers más balanceados) pero el efecto persiste.",
+      "tags": ["tokenización", "BPE", "billing", "fundamentos"],
+      "tech": ["tiktoken", "SentencePiece", "OpenAI", "Anthropic"],
+      "references": [
+        { "title": "OpenAI — What are tokens and how to count them", "url": "https://platform.openai.com/tokenizer" },
+        { "title": "Sennrich et al. — Neural Machine Translation of Rare Words with Subword Units (BPE)", "url": "https://arxiv.org/abs/1508.07909" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "cost-inference",
+      "topic": "Tokens de entrada vs salida — precio asimétrico",
+      "difficulty": "junior",
+      "scenario": "Diseñas un servicio que resume PDFs largos. En promedio: 40k tokens de entrada, 800 tokens de salida por documento. El modelo (Claude Sonnet, hipotético): $3 / MTok entrada, $15 / MTok salida. Tu compañero calcula: '40.800 tokens totales * $9 promedio = $0.37 por doc'.",
+      "question": "¿Por qué está mal ese cálculo y cuál es el correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Está bien; los proveedores promedian input y output para simplificar la factura.", "correct": false, "why": "No. Prácticamente todos los proveedores comerciales (OpenAI, Anthropic, Google, Cohere, DeepSeek, xAI) cobran input y output por separado, con output habitualmente 3–5x más caro." },
+        { "letter": "B", "text": "El cálculo correcto es (40.000/1M * $3) + (800/1M * $15) = $0.12 + $0.012 = $0.132 por doc. Input y output se facturan por separado y el output suele ser mucho más caro.", "correct": true, "why": "Correcto. Regla mental: separa siempre input y output. En cargas RAG (mucha entrada, poca salida) domina el input; en cargas de generación (poca entrada, mucha salida) domina el output. En este caso el input domina porque el volumen es 50x mayor pese al precio 5x menor." },
+        { "letter": "C", "text": "El cálculo correcto es (40.800/1M) * $15 porque siempre se cobra al precio del output.", "correct": false, "why": "Falso — es al revés en muchos escenarios. Y ningún proveedor mainstream cobra todos los tokens al precio de output." },
+        { "letter": "D", "text": "El precio se calcula sobre caracteres, no sobre tokens.", "correct": false, "why": "Google Vertex AI facturó por caracteres en algunas variantes de PaLM/Gemini early access, pero desde 2024 todos los proveedores mainstream facturan por tokens." }
+      ],
+      "explanation": "Precios asimétricos: el output es más caro porque el modelo genera token a token de forma autoregresiva — cada token requiere una pasada completa por la red. El input se procesa en paralelo (prefill), órdenes de magnitud más eficiente por token. Consecuencia práctica: (1) presupuesta con la fórmula (input_tokens * price_in + output_tokens * price_out), (2) para cargas RAG considera prompt caching (baja el precio de input hasta 90%), (3) para cargas con output largo (reports, código) considera modelos más chicos o técnicas como speculative decoding.",
+      "realWorld": "En 2024 Anthropic introdujo prompt caching (5m/1h TTL) que reduce input tokens repetidos a $0.30/MTok (10% del normal). Startups como Cursor y Anysphere reportaron ahorros del 60–80% en costos al reestructurar prompts para maximizar cache hits.",
+      "tags": ["billing", "input vs output", "cost", "pricing"],
+      "tech": ["Anthropic API", "OpenAI API", "prompt caching"],
+      "references": [
+        { "title": "Anthropic — Pricing", "url": "https://www.anthropic.com/pricing" },
+        { "title": "OpenAI — API Pricing", "url": "https://openai.com/api/pricing/" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "context-engineering",
+      "topic": "Context window vs max output tokens",
+      "difficulty": "mid",
+      "scenario": "Un modelo anuncia 'context window 200k tokens'. Tu compañero mete un PDF de 195k tokens y pide: 'Reescribe todo el documento cambiando el tono a formal'. La API responde con un texto truncado a 4096 tokens y un finish_reason: 'length'. Está frustrado y dice que 'la ventana de 200k es mentira'.",
+      "question": "¿Cuál es la explicación técnica correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El context window es el TOTAL (input + output). Además, cada modelo tiene un límite SEPARADO de max_output_tokens (típicamente 4k, 8k, o hasta 64k), independiente del context window total. En este caso el output se topó con ese límite, no con la ventana.", "correct": true, "why": "Correcto. Claude 3.5 Sonnet tuvo 200k context / 8k output; Sonnet 3.7 introdujo 64k output; GPT-4o tiene 128k context / 16k output. Debes leer AMBOS límites en la documentación y setear max_tokens explícitamente." },
+        { "letter": "B", "text": "El proveedor limita el output a 4k para reducir costos.", "correct": false, "why": "El límite existe por razones técnicas (memoria del KV cache durante generación autoregresiva, latencia, calidad que se degrada), no comerciales. Y varía por modelo." },
+        { "letter": "C", "text": "El context window de 200k solo aplica cuando usas fine-tuning.", "correct": false, "why": "El context window es una propiedad de la arquitectura del modelo (posición máxima entrenada / RoPE / ALiBi), aplica a cualquier llamada al modelo." },
+        { "letter": "D", "text": "'Context window' significa lo mismo que 'max_output_tokens'; el error del compañero es semántico.", "correct": false, "why": "Al contrario: son conceptos distintos y confundirlos es la fuente del bug. Context window = entrada + salida máxima; max_output_tokens = tope específico de la respuesta." }
+      ],
+      "explanation": "Regla mental: input_tokens + output_tokens ≤ context_window, Y además output_tokens ≤ max_output_tokens (típicamente mucho más pequeño). Para 'reescribir todo un documento' de 195k tokens en un pase, es físicamente imposible con una ventana de 200k (te queda 5k para el output, y el modelo probablemente no puede generar tanto por su límite propio). Patrón correcto: chunking del documento + procesamiento por partes + merge, o usar un modelo con output extendido (Claude 3.7 Sonnet con 64k, o Gemini 1.5/2.0 con 8k).",
+      "realWorld": "Anthropic documentó explícitamente en su changelog de Sonnet 3.7 (2025) que el output extendido a 64k requiere activar un header beta. Muchos devs asumieron 'context window = todo lo que puedo pedir' y sufrieron respuestas truncadas silenciosamente en producción hasta descubrir la distinción.",
+      "tags": ["context-window", "max-tokens", "límites API", "arquitectura"],
+      "tech": ["Anthropic", "OpenAI", "Gemini"],
+      "references": [
+        { "title": "Anthropic — Models overview (context vs max output)", "url": "https://docs.anthropic.com/en/docs/about-claude/models" },
+        { "title": "OpenAI — Model reference", "url": "https://platform.openai.com/docs/models" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "context-engineering",
+      "topic": "Temperatura y top-p — cómo interactúan",
+      "difficulty": "mid",
+      "scenario": "En code review, un compañero ha configurado un agente que ejecuta SQL contra la DB de producción con `temperature=0.8, top_p=0.95`. Argumenta: 'así el agente es creativo para generar queries variadas'. Tú alegas que es peligroso y propones `temperature=0` para determinismo.",
+      "question": "¿Cuál es el análisis más completo del problema y de la solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Con temperature=0 el modelo es 100% determinista siempre; el debate está zanjado.", "correct": false, "why": "Falso. Incluso con temperature=0, hay no-determinismo por (a) batching en GPU (orden de operaciones flotantes), (b) sparse Mixture-of-Experts routing, (c) actualizaciones del backend. temperature=0 minimiza pero no elimina. OpenAI y Google reconocieron esto públicamente." },
+        { "letter": "B", "text": "Temperature y top-p atacan la misma variable (aleatoriedad del sampling) por caminos distintos y suelen setearse UNO o el OTRO, no ambos altos. Para SQL sobre producción hay que bajar temperature a 0 (o cerca) para maximizar determinismo, usar seed cuando el proveedor lo permita, y aplicar validación estructural (parse SQL, whitelist de tablas) porque incluso a 0 el modelo puede alucinar sintaxis o nombres de columna.", "correct": true, "why": "Correcto. Temperature escala los logits antes del softmax (0 = argmax). Top-p (nucleus sampling) restringe la muestra al conjunto más pequeño cuya probabilidad acumulada ≥ p. Combinar temperature alta + top_p alto amplifica creatividad — lo opuesto a lo que quieres en SQL. Y nunca confíes ciegamente: valida sintaxis, permisos y whitelist antes de ejecutar." },
+        { "letter": "C", "text": "Top-p=0.95 ya es suficiente para determinismo; la temperatura no importa cuando top-p está setado.", "correct": false, "why": "Top-p sigue haciendo muestreo probabilístico dentro del conjunto candidato. Si el conjunto tiene más de un token, hay aleatoriedad." },
+        { "letter": "D", "text": "Con `seed` el output es 100% determinista independientemente de temperature.", "correct": false, "why": "Seed ayuda a la reproducibilidad pero no la garantiza en producción (mismo motivo: batching, routing MoE, actualizaciones del modelo). OpenAI expone `system_fingerprint` para detectar cambios internos." }
+      ],
+      "explanation": "Sampling pipeline: logits → temperature scaling → top-k → top-p (nucleus) → sample. Temperature=0 hace argmax; temperature alta aplana la distribución (más diversa). Top-p corta la cola larga: p=0.95 dice 'toma tokens hasta acumular 95% de probabilidad'. La combinación típica: para tareas deterministas (SQL, JSON, tool-calling) usa temperature=0 y valida structural. Para tareas creativas usa temperature 0.7–1.0 con top-p 0.9. Nunca mezcles 'creatividad' con 'acceso a producción' — sepáralo con capas de validación y permisos.",
+      "realWorld": "Replit reportó en 2024 una serie de incidentes con agentes IA que ejecutaban comandos destructivos por 'creatividad' del modelo. Su solución incluyó: (1) temperature=0 para acciones sensibles, (2) confirmación humana, (3) sandboxing, (4) revocación de permisos de escritura por defecto.",
+      "tags": ["temperature", "top-p", "determinismo", "sampling"],
+      "tech": ["OpenAI API", "Anthropic API", "seed"],
+      "references": [
+        { "title": "Holtzman et al. — The Curious Case of Neural Text Degeneration (nucleus sampling)", "url": "https://arxiv.org/abs/1904.09751" },
+        { "title": "OpenAI — Reproducible outputs (seed & system_fingerprint)", "url": "https://cookbook.openai.com/examples/reproducible_outputs_with_the_seed_parameter" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "context-engineering",
+      "topic": "Modelo base vs instruction-tuned vs chat",
+      "difficulty": "mid",
+      "scenario": "Un compañero descarga de HuggingFace 'Llama-3-70B' (modelo base, sin sufijo -Instruct) y lo despliega esperando poder pasarle prompts tipo 'Resume este texto:'. El modelo devuelve texto que parece copiado de Wikipedia, sigue frases pero no obedece instrucciones.",
+      "question": "¿Cuál es la causa raíz y cuál es la solución correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los modelos base solo hacen next-token prediction sobre el corpus de pretraining — no están entrenados para seguir instrucciones ni conversación. Necesitan una fase adicional de SFT (Supervised Fine-Tuning) + RLHF/DPO para convertirse en 'instruct' o 'chat'. La solución es usar Llama-3-70B-Instruct, no el base.", "correct": true, "why": "Correcto. Los modelos base completan patrones. Para conversar necesitan instruction-tuning (SFT sobre pares instrucción-respuesta) y a menudo alineación (RLHF, DPO, KTO). Los sufijos -Instruct, -Chat, -it indican esto." },
+        { "letter": "B", "text": "Le falta el system prompt correcto; con un system prompt bien escrito los modelos base se comportan como chat.", "correct": false, "why": "El modelo base no tiene noción de 'system prompt' — ese constructo se enseña durante el fine-tuning con formatos como ChatML, Llama-3 chat template, etc. Sin ese entrenamiento, el system prompt es solo texto más." },
+        { "letter": "C", "text": "El problema es la temperatura; a temperature=0 el modelo base empieza a seguir instrucciones.", "correct": false, "why": "Temperature no cambia el objetivo de entrenamiento. El modelo base solo predice el siguiente token; a temperature=0 predice el token MÁS PROBABLE dado el corpus, no la respuesta más útil a una instrucción." },
+        { "letter": "D", "text": "Todos los modelos actuales son chat por defecto; el compañero descargó una versión rota.", "correct": false, "why": "HuggingFace expone ambas versiones. Los base models existen y tienen usos válidos (research, fine-tuning propio, embedding generation)." }
+      ],
+      "explanation": "Pipeline típico: (1) Pretraining — next-token sobre trillones de tokens de internet → modelo base. (2) SFT — fine-tuning supervisado sobre miles/millones de pares instrucción-respuesta curados → modelo capaz de seguir instrucciones. (3) RLHF/DPO/KTO — alineación con preferencias humanas → modelo 'chat' pulido. Sufijos: -Base (crudo), -Instruct/-it (paso 2), -Chat (paso 3). Usa base solo si vas a hacer tu propio fine-tuning o para investigar. Para producción, siempre -Instruct o -Chat.",
+      "realWorld": "Meta liberó Llama-3 en abril 2024 con ambas variantes. Hubo múltiples reportes en foros de devs (r/LocalLlama, HF discussions) de usuarios desplegando el base y quejándose de que 'no funciona' — casi siempre el fix era simplemente cambiar el nombre del modelo por -Instruct.",
+      "tags": ["base model", "instruction-tuning", "RLHF", "modelos open"],
+      "tech": ["Llama-3", "HuggingFace", "SFT", "RLHF"],
+      "references": [
+        { "title": "Ouyang et al. — Training language models to follow instructions (InstructGPT)", "url": "https://arxiv.org/abs/2203.02155" },
+        { "title": "Meta — Llama 3 Model Card", "url": "https://github.com/meta-llama/llama3" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "cost-inference",
+      "topic": "Streaming vs completo — TTFT vs TPS",
+      "difficulty": "mid",
+      "scenario": "Estás midiendo el performance de un chatbot. Métricas por request: TTFT (time to first token) = 3.2s, tokens/segundo (TPS) = 85, latencia total = 12s. UX reporta que 'la app se siente lenta' aunque la latencia total no ha cambiado desde el mes pasado. El equipo debate qué métrica atacar.",
+      "question": "¿Qué análisis y qué acción son las correctas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bajar TPS a 50 para reducir carga en GPU y así mejorar la sensación de fluidez.", "correct": false, "why": "TPS más bajo = respuesta más lenta = peor UX. Y el problema declarado es 'se siente lenta', no la carga en GPU." },
+        { "letter": "B", "text": "El problema probable es el TTFT alto (3.2s de silencio antes del primer token). En streaming, el usuario percibe latencia como 'tiempo hasta ver ALGO'. Acciones: (1) activar streaming si no está, (2) reducir prompt de entrada (menos prefill), (3) prompt caching para amortizar prefill entre requests, (4) considerar un modelo más chico o edge deployment. La latencia total no importa tanto si el usuario ve texto fluyendo.", "correct": true, "why": "Correcto. La percepción humana valora enormemente la respuesta inmediata: 200ms es el umbral clásico de 'inmediato'. Un TTFT de 3.2s hace que el usuario piense que la app está rota, aunque después el output fluya rápido." },
+        { "letter": "C", "text": "Deshabilitar streaming para que el usuario reciba todo el texto de golpe y así 'no vea la lentitud'.", "correct": false, "why": "Al contrario: sin streaming el usuario mira una pantalla en blanco durante toda la latencia total (12s) en lugar de solo 3.2s antes de ver algo." },
+        { "letter": "D", "text": "TTFT y TPS son la misma métrica reportada de dos formas distintas.", "correct": false, "why": "TTFT es la latencia del prefill (procesamiento del input, pareable). TPS mide la velocidad del decode (generación secuencial). Son fases distintas del inference." }
+      ],
+      "explanation": "Inference tiene dos fases: PREFILL (procesa input en paralelo, produce el primer token → TTFT) y DECODE (genera tokens uno a uno → TPS). TTFT crece con el tamaño del input; TPS depende del hardware, tamaño del modelo, y batching. Para UX conversacional prioriza TTFT bajo (<500ms ideal). Para generación larga prioriza TPS alto. Prompt caching (Anthropic, OpenAI, Gemini) es una palanca poderosa: cachea el prefill entre requests y baja TTFT hasta 80%. En agentes con context grande, el ahorro es masivo.",
+      "realWorld": "Cursor, Perplexity y GitHub Copilot reportaron públicamente que optimizar TTFT (con prompt caching, edge inference, y modelos speculative) mejoró la retención de usuarios más que optimizar la calidad del modelo. Perplexity migró parte de su stack a Groq/Cerebras para bajar TTFT en sub-100ms.",
+      "tags": ["TTFT", "TPS", "streaming", "UX latency"],
+      "tech": ["streaming API", "prompt caching", "Groq", "Cerebras"],
+      "references": [
+        { "title": "Anthropic — Streaming Messages", "url": "https://docs.anthropic.com/en/api/messages-streaming" },
+        { "title": "Jakob Nielsen — Response Times: The 3 Important Limits", "url": "https://www.nngroup.com/articles/response-times-3-important-limits/" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "context-engineering",
+      "topic": "JSON mode / structured output",
+      "difficulty": "mid",
+      "scenario": "Tu servicio pide al LLM que devuelva JSON con la forma `{action: 'refund'|'escalate'|'reply', reason: string, confidence: number}` para enrutar tickets. Un 8% de las respuestas rompen el parser (comas sobrantes, comentarios, texto extra antes/después del JSON, o campos inventados). El fix cutre actual es un try/catch con retry.",
+      "question": "¿Cuál es la solución más robusta y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar structured output nativo del proveedor (OpenAI: `response_format` con json_schema; Anthropic: tool_use con schema; Gemini: `responseSchema`). Estos modos aplican grammar-constrained decoding o validación en el proveedor, garantizando JSON parseable que cumple el schema. Retry manual como fallback, no como estrategia principal.", "correct": true, "why": "Correcto. Structured output usa técnicas como constrained decoding (solo se muestrean tokens que cumplen la gramática JSON) o validación server-side. OpenAI garantiza 100% de conformidad con JSON schema desde agosto 2024; Anthropic vía tool_use; Gemini con responseSchema. Elimina la clase entera de bugs." },
+        { "letter": "B", "text": "Añadir al system prompt: 'RESPONDE SOLO JSON VÁLIDO. NO USES MARKDOWN. NO INCLUYAS TEXTO EXTRA.' — el modelo entiende y cumple.", "correct": false, "why": "Ayuda a bajar la tasa de error pero no la elimina — el modelo sigue siendo probabilístico. Los proveedores midieron tasas de fallo del 5–20% incluso con prompts insistentes. No es aceptable como capa única en producción." },
+        { "letter": "C", "text": "Regex + parser tolerante que 'limpie' el output antes de pasarlo a JSON.parse.", "correct": false, "why": "Parche frágil: rompe con casos nuevos (JSON con strings que contienen `}`, arrays anidados, escape complicado). Mejor solucionar en la raíz con structured output. Regex está bien como fallback de emergencia." },
+        { "letter": "D", "text": "Cambiar a un modelo más grande — GPT-4 no falla el JSON.", "correct": false, "why": "Modelos más grandes fallan menos pero no cero. Y no ataca el problema estructural: no debes confiar en 'buen comportamiento' cuando existe una API contractual (structured output)." }
+      ],
+      "explanation": "Structured output funciona porque el proveedor guía el sampling: en cada paso, solo se consideran tokens que mantienen el JSON válido según el schema (constrained decoding). Alternativas del ecosistema: Instructor (Python), Outlines, LMFormatEnforcer, Guidance — hacen lo mismo del lado cliente para modelos open source. Diseño defensivo aún así: (1) valida el schema al recibir, (2) log de fallos, (3) fallback graceful, (4) evita schemas gigantes (bajan calidad y aumentan latencia).",
+      "realWorld": "OpenAI anunció Structured Outputs con 100% JSON schema adherence en agosto 2024 (blog post oficial). Muchos equipos migraron desde el antiguo 'json_mode' que solo garantizaba JSON válido pero no adherencia al schema, eliminando entre 3–10% de errores en pipelines de producción.",
+      "tags": ["JSON mode", "structured output", "constrained decoding", "reliability"],
+      "tech": ["OpenAI", "Anthropic tool_use", "Instructor", "Outlines"],
+      "references": [
+        { "title": "OpenAI — Introducing Structured Outputs in the API", "url": "https://openai.com/index/introducing-structured-outputs-in-the-api/" },
+        { "title": "Anthropic — Tool use / structured output", "url": "https://docs.anthropic.com/en/docs/build-with-claude/tool-use" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "context-engineering",
+      "topic": "Function calling / tool use — flujo real",
+      "difficulty": "mid",
+      "scenario": "Un compañero mid dice: 'implementé function calling. Le paso las tools al modelo, el modelo ejecuta la función, y me devuelve el resultado en el response.content'. Está confundido porque a veces `response.content` está vacío y `finish_reason` es `tool_calls`.",
+      "question": "¿Cuál es el flujo REAL de function calling que le explicarías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Function calling es un flujo de MÚLTIPLES pasos: (1) mandas el prompt + tool definitions, (2) el modelo NO ejecuta nada — devuelve la INTENCIÓN de llamar una tool (nombre + args JSON) y `finish_reason='tool_calls'`, (3) TÚ ejecutas la tool en tu backend, (4) mandas el resultado de vuelta como un mensaje de rol 'tool', (5) el modelo genera la respuesta final o pide otra tool. El modelo nunca ejecuta código directamente.", "correct": true, "why": "Correcto. Es un patrón conversacional: modelo propone, tú ejecutas, modelo interpreta. Requiere hacer varias llamadas API en un loop hasta que finish_reason='stop'. El error del compañero es esperar ejecución server-side." },
+        { "letter": "B", "text": "El modelo ejecuta la función en sandbox del proveedor y devuelve el resultado directamente en content.", "correct": false, "why": "Falso para la mayoría de APIs. Los proveedores no ejecutan tu código (excepciones: OpenAI Code Interpreter, Anthropic computer use, Gemini code execution — pero son features específicas, distintas de function calling general)." },
+        { "letter": "C", "text": "response.content contiene siempre la respuesta final; si está vacío es un bug del proveedor.", "correct": false, "why": "El content vacío es el comportamiento esperado cuando el modelo decide llamar una tool. Es el diseño de la API." },
+        { "letter": "D", "text": "Function calling requiere fine-tuning del modelo con tus propias funciones.", "correct": false, "why": "No. Los modelos actuales (GPT-4o, Claude 3.5+, Gemini 2.0) tienen function calling nativo entrenado — solo declaras las tools en cada request." }
+      ],
+      "explanation": "Function calling = protocolo de conversación estructurada. El loop típico: (a) POST con messages + tools, (b) si respuesta contiene tool_calls, ejecuta cada una en tu backend, (c) POST siguiente con messages actualizado (assistant tool_call + tool result), (d) repite hasta finish_reason=stop. Aspectos críticos: (1) valida args del modelo antes de ejecutar (puede alucinar argumentos), (2) timeouts por tool, (3) máximo de iteraciones para evitar loops infinitos, (4) idempotencia — el modelo puede repetir la misma tool. MCP (Model Context Protocol, Anthropic 2024) estandariza este patrón entre proveedores.",
+      "realWorld": "En el playbook de agentes de Anthropic (2024–2025), se recomienda explícitamente un límite de 25 turnos tool-use por conversación para evitar 'agentes runaway'. LangChain reportó postmortems públicos de agents que quemaron $500+ en una sola sesión por loops infinitos de tool calls.",
+      "tags": ["function calling", "tool use", "agentes", "protocolo"],
+      "tech": ["OpenAI tools", "Anthropic tool_use", "MCP", "Gemini function calling"],
+      "references": [
+        { "title": "OpenAI — Function calling guide", "url": "https://platform.openai.com/docs/guides/function-calling" },
+        { "title": "Anthropic — Model Context Protocol", "url": "https://modelcontextprotocol.io/" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "cost-inference",
+      "topic": "Elegir entre Claude, GPT, Gemini, DeepSeek, Llama",
+      "difficulty": "mid",
+      "scenario": "Producto SaaS B2B con requisitos: (1) procesar contratos legales de 100-300 páginas, (2) respuestas trazables (mostrar de qué párrafo salió la respuesta), (3) coste debe estar bajo control, (4) latencia P95 < 8s, (5) datos de clientes NO pueden salir de US/UE. Un compañero propone 'usemos GPT-4o para todo, es el estándar'.",
+      "question": "¿Qué crítica y propuesta más matizada harías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "'GPT-4o para todo' ignora: (1) contratos largos favorecen modelos con context grande y buen recall (Gemini 1.5/2.0 con 1M+, Claude 3.5+ con 200k), (2) trazabilidad se beneficia de citations nativas (Anthropic Citations, Cohere) o RAG bien montado, (3) coste varía 10x entre modelos, (4) residencia de datos requiere elegir región/proveedor correcto (Bedrock, Vertex, Azure OpenAI en región específica, no la API pública). Propondría benchmarking en TU caso de uso antes de decidir, y probablemente un router (modelo chico para tareas simples, grande para las complejas).", "correct": true, "why": "Correcto. No hay 'mejor modelo' universal — hay 'mejor modelo para TU caso'. Los benchmarks públicos (MMLU, HumanEval) no correlacionan bien con calidad en dominios específicos. La respuesta madura es hacer eval propio." },
+        { "letter": "B", "text": "GPT-4o es el mejor modelo objetivo, así que sí, usar solo eso.", "correct": false, "why": "No existe 'mejor modelo objetivo'. Cada modelo tiene fortalezas: Claude en escritura/coding largo, Gemini en context ultra-largo y multimodal, GPT en tool use maduro, DeepSeek en razonamiento a bajo coste, Llama on-prem. Depende del caso." },
+        { "letter": "C", "text": "Llama-3 self-hosted resuelve todo: sin dependencia de API externa.", "correct": false, "why": "Self-hosting resuelve residencia de datos y potencialmente coste, pero introduce operaciones complejas (GPU scheduling, autoscaling, monitoring, evals continuos). Puede ser correcto en algunos casos pero no es la primera opción sin análisis." },
+        { "letter": "D", "text": "Usar el modelo más barato disponible (DeepSeek); si falla se cambia a otro.", "correct": false, "why": "Optimizar solo coste ignora latencia, calidad, y compliance. Y 'cambiar cuando falle' en producción B2B con contratos legales genera incidentes con clientes." }
+      ],
+      "explanation": "Framework para elegir modelo: (1) Requisitos duros primero — residencia de datos, SLA, latencia. (2) Calidad — evalúa con TU dataset (mínimo 100 ejemplos). (3) Coste — calcula el TCO por request, no el precio por token. (4) Vendor risk — evita lock-in vía abstracciones (LiteLLM, Vercel AI SDK, Bedrock). (5) Router — modelo chico para el 80% simple, grande para el 20% complejo. Modelos 2025–2026 relevantes: Claude 3.5/4/Opus, GPT-4o/4.1/5, Gemini 2.0/2.5, DeepSeek V3/R1, Llama 3.3/4, Mistral Large 2, Cohere Command R+.",
+      "realWorld": "Notion publicó en 2024 su arquitectura multi-modelo: routing según tarea (Claude para escritura, GPT-4 para code, modelo chico para clasificación). Ahorros reportados: 70% en coste vs 'GPT-4 para todo', calidad equivalente o mejor por task-specific matching.",
+      "tags": ["model selection", "vendor comparison", "TCO", "routing"],
+      "tech": ["Claude", "GPT-4o", "Gemini", "DeepSeek", "Llama", "LiteLLM"],
+      "references": [
+        { "title": "LMSYS Chatbot Arena Leaderboard", "url": "https://lmarena.ai/" },
+        { "title": "Artificial Analysis — Model comparison", "url": "https://artificialanalysis.ai/" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "context-engineering",
+      "topic": "Context window grande — implicaciones reales",
+      "difficulty": "senior",
+      "scenario": "Gemini 2.0 ofrece 1M tokens de contexto, Claude 3.5+ ofrece 200k, y en 2025 aparecen ventanas 2M+. Un compañero propone: 'Ya no necesitamos RAG. Metemos toda nuestra documentación (~800k tokens) en cada request y listo.'",
+      "question": "¿Cuáles son los DOS problemas más graves de esa propuesta?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Coste por request: 800k tokens de input a $3/MTok = $2.40 por request; con 10k requests/día = $24k/día = $720k/mes solo en input tokens. RAG con 20 chunks relevantes = ~$0.024 por request. Diferencia 100x.", "correct": true, "why": "Correcto. El coste escala linealmente con tokens de input. Ventanas grandes tienen su lugar (documento único, análisis one-off) pero para queries repetidas con corpus estático, RAG sigue ganando por coste, incluso considerando prompt caching (que baja pero no elimina el diferencial)." },
+        { "letter": "B", "text": "Degradación de calidad tipo 'lost-in-the-middle' y 'needle-in-haystack': los modelos con ventana grande aún tienen sesgos posicionales — recuperan mejor info al inicio y al final que en la mitad. Y accuracy baja para queries que requieren reasoning sobre múltiples piezas dispersas en el contexto. RAG mitiga esto al pasar solo lo relevante.", "correct": true, "why": "Correcto. Papers de 2023–2025 (Liu et al. 'Lost in the Middle', evals de Anthropic y Google en needle-in-haystack) muestran que aunque ventanas grandes 'recuerdan' facts individuales, la calidad de razonamiento multi-hop se degrada con context muy grande. RAG selecciona activamente lo relevante." },
+        { "letter": "C", "text": "El modelo se cae por OOM cuando el context es >500k.", "correct": false, "why": "No — el proveedor gestiona la memoria. Si soporta 1M, procesa 1M sin OOM del lado cliente." },
+        { "letter": "D", "text": "El context grande viola GDPR automáticamente.", "correct": false, "why": "GDPR no depende del tamaño del context, sino del tipo de datos y el proveedor/región. Es una preocupación real pero ortogonal al tamaño." },
+        { "letter": "E", "text": "Latencia: prefill de 800k tokens tarda 15–40s típicamente, inaceptable para UX conversacional.", "correct": true, "why": "También correcto. TTFT escala con el tamaño del input. Con prompt caching se amortiza tras la primera request, pero la primera cuesta caro. Aún así, elegí solo dos porque el enunciado pide 'los DOS más graves' — B y A son los universales; E depende del patrón de uso." }
+      ],
+      "explanation": "Ventanas grandes NO reemplazan RAG en la mayoría de escenarios de producción. RAG sigue ganando por: (1) coste (procesa solo lo relevante), (2) precisión (evita lost-in-the-middle, mejora recall en corpus grandes), (3) actualización incremental (no reindexas todo), (4) trazabilidad (sabes qué chunks se usaron). Ventanas grandes brillan cuando: (a) input es único y grande (contrato, codebase), (b) la query requiere ver todo (resumen global, cross-referencing denso), (c) el corpus cambia por request. Patrón moderno: RAG + ventana grande combinados — recupera 50 chunks pero pásalos a un modelo con 200k para razonar sobre todos.",
+      "realWorld": "Google Gemini 1.5 lanzó con 1M–10M tokens en 2024 y presentó needle-in-haystack como perfecto. Pero benchmarks independientes (Chroma Research 'Context Rot', Databricks) mostraron degradación real en tareas de reasoning con context >200k. La industria consolidó el consenso: 'ventana grande complementa a RAG, no lo reemplaza'.",
+      "tags": ["context-window", "RAG vs long-context", "lost-in-the-middle", "cost"],
+      "tech": ["Gemini", "Claude", "RAG"],
+      "references": [
+        { "title": "Liu et al. — Lost in the Middle: How Language Models Use Long Contexts", "url": "https://arxiv.org/abs/2307.03172" },
+        { "title": "Anthropic — Long context prompt engineering", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/long-context-tips" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "cost-inference",
+      "topic": "Prompt caching — cómo funciona y cuándo NO ayuda",
+      "difficulty": "senior",
+      "scenario": "Activas prompt caching de Anthropic en un endpoint. El precio de input pasa a $0.30/MTok para tokens cacheados. Pero el ahorro real medido es del 12%, no del 90% que esperabas. Los prompts son de 30k tokens (18k de instrucciones + 12k que cambian por usuario).",
+      "question": "¿Cuál es la causa más probable y cómo lo optimizarías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El TTL del cache es 5 minutos (o 1 hora con la opción extendida). Si el tráfico está distribuido en el tiempo, la mayoría de requests no encuentran cache caliente. Además, prompt caching funciona por PREFIJO: los tokens deben ser IDÉNTICOS desde el inicio hasta el punto de cache. Si mezclas partes variables antes de las estáticas, invalidas todo el cache. Solución: (1) reordenar prompt para poner ESTÁTICO primero (system prompt, tools, docs) y VARIABLE al final (query del usuario), (2) marcar cache_control en el bloque estático, (3) considerar cache extendido de 1h para tráfico esporádico.", "correct": true, "why": "Correcto. Es la causa #1 de baja hit rate. El cache es un prefijo: cualquier cambio antes del punto marcado invalida todo el prefijo. Además el TTL es corto." },
+        { "letter": "B", "text": "El cache solo funciona con modelo Claude Haiku, no con Sonnet.", "correct": false, "why": "Falso. Anthropic ofrece prompt caching en toda la familia Claude 3+ (Haiku, Sonnet, Opus)." },
+        { "letter": "C", "text": "El cache tiene un cargo de escritura adicional que anula la mayor parte del ahorro.", "correct": false, "why": "Parcialmente cierto — hay un costo de escritura (1.25x el precio normal, ~$3.75/MTok en el ejemplo). Pero para prompts reutilizados 2+ veces ya sale rentable. No explica una diferencia tan grande." },
+        { "letter": "D", "text": "Prompt caching es incompatible con streaming.", "correct": false, "why": "Falso. Funciona con streaming perfectamente." }
+      ],
+      "explanation": "Prompt caching funciona por PREFIX MATCHING: el proveedor guarda el KV-cache del prefix procesado hasta el punto marcado. Si el siguiente request comparte exactamente el mismo prefix, reutiliza y ahorra prefill. Reglas críticas: (1) ORDEN — pon estático al inicio (system, tools, docs, few-shot examples) y variable al final (user query, timestamps). (2) IDENTIDAD BYTE-A-BYTE — cualquier cambio (fecha, ID, whitespace) rompe el cache desde ese punto. (3) TTL — 5m por defecto, 1h como opción (más cara escribir pero rentable si hits son escasos). (4) MÍNIMO — hay un mínimo de tokens para poder cachear (~1024 en Anthropic). Diseña el prompt como un layered cake: fundamentos abajo, la crema arriba.",
+      "realWorld": "Anthropic publicó en 2024 case studies donde Notion, Sourcegraph, y Perplexity reportaron ahorros del 50–90% al reestructurar prompts para maximizar hit rate. En un caso, mover el system prompt y las tools ANTES del historial de conversación aumentó hits del 20% al 85%.",
+      "tags": ["prompt caching", "cost optimization", "cache design", "KV cache"],
+      "tech": ["Anthropic", "OpenAI", "Gemini"],
+      "references": [
+        { "title": "Anthropic — Prompt caching", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching" },
+        { "title": "OpenAI — Prompt caching", "url": "https://platform.openai.com/docs/guides/prompt-caching" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "context-engineering",
+      "topic": "Determinismo y reproducibilidad en producción",
+      "difficulty": "senior",
+      "scenario": "Auditoría legal exige que un endpoint de LLM sea 'reproducible': mismo input → mismo output para trazabilidad. Un compañero propone `temperature=0, seed=42` y declara 'listo'. Pero al re-ejecutar tests en CI, el 3% de outputs difieren.",
+      "question": "¿Cuál es la explicación técnica y qué diseño cumple realmente la exigencia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Determinismo perfecto NO se puede garantizar solo con temperature=0 + seed: (a) batching en GPU altera orden de operaciones flotantes, (b) actualizaciones silenciosas del modelo cambian salidas (por eso OpenAI expone `system_fingerprint` — si cambia, el modelo cambió), (c) MoE routing puede variar. Diseño para cumplir compliance: (1) LOG del input completo + output + model version + fingerprint + timestamp, (2) versionado explícito del modelo (`gpt-4-0613`, no `gpt-4`), (3) hash del output guardado, (4) NO reejecutar en auditoría — auditar los logs guardados. La reproducibilidad se resuelve con storage, no con determinismo del modelo.", "correct": true, "why": "Correcto. Ese es el patrón usado por bancos, salud, y legal: logging inmutable de I/O, versionado explícito, y auditoría sobre logs, no re-ejecución. El determinismo del modelo es un ideal aproximable, no garantizable." },
+        { "letter": "B", "text": "Cambiando a un modelo open-source auto-hosteado con temperature=0 se garantiza determinismo bit-perfect siempre.", "correct": false, "why": "Cerca pero incompleto. Incluso self-hosted, cuBLAS/cuDNN pueden variar por versión de driver, y el batching sigue afectando. Se puede acercar mucho con `torch.use_deterministic_algorithms(True)` y batch_size=1, pero mata performance." },
+        { "letter": "C", "text": "temperature=0 + seed=42 es la única manera oficial y el 3% de fallos es un bug reportable.", "correct": false, "why": "OpenAI mismo dice: 'Determinism is best-effort'. El 3% es esperado y no es reportable como bug." },
+        { "letter": "D", "text": "Encriptar el output con la seed como clave asegura la reproducibilidad.", "correct": false, "why": "Confusión de conceptos: encriptar no tiene relación con reproducibilidad de output. Falla el requisito." }
+      ],
+      "explanation": "Reproducibilidad ≠ determinismo del modelo. En producción con compliance (SOX, HIPAA, GDPR-Art22 sobre decisiones automatizadas), la solución es: (1) storage inmutable de request/response, (2) versión explícita del modelo (pinning), (3) metadata (fingerprint, timestamp, request_id), (4) mecanismo de re-derivación desde logs, no re-ejecución. Buenas prácticas complementarias: (a) temperature=0 y seed para minimizar drift, (b) circuit breaker si system_fingerprint cambia inesperadamente, (c) canary con eval antes de aceptar model updates.",
+      "realWorld": "En 2024 OpenAI actualizó silenciosamente varios snapshots de gpt-4 y usuarios reportaron cambios de comportamiento en evals. Desde entonces, la best practice es pinnear versiones (`gpt-4-turbo-2024-04-09`) y no usar aliases genéricos (`gpt-4`). El model card de cada snapshot incluye system_fingerprint.",
+      "tags": ["determinismo", "reproducibilidad", "compliance", "audit"],
+      "tech": ["OpenAI seed", "system_fingerprint", "model pinning"],
+      "references": [
+        { "title": "OpenAI — Reproducible outputs", "url": "https://cookbook.openai.com/examples/reproducible_outputs_with_the_seed_parameter" },
+        { "title": "GDPR Article 22 — Automated decision-making", "url": "https://gdpr-info.eu/art-22-gdpr/" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "context-engineering",
+      "topic": "System prompt vs user prompt vs assistant prefill",
+      "difficulty": "mid",
+      "scenario": "En code review encuentras: el system prompt tiene el historial de conversación, el user prompt tiene el 'Eres un asistente de X' del asistente, y el prefill del assistant está vacío. El resultado: el modelo confunde roles, alucina y rompe formato con frecuencia.",
+      "question": "¿Cuál es la explicación correcta del uso de cada rol y cómo debería reorganizarse?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los roles tienen semántica entrenada: (1) SYSTEM = identidad, reglas, output format, tools disponibles. (2) USER = input del humano en ESTE turno. (3) ASSISTANT = respuestas anteriores del modelo (turno pasado) o PREFILL para forzar formato ('{' para JSON, '<answer>' para XML). Mezclar roles rompe la señal entrenada. Solución: mover 'Eres un asistente…' al SYSTEM, el historial en la secuencia alternada USER/ASSISTANT, y el prefill vacío está bien salvo que quieras forzar inicio del output.", "correct": true, "why": "Correcto. Los modelos instruction-tuned aprenden el patrón role→semántica en SFT/RLHF. Ignorarlo degrada calidad significativamente." },
+        { "letter": "B", "text": "Los roles son cosméticos; se pueden mezclar libremente sin impacto.", "correct": false, "why": "Falso. Los modelos aprenden diferentes 'behavior patterns' por rol durante fine-tuning. Anthropic y OpenAI publican guides explicando la semántica esperada de cada rol." },
+        { "letter": "C", "text": "System prompt no funciona en Claude, solo en OpenAI; debería mover todo al user.", "correct": false, "why": "Claude soporta system prompt vía el parámetro `system` en la API (no es un mensaje con rol, es un campo separado, pero cumple la misma función semántica)." },
+        { "letter": "D", "text": "El assistant prefill es para logging; nunca contiene texto que el modelo continúe.", "correct": false, "why": "Al contrario: el prefill fuerza al modelo a CONTINUAR desde ahí. Es una técnica poderosa para forzar formato ('{', '```json', '<answer>') y evitar preámbulos indeseados." }
+      ],
+      "explanation": "Cada rol tiene semántica: SYSTEM define persona/reglas/format (Anthropic recomienda ponerlo detallado; OpenAI también). USER es el turno actual del humano. ASSISTANT son respuestas pasadas del modelo (para historial) o prefill (para continuar output). Reglas prácticas: (1) NO metas 'Eres X' en user — es señal débil. (2) NO metas historial en system — se olvida. (3) Usa prefill para forzar JSON/XML/formato específico. (4) En agentes con tool_use, el rol 'tool' guarda resultados de tools. Anthropic recomienda usar XML tags dentro del system para estructurar (`<instructions>`, `<examples>`, `<constraints>`).",
+      "realWorld": "Anthropic publicó un guide (2024) mostrando que reestructurar prompts para poner instrucciones en system + ejemplos en formato XML mejoró la adherencia a formato en un 40% en sus evals internos. Es de las palancas más baratas y grandes.",
+      "tags": ["roles", "system prompt", "prefill", "prompt engineering"],
+      "tech": ["OpenAI", "Anthropic", "chat templates"],
+      "references": [
+        { "title": "Anthropic — System prompts", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/system-prompts" },
+        { "title": "OpenAI — Chat completions guide", "url": "https://platform.openai.com/docs/guides/text-generation" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "cost-inference",
+      "topic": "Batching y throughput vs latency",
+      "difficulty": "senior",
+      "scenario": "Diseñas un job nocturno que clasifica 500k tickets con LLM. Tu proveedor ofrece dos modos: (a) API sincrónica normal ($3/MTok input, $15/MTok output, latencia P50 2s), (b) Batch API con 24h SLA a mitad de precio. Un compañero dice: 'usemos la síncrona pero con 200 requests paralelos, será más rápido y no me tengo que pelear con batches'.",
+      "question": "¿Qué contrapunto técnico y económico haces?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "La Batch API existe justamente para este workload: (1) precio 50% menor (500k * $costo/2 = ahorro considerable), (2) sin rate limits punzantes (no te tumban el servicio en horario laboral), (3) el proveedor optimiza throughput agrupando en background. La ruta 'paralelo síncrono' rompe rate limits (429s), consume tu quota de latencia interactiva, y no ahorra dinero. Además, 24h SLA es sobrado para un job nocturno.", "correct": true, "why": "Correcto. Batch APIs (OpenAI, Anthropic desde 2024) están diseñadas exactamente para este caso. Mismo modelo, mismo output, mitad de precio, sin drama de rate limits." },
+        { "letter": "B", "text": "El paralelo síncrono siempre gana porque es más rápido; 24h de SLA es excesivo.", "correct": false, "why": "'Más rápido' no importa si el requerimiento es 'antes de mañana'. Y no es más rápido si te rate-limitea el proveedor." },
+        { "letter": "C", "text": "La Batch API solo sirve para embeddings, no para chat completions.", "correct": false, "why": "Falso. Anthropic Message Batches y OpenAI Batch API soportan chat completions, embeddings, y en OpenAI también fine-tuning inputs." },
+        { "letter": "D", "text": "El paralelo síncrono viola los TOS del proveedor.", "correct": false, "why": "No viola TOS mientras respetes rate limits. El problema es que un job de 500k rebasa fácilmente los rate limits de tier estándar." }
+      ],
+      "explanation": "Regla: elige la modalidad según SLA de la tarea, no según preferencia personal. Cargas offline/batch = usa Batch API (50% descuento, sin rate limits agresivos, procesamiento asincrónico). Cargas interactivas = síncrona con streaming. Cargas near-realtime (segundos) = síncrona con prompt caching. Cargas ultra-baja latencia = Groq/Cerebras/inference específica. Además, Batch API tiene ventajas ocultas: (1) no bloquea tu quota de latencia interactiva, (2) el proveedor puede darte mejor throughput porque agrupa, (3) resultado en JSONL trivial de procesar.",
+      "realWorld": "Anthropic lanzó Message Batches en octubre 2024 con 50% descuento y hasta 100k requests por batch. Grandes usuarios (Shopify, Notion, GitLab) migraron cargas offline reduciendo facturas mensuales entre 30–50%.",
+      "tags": ["batch API", "throughput", "rate limits", "cost"],
+      "tech": ["Anthropic Batches", "OpenAI Batch API"],
+      "references": [
+        { "title": "OpenAI — Batch API", "url": "https://platform.openai.com/docs/guides/batch" },
+        { "title": "Anthropic — Message Batches", "url": "https://docs.anthropic.com/en/docs/build-with-claude/batch-processing" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "context-engineering",
+      "topic": "Chain-of-Thought vs razonadores nativos (o1, R1, Claude thinking)",
+      "difficulty": "senior",
+      "scenario": "Un compañero implementó Chain-of-Thought manual ('Piensa paso a paso antes de responder') sobre GPT-4o para problemas matemáticos. La accuracy es 62%. Otro compañero propone migrar a un modelo razonador nativo (o1/o3, DeepSeek R1, Claude extended thinking) y quitar el CoT del prompt.",
+      "question": "¿Cuál es la razón técnica más precisa para preferir razonadores nativos en este caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los razonadores nativos están específicamente ENTRENADOS con RL sobre trazas de razonamiento (a menudo con verificadores automáticos para matemáticas/código), aprendiendo a explorar, retroceder, verificar. Producen 'thinking tokens' internos antes del output final y logran 20–40 puntos más en benchmarks matemáticos (AIME, MATH). CoT manual sobre modelos NO razonadores mejora respecto al baseline pero no alcanza esos números. Trade-off: cuestan más tokens (thinking tokens se facturan) y son más lentos.", "correct": true, "why": "Correcto. o1 (2024), o3 (2025), DeepSeek R1 (2025), Claude 3.7 extended thinking (2025), Gemini 2.5 thinking (2025) fueron entrenados con RL sobre reasoning traces. Los benchmarks públicos muestran diferencias enormes vs CoT sobre modelos no razonadores." },
+        { "letter": "B", "text": "Los razonadores son más baratos y rápidos por token, así que siempre son la mejor opción.", "correct": false, "why": "Justo lo opuesto: consumen thinking tokens (facturados por el proveedor) y son más lentos. Solo valen la pena cuando la ganancia de accuracy justifica el coste extra." },
+        { "letter": "C", "text": "CoT manual funciona igual de bien que un razonador nativo; el debate es puramente estético.", "correct": false, "why": "Los benchmarks públicos (AIME, MATH, GPQA, LiveBench) muestran diferencias de 20–40 puntos porcentuales a favor de razonadores nativos en tareas de matemáticas/razonamiento." },
+        { "letter": "D", "text": "Los razonadores no exponen su thinking, así que no se pueden usar en producción por falta de trazabilidad.", "correct": false, "why": "Claude extended thinking y DeepSeek R1 exponen las trazas. OpenAI o1/o3 las oculta pero devuelve tokens totales (para billing). Trazabilidad es un factor a evaluar pero no un blocker universal." }
+      ],
+      "explanation": "Modelos razonadores usan RL con recompensas basadas en resolver problemas correctamente (matemáticas verificables, tests de código que pasan). Aprenden emergentes: reflexión, verificación, exploración de ramas. Trade-offs: (1) latencia alta (thinking puede tardar decenas de segundos), (2) coste alto (thinking tokens facturados como output), (3) no siempre necesario — para clasificación simple o generación creativa un modelo estándar es mejor. Regla: usa razonador cuando la tarea es reasoning-heavy (matemáticas, ciencia, código complejo, agentes multi-step planning) y tolera la latencia.",
+      "realWorld": "DeepSeek R1 (enero 2025) demostró que RL con recompensas verificables sobre matemáticas alcanza performance similar a o1 con coste muy inferior. Cambió la percepción del mercado sobre modelos razonadores y aceleró la adopción de esta técnica en múltiples labs.",
+      "tags": ["reasoning models", "chain-of-thought", "o1", "R1", "thinking"],
+      "tech": ["OpenAI o1/o3", "DeepSeek R1", "Claude extended thinking", "Gemini thinking"],
+      "references": [
+        { "title": "OpenAI — Learning to reason with LLMs (o1)", "url": "https://openai.com/index/learning-to-reason-with-llms/" },
+        { "title": "DeepSeek-R1 — Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "url": "https://arxiv.org/abs/2501.12948" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "cost-inference",
+      "topic": "Rate limits — RPM, TPM, RPD y estrategias",
+      "difficulty": "mid",
+      "scenario": "Un servicio empieza a devolver 429 Too Many Requests desde Anthropic. Los headers muestran: `anthropic-ratelimit-tokens-remaining: 0`, `anthropic-ratelimit-tokens-reset: 45s`. El equipo está en pánico en Slack. Un compañero propone 'retry inmediato hasta que pase'.",
+      "question": "¿Cuál es la respuesta técnicamente correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Retry inmediato empeora todo: refresca el 429, quema quota extra, y puede causar throttling secundario. Estrategia correcta: (1) exponential backoff con jitter, (2) respetar el header `retry-after` o `ratelimit-reset`, (3) implementar cliente con rate limit LOCAL (token bucket) por debajo del server-side, (4) usar Batch API para cargas offline, (5) pedir tier increase al proveedor si es persistente, (6) diseñar circuit breaker que degrade gracefully (mostrar 'servicio saturado' antes que rebotar 429s al usuario final).", "correct": true, "why": "Correcto. Este es el playbook estándar. Retry inmediato es antipatrón — todos los libros de fiabilidad (Google SRE, AWS Well-Architected) lo prohíben. La combinación backoff + jitter + rate limit local + batch offline + tier increase es lo que funciona." },
+        { "letter": "B", "text": "Ignorar el 429 y seguir mandando; el proveedor eventualmente cede.", "correct": false, "why": "Al contrario: el proveedor puede escalar el throttling (bans temporales del API key, tier degradation). Y tu app va a fallar consistentemente." },
+        { "letter": "C", "text": "Cambiar a un modelo distinto (GPT-4 en vez de Claude); los rate limits son independientes.", "correct": false, "why": "Solución posible como fallback multi-proveedor pero no soluciona la causa raíz. Si tu carga excede la capacidad del provider actual, planificar propiedad rate limits o batches es mejor." },
+        { "letter": "D", "text": "Deshabilitar los reintentos automáticos del SDK y solo hacer una llamada por request.", "correct": false, "why": "Hace que fallos transitorios (que no son 429) también fallen. Mejor: reintentos con backoff + jitter, respetando el retry-after." }
+      ],
+      "explanation": "Rate limits usualmente son: RPM (requests/minuto), TPM (tokens/minuto), y a veces RPD (requests/día). Anthropic y OpenAI limitan por TPM primariamente. Estrategias: (1) client-side rate limiter (bucket4j, aiolimiter) por debajo del server-side, (2) exponential backoff con jitter (retry * 2^n + random), (3) respetar retry-after header, (4) usar Batch API para offline, (5) tier increase pidiendo al proveedor con evidencia de uso, (6) multi-proveedor con router (LiteLLM), (7) circuit breaker para fail-fast bajo saturación.",
+      "realWorld": "AWS SDK oficial implementa desde hace años exponential backoff con jitter según su paper 'Exponential Backoff And Jitter' — evita el 'thundering herd problem'. LiteLLM y LangChain integran retries configurables con la misma técnica.",
+      "tags": ["rate limits", "429", "backoff", "resilience"],
+      "tech": ["Anthropic", "OpenAI", "exponential backoff", "LiteLLM"],
+      "references": [
+        { "title": "AWS — Exponential Backoff And Jitter", "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/" },
+        { "title": "OpenAI — Rate limits guide", "url": "https://platform.openai.com/docs/guides/rate-limits" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "context-engineering",
+      "topic": "Multimodal — cuándo usar y cuándo NO",
+      "difficulty": "mid",
+      "scenario": "Un compañero quiere extraer texto de facturas escaneadas (PDF/JPG). Propone dos opciones: (a) OCR clásico (Tesseract, Textract, DocAI) → texto → LLM para estructurar; (b) mandar la imagen directamente a un LLM multimodal (GPT-4o, Claude 3.5+, Gemini 2.0). ¿Cuál elegir?",
+      "question": "¿Cuál es el análisis más pragmático?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Depende de calidad de imagen y volumen: (1) para volumen alto con imágenes de calidad decente, OCR + LLM sale más barato y trazable (puedes ver el texto extraído y auditar). (2) LLM multimodal directo brilla cuando OCR falla (handwriting, layout complejo, tablas irregulares) o cuando quieres extraer + razonar en un solo paso. (3) A menudo el patrón ganador es HÍBRIDO: OCR como default barato, fallback a multimodal si confidence de OCR es bajo. Además, medir: multimodal cuenta la imagen como ~1000-2000 tokens según resolución, no gratis.", "correct": true, "why": "Correcto. Es análisis maduro: no hay 'ganador universal'. Los costos de tokens de imagen (OpenAI: high detail ~1105 tokens por tile 512x512) hacen que a volumen, OCR+LLM sea más barato. Pero para casos difíciles multimodal es superior." },
+        { "letter": "B", "text": "Siempre multimodal, es 'la nueva forma de hacer las cosas'.", "correct": false, "why": "Ignora coste, latencia, y trazabilidad. En volumen 100k+ facturas/mes el diferencial de precio es significativo." },
+        { "letter": "C", "text": "Siempre OCR clásico; los LLMs multimodales son inmaduros en 2026.", "correct": false, "why": "Falso — GPT-4o, Claude 3.5+, Gemini 2.0 son excelentes en visión. La cuestión es cuándo vale el coste extra, no si funcionan." },
+        { "letter": "D", "text": "OCR y multimodal dan resultados idénticos siempre; elige por precio.", "correct": false, "why": "Falso. En handwriting, layouts complejos, y idiomas raros, multimodal es notablemente superior. En texto impreso limpio, ambos son excelentes." }
+      ],
+      "explanation": "Costes multimodales típicos (2025): OpenAI factura ~85 + 170*n tiles tokens por imagen high-detail. Claude ~1600 tokens por imagen 1092x1092. Gemini incluye visión con precio de texto en muchos tiers. Para batch de 100k facturas: OCR clásico ~$100–500 (según proveedor), multimodal LLM $5k–20k. Patrón híbrido inteligente: (1) OCR (Textract/DocAI) primero, (2) medir confidence, (3) fallback a multimodal para <5% que falla. Baja el coste 90% con la misma calidad. Ecosistemas específicos: unstructured.io, Landing AI, LlamaParse combinan OCR + multimodal automáticamente.",
+      "realWorld": "Ramp (fintech de tarjetas corporativas) publicó su arquitectura de procesamiento de recibos: OCR primero para volumen, LLM multimodal solo para casos edge — ahorros del 80% vs multimodal-first. Anthropic recomienda explícitamente este patrón en su cookbook.",
+      "tags": ["multimodal", "OCR", "vision", "cost"],
+      "tech": ["GPT-4o vision", "Claude vision", "Gemini vision", "Textract", "Tesseract"],
+      "references": [
+        { "title": "OpenAI — Vision guide (image tokens)", "url": "https://platform.openai.com/docs/guides/vision" },
+        { "title": "Anthropic — Vision capabilities", "url": "https://docs.anthropic.com/en/docs/build-with-claude/vision" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "cost-inference",
+      "topic": "Speculative decoding, distillation, MoE",
+      "difficulty": "senior",
+      "scenario": "En una arquitectura review, un compañero pregunta: '¿Por qué Groq/Cerebras/SambaNova sirven a 500+ tokens/s cuando GPT-4 va a 30–80 t/s en la API estándar? ¿Es truco?'",
+      "question": "¿Cuál es la explicación técnica más completa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Hardware especializado + técnicas de inferencia: (1) Groq usa LPU (Language Processing Unit) con SRAM on-chip masiva — evita bottleneck de HBM. Cerebras usa wafer-scale engine. Son ASICs pensados para LLM inference, no GPUs de propósito general. (2) Técnicas: speculative decoding (draft model chico predice, big model verifica en paralelo), continuous batching, KV cache optimizado, tensor parallelism. (3) Trade-off: menos flexibilidad, coste inicial alto, disponibilidad restringida vs GPU cloud tradicional. No es truco — es arquitectura hardware/software dedicada.", "correct": true, "why": "Correcto. Es análisis honesto: hay razones físicas (memoria más rápida, ASICs) y algorítmicas (speculative decoding) que explican el 10x. GPUs de nube resuelven el caso general; ASICs dedican silicio a un solo problema." },
+        { "letter": "B", "text": "Corren modelos mucho más chicos y bajan calidad para conseguir throughput.", "correct": false, "why": "Falso — Groq sirve Llama-3-70B, Mixtral 8x7B, etc., con calidad idéntica al modelo original. Cerebras sirve Llama-3.1-405B." },
+        { "letter": "C", "text": "Comprimen respuestas usando streaming multiplexado inventado en 2025.", "correct": false, "why": "No existe tal cosa. Streaming es texto, punto." },
+        { "letter": "D", "text": "Cachean respuestas frecuentes; nunca ejecutan el modelo completo.", "correct": false, "why": "Falso — sí ejecutan el modelo. Hay caching opcional pero no es cómo consiguen throughput base." }
+      ],
+      "explanation": "Bottleneck principal en inference de LLM = memoria (mover pesos entre HBM y compute). GPUs tienen HBM rápida (H100: 3TB/s) pero limitada. ASICs como Groq LPU tienen SRAM masiva on-chip con >80TB/s de ancho de banda efectivo. Técnicas complementarias: speculative decoding (draft model chico predice N tokens, big model verifica en paralelo — 2-3x speedup), MoE routing (solo activan expertos relevantes), quantization (INT8/INT4 baja memory footprint), continuous batching (rellenas huecos con nuevos requests). Para casos con latencia crítica (voice AI, agentes real-time), estos providers son game changers.",
+      "realWorld": "Cerebras demostró Llama-3.1-405B a >900 t/s (feb 2025), 20x más rápido que GPUs. Groq alcanza 500+ t/s en Llama-3-70B. SambaNova sirve DeepSeek R1 671B con latency competitiva. Cambian el diseño posible: voice AI en <1s de latencia total, agentes que ejecutan cientos de pasos en segundos.",
+      "tags": ["hardware", "speculative decoding", "throughput", "ASIC"],
+      "tech": ["Groq", "Cerebras", "SambaNova", "speculative decoding", "MoE"],
+      "references": [
+        { "title": "Leviathan et al. — Fast Inference from Transformers via Speculative Decoding", "url": "https://arxiv.org/abs/2211.17192" },
+        { "title": "Groq — LPU Inference Engine architecture", "url": "https://groq.com/lpu-inference-engine/" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "context-engineering",
+      "topic": "Few-shot examples — cuándo y cómo",
+      "difficulty": "mid",
+      "scenario": "Tu clasificador de intents tiene un system prompt con 30 ejemplos few-shot embebidos. Accuracy 78%. Un compañero propone 'agregar 100 ejemplos más para mejorar'. Otro dice 'quitar todos y usar zero-shot con instrucciones claras'.",
+      "question": "¿Qué análisis y recomendación darías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Depende del modelo y del task: (1) modelos grandes modernos (GPT-4o, Claude 3.5+, Gemini 2.0) hacen zero-shot muy bien cuando las instrucciones son claras; a menudo few-shot no mejora o EMPEORA (rigidez, sobreajuste al formato de los ejemplos). (2) Modelos chicos SÍ se benefician de few-shot. (3) Añadir ejemplos linealmente aumenta coste y latencia (input tokens); 100 ejemplos = 5-10k tokens extra por request. (4) Estrategia ganadora: (a) probar zero-shot con instrucciones bien escritas, (b) si falla, few-shot con 3-8 ejemplos SELECCIONADOS (edge cases + diversidad), (c) si sigue fallando, fine-tuning o RAG-basado (few-shot dinámico por similarity).", "correct": true, "why": "Correcto. Es análisis moderno: 'más ejemplos' no es respuesta automática. La research reciente (2024) muestra rendimientos decrecientes y a menudo negativos con muchos ejemplos en modelos grandes." },
+        { "letter": "B", "text": "Siempre más ejemplos = mejor accuracy. Poner 100 mejora seguro.", "correct": false, "why": "Falso. Estudios recientes muestran retornos decrecientes y a veces negativos. Además dispara coste linealmente." },
+        { "letter": "C", "text": "Zero-shot siempre gana en 2026, few-shot es obsoleto.", "correct": false, "why": "Depende del modelo. Modelos chicos (Haiku, Gemini Flash, Llama-3-8B) siguen beneficiándose de few-shot. Y para formatos raros o dominios específicos, ejemplos ayudan a todos los modelos." },
+        { "letter": "D", "text": "Los few-shot deben estar siempre en el user prompt, nunca en el system.", "correct": false, "why": "Al contrario — poner few-shot en system aprovecha prompt caching (estáticos). Ponerlos en user rompe el cache por request." }
+      ],
+      "explanation": "Few-shot in-context learning fue clave con GPT-3 (2020). Con modelos actuales, la utilidad marginal es menor: (1) instruction-tuned models entienden reglas explícitas casi tan bien como ejemplos, (2) demasiados ejemplos causan 'majority label bias', 'recency bias', y sobreajuste al formato, (3) coste crece linealmente con ejemplos. Best practices 2025: (a) empezar con zero-shot bien redactado (usar CoT si es reasoning), (b) añadir 3–8 ejemplos DIVERSOS y con EDGE CASES si es necesario, (c) considerar dynamic few-shot (recuperar ejemplos similares al query con embeddings), (d) para casos crónicos, fine-tuning es más rentable que embeder ejemplos gigantes en cada request.",
+      "realWorld": "Anthropic publicó guías (2024) mostrando que Claude 3.5 Sonnet con zero-shot + instrucciones claras iguala few-shot 20-ejemplos en la mayoría de clasificación. Sourcegraph reportó que reducir de 40 a 5 ejemplos few-shot mejoró latencia y bajó coste sin degradar accuracy.",
+      "tags": ["few-shot", "zero-shot", "in-context learning", "prompt design"],
+      "tech": ["prompt engineering", "in-context learning"],
+      "references": [
+        { "title": "Brown et al. — Language Models are Few-Shot Learners (GPT-3)", "url": "https://arxiv.org/abs/2005.14165" },
+        { "title": "Anthropic — Use examples (multishot prompting)", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/multishot-prompting" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "context-engineering",
+      "topic": "Instrumentación mínima que TODO endpoint LLM debe tener",
+      "difficulty": "staff",
+      "scenario": "Estás definiendo el playbook de tu equipo para desplegar cualquier endpoint que llame a un LLM. Un compañero quiere mandar a prod un servicio 'MVP' con solo el request y respuesta loggeados. Tu compliance officer también está preocupado.",
+      "question": "¿Cuál es el conjunto MÍNIMO de instrumentación que definirías como bloqueante para prod?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Mínimo bloqueante: (1) Log estructurado con: request_id, user_id anonimizado, prompt hash, model + version + system_fingerprint, tokens_input, tokens_output, latency (TTFT + total), cost estimado, finish_reason, tools llamadas. (2) PII scrubbing antes de log. (3) Feature flag para desactivar el endpoint sin deploy. (4) Rate limiter local. (5) Circuit breaker por proveedor. (6) Alerts sobre p95 latency, error rate, cost per hour. (7) Sampling de traces con OpenTelemetry (Langfuse, Arize, Helicone o equivalente). (8) Eval canary: 20-50 casos que corren en cada deploy. Sin esto, no vas a prod.", "correct": true, "why": "Correcto. Es el mínimo razonable para LLMs. Muchos equipos lo aprenden por las malas: sin cost alerts pierden $10k en una noche; sin traces no depuran alucinaciones; sin canary evals una actualización del proveedor rompe el output silenciosamente." },
+        { "letter": "B", "text": "Solo log del request y response basta para MVP; el resto lo añadimos después.", "correct": false, "why": "'Después' rara vez llega, y sin cost alerts / rate limiter puedes tener un incidente de miles de dólares en horas. Sin PII scrubbing puedes violar GDPR en la primera semana." },
+        { "letter": "C", "text": "Configurar CloudWatch o Datadog es suficiente, no hace falta observabilidad específica de LLM.", "correct": false, "why": "Insuficiente. LLM observability necesita métricas específicas: token cost, hallucination rate, tool call success, cache hit rate. Tools genéricas no capturan esto sin custom instrumentation." },
+        { "letter": "D", "text": "Con guardrails (Guardrails AI, NeMo Guardrails) ya está todo cubierto.", "correct": false, "why": "Guardrails son una capa (input/output validation) pero no cubren observabilidad, cost tracking, ni evals continuos. Complementarias, no sustitutas." }
+      ],
+      "explanation": "LLMs en producción sin observabilidad = bomba de tiempo. Diferencias vs microservicios clásicos: (1) coste variable por request, (2) output no-determinístico, (3) drift silencioso por updates del proveedor, (4) alucinaciones que requieren eval semántico, no assertions. Stack recomendado 2025: (a) LLM observability (Langfuse, Arize AI, Helicone, LangSmith, Weights & Biases), (b) evals continuos (Braintrust, Ragas, promptfoo), (c) cost tracking con budget alerts por endpoint, (d) canary + shadow traffic para releases, (e) PII detection (Presidio, Amazon Comprehend PII). Sin estos, un incidente pequeño escala rápido.",
+      "realWorld": "En 2024 hubo múltiples casos públicos de startups quemando $5k–50k en horas por prompt injections que hicieron llamar tools costosas en loop, o por usuarios explotando endpoints sin rate limiting. Post-mortem consistente: la falta de observabilidad + cost alerts fue el multiplicador del daño.",
+      "tags": ["observability", "cost tracking", "production readiness", "PII"],
+      "tech": ["Langfuse", "Arize", "Helicone", "OpenTelemetry", "Presidio"],
+      "references": [
+        { "title": "OWASP LLM Top 10 (2025)", "url": "https://genai.owasp.org/llm-top-10/" },
+        { "title": "Langfuse — LLM Observability", "url": "https://langfuse.com/docs" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1151 @@
+{
+  "id": "programmer-sim-10-error-handling-and-recovery",
+  "trackId": "programmer",
+  "order": 10,
+  "title": "Simulacro 10 — Manejo de errores y recuperación",
+  "focus": "Exceptions vs error values, retries, dead-letter queues, saga compensation, defensive vs offensive programming, error boundaries — la línea entre un sistema que se cae y uno que degrada elegantemente.",
+  "areaCoverage": [
+    "apis",
+    "concurrency",
+    "patterns"
+  ],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "apis",
+      "topic": "Fail fast vs Fail silently",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr escribe:\n```python\ntry:\n    result = api_call()\nexcept:\n    pass\n```\nDice: 'así el código nunca crashea'.",
+      "question": "¿Cuál es el problema con este patrón?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Silencia TODO — incluidos KeyboardInterrupt, SystemExit, MemoryError, y bugs de programación. El servicio parece funcionar pero produce data corrupta o incorrecta silenciosamente. Es infinitamente peor que un crash: un crash lo detectas, un fallo silencioso lo descubres 6 meses después con auditoría.",
+          "correct": true,
+          "why": "Correcto. 'except:' bare en Python captura CUALQUIER excepción incluidas las que nunca deberías capturar (KeyboardInterrupt hace que Ctrl+C deje de funcionar). Además, silenciar errores oculta bugs: el código sigue como si nada aunque falló. Regla: solo captura excepciones ESPECÍFICAS que sabes cómo manejar (`except requests.Timeout:`). Todo lo demás debe propagar."
+        },
+        {
+          "letter": "B",
+          "text": "Ninguno — es una buena defensa contra crashes.",
+          "correct": false,
+          "why": "Anti-patrón conocido. 'Ocultar errores' no es 'manejar errores'. El sistema pierde observabilidad, produce comportamiento indefinido, y los bugs se acumulan."
+        },
+        {
+          "letter": "C",
+          "text": "Solo el hecho de no loguear el error.",
+          "correct": false,
+          "why": "Parcialmente cierto pero incompleto. Aunque logueaes, sigue siendo peligroso capturar demasiado amplio. El logging no arregla el problema conceptual."
+        },
+        {
+          "letter": "D",
+          "text": "Es problema solo si el api_call devuelve None.",
+          "correct": false,
+          "why": "Confuso. El problema es la captura amplia, no el valor devuelto."
+        }
+      ],
+      "explanation": "Regla dura de manejo de errores: (1) CAPTURA solo lo que puedes MANEJAR; (2) TODO lo demás debe propagar y ser visible (log + alert + crash si necesario). 'Fail fast' > 'fail silent': un servicio que crashea es diagnosticable; uno que produce data incorrecta silenciosamente destruye reputación. El principio se llama 'Let it crash' (Erlang philosophy) — deja que falle, tu supervisor lo reinicia. Alternativas modernas: Rust Result<T, E>, Go error values — hacen los errores explícitos y difíciles de ignorar.",
+      "realWorld": "Amazon perdió millones en 2004 por un bug de código que se ejecutó en un except silencioso. NASA Mars Climate Orbiter falló por unit mismatch silencioso. Toyota unintended acceleration se relacionó con exception handling débil en firmware.",
+      "tags": [
+        "fail fast",
+        "exception handling",
+        "silent failures",
+        "let it crash"
+      ],
+      "tech": [
+        "Python",
+        "Erlang",
+        "Rust"
+      ],
+      "references": [
+        {
+          "title": "Joe Armstrong — Making Reliable Distributed Systems"
+        },
+        {
+          "title": "Kent Beck — 'When to throw exceptions'"
+        }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "apis",
+      "topic": "Exception vs error values",
+      "difficulty": "mid",
+      "scenario": "Diseñas un módulo `parseUserInput`. Puede fallar por: (1) input malformado (esperado), (2) DB caída (transitorio), (3) programming bug (no debería pasar). Estás usando Go/Rust.",
+      "question": "¿Cómo distingues estos tipos y qué expones al llamador?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "En Go/Rust: (1) input malformado = error VALUE devuelto (`Result::Err(ValidationError)`) — llamador puede manejar; (2) DB caída = error value distinto para retry policy; (3) programming bug = panic!/panic — indica bug, no debe pasar en runtime saludable, debe generar crash + alert.",
+          "correct": true,
+          "why": "Correcto. Distinguir 'errores esperados que forman parte del flujo' (input malformado) de 'errores transitorios' (DB) de 'programming bugs' (invariantes violadas) es clave. Rust separa `Result` (recoverable) de `panic!` (unrecoverable). Go usa error values + `panic` para bugs. Errores esperados NO deben crashear; bugs DEBEN crashear rápido para ser detectados."
+        },
+        {
+          "letter": "B",
+          "text": "Todo debe ser exception; el llamador decide qué hacer.",
+          "correct": false,
+          "why": "En Java/Python funciona pero pierde información. Y las exceptions ocultan flujo de control — al leer código no ves qué puede fallar. Go/Rust decidieron explícitamente evitar exceptions por esta razón."
+        },
+        {
+          "letter": "C",
+          "text": "Todo debe devolver error value; nunca panic.",
+          "correct": false,
+          "why": "Programming bugs (invariantes violadas, punteros nulos donde no deben) deben crashear. Devolver error value para eso implica que el llamador puede 'recuperarse' de un bug, lo cual es peligroso."
+        },
+        {
+          "letter": "D",
+          "text": "Depende del framework — no hay guía general.",
+          "correct": false,
+          "why": "Hay guía general: separar recoverable de unrecoverable. Idiomático en Rust y Go, aplicable en cualquier lenguaje."
+        }
+      ],
+      "explanation": "Categorías de fallo (Joe Duffy, C# team, y Rust design): (1) EXPECTED errors — parte del flujo normal (validación, not-found, timeouts). Estos son error values / Result::Err. (2) EXCEPTIONAL errors — transitorios pero manejables (DB down, network). Retry con backoff. (3) BUGS / assertion violations — invariantes rotos, indica código incorrecto. Panic / crash. Rust hace la distinción explícita con `Result` (esperado) vs `panic!` (bug). Go con `error` vs `panic()`. Java/Python mezclan todo en `Exception`, lo que genera confusión. Buena práctica: subclase de exceptions para distinguir, o `Either<Error, T>` en FP.",
+      "realWorld": "Joe Duffy escribió 'The Error Model' analizando 15 años de Microsoft con exceptions y por qué el equipo diseñó Midori con error values. Rust adoptó explícitamente esta lección. En Java/C#, muchos equipos añaden `Optional<T>` y `Try<T>` para modelar errores esperados.",
+      "tags": [
+        "error handling",
+        "exceptions",
+        "error values",
+        "Result",
+        "panic"
+      ],
+      "tech": [
+        "Rust",
+        "Go",
+        "Java",
+        "C#"
+      ],
+      "references": [
+        {
+          "title": "Joe Duffy — The Error Model"
+        },
+        {
+          "title": "Rust Book — Error Handling"
+        }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "apis",
+      "topic": "Retry con exponential backoff",
+      "difficulty": "mid",
+      "scenario": "Tu servicio llama a una API externa. A veces falla con 503. Un compañero implementa: `for i in 1..5: try { return call() } catch { sleep(1000); continue }`.",
+      "question": "¿Qué está mal y cuál es la implementación correcta?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Retry constante (1s cada vez) crea 'thundering herd': si 10.000 clientes fallan y todos reintentan al mismo tiempo, saturas al server que se estaba recuperando. Exponential backoff (100ms, 200ms, 400ms, 800ms...) distribuye la carga.",
+          "correct": true,
+          "why": "Correcto. Retries sin backoff son la causa #1 de que servicios en recovery se caigan de nuevo. Exponential backoff da tiempo al server a recuperar, y evita cascading failures."
+        },
+        {
+          "letter": "B",
+          "text": "Falta jitter: añadir aleatoriedad (±25%) al delay. Sin jitter, N clientes sincronizados generan olas de tráfico periódicas. Con jitter, se dispersan.",
+          "correct": true,
+          "why": "Correcto. Marc Brooker (AWS) publicó el paper canónico 'Exponential Backoff and Jitter'. Sin jitter, el sistema oscila; con jitter, converge al equilibrio."
+        },
+        {
+          "letter": "C",
+          "text": "Retry SOLO en errores transitorios/retriables (5xx, 429, timeout de red). NUNCA retry 4xx (400 bad request, 401 auth) que representan un problema del cliente, ni operaciones no-idempotentes sin idempotency key.",
+          "correct": true,
+          "why": "Correcto. Retry de POST no-idempotente = doble carga en tarjeta. Retry de 400 = mismo error siempre. Retry de 429 SIN respetar Retry-After header = pisas al rate limiter."
+        },
+        {
+          "letter": "D",
+          "text": "Retry indefinido con backoff hasta que funcione.",
+          "correct": false,
+          "why": "Sin max attempts / max total time, un cliente se cuelga indefinidamente. Y en el peor caso, retry infinito puede convertir un fallo transitorio en un DDoS a tu propio servicio."
+        },
+        {
+          "letter": "E",
+          "text": "Retry en cualquier excepción para máxima cobertura.",
+          "correct": false,
+          "why": "Reintenta bugs (NullPointerException) que nunca se van a resolver, gastando recursos y ocultando problemas reales de código."
+        }
+      ],
+      "explanation": "Retry pattern moderno: (1) exponential backoff con base=100ms, max=30s; (2) jitter ±25% (o 'full jitter' aleatorio entre 0 y delay); (3) max retries (típicamente 3-5); (4) max total wait (evita cuelgues); (5) filtro de retriables (5xx, timeouts, 429 respeto Retry-After); (6) circuit breaker downstream (si sigue fallando, deja de intentar). Librerías: Polly (.NET), Resilience4j (Java), Tenacity (Python), retry (Go), AWS SDK retry (built-in con estos patrones). Sin estas defensas, un fallo transitorio se convierte en outage.",
+      "realWorld": "AWS DynamoDB incident 2015 fue amplificado por retries agresivos sin backoff. Twitter Fabric 2015 similar. Netflix Hystrix se creó específicamente por estos escenarios.",
+      "tags": [
+        "retries",
+        "backoff",
+        "jitter",
+        "idempotency"
+      ],
+      "tech": [
+        "Polly",
+        "Resilience4j",
+        "Tenacity",
+        "AWS SDK"
+      ],
+      "references": [
+        {
+          "title": "AWS Builders' Library — Exponential Backoff and Jitter"
+        },
+        {
+          "title": "Marc Brooker — Timeouts, retries, and backoff"
+        }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "apis",
+      "topic": "Idempotencia — la piedra angular de retries",
+      "difficulty": "senior",
+      "scenario": "Diseñas `POST /payments`. Cliente hace request; falla el response por timeout de red; cliente retrya. Ahora tienes 2 cargos. Un compañero dice 'usa PUT en lugar de POST porque PUT es idempotente'.",
+      "question": "¿Por qué eso no basta y qué es idempotencia REAL?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Verbo HTTP es solo convención — no garantiza idempotencia en tu handler. Solución REAL: cliente genera UUID (`Idempotency-Key: <uuid>`), server guarda mapping `key → response` por 24h. Retry con el mismo key devuelve la respuesta CACHED sin re-procesar. Stripe, Square, Shopify implementan así.",
+          "correct": true,
+          "why": "Correcto. Idempotencia = ejecutar N veces produce el mismo estado que ejecutar 1 vez. Requiere lógica explícita: dedupe por key. HTTP idempotency es solo semantic hint; la implementación debe respaldarla."
+        },
+        {
+          "letter": "B",
+          "text": "PUT es idempotente por RFC — basta cambiar el verbo.",
+          "correct": false,
+          "why": "RFC dice PUT DEBE ser idempotente pero no fuerza tu implementación. Si tu PUT inserta una fila cada vez, no es idempotente. La responsabilidad es del handler, no del verbo."
+        },
+        {
+          "letter": "C",
+          "text": "Añadir un lock en Redis por userId+amount por 30s.",
+          "correct": false,
+          "why": "Frágil: ¿si el usuario legítimamente carga $50 dos veces en 30s? Y si Redis se cae, el lock se pierde. Idempotency key es más preciso porque lo determina el cliente."
+        },
+        {
+          "letter": "D",
+          "text": "Cambiar el cliente para nunca retriar.",
+          "correct": false,
+          "why": "El cliente no siempre sabe si el request llegó (timeout de red = ambiguo). Sin retry el UX es terrible. La solución es hacer el server tolerante a retries."
+        }
+      ],
+      "explanation": "Idempotency-Key pattern (Stripe, RFC draft): (1) cliente genera UUID único por 'intent'; (2) server recibe request, busca key en tabla; (3) si existe → devuelve response cacheada; (4) si no → procesa, guarda `{key, response, expiry}`; (5) retención típica 24h (suficiente para retries). Implementación: puede ser Redis (rápido, con TTL) o tabla dedicada. CRÍTICO en payments, order creation, credit issuance. Sin esto, cualquier network glitch = doble transacción.",
+      "realWorld": "Stripe documenta 'Idempotent Requests' como pilar de su API. Shopify también. Un incidente famoso: banco X en 2013 tuvo timeout durante Black Friday, cargos duplicados a miles de clientes por no implementar idempotency.",
+      "tags": [
+        "idempotency",
+        "retries",
+        "distributed systems",
+        "idempotency key"
+      ],
+      "tech": [
+        "Stripe",
+        "HTTP",
+        "REST"
+      ],
+      "references": [
+        {
+          "title": "Stripe API — Idempotent Requests"
+        },
+        {
+          "title": "RFC draft — The Idempotency-Key HTTP Header"
+        }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "apis",
+      "topic": "Dead Letter Queues",
+      "difficulty": "senior",
+      "scenario": "Tu worker procesa mensajes de SQS. Un mensaje malformado causa exception cada vez que se procesa. SQS lo devuelve a la cola, el worker vuelve a fallar. Loop infinito consumiendo throughput y logs.",
+      "question": "¿Qué es un Dead Letter Queue (DLQ) y cómo se usa?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "DLQ: cola secundaria para mensajes que fallaron N veces (típicamente 3-5). SQS auto-mueve el mensaje a DLQ al superar el max receive count. Ahí queda hasta que un humano/proceso lo inspeccione. Beneficios: (1) libera la cola principal; (2) preserva el mensaje para debug; (3) alerta operacional cuando DLQ crece.",
+          "correct": true,
+          "why": "Correcto. DLQ es patrón fundamental de mensajería async. Sin él, 'poison messages' bloquean el pipeline. AWS SQS, RabbitMQ, Kafka, Azure Service Bus todos lo soportan. Alerta importante: monitorea depth de DLQ — cero mensajes = healthy, crecimiento = investigar."
+        },
+        {
+          "letter": "B",
+          "text": "Configurar SQS para nunca retriar — descarta al primer fallo.",
+          "correct": false,
+          "why": "Pierdes datos por errores transitorios (network glitch, timeout). El patrón correcto es retry limitado + DLQ para dead letters."
+        },
+        {
+          "letter": "C",
+          "text": "Try/catch en el worker que descarta el mensaje si falla.",
+          "correct": false,
+          "why": "Silencia el problema — igual que 'except: pass'. Pierdes visibilidad de qué mensajes están fallando y por qué."
+        },
+        {
+          "letter": "D",
+          "text": "Aumentar el número de workers para procesar más rápido.",
+          "correct": false,
+          "why": "No resuelve el problema — el mensaje MALO sigue fallando en cualquier worker. Solo enmascara y consume más recursos."
+        }
+      ],
+      "explanation": "DLQ (Dead Letter Queue) es la separación entre 'esperado' y 'excepcional' en pipelines async. Config: (1) main queue con maxReceiveCount=3; (2) DLQ receive los que superaron; (3) alertas cuando DLQ.depth > 0 (o > threshold). Post-mortem del mensaje en DLQ: puede requerir fix de código + replay, o discard manual con reason. Kafka usa 'error topic' similar. Beneficio adicional: si tu pipeline procesa 1M msg/s y 0.01% son malos, sin DLQ tienes retry storm; con DLQ, aíslas los 100 problemáticos.",
+      "realWorld": "Netflix usa DLQs en toda su plataforma de streaming events. Airbnb, Uber, Shopify similar. Un anti-patrón: DLQ que crece sin monitoreo — 'we discovered 10M dead messages' es post-mortem común.",
+      "tags": [
+        "DLQ",
+        "poison messages",
+        "async",
+        "SQS"
+      ],
+      "tech": [
+        "SQS",
+        "RabbitMQ",
+        "Kafka",
+        "Azure Service Bus"
+      ],
+      "references": [
+        {
+          "title": "AWS — Amazon SQS Dead-Letter Queues"
+        },
+        {
+          "title": "Enterprise Integration Patterns — Dead Letter Channel"
+        }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "patterns",
+      "topic": "Saga pattern — transacciones distribuidas",
+      "difficulty": "senior",
+      "scenario": "Sistema de reservas de viajes: para reservar un paquete coordinas (1) vuelo, (2) hotel, (3) auto. Cada uno en servicios/DBs distintos. Si el paso 3 falla, ¿cómo garantizas consistencia sin transacción global?",
+      "question": "¿Qué es un Saga y cuáles son sus dos variantes?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Saga: secuencia de transacciones LOCALES con acciones COMPENSATORIAS. Si el paso 3 falla, ejecuta rollback lógico de 1 y 2 (cancel flight, cancel hotel). No hay lock global — cada servicio maneja su propia transacción.",
+          "correct": true,
+          "why": "Correcto. Saga (Garcia-Molina 1987) es la alternativa moderna a 2PC. Cada compensación debe ser IDEMPOTENTE (los reintentos son inevitables) y NUEVA ACTION (no undo real — publicas 'cancellation' event, no borras historia)."
+        },
+        {
+          "letter": "B",
+          "text": "Orquestada: un orquestador central (Temporal, Step Functions) dirige la secuencia. Cada servicio recibe comandos. Más explícito, mejor para debugging.",
+          "correct": true,
+          "why": "Correcto. Orquestador tiene estado del workflow, sabe qué está pendiente, retrae al reiniciar. Trade-off: es un SPOF potencial y añade complejidad."
+        },
+        {
+          "letter": "C",
+          "text": "Coreografiada: cada servicio publica eventos y otros reaccionan. Sin orquestador central. Más loosely coupled pero muy difícil de razonar sobre el estado global.",
+          "correct": true,
+          "why": "Correcto. Coreografía = flujo emergente del intercambio de eventos. Adecuada para flujos SIMPLES y estables; se vuelve incontrolable con 10+ servicios porque nadie 've' el flujo completo."
+        },
+        {
+          "letter": "D",
+          "text": "2PC (Two-Phase Commit) es siempre mejor que Saga.",
+          "correct": false,
+          "why": "2PC en servicios distribuidos es tóxico: bloqueante, SPOF (coordinador), no funciona con REST/HTTP, no escala. Nadie serio lo usa entre servicios en 2026."
+        },
+        {
+          "letter": "E",
+          "text": "Todo debe estar en la misma DB para evitar el problema.",
+          "correct": false,
+          "why": "Válido a veces (revertir a monolito), pero no siempre posible. Sagas nacen precisamente para el caso donde no puedes centralizar."
+        }
+      ],
+      "explanation": "Saga es la solución idiomática moderna. Trade-off principal: NO tiene aislamiento (otro lector puede ver el estado intermedio — vuelo reservado pero hotel no). Debes diseñar compensaciones que sean idempotentes, seguras de repetir, y visibles al usuario si aplican. Frameworks: Temporal, AWS Step Functions, Camunda, Cadence — orquestadores que persisten el estado del saga, garantizan continuación tras crashes, y proveen visibilidad. Regla: si tu saga tiene >5 pasos o >3 servicios, USA orquestación (visibilidad). Coreografía solo para flujos simples y estables.",
+      "realWorld": "Uber usa Cadence/Temporal para viajes (booking, matching, tracking, payment). Booking.com maneja millones de sagas. Airbnb tiene 'Workflow' similar. Sin sagas, coordinación distribuida se rompe silenciosamente.",
+      "tags": [
+        "saga",
+        "distributed transaction",
+        "compensation",
+        "orchestration"
+      ],
+      "tech": [
+        "Temporal",
+        "AWS Step Functions",
+        "Cadence",
+        "Camunda"
+      ],
+      "references": [
+        {
+          "title": "Garcia-Molina, Salem — Sagas (1987)"
+        },
+        {
+          "title": "Chris Richardson — Microservices Patterns"
+        }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "apis",
+      "topic": "Circuit Breaker",
+      "difficulty": "senior",
+      "scenario": "Tu servicio A depende de B. B se cae (500s). A sigue enviando requests a B; cada una espera 30s de timeout antes de fallar. Los threads de A se saturan esperando timeouts. A también se cae por thread exhaustion.",
+      "question": "¿Qué es un Circuit Breaker y cómo previene cascading failure?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Circuit Breaker mide fallos recientes. Si >50% en últimos 10s, 'abre' el circuito: futuras requests fallan INMEDIATAMENTE sin llamar a B. Tras cooldown (30s), entra en 'half-open': deja pasar 1 request de prueba. Si funciona, cierra. Si no, sigue abierto. Protege AL CLIENTE (A) del downstream lento/muerto.",
+          "correct": true,
+          "why": "Correcto. El nombre viene de un breaker eléctrico: al detectar sobrecarga, corta flujo. Protege a A de arrastrarse por B. Los threads de A dejan de bloquearse. B recibe menos carga, puede recuperarse. Half-open detecta la recuperación sin volver a sobrecargar."
+        },
+        {
+          "letter": "B",
+          "text": "Es un rate limiter que bloquea si el cliente hace muchas requests.",
+          "correct": false,
+          "why": "Confunde con rate limiting. Rate limiter mira RATE del cliente; circuit breaker mira FALLOS del proveedor. Objetivos distintos."
+        },
+        {
+          "letter": "C",
+          "text": "Es lo mismo que retry con backoff — solo cambia el nombre.",
+          "correct": false,
+          "why": "No. Retry INTENTA MÁS; circuit breaker DEJA DE INTENTAR. Son complementarios: primero retry con backoff, si sigue fallando, abrir circuit."
+        },
+        {
+          "letter": "D",
+          "text": "Previene deadlocks entre servicios.",
+          "correct": false,
+          "why": "Deadlock es un problema de locks compartidos, no relacionado. Circuit breaker previene 'cascading failure', distinto concepto."
+        }
+      ],
+      "explanation": "Circuit Breaker: 3 estados (CLOSED = requests pasan, OPEN = fallan rápido, HALF-OPEN = 1 prueba). Config típica: 50% fails en ventana 10s abre, cooldown 30s. Se combina con: (1) timeouts agresivos; (2) bulkheads (aísla pools por dependency); (3) fallback (respuesta degradada cuando circuit abierto: cached, default, sensible error). Librerías: Resilience4j, Polly, Hystrix (deprecated), Istio (service mesh level).",
+      "realWorld": "Netflix inventó Hystrix porque un solo servicio caído tumbaba el streaming. Con 100+ microservicios sin circuit breakers, un fallo pequeño se propaga. Airbnb, Amazon similar. Sin CBs, sistema distribuido = bomba de tiempo.",
+      "tags": [
+        "circuit breaker",
+        "cascading failure",
+        "resilience"
+      ],
+      "tech": [
+        "Hystrix",
+        "Resilience4j",
+        "Polly",
+        "Istio"
+      ],
+      "references": [
+        {
+          "title": "Michael Nygard — Release It!"
+        },
+        {
+          "title": "Martin Fowler — CircuitBreaker"
+        }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "apis",
+      "topic": "Bulkhead pattern",
+      "difficulty": "senior",
+      "scenario": "Un thread pool compartido maneja llamadas a servicio A (rápido, 50ms) y B (lento, 5s cuando degradado). Cuando B se pone lento, todos los threads se ocupan esperando B. Requests a A (que sigue rápido) también fallan por thread starvation.",
+      "question": "¿Qué es Bulkhead pattern y cómo lo resuelve?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Bulkhead: aislar recursos por dependencia. Thread pool separado para A (ej. 100 threads) y otro para B (ej. 20 threads). Si B satura sus 20, requests a A siguen fluyendo con sus propios threads. Análogo naval: compartments estancos — un compartment inundado no hunde el barco.",
+          "correct": true,
+          "why": "Correcto. Bulkhead es el patrón que protege contra fallos aislados que se propagan por compartir recursos. Aplicable a: thread pools, connection pools, semáforos, memoria. La clave es NO compartir el mismo pool entre dependencies de perfil distinto."
+        },
+        {
+          "letter": "B",
+          "text": "Aumentar el tamaño del pool compartido a 500 threads.",
+          "correct": false,
+          "why": "Postpone el problema — un B más degradado saturará 500 igual que saturó 100. Y desperdicia memoria en threads mayormente idle."
+        },
+        {
+          "letter": "C",
+          "text": "Meter timeout de 100ms en TODAS las llamadas.",
+          "correct": false,
+          "why": "Ayuda pero no soluciona: aún con timeout 100ms, si B tarda 100ms consistentemente cuando degradado, los threads siguen ocupados."
+        },
+        {
+          "letter": "D",
+          "text": "Usar async/await elimina la necesidad de bulkheads.",
+          "correct": false,
+          "why": "Async ayuda con thread starvation en sí, pero el mismo principio aplica a semáforos/concurrency limits: aislar recursos por dependency sigue siendo necesario. Resilience4j Bulkhead funciona con async."
+        }
+      ],
+      "explanation": "Bulkhead: aislar 'compartments' de recursos por dependencia crítica. Formas: (1) Thread pools separados (clásico); (2) Semáforos con capacidad limitada; (3) Concurrency limits por endpoint downstream; (4) Cluster nodes dedicados por servicio (extreme). Complementa Circuit Breaker: Bulkhead limita el DAÑO cuando algo falla; Circuit Breaker DETIENE el intento. Resilience4j implementa ambos. En Kubernetes, PodDisruptionBudget + resource limits son bulkheads a nivel infra.",
+      "realWorld": "Netflix Hystrix incluye Bulkhead. Amazon usa el patrón obsesivamente. El nombre viene de la construcción naval: el Titanic falló porque sus compartments no estaban selladamente aislados. En software, aplica: un servicio no debe hundir a todos los demás.",
+      "tags": [
+        "bulkhead",
+        "isolation",
+        "resilience",
+        "thread pool"
+      ],
+      "tech": [
+        "Resilience4j",
+        "Hystrix"
+      ],
+      "references": [
+        {
+          "title": "Michael Nygard — Release It! Ch. 5 Stability Patterns"
+        }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "apis",
+      "topic": "Fallback y degradación elegante",
+      "difficulty": "mid",
+      "scenario": "Tu página muestra 'recomendaciones para ti'. El servicio de recomendaciones se cae. Actualmente la página completa falla porque el componente lanza exception.",
+      "question": "¿Cuál es la estrategia correcta de fallback?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Graceful degradation: si el servicio de recomendaciones falla, mostrar recomendaciones GENÉRICAS (cached, top-sellers, default), NO tumbar toda la página. Log del fallo para investigar. Usuario ve algo útil aunque sea sub-óptimo.",
+          "correct": true,
+          "why": "Correcto. Regla de disponibilidad: 'reduce funcionalidad antes que romper la experiencia'. En un e-commerce, ver 'top-sellers' es 10x mejor que ver 500 error. En feed social, mostrar posts recientes es mejor que error."
+        },
+        {
+          "letter": "B",
+          "text": "Retry hasta 100 veces esperando que el servicio vuelva.",
+          "correct": false,
+          "why": "Bloqueas la página por segundos. Peor UX que fallback rápido. Además retry storm empeora al backend en recovery."
+        },
+        {
+          "letter": "C",
+          "text": "Fail loudly: mostrar 'error de recomendaciones' con detalle técnico.",
+          "correct": false,
+          "why": "Detalle técnico al usuario final = confusión + brecha de seguridad. Usuario no puede hacer nada con 'ConnectionRefusedError'."
+        },
+        {
+          "letter": "D",
+          "text": "Mostrar solo cuando el servicio funciona; ocultar el componente si no.",
+          "correct": false,
+          "why": "Válido a veces pero pobre UX si la sección es prominente. Preferible fallback contenido, no vacío."
+        }
+      ],
+      "explanation": "Degradación elegante = 'menos features, no menos servicio'. Estrategia: cada componente tiene un fallback definido (cached data, default, empty state útil). Circuit breaker + fallback trabajan juntos: circuit abierto → fallback inmediato. Netflix construyó su UX asumiendo que TODO puede fallar. En React, error boundaries + fallback UI. En backend, respuesta parcial (200 con `recommendations: null`) mejor que error.",
+      "realWorld": "Amazon.com raramente se cae — degrada. Puedes hacer checkout aunque recomendaciones no funcionen. Netflix diseña asumiendo que cada dependency puede caer. Facebook mantiene feed funcionando aunque like counts fallen.",
+      "tags": [
+        "graceful degradation",
+        "fallback",
+        "resilience",
+        "UX"
+      ],
+      "tech": [
+        "React Error Boundaries",
+        "Hystrix fallback"
+      ],
+      "references": [
+        {
+          "title": "Netflix TechBlog — Fault Tolerant Design"
+        }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "apis",
+      "topic": "Defensive vs Offensive programming",
+      "difficulty": "senior",
+      "scenario": "Escribes función `getUser(id)`. Un compañero envuelve TODO en try/catch, valida cada arg 'por si acaso', chequea nullish en cada uso. El código triplicó de tamaño. Argumenta: 'es defensive programming'.",
+      "question": "¿Cuándo aplica defensive y cuándo NO?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Defensive tiene su lugar EN LOS BORDES del sistema (entrada de usuarios, APIs públicas, deserialización externa). Dentro de tu módulo/codebase, CONFÍA en tus tipos e invariantes. 'Offensive programming' (assertions que crashean con clear message si invariante roto) es mejor internamente. Defensive everywhere = código muerto + bugs silenciados.",
+          "correct": true,
+          "why": "Correcto. Regla: 'validate at boundaries, trust inside'. Los tipos (TypeScript, Go, Rust) hacen el trabajo dentro. Assertions detectan bugs de programación. Defensive innecesario en un método interno crea código que NUNCA ejecuta (los args serían correctos por diseño), y peor: si son incorrectos, el defensive los SILENCIA en vez de detectar el bug."
+        },
+        {
+          "letter": "B",
+          "text": "Siempre aplicar defensive — no perjudica.",
+          "correct": false,
+          "why": "Perjudica: (1) triplica codebase; (2) oculta assumptions (cuando validas todo, no sabes qué invariantes debería mantener el llamador); (3) 'defensive' silencia bugs — devolver null 'por si acaso' se propaga hasta que causa NPE en otro lado."
+        },
+        {
+          "letter": "C",
+          "text": "Nunca aplicar defensive — siempre confiar en los inputs.",
+          "correct": false,
+          "why": "En el borde del sistema (HTTP handler recibiendo JSON externo) DEBES validar — cualquiera puede enviar basura. La regla es contexto-dependiente."
+        },
+        {
+          "letter": "D",
+          "text": "Depende del lenguaje: Java necesita defensive, Rust no.",
+          "correct": false,
+          "why": "El principio 'validate at boundaries, trust inside' aplica en todos los lenguajes. Rust hace más difícil evitar validation por su type system, pero el principio se mantiene."
+        }
+      ],
+      "explanation": "Defensive programming NECESARIO: (1) input de usuario (HTTP request body); (2) deserialización de fuentes externas (JSON, YAML, files); (3) argumentos de librería pública. Defensive INNECESARIO/DAÑINO: (1) llamadas internas donde tipos garantizan validez; (2) assumptions codificadas en el tipo. En su lugar, 'offensive': `assert !user.isEmpty() : 'callers must pre-check'` — crashea rápido si invariante violado, deja bugs visibles. Rust y TypeScript strict hacen mucho de este trabajo por ti.",
+      "realWorld": "Google C++ style guide desincentiva excesivo defensive: 'assumptions should be validated by the type system when possible'. Joel Spolsky escribió 'Making Wrong Code Look Wrong' sobre este espíritu. Los assertions en Kubernetes source (Go) son offensive.",
+      "tags": [
+        "defensive programming",
+        "offensive programming",
+        "boundaries",
+        "assertions"
+      ],
+      "tech": [
+        "assertions",
+        "type system"
+      ],
+      "references": [
+        {
+          "title": "Steve McConnell — Code Complete Ch. 8 Defensive Programming"
+        }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "apis",
+      "topic": "Error boundaries en React",
+      "difficulty": "mid",
+      "scenario": "Un bug en el componente `<UserAvatar>` causa un `undefined is not a function`. Toda tu SPA se pone en blanco. El usuario ve pantalla vacía sin error visible.",
+      "question": "¿Cómo prevenir que un error en UN componente tumbe la app entera?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "React Error Boundaries: componente especial con `componentDidCatch` que captura errores de sus hijos. Muestra fallback UI en lugar de reventar el árbol entero. Envuelves secciones críticas por separado — un avatar roto no tumba el header ni el feed. Reportas el error a Sentry/similar en el catch.",
+          "correct": true,
+          "why": "Correcto. Error boundaries son el patrón oficial de React desde v16. Cada error boundary encapsula una 'región' — un fallo en una región no propaga a otras. Fallback UI puede ser un placeholder ('Este componente no cargó, refresh') o simplemente nada visible. Reporta a monitoring para debug."
+        },
+        {
+          "letter": "B",
+          "text": "Try/catch en cada componente.",
+          "correct": false,
+          "why": "Try/catch NO captura errores en render de React ni en el reconciler. Solo funciona para código sync dentro de handlers. Error Boundaries son la solución específica de React."
+        },
+        {
+          "letter": "C",
+          "text": "Envolver toda la app en un error boundary global.",
+          "correct": false,
+          "why": "Insuficiente. Un error boundary global cachea todo, sí — pero la pantalla se vacía completa. Preferible varios error boundaries granulares: un fallo en avatar solo muestra placeholder en el avatar."
+        },
+        {
+          "letter": "D",
+          "text": "Usar TypeScript para eliminar todos los errores.",
+          "correct": false,
+          "why": "TypeScript no cubre errores runtime (data undefined desde API, casts inseguros, third-party libraries). Es defense-in-depth junto a Error Boundaries."
+        }
+      ],
+      "explanation": "React Error Boundaries: componente class con `static getDerivedStateFromError()` y `componentDidCatch()`. Encapsula regiones. Estrategia: (1) boundary top-level (fallback: 'Something went wrong'); (2) boundaries por sección crítica (feed, sidebar, ads); (3) boundaries per widget para componentes third-party impredecibles. Reporta errores capturados a Sentry, Datadog, Rollbar. Vue tiene `errorCaptured` similar. Angular tiene `ErrorHandler` global.",
+      "realWorld": "Facebook (creadores de React) usan boundaries agresivamente. El patrón fue introducido después de un bug en Facebook que tumbó el chat globalmente. Sentry documenta best practices para React errors.",
+      "tags": [
+        "error boundary",
+        "React",
+        "graceful degradation",
+        "frontend"
+      ],
+      "tech": [
+        "React",
+        "Sentry",
+        "Rollbar"
+      ],
+      "references": [
+        {
+          "title": "React docs — Error Boundaries"
+        }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "apis",
+      "topic": "Timeouts — el 99% de sistemas los pone mal",
+      "difficulty": "senior",
+      "scenario": "Diseñas un endpoint que llama a otro servicio. Tu SLA con el cliente es p99 < 500ms. ¿Qué timeout configuras al llamar al servicio downstream?",
+      "question": "¿Cuál es el criterio correcto y qué evitar?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Menos que tu SLA: si SLA es 500ms, timeout al dep ~200-300ms. Deja margen para tu procesamiento + variability. Si el dep tarda más, MEJOR fallar rápido con error/fallback que hacer al cliente esperar y ROMPER el SLA de todas formas. Cadena A→B→C: timeouts deben decrecer río abajo.",
+          "correct": true,
+          "why": "Correcto. Regla: timeout downstream < tu SLA menos overhead. Si tardas 100ms procesando y SLA es 500ms, timeout debe ser <400ms (ideal 200-300ms). Si el dep NO responde en ese tiempo, ya has roto SLA — mejor fallar rápido y liberar recursos que hacer al cliente esperar hasta el timeout de 30s del default HTTP."
+        },
+        {
+          "letter": "B",
+          "text": "30 segundos — es el default de la mayoría de HTTP clients.",
+          "correct": false,
+          "why": "Anti-patrón grave. Si el dep se degrada a 2s (aún dentro de 30s), tu SLA se rompió pero sigues esperando. Threads se apilan. En incidents, causa cascading failures."
+        },
+        {
+          "letter": "C",
+          "text": "1 segundo uniforme para todos.",
+          "correct": false,
+          "why": "Sin criterio. Cada dep tiene un SLA distinto — el timeout debe calibrar a él, no arbitrario."
+        },
+        {
+          "letter": "D",
+          "text": "No configurar timeout — dejar que TCP haga el suyo (~2 horas).",
+          "correct": false,
+          "why": "Desastre. Un pod colgado espera 2h antes de fallar. Threads se saturan mucho antes. Una de las causas #1 de outage."
+        }
+      ],
+      "explanation": "Regla del arquitecto senior: 'Todo I/O tiene timeout, y ese timeout se calcula, no se copia'. Deriva de: (1) SLA con cliente; (2) SLA del proveedor (p99 del dep + margen); (3) qué haces si vence (fallback? error?). Cadena A→B→C: timeout A→B < SLA A; timeout B→C < SLA B. Cada nivel debe fallar ANTES que el nivel superior — sino el nivel superior explota antes de que el inferior reporte. Aplica también a DB queries, HTTP, file I/O.",
+      "realWorld": "Muchos outages de AWS/Google atribuidos a timeouts mal configurados amplificando fallos leves. Cloudflare 2019 incident. Facebook Oct 2021. Cada post-mortem serio lista 'inadequate timeouts' como contributor.",
+      "tags": [
+        "timeouts",
+        "SLA",
+        "cascading failure"
+      ],
+      "tech": [
+        "HTTP clients",
+        "gRPC deadlines"
+      ],
+      "references": [
+        {
+          "title": "AWS Builders' Library — Timeouts, retries and backoff"
+        },
+        {
+          "title": "Google SRE Book — Ch. 22 Addressing Cascading Failures"
+        }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "concurrency",
+      "topic": "Panic recovery en Go",
+      "difficulty": "senior",
+      "scenario": "Tu servidor Go tiene handler HTTP: si el handler hace `panic()` (nil pointer, index out of range), el servidor ENTERO se cae porque una goroutine no capturada crashea el proceso.",
+      "question": "¿Cómo se recupera correctamente y cuándo NO recuperar?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Middleware con `defer + recover()` alrededor de cada handler: si el handler panics, se recupera, logea el stack trace + alerta, y devuelve 500 al cliente. El servidor sigue vivo. Frameworks (gin, echo) lo hacen por default. NO se recupera al top-level main — bugs de config deben crashear al arranque.",
+          "correct": true,
+          "view": "Correcto. Pattern estándar en Go web servers.",
+          "why": "Correcto. En Go idiomatico, un panic en un handler HTTP no debe tumbar el proceso. El patrón es middleware con defer+recover() que captura el panic, loguea el stack trace, responde 500 y sigue sirviendo los otros requests concurrentes. Recover DEBE estar en la misma goroutine que el panic (por eso va en el handler, no en main). Reservar panic para errores irrecuperables (programa mal escrito), usar error returns para todo lo demás."
+        },
+        {
+          "letter": "B",
+          "text": "Nunca recuperar — dejar que el proceso muera para que systemd/K8s lo reinicie.",
+          "correct": false,
+          "why": "Un panic en UN handler no debe tumbar los OTROS 1000 requests concurrentes. Recuperar en el borde protege el servidor manteniendo la política de 'let it crash' para el request específico."
+        },
+        {
+          "letter": "C",
+          "text": "recover() en el mismo goroutine que lanzó el panic no funciona.",
+          "correct": false,
+          "why": "Falso. recover() DEBE estar en la misma goroutine que el panic. Está diseñado exactamente para eso."
+        },
+        {
+          "letter": "D",
+          "text": "Recuperar y continuar SIN loguear el stack trace.",
+          "correct": false,
+          "why": "Peor de todos los mundos: silencias bugs, servidor sigue como si nada. Necesitas loggear + alert para saber qué está pasando."
+        }
+      ],
+      "explanation": "Go's `panic/recover` es análogo a exceptions pero de uso limitado: solo para bugs graves. Pattern web: middleware con defer/recover en cada handler HTTP. Al recuperar: (1) log stack trace; (2) alert a monitoring; (3) HTTP 500 al cliente; (4) continue serving other requests. Al top-level main NO recuperar — permite que init failures crasheen limpio (K8s reinicia). Nunca uses recover para control de flujo — solo para AISLAR bugs de código.",
+      "realWorld": "Kubernetes API server tiene recovery middleware. Docker daemon similar. Gin framework middleware `Recovery()` es estándar. gRPC servers Go tienen `grpc-middleware/recovery`.",
+      "tags": [
+        "panic",
+        "recover",
+        "Go",
+        "middleware"
+      ],
+      "tech": [
+        "Go",
+        "gin",
+        "echo",
+        "gRPC"
+      ],
+      "references": [
+        {
+          "title": "Go documentation — Defer, Panic, Recover"
+        }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "apis",
+      "topic": "Poison message handling",
+      "difficulty": "senior",
+      "scenario": "Tu Kafka consumer procesa mensajes. Uno mensaje causa que el consumer NUNCA lo commiteé (siempre falla parsing). Kafka le envía el MISMO mensaje una y otra vez. El consumer queda pegado en ese mensaje, no avanza. Todos los mensajes posteriores esperan.",
+      "question": "¿Cómo se maneja un 'poison message' en Kafka?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Consumer con try/catch: si parsear/procesar falla → log del mensaje + skip → commit del offset avanza. El mensaje se pierde para procesamiento normal pero se guarda en 'error topic' para auditoría/reprocess manual.",
+          "correct": true,
+          "why": "Correcto. Sin skip, un mensaje malo bloquea todo el partition. Al hacer skip + save a error topic, mantienes el pipeline fluyendo y preservas el mensaje para análisis."
+        },
+        {
+          "letter": "B",
+          "text": "Configurar un 'dead-letter topic' explícito. Consumer intenta N veces (retries locales o mediante error-handling library como Kafka Streams). Al fallar, produce el mensaje al DLT con metadata (error, timestamp, retry count). Consumer del DLT humano/otro proceso.",
+          "correct": true,
+          "why": "Correcto. Kafka Streams tiene 'production exception handler' y 'deserialization exception handler'. Spring Kafka tiene retry topic con backoff. Este es el patrón robusto."
+        },
+        {
+          "letter": "C",
+          "text": "Idempotency: si tu consumer es idempotente, retries de mensajes válidos son safe. Combinado con DLT para inválidos.",
+          "correct": true,
+          "why": "Correcto. Idempotency permite retry libre — el mensaje procesado 2 veces produce mismo estado. Complementa DLT: retries seguros + DLT para verdaderos poison."
+        },
+        {
+          "letter": "D",
+          "text": "Ignorar — el mensaje eventualmente se procesará.",
+          "correct": false,
+          "why": "Falso. Sin intervención, el mensaje bloquea el consumer permanentemente."
+        },
+        {
+          "letter": "E",
+          "text": "Reiniciar el consumer al detectar fallo.",
+          "correct": false,
+          "why": "Al reiniciar, Kafka le da el mismo mensaje — mismo problema. Loop de reinicio infinito."
+        }
+      ],
+      "explanation": "Poison messages son endémicos en streams. Estrategia: (1) validar schema al deserializar (Schema Registry ayuda); (2) try/catch en processing; (3) DLT para irrecuperables; (4) alertas cuando DLT crece; (5) tooling para reprocesar mensajes del DLT tras fix. Alternativas: skip and log, isolate partition, incremental retry con backoff. Confluent's docs cubren esto extensivamente. En SQS es similar con DLQ. En RabbitMQ, dead letter exchange.",
+      "realWorld": "Netflix Keystone (Kafka pipeline) tiene multiples DLTs. Uber usa Kafka masivo con extensive poison handling. Airbnb Jitney similar. Sin manejo de poison, un mensaje inválido = pipeline detenido = alertas 3AM.",
+      "tags": [
+        "poison message",
+        "Kafka",
+        "DLT",
+        "consumer"
+      ],
+      "tech": [
+        "Kafka",
+        "Kafka Streams",
+        "Spring Kafka",
+        "Confluent"
+      ],
+      "references": [
+        {
+          "title": "Confluent — Handling errors in Kafka Streams"
+        }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "apis",
+      "topic": "Compensación vs rollback",
+      "difficulty": "staff",
+      "scenario": "Tu saga reserva vuelo → cobra tarjeta → confirma booking. Si el paso 3 falla, quieres 'deshacer'. Un compañero jr dice: 'hago rollback de la cobranza — devuelvo el dinero'. Un senior responde: 'no es rollback, es compensación'.",
+      "question": "¿Cuál es la distinción y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Rollback (transacción ACID) BORRA la operación como si nunca hubiera ocurrido. Compensación es una operación NUEVA que INVIERTE el efecto (refund, cancel). La historia se preserva: hubo un charge, luego un refund. Legal/audit lo requiere. Compensación puede ser parcial (fee de cancelación, refund menos).",
+          "correct": true,
+          "why": "Correcto. Distinción crítica en sistemas distribuidos. Rollback implica que puedes 'des-hacer' — funciona en una DB con transacción abierta. En sistemas cross-service, la operación YA se ejecutó (charge YA salió), no puedes des-hacerla — la compensas con otra operación."
+        },
+        {
+          "letter": "B",
+          "text": "Son sinónimos.",
+          "correct": false,
+          "why": "Confusión peligrosa. Rollback dentro de un servicio DB es distinto de compensación cross-service. Confundirlos lleva a esperar propiedades que no tienes."
+        },
+        {
+          "letter": "C",
+          "text": "Compensación solo aplica en saga; rollback en microservicios sin saga.",
+          "correct": false,
+          "why": "Compensación es un concepto de sagas. En una arquitectura sin sagas explícitas, aún necesitas compensación si tienes side effects cross-service."
+        },
+        {
+          "letter": "D",
+          "text": "Rollback es sinónimo de 'refund'.",
+          "correct": false,
+          "why": "Refund es un tipo específico de compensación. Rollback es un concepto más general y con semántica distinta."
+        }
+      ],
+      "explanation": "Compensación (Sagas, DDD): operaciones inversas semánticamente. Requisitos: (1) IDEMPOTENTES — si falla el compensate, se puede retriar sin doble refund; (2) COMMUTATIVE cuando posible; (3) COMPLETAS — deben cubrir todos los efectos. Ejemplos: ChargeCard → RefundCharge; ReserveInventory → ReleaseInventory. Trickiness: puede haber compensación PARCIAL (fee de cancel), COMPENSACIÓN CON DELAY (refund en 3-5 días), o NO COMPENSABLE (email enviado). La regla: si no puedes compensar, esa acción debe ser el ÚLTIMO paso del saga (no comprometes hasta que todo lo anterior es firme).",
+      "realWorld": "Uber cancel de viaje = compensación (no rollback). Amazon return de producto = compensación. Airbnb cancellation = compensation con policy (partial refund). Los sistemas de payment (Stripe, Braintree) documentan explícitamente su modelo de refunds.",
+      "tags": [
+        "compensation",
+        "saga",
+        "rollback",
+        "distributed transactions"
+      ],
+      "tech": [
+        "Temporal",
+        "Camunda",
+        "Stripe API"
+      ],
+      "references": [
+        {
+          "title": "Chris Richardson — Microservices Patterns Ch. 4"
+        }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "apis",
+      "topic": "Chaos Engineering — probar recovery",
+      "difficulty": "senior",
+      "scenario": "Tu sistema tiene 'todos los patrones' de resilencia (retries, circuit breakers, DLQs). En incident real, DESCUBRES que el circuit breaker jamás se abrió porque la config estaba mal, y los retries agravaron el problema.",
+      "question": "¿Cómo VERIFICAS que tus defensas funcionan ANTES de un incident real?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Chaos Engineering: inyectar fallos deliberadamente en producción (o pre-prod) para validar que las defensas responden. Netflix Chaos Monkey mata instancias random; Chaos Kong mata regiones enteras. Se hace en horario de trabajo con equipo alerta.",
+          "correct": true,
+          "why": "Correcto. 'Hope is not a strategy'. Sin practicar los failure modes, no sabes si tus defensas funcionan. Chaos engineering convierte 'defense-in-depth' en 'proven defenses'."
+        },
+        {
+          "letter": "B",
+          "text": "Game Days: ejercicio programado donde el equipo simula un incident (ej. 'DB primaria se cae'). El equipo ejecuta el runbook, mide MTTR, encuentra gaps. Amazon lo hace regularmente.",
+          "correct": true,
+          "why": "Correcto. Game Days entrenan a HUMANOS (runbook familiarity) además de sistemas. Un runbook nunca ejecutado se descubre roto en el incident real."
+        },
+        {
+          "letter": "C",
+          "text": "Fault injection en tests de integración: usar Toxiproxy o similar para simular latencia, packet loss, connection drops en tu test suite.",
+          "correct": true,
+          "why": "Correcto. Toxiproxy (Shopify) permite tests que verifican comportamiento bajo condiciones de red degradadas. Complementa chaos engineering para lo que puedes cubrir en CI."
+        },
+        {
+          "letter": "D",
+          "text": "Confiar en el diseño teórico — si el paper dice que funciona, funciona.",
+          "correct": false,
+          "why": "Papers describen el patrón; tu implementación puede tener bugs. La distancia entre 'circuit breaker en el diseño' y 'circuit breaker configurado correctamente en prod' es enorme."
+        },
+        {
+          "letter": "E",
+          "text": "Solo probar en preproducción, nunca en producción real.",
+          "correct": false,
+          "why": "Muchos comportamientos solo emergen bajo carga real (traffic patterns, distribución geográfica). Chaos in production, con cautela, es el estándar de las empresas serias."
+        }
+      ],
+      "explanation": "Chaos Engineering (formalizado por Netflix ~2010) es la disciplina de inyectar fallos para validar resiliencia. Principios (principlesofchaos.org): (1) hipótesis explícita ('creo que si mato X, Y debería seguir funcionando'); (2) experimento en producción cuando maduro; (3) automatizar y ejecutar continuamente; (4) minimizar radio de daño. Herramientas: AWS FIS, Gremlin, Chaos Mesh, LitmusChaos. Game Days son la versión human-driven. Regla dura: 'if you haven't tested it, it doesn't work'.",
+      "realWorld": "Netflix Chaos Monkey, Kong, Gorilla — mataban instancias, zones, regions. Amazon corre GameDays cada trimestre. Google 'DiRT' (Disaster Recovery Testing) hace lo mismo. Facebook mata 30% de servers en un region cada mes automáticamente.",
+      "tags": [
+        "chaos engineering",
+        "game days",
+        "fault injection",
+        "reliability"
+      ],
+      "tech": [
+        "Chaos Monkey",
+        "Gremlin",
+        "Toxiproxy",
+        "AWS FIS"
+      ],
+      "references": [
+        {
+          "title": "principlesofchaos.org"
+        },
+        {
+          "title": "Netflix TechBlog — Chaos Engineering"
+        }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "apis",
+      "topic": "Timeouts en cascada",
+      "difficulty": "staff",
+      "scenario": "Cliente → API (SLA 1s) → Service A (SLA 500ms) → Service B (SLA 200ms). ¿Cómo asignar timeouts cross-service?",
+      "question": "¿Cuál es la regla del timeout budget?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Timeout budget decreciente: Cliente→API 1s, API→A 800ms (deja 200ms para retry+overhead), A→B 300ms (deja 200ms para procesamiento). Cada nivel debe fallar ANTES que el nivel superior, sino explota antes. Propagar el 'deadline' remaining en el request (gRPC lo hace built-in).",
+          "correct": true,
+          "view": "Correcto. gRPC 'deadlines' es este patrón nativo — el cliente propaga cuánto tiempo queda. Cada hop consume del budget.",
+          "why": "Correcto. Cada hop de la cadena debe fallar ANTES que el hop de arriba, dejando margen para retry+overhead. Si cliente tiene 1s, tu API interna tiene <1s (ej 800ms), y cada servicio downstream aún menos. Así si un servicio se atasca, cada capa aborta a tiempo y responde con error controlado en vez de dejar al cliente colgado con timeout. Es la técnica estándar de context.WithTimeout de Go, deadline propagation en gRPC, y HTTP Client timeouts anidados."
+        },
+        {
+          "letter": "B",
+          "text": "Todos deben tener el mismo timeout (1s).",
+          "correct": false,
+          "why": "Si A tarda 1.1s, tu API ya rompió SLA. Cada hop necesita fallar antes que el hop siguiente, sino la respuesta llega tarde."
+        },
+        {
+          "letter": "C",
+          "text": "Sin timeouts — cada servicio decide cuándo responder.",
+          "correct": false,
+          "why": "Desastre. Un servicio lento arrastra a toda la cadena."
+        },
+        {
+          "letter": "D",
+          "text": "Solo el cliente tiene timeout; los internos son ilimitados.",
+          "correct": false,
+          "why": "Aún si el cliente aborta, los servicios internos siguen procesando (waste). Y sin timeouts internos, un dep lento consume recursos indefinidamente."
+        }
+      ],
+      "explanation": "Timeout budget cross-service: (1) cada request lleva un 'deadline' — cuándo debe estar terminado; (2) cada servicio lee el deadline restante y lo propaga a sus dependencies; (3) si el deadline se aproxima, el servicio abandona y devuelve error. gRPC hace esto built-in con `context.WithDeadline`. Sin este patrón, cada hop asume 'tengo todo el tiempo del mundo' — el trabajo sigue aunque el cliente ya se dio por vencido (waste). Este patrón es 'deadline propagation'.",
+      "realWorld": "Google usa deadline propagation en TODO su stack (Stubby, gRPC). Kubernetes API server también. Sin deadlines, un servicio lento colapsa la cadena de servicios río arriba.",
+      "tags": [
+        "timeout budget",
+        "deadline propagation",
+        "gRPC"
+      ],
+      "tech": [
+        "gRPC",
+        "context.Context"
+      ],
+      "references": [
+        {
+          "title": "gRPC docs — Deadlines"
+        },
+        {
+          "title": "Google SRE Book — Ch. 22"
+        }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "patterns",
+      "topic": "Retry loops que no convergen",
+      "difficulty": "staff",
+      "scenario": "Tu sistema: cliente retry al server. Server retry a DB. DB retry internal. Cada nivel con backoff. Bajo fallo transitorio, se disparan retries EN CASCADA — 5 × 5 × 5 = 125 intentos. La DB colapsa por retry amplification.",
+      "question": "¿Cómo evitar retry amplification en sistemas multi-tier?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Solo UN nivel debe hacer retry. Típicamente el nivel más externo (cliente o gateway). Los servicios internos NO retry a menos que sepan que el fallo es local/transitorio (no downstream).",
+          "correct": true,
+          "why": "Correcto. Retry amplification es multiplicativo: si cada nivel intenta 3 veces, N niveles × 3 = 3^N intentos por request. Regla: 'retry once at the outermost point that can meaningfully retry'."
+        },
+        {
+          "letter": "B",
+          "text": "Distinguir 'retry porque yo fallé' de 'retry porque downstream falló'. Solo retry el primer caso. Si downstream falla, propagar el error inmediatamente al upstream que decidirá.",
+          "correct": true,
+          "why": "Correcto. Un cliente HTTP recibiendo 503 puede retriarlo (transient externo). Un servicio recibiendo 503 de su DB probablemente NO debe retriar internamente si su cliente también va a retriar."
+        },
+        {
+          "letter": "C",
+          "text": "Circuit breakers en cada nivel para cortar retries cuando downstream degradado.",
+          "correct": true,
+          "why": "Correcto. Circuit breaker abierto = no retries (fallback o error inmediato). Complementa la regla 'retry en outermost'."
+        },
+        {
+          "letter": "D",
+          "text": "Retry en todos los niveles con backoff idéntico.",
+          "correct": false,
+          "why": "Amplificación multiplicativa. El escenario del enunciado exactamente."
+        },
+        {
+          "letter": "E",
+          "text": "Sin retries — solo fail-fast.",
+          "correct": false,
+          "why": "Fallos transitorios (network glitch) legítimamente se benefician de retry. La cuestión es DÓNDE y CUÁNTOS."
+        }
+      ],
+      "explanation": "Retry amplification es un patrón de fallo distribuido conocido. Solución: retry en UNA capa (típicamente cliente o edge), no en cada. Cada retry en niveles internos debe justificarse ('yo puedo resolverlo internamente'). Circuit breakers son safety net. Este patrón fue causa de outages famosos: cliente hace 3 retries; API interna hace 3 retries por su cuenta; DB library hace 3 más — 27 requests por 1 request del cliente.",
+      "realWorld": "AWS SDK tiene retry policies configurables — pero muchas apps NO deshabilitan el retry del SDK cuando su código hace su propio retry, generando amplification. Netflix Hystrix y Resilience4j documentan esto.",
+      "tags": [
+        "retry amplification",
+        "distributed retries",
+        "circuit breaker"
+      ],
+      "tech": [
+        "AWS SDK",
+        "gRPC",
+        "Hystrix"
+      ],
+      "references": [
+        {
+          "title": "Google SRE Book — Ch. 22 Addressing Cascading Failures"
+        }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "apis",
+      "topic": "Errores en background jobs",
+      "difficulty": "senior",
+      "scenario": "Tu app corre un background job diario (Sidekiq/Celery/Cloud Tasks). Un día el job falla silenciosamente por una excepción no capturada. Nadie se entera hasta que un cliente reporta 'no me llegó el reporte'.",
+      "question": "¿Cómo hacer background jobs observable y robustos?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Cada job debe: (1) tener retry con backoff; (2) enviar métricas de success/failure a Prometheus; (3) alertar si N jobs consecutive fail o si N% success rate baja; (4) reportar exceptions a Sentry/similar; (5) heartbeat/deadman switch si es scheduled ('si no corrió en 24h, alerta').",
+          "correct": true,
+          "why": "Correcto. Background jobs son notoriamente silenciosos. Sin observabilidad, un job roto puede pasar meses sin ser detectado hasta que un cliente reporta."
+        },
+        {
+          "letter": "B",
+          "text": "Idempotency: el job debe ser seguro de correr múltiples veces (retry o manual re-run). Diseño: usar operation_id y verificar si ya se ejecutó antes de trabajar.",
+          "correct": true,
+          "why": "Correcto. Idempotency permite retry sin miedo. Un job 'send monthly invoice' idempotente puede correrse manualmente para re-attempt tras fix sin doble facturación."
+        },
+        {
+          "letter": "C",
+          "text": "Dead-letter queue para jobs que fallaron todos los retries. Humano/proceso revisa y decide.",
+          "correct": true,
+          "why": "Correcto. Sidekiq tiene 'dead set'; Celery result backend con failure state; Cloud Tasks retry policy + dead letter topic. Sin DLQ, jobs failures se pierden o loop infinitamente."
+        },
+        {
+          "letter": "D",
+          "text": "Confiar en el framework — si Sidekiq/Celery corren, todo bien.",
+          "correct": false,
+          "why": "Frameworks corren el código; NO garantizan que tu job se completó exitosamente. Tú necesitas observabilidad + idempotency + DLQ."
+        },
+        {
+          "letter": "E",
+          "text": "Loguear a stdout es suficiente — cualquiera puede grep.",
+          "correct": false,
+          "why": "Sin métricas + alertas, nadie MIRA los logs a menos que ya haya un problema. Observabilidad reactiva, no proactiva."
+        }
+      ],
+      "explanation": "Background jobs deben tener la misma disciplina que APIs sync: observabilidad, idempotency, DLQ. Extras: (1) heartbeat/cron monitoring — Better Uptime, Cronitor, Dead Man's Snitch, o Prometheus 'up' metric; (2) time-to-execute tracking (job scheduled at X, started at Y — Y-X delay indica saturación del worker); (3) alerting on drop-in job rate (si esperas 1000 jobs/hora y ves 100, algo está bloqueado). Frameworks maduros: Sidekiq Enterprise, Temporal, Celery + Flower.",
+      "realWorld": "Stripe procesa millones de background jobs — cada uno instrumented. Airbnb Airflow para batch. Uber Cadence/Temporal. Sin observabilidad de jobs, empresas descubren 'nuestro backup jamás corrió' meses después.",
+      "tags": [
+        "background jobs",
+        "observability",
+        "idempotency",
+        "cron"
+      ],
+      "tech": [
+        "Sidekiq",
+        "Celery",
+        "Cloud Tasks",
+        "Temporal"
+      ],
+      "references": [
+        {
+          "title": "Sidekiq Enterprise docs"
+        },
+        {
+          "title": "Better Uptime — cron monitoring"
+        }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "apis",
+      "topic": "Postmortems blameless",
+      "difficulty": "staff",
+      "scenario": "Tu servicio se cae 4 horas. El deploy que causó el problema fue aprobado por Juan. En el postmortem, el gerente dice 'Juan, ¿qué pasó?'. Juan se pone defensivo.",
+      "question": "¿Qué es un postmortem 'blameless' y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Blameless postmortem: analiza el INCIDENTE, no la persona. Pregunta '¿POR QUÉ el sistema permitió que esto pasara?' en lugar de '¿QUIÉN cometió el error?'. Resultado: fixes SISTEMICOS (mejor testing, gate en el pipeline, validación en la config), no reprimendas. Los humanos son honestos sobre lo que pasó; el sistema aprende y mejora.",
+          "correct": true,
+          "why": "Correcto. La cultura de blame lleva a: (1) ingenieros ocultan errores por miedo; (2) fixes de superficie ('Juan será más cuidadoso') que no previenen recurrencia; (3) MISMO error pasa con otro ingeniero. Blameless: 'todo error humano es un fallo del sistema que no lo previno' → cambias el sistema, no el humano."
+        },
+        {
+          "letter": "B",
+          "text": "Postmortem donde nadie es culpado, ni se documenta el error.",
+          "correct": false,
+          "why": "Malinterpretación común. Blameless no significa 'ocultar el error' — significa analizar sin castigar. Documentas EXACTAMENTE qué pasó, quién hizo qué, en qué momento — sin señalar culpables, buscando causa raíz."
+        },
+        {
+          "letter": "C",
+          "text": "Solo aplica a incidents pequeños; los grandes requieren blame.",
+          "correct": false,
+          "why": "Al contrario: los grandes suelen tener causas sistémicas más obvias. Blame en incidents grandes crea coverups y peor cultura."
+        },
+        {
+          "letter": "D",
+          "text": "Es un concepto de Google — no aplica en empresas normales.",
+          "correct": false,
+          "why": "Ampliamente adoptado. Etsy popularizó 'blameless' en 2012. Empresas de todos los tamaños lo practican."
+        }
+      ],
+      "explanation": "Blameless postmortem (Etsy 2012, Google SRE) es el estándar de la industria seria. Estructura: (1) Timeline (qué pasó cuándo — sin señalar); (2) Impact (cuántos usuarios, downtime, revenue); (3) Root cause (analysis técnico, con '5 whys'); (4) Detection (¿cómo lo detectamos? podría ser antes?); (5) Response (¿el runbook funcionó?); (6) Action items (fixes sistémicos con owners y fechas). Herramientas: Notion/Confluence templates, Blameless.com, Grafana OnCall postmortems. Cultura: el postmortem es OPORTUNIDAD DE APRENDIZAJE. Reprimir el error = ocultar el próximo.",
+      "realWorld": "Google SRE Book dedica capítulo entero. Etsy 'How Complex Systems Fail' fue seminal. GitLab publica postmortems públicos (incluido el famoso de 2017 con 6h data loss). Cloudflare igual. Empresas que blame crean cultura de miedo — ingenieros dejan la empresa.",
+      "tags": [
+        "postmortem",
+        "blameless",
+        "SRE",
+        "culture"
+      ],
+      "tech": [
+        "Notion",
+        "Confluence",
+        "Blameless.com"
+      ],
+      "references": [
+        {
+          "title": "Google SRE Book — Ch. 15 Postmortem Culture"
+        },
+        {
+          "title": "Etsy — Blameless PostMortems and a Just Culture"
+        }
+      ]
+    }
+  ]
+}

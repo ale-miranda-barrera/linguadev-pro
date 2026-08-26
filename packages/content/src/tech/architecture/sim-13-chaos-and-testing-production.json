@@ -1,0 +1,478 @@
+{
+  "id": "architecture-sim-13-chaos-and-testing-production",
+  "trackId": "architecture",
+  "order": 13,
+  "title": "Simulacro 13 — Chaos engineering y testing en producción",
+  "focus": "Chaos engineering, load testing, fault injection, DI para test doubles, canary analysis, feature flags como safety nets, dark launches, testing en producción sin cagarla.",
+  "areaCoverage": ["resilience"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "resilience",
+      "topic": "Chaos engineering — filosofía",
+      "difficulty": "senior",
+      "scenario": "Un compañero propone 'no vamos a poder implementar chaos engineering hasta que estemos completamente estables'. Pasan los meses y nunca están 'completamente estables'.",
+      "question": "¿Cuál es la filosofía correcta del chaos engineering?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Chaos engineering NO es 'romper cosas al azar' — es INDUCIR FALLOS CONTROLADOS para descubrir debilidades antes de que las descubra un incident real. Hipótesis → experimento → verificar → aprender. Se hace CUANDO el sistema debería resistir, no para 'esperar a estar seguro'.", "correct": true, "why": "Correcto. La definición de Netflix (que popularizó la disciplina): 'la disciplina de experimentar sobre un sistema distribuido con el fin de generar confianza en la capacidad del sistema para resistir condiciones turbulentas en producción'. Es método científico aplicado a resiliencia: hipótesis ('si mato una instancia, el LB debería re-rutear en <10s'), experimento controlado, verificación." },
+        { "letter": "B", "text": "Empieza en dev/staging con blast radius pequeño, luego producción con controles: horario laboral, kill switch, monitoring cerca, no en horas peak.", "correct": true, "why": "Correcto. La progresión: (1) dev/stg con experimento aislado; (2) prod con blast radius mínimo (1 pod, 1 región secundaria, 1% tráfico); (3) prod con blast radius mayor progresivamente. Siempre con game day: humanos observando + kill switch listo. Chaos en producción a las 3AM sin equipo es imprudente, no chaos engineering." },
+        { "letter": "C", "text": "El objetivo es que el equipo DESCUBRA problemas en horario y contexto controlado, en lugar de descubrirlos en incidente real (3AM, cliente enojado, pánico). Aprender es más barato en experimento.", "correct": true, "why": "Correcto. Es aprendizaje proactivo. En incident real: presión, contexto pobre, decisiones apresuradas. En chaos game day: metódico, hipotesis, análisis. Empresas maduras hacen game days periódicamente." },
+        { "letter": "D", "text": "Chaos engineering es solo para Netflix — empresas más pequeñas no lo necesitan.", "correct": false, "why": "Falso. Cualquier sistema distribuido tiene fallos parciales imposibles de reproducir en dev. Chaos escala: puedes empezar con simple 'kill un pod y observa' en pequeño. Empresas de todos tamaños lo aplican." },
+        { "letter": "E", "text": "Chaos engineering requiere caos real: dejar experimentos corriendo indefinidamente sin controles.", "correct": false, "why": "Falso. Es DISCIPLINADO — hipótesis, timebox, monitoring, rollback. Sin controles no es engineering, es negligencia." }
+      ],
+      "explanation": "Chaos engineering popularizado por Netflix con Chaos Monkey (2010). Principios (chaosengineering.com): (1) construye hipótesis alrededor de comportamiento en estado estable; (2) varía eventos del mundo real (fallos, latencia, spike); (3) ejecuta experimentos en producción (staging no reproduce complejidad real); (4) automatiza para correr continuamente; (5) minimiza blast radius. Herramientas: Chaos Monkey (Netflix, kill random instances), Gremlin (SaaS), AWS Fault Injection Service (FIS), Litmus (Kubernetes), Chaos Mesh (K8s). Cultura importante: 'Game Days' periódicos donde el equipo ejercita respuesta.",
+      "realWorld": "Netflix inventó Chaos Monkey → Simian Army (Latency Monkey, Chaos Kong, etc.). AWS lanzó FIS en 2021. Google publica 'DiRT' (Disaster Recovery Testing) internamente. Cassandra tests reguladamente con Jepsen (Kyle Kingsbury). Charity Majors escribe extensivamente sobre testing en producción.",
+      "tags": ["chaos engineering", "hypothesis", "blast radius", "game day"],
+      "tech": ["Chaos Monkey", "Gremlin", "AWS FIS", "Litmus", "Chaos Mesh"],
+      "references": [
+        { "title": "chaosengineering.com — Principles" },
+        { "title": "Netflix Tech Blog — Chaos Monkey history" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "resilience",
+      "topic": "Simian Army y variantes de chaos",
+      "difficulty": "senior",
+      "scenario": "Tu equipo va a implementar chaos experiments. ¿Qué tipos de fallos son valiosos experimentar?",
+      "question": "¿Cuáles son variantes útiles de chaos experiments?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Kill random instances (Chaos Monkey original): verifica que tu autoscaling + LB re-rutea sin downtime. El más básico y el más útil como punto de partida.", "correct": true, "why": "Correcto. Kill de una instancia debería ser invisible al usuario (LB re-rutea + autoscaling levanta reemplazo). Si tu sistema no sobrevive esto, tienes SPOF. Punto de partida obligado." },
+        { "letter": "B", "text": "Latency injection (Latency Monkey): añadir delay artificial en llamadas a dependencies. Verifica que timeouts + circuit breakers actúan; descubre dependencies críticas ocultas.", "correct": true, "why": "Correcto. Muchos fallos en distribuidos NO son 'caído' — son 'lento' (más peligroso). Servicio degradado a 5s de latencia saturaba threads del cliente antes de circuit breaker actuar. Latency injection descubre estas cadenas." },
+        { "letter": "C", "text": "Network partition (Split-brain): cortar conectividad entre subsets del sistema. Reproduce el clásico 'partition tolerance' de CAP; verifica cómo el sistema se recupera cuando la red vuelve.", "correct": true, "why": "Correcto. Redes son 'unreliable' por diseño en distribuidos. Split-brain descubre bugs de consenso, replicación, y consistency. Jepsen tests especializados en esto — famosos por encontrar bugs en Cassandra, MongoDB, Kafka." },
+        { "letter": "D", "text": "Kill an entire AZ or region (Chaos Kong): verifica multi-AZ / multi-region failover. Nivel más agresivo — solo con sistemas diseñados para ello.", "correct": true, "why": "Correcto. Netflix Chaos Kong 'apaga' una región AWS entera regularmente para verificar que sus sistemas rerutean. Aggressive pero garantiza que el DR está VIVO, no solo documentado." },
+        { "letter": "E", "text": "Chaos experiments deben ser aleatorios sin plan — el azar es el punto.", "correct": false, "why": "Falso. Chaos = HIPÓTESIS + EXPERIMENTO. 'Kill random pod cada hora' sin observación no es chaos engineering — es sabotaje. El azar es en QUÉ se rompe; el proceso es científico." }
+      ],
+      "explanation": "El Simian Army de Netflix (Chaos Monkey + otros primates): (a) Chaos Monkey (kill instances); (b) Latency Monkey (delay); (c) Doctor Monkey (health check fake); (d) Janitor Monkey (limpia recursos no usados); (e) Conformity Monkey (viola políticas); (f) Chaos Gorilla (kill AZ); (g) Chaos Kong (kill region). Herramientas modernas: AWS Fault Injection Service ejecuta muchos de estos con templates. Gremlin SaaS. Litmus/Chaos Mesh para Kubernetes con network chaos, IO chaos, time skew, etc.",
+      "realWorld": "Netflix Tech Blog documenta cada primate. Jepsen tests de Kyle Kingsbury son el gold standard para verificar consistencia bajo network partition — han encontrado bugs graves en muchos databases. AWS re:Invent 2021 lanzó FIS con demo de multi-service experiments.",
+      "tags": ["Simian Army", "Chaos Kong", "network partition", "latency injection"],
+      "tech": ["Chaos Monkey", "Chaos Kong", "Jepsen", "AWS FIS", "Litmus"],
+      "references": [
+        { "title": "Netflix — Simian Army" },
+        { "title": "Jepsen tests (jepsen.io)" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "resilience",
+      "topic": "Load testing — k6 y patterns",
+      "difficulty": "senior",
+      "scenario": "Vas a lanzar una feature que espera 10x el tráfico usual. Necesitas validar que el sistema aguanta antes.",
+      "question": "¿Qué patrones de load testing son ADECUADOS y qué herramientas usar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Smoke test: 1-5 VUs para validar que el sistema responde. Load test: RPS esperado sostenido para medir baseline. Stress test: subir RPS hasta romper para encontrar límites. Spike test: subida abrupta simulando viral event. Soak test: carga sostenida por horas/días para detectar memory leaks.", "correct": true, "why": "Correcto. Cada test tipo tiene propósito distinto. Load = comportamiento en operación normal. Stress = límite. Spike = escenarios de viralidad/flash-sale. Soak = degradación gradual (leaks, GC, disk fill). Es error correr solo 'load' y creerse listo — spike y stress descubren cosas distintas." },
+        { "letter": "B", "text": "Herramientas modernas: k6 (Go-based, scripting JS, CLI + cloud), Gatling (Scala DSL, potente), Locust (Python), JMeter (Java, GUI, veterano), Vegeta (Go, HTTP simple).", "correct": true, "why": "Correcto. k6 es el favorito moderno (open source de Grafana Labs, JS scripting, CLI-friendly, integra a Grafana Cloud). Gatling con Scala DSL para pipelines. Locust para Python teams. JMeter legacy pero potente. Vegeta simple para HTTP RPS puro." },
+        { "letter": "C", "text": "Load testing debe hacerse contra staging idéntico a producción (misma spec, mismos datos). Sino, resultados no informan.", "correct": true, "why": "Correcto. Staging con menos capacidad = resultados no traducen a prod. Ideal: staging idéntico o load test directo en prod (con targets aislados o horario controlado). Datos también importan: tabla con 100 filas vs 100M filas performa distinto." },
+        { "letter": "D", "text": "Simular perfil de tráfico real: mix de endpoints en proporciones reales (80% GET reads, 15% simple writes, 5% complex). Load test uniforme no refleja carga real.", "correct": true, "why": "Correcto. Un endpoint puede aguantar 10k RPS solo, pero mix realista (con endpoints CPU-heavy) puede tumbar a 2k RPS. Modelar el 'traffic profile' es parte crítica del test." },
+        { "letter": "E", "text": "Load testing es innecesario si tienes autoscaling.", "correct": false, "why": "Falso. Autoscaling tiene lag (minutos para nuevas instancias). Un spike agudo tumba el sistema antes de que escale. Además autoscaling no evita bugs de app bajo carga (deadlocks, resource exhaustion, connection pool saturation)." }
+      ],
+      "explanation": "Load testing es diagnóstico + validación. Ciclo: (1) define objectivo (validar 10x tráfico, encontrar breaking point); (2) define perfil realista (mix endpoints); (3) ejecuta en env representativo; (4) monitoriza (RPS, latency percentiles, error rate, resource utilization); (5) analiza (dónde está el cuello); (6) mejora; (7) repite. k6 con scripting JS + Grafana Cloud es popular hoy. Ejecuciones distribuidas para tráfico masivo (k6 cloud, JMeter distributed, Locust distributed).",
+      "realWorld": "Grafana Labs adquirió k6 y lo integró a Grafana Cloud como 'k6 Cloud'. Netflix, Spotify, Uber tienen load testing frameworks internos + regularmente publican benchmarks. AWS re:Invent 2022 (ARC308) demoed load testing patterns con k6.",
+      "tags": ["load testing", "stress test", "k6", "Gatling", "spike test"],
+      "tech": ["k6", "Gatling", "Locust", "JMeter", "Vegeta"],
+      "references": [
+        { "title": "k6.io — Test types" },
+        { "title": "Grafana k6 Cloud" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "resilience",
+      "topic": "Fault injection — AWS FIS",
+      "difficulty": "staff",
+      "scenario": "Tu equipo usa Kubernetes en EKS. Quieren automatizar chaos experiments con AWS Fault Injection Service.",
+      "question": "¿Qué es cierto sobre AWS FIS y fault injection?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS FIS es servicio managed que ejecuta experimentos definidos como 'experiment templates': acciones (aws:ec2:stop-instances, aws:eks:pod-network-latency, aws:rds:reboot-db-instances, aws:fis:inject-api-throttle-error) con targets (resources selection via tags o filters), stop conditions (CloudWatch alarm que aborta si degradation), y control (approve manual, o auto). Integra IAM, CloudTrail, EventBridge.", "correct": true, "why": "Correcto. FIS (2021) es el 'chaos-as-a-service' nativo de AWS. Templates JSON. Ejemplos: 'apagar 30% de EC2 con tag env=prod-canary durante 5 min', 'inyectar latencia 2s en API a DynamoDB', 'lanzar CPU stress en containers'. Stop conditions son safety net: si CPU en app pasa umbral, FIS aborta. Auditado en CloudTrail. Integra con EventBridge para automatización." },
+        { "letter": "B", "text": "FIS solo funciona con EC2, no con containers.", "correct": false, "why": "Falso. FIS soporta EC2, ECS, EKS (pod-level actions), RDS, Lambda (via CloudWatch throttling), y más. Constantemente añade actions." },
+        { "letter": "C", "text": "FIS es gratuito.", "correct": false, "why": "Cuesta ~$0.10 por action-minute. Ridículamente barato comparado con el valor de descubrir un bug antes de un outage." },
+        { "letter": "D", "text": "FIS reemplaza necesidad de tener un plan de disaster recovery.", "correct": false, "why": "Falso. FIS EJECUTA el DR plan para validarlo. Necesitas TENER el plan primero (runbook, comunicación, automation) y FIS lo prueba." }
+      ],
+      "explanation": "AWS FIS es un game-changer porque democratiza chaos engineering: templates reutilizables, integraciones nativas, safety guardrails. Antes de FIS, o usabas Chaos Monkey (solo EC2) o SaaS pagados (Gremlin). Casos típicos con FIS: (a) monthly game day: apagar una AZ y ver failover; (b) chaos as regression: correr experimentos post-deploy en canary; (c) inyectar latencia en RDS para validar timeouts y circuit breakers; (d) throttle API para ver que degradation graceful. Combinar con CloudWatch alarms como stop conditions es fundamental — sin ellas, chaos puede escalar a outage real.",
+      "realWorld": "AWS re:Invent 2021 lanzamiento de FIS con demos de multi-region failover. AWS Well-Architected Framework 'Reliability Pillar' recomienda fault injection regularmente. Formula 1 usa FIS para probar sus sistemas de race day.",
+      "tags": ["AWS FIS", "chaos engineering", "stop conditions", "game day"],
+      "tech": ["AWS FIS", "EKS", "CloudWatch", "EventBridge"],
+      "references": [
+        { "title": "AWS Fault Injection Service docs" },
+        { "title": "AWS re:Invent 2021 — ARC307 FIS deep dive" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "resilience",
+      "topic": "Dependency injection para testing",
+      "difficulty": "senior",
+      "scenario": "Tienes un servicio que llama a Stripe, envía emails con SES y escribe a DynamoDB. Los tests unitarios usan mocks pero los tests de integración también mockean todo. Un incidente en prod revela que el mock de Stripe no coincidía con la respuesta real.",
+      "question": "¿Cómo estructurar el testing con dependency injection correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Layered strategy: (a) unit tests con mocks de todo (rápidos, aislados, no dependen de red); (b) integration tests con test doubles cerca-real (LocalStack para AWS, Stripe test mode, mailhog para SMTP); (c) contract tests con Pact-like para verificar que mocks matchean provider real; (d) e2e tests en staging con instancia real de dependencies (sacrificio: lentos, flaky, caros).", "correct": true, "why": "Correcto. Pyramid clásica adaptada: unit rápidos + integration con doubles fieles + contracts + selective e2e. El error del escenario: mock de Stripe no matcheaba real (drift). Solución: contract testing continuous (Pact records real response, tu mock lo replica) o usar Stripe test mode que es real API con test cards. LocalStack para servicios AWS es cerca-real (no perfect, ~90% coverage)." },
+        { "letter": "B", "text": "Mockear todo siempre — nunca llamar servicios externos en tests.", "correct": false, "why": "Es lo que causó el bug. Mock drift es real: mocks 'creen que Stripe responde X'; Stripe actualmente responde Y ligeramente distinto. Sin contract testing, mocks divergen del real silenciosamente." },
+        { "letter": "C", "text": "Correr todos los tests contra producción de dependencies (Stripe real, SES real).", "correct": false, "why": "Costoso (Stripe test charges), lento, side-effectful (SES enviando emails reales), flaky (network deps). Reservado para e2e selectivos, no unit ni integration." },
+        { "letter": "D", "text": "Dependency injection es innecesaria si usas monkey patching.", "correct": false, "why": "Monkey patching es HACK evitable. DI es cleaner, más testable, más mantenible. En estáticos (Java, Go, TS) DI es idiomático; en dinámicos (Python, Ruby) monkey patching es común pero peor práctica." }
+      ],
+      "explanation": "Testing strategy = layered pyramid: (1) unit tests con mocks (miles, ms); (2) integration tests con test doubles fieles (LocalStack para AWS, Testcontainers para DBs reales); (3) contract tests (Pact, Spring Cloud Contract) para verificar mocks vs real; (4) e2e selectivos (docenas, minutos). DI es el enabler: código diseñado para inyectar deps (no new StripeClient() en constructor) permite intercambiar por mock/double/real. Frameworks: Guice/Dagger (Java), Spring (Java), interfaces + factories (Go), tsyringe/InversifyJS (TS/Node), custom (Python). Testcontainers es especialmente potente: arranca Postgres/Redis/Kafka reales en Docker durante tests.",
+      "realWorld": "Testcontainers es standard en Java/Kotlin/JS testing. LocalStack es popular para AWS-heavy dev. Stripe test mode es referencia de 'test env que refleja prod'. Pact.io lidera contract testing.",
+      "tags": ["dependency injection", "test doubles", "LocalStack", "Testcontainers", "contract testing"],
+      "tech": ["LocalStack", "Testcontainers", "Pact", "Stripe test mode"],
+      "references": [
+        { "title": "Testcontainers docs" },
+        { "title": "Martin Fowler — TestPyramid, Mocks Aren't Stubs" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "resilience",
+      "topic": "Canary analysis automation",
+      "difficulty": "staff",
+      "scenario": "Tu deploy pipeline rutea 5% del tráfico al canary y espera 15 minutos. ¿Cómo decide un HUMANO o el sistema si canary es bueno o malo?",
+      "question": "¿Qué es 'canary analysis' automatizado?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Comparar métricas del canary vs baseline (producción actual) con statistical significance test. Métricas: error rate, latency percentiles, custom business (conversion). Si diferencia significativa Y peor, canary rechazado (auto-rollback). Herramientas: Netflix Kayenta (open source, base de Spinnaker), Argo Rollouts con Prometheus metrics, Flagger.", "correct": true, "why": "Correcto. Statistical significance es clave: un canary puede ver 0.5% error rate vs baseline 0.4% — sin significance test, no sabes si es ruido. Kayenta usa Mann-Whitney U test, umbrales por métrica, weighting. Automation permite reaccionar en minutos (humano tardaría más y sesgo cognitivo). Retorna 'canary judgement': PASS, MARGINAL, FAIL." },
+        { "letter": "B", "text": "Ver los dashboards y decidir intuitivamente.", "correct": false, "why": "Sujeto a sesgo, lento, no escalable a decenas de deploys/día. La automatización elimina el factor humano en detección." },
+        { "letter": "C", "text": "Considerar exitoso si no hay alertas de PagerDuty.", "correct": false, "why": "PagerDuty alerta en degradaciones OBVIAS. Canary puede degradar sutilmente (p99 sube 20%, conversion baja 3%) sin alertar. Análisis explícito compara métricas del canary vs baseline con umbrales por métrica." },
+        { "letter": "D", "text": "Confiar en tests unitarios que ya pasaron.", "correct": false, "why": "Unit tests no capturan degradación en producción con tráfico real. Canary es precisamente para lo que tests no vieron." }
+      ],
+      "explanation": "Canary analysis maduro compara canary vs baseline con statistical rigor: métricas de golden signals (Google SRE — latency, traffic, errors, saturation) + business (conversion, revenue). Kayenta (open source, Netflix) fue el pionero. Argo Rollouts con analyses templates a partir de Prometheus queries. Flagger con Prometheus/Datadog/CloudWatch. Configuración: por métrica, definir umbral y peso; agregar en score; decisión final basada en score total. Sin analysis automatizado, canary es teatro — subes % sin real verification.",
+      "realWorld": "Netflix open-sourced Kayenta como base de Spinnaker en 2017. Waze (Google) publicó su uso de canary analysis. Argo Rollouts en CNCF es el estándar Kubernetes-native. Grafana Labs, Datadog Deployment Tracking automatizan comparaciones baseline vs deploy.",
+      "tags": ["canary analysis", "statistical significance", "Kayenta", "Argo Rollouts"],
+      "tech": ["Kayenta", "Argo Rollouts", "Flagger", "Spinnaker"],
+      "references": [
+        { "title": "Netflix Kayenta — automated canary analysis" },
+        { "title": "Argo Rollouts — Analysis" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "resilience",
+      "topic": "Feature flags como safety net",
+      "difficulty": "senior",
+      "scenario": "Deployas una feature detrás de flag. La feature causa lentitud en cierto flujo. Sin flag hubieras hecho rollback (minutos). Con flag, ¿qué haces?",
+      "question": "¿Cómo funcionan flags como safety net en producción?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Flag OFF instantáneo: sin redeploy, la feature se desactiva en segundos. Rollback selectivo (solo esa feature, no todo el deploy). Menor blast radius que un full rollback.", "correct": true, "why": "Correcto. Es la ventaja core de flags: 'kill switch' para features individuales. Un incident con feature X no requiere revertir feature Y también. Herramientas SDK propagan cambios de flag en <1min típicamente." },
+        { "letter": "B", "text": "Progressive rollback: si flag afecta a 10% users, primero baja a 5%, luego 1%, luego 0% observando métricas. Confirma que el problema es la feature.", "correct": true, "why": "Correcto. Al bajar gradualmente, verificas causalidad: si al bajar de 10 a 5 mejora proporcional, es la feature. Si no cambia, es otro factor. Confirmación empírica antes de conclusiones." },
+        { "letter": "C", "text": "Segmentación: dejar la feature activa para usuarios internos (dogfood) mientras la desactivas para externos. Debug con tráfico real controlado.", "correct": true, "why": "Correcto. Flags con targeting permiten esta granularidad. Feature OFF para externals, ON para internal team con logs verbosos. Reproduces el bug en producción con impact 0 en clientes." },
+        { "letter": "D", "text": "Flag OFF y esperar días para pensar. Los flags son gratis mantenerlos indefinidamente.", "correct": false, "why": "Flags 'temporales' que quedan meses/años son deuda técnica. Cada flag es una branch lógica en el código — proliferation causa complexity. Regla: flag investigado en sprint siguiente, decisión (fix + activate o remove); no dejar zombie flags." },
+        { "letter": "E", "text": "Un flag OFF resuelve todo — no necesitas investigar la causa raíz.", "correct": false, "why": "Flag OFF es MITIGACIÓN, no fix. Aún hay que investigar por qué la feature causaba lentitud y corregir. Postmortem obligatorio." }
+      ],
+      "explanation": "Feature flags = potencia + responsabilidad. Beneficios: (a) rollback granular; (b) targeting (canary, segmentation, A/B); (c) deploy != release. Riesgos: (a) proliferation → complexity; (b) deuda técnica si no se limpian; (c) confusión si dos flags interactúan mal. Best practices: naming convention, owner, expiry date, review de stale flags mensualmente, kill switch documentado. Herramientas gestionan lifecycle: LaunchDarkly dashboard muestra flags 'unused for X days', metrics de uso.",
+      "realWorld": "LaunchDarkly lidera el mercado. Netflix, Uber, Airbnb tienen internos maduros. AWS AppConfig es nativa. Etsy (early adopter) publicó 'Feature flagging at Etsy' documentando lifecycle.",
+      "tags": ["feature flags", "kill switch", "progressive rollback", "targeting"],
+      "tech": ["LaunchDarkly", "Unleash", "AWS AppConfig", "ConfigCat"],
+      "references": [
+        { "title": "LaunchDarkly best practices" },
+        { "title": "Etsy — Feature flagging" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "resilience",
+      "topic": "Dark launch",
+      "difficulty": "senior",
+      "scenario": "Vas a lanzar una funcionalidad de recomendaciones ML que requiere infra nueva. Quieres validar que la infra escala bajo tráfico real antes de que usuarios la vean.",
+      "question": "¿Qué es dark launch y cómo se ejecuta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dark launch = activar el path del código en producción con tráfico REAL, pero SIN mostrar el resultado al usuario. La feature 'corre en la sombra': ejerce infra, genera métricas de latencia/error/uso de recursos, pero UI no cambia. Valida capacidad + integraciones sin risk al usuario.", "correct": true, "why": "Correcto. Dark launch es 'ejercicio de infra' con tráfico real. Ejemplo típico: lanzar el servicio de recomendaciones, cada request genera predicciones (que se descartan), pero infra se calienta y métricas revelan performance real. Facebook popularizó el término para features de escala como Chat, News Feed refactors. Diferencia con shadow: shadow COMPARA outputs de 2 sistemas; dark launch simplemente EJECUTA sin exposición." },
+        { "letter": "B", "text": "Dark launch es lo mismo que canary.", "correct": false, "why": "Canary MUESTRA la nueva version a un % de users. Dark launch NO muestra a nadie — solo ejercita el path en background." },
+        { "letter": "C", "text": "Dark launch requiere una infra separada de producción.", "correct": false, "why": "No, es parte de la misma infra. La diferencia es que el output no se expone al usuario final. Puede ser condicional dentro del mismo servicio o servicio separado invocado en background." },
+        { "letter": "D", "text": "Dark launch aplica solo a servicios de ML.", "correct": false, "why": "Aplica a cualquier feature con dudas sobre escala o integración: nueva DB, nuevo microservicio, nuevo cache tier. Ejecuta con tráfico real, mide, luego expone." }
+      ],
+      "explanation": "Dark launch es standard en empresas de escala. Casos típicos: (1) nueva DB — dual write (dark) para validar performance y consistency antes de leer de ella; (2) refactor de servicio crítico — nueva versión corre en paralelo, resultados descartados o comparados; (3) infra ML — modelo genera predicciones descartadas para medir latencia real; (4) nueva integración externa — se llama pero no se usa la response. Ventajas sobre load testing: tráfico real es más representativo que sintético (patterns, distribución, edge cases). Combina bien con feature flags (activar dark launch con flag, luego exponer con otro flag).",
+      "realWorld": "Facebook chat launch (2008) famous dark launch: la infra Chat corrió por semanas antes de que UI apareciera, con requests fantasma para validar escala. El paper 'Facebook Chat Architecture' menciona esto. Google también documenta dark launches en su Software Engineering book (Winters et al.).",
+      "tags": ["dark launch", "Facebook chat", "shadow", "capacity validation"],
+      "tech": ["feature flags", "load testing", "capacity planning"],
+      "references": [
+        { "title": "Facebook Engineering — Chat launch" },
+        { "title": "Software Engineering at Google (Winters et al.)" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "resilience",
+      "topic": "Testing en producción — filosofía",
+      "difficulty": "staff",
+      "scenario": "Un compañero dice 'testing en producción es irresponsable. Todo debe estar 100% probado en staging'.",
+      "question": "¿Cuál es la posición MÁS realista sobre testing en producción?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Staging NUNCA reproduce completamente producción (escala de datos, tráfico patterns, integraciones externas, monitoring, hardware). Testing en producción es NECESARIO — el arte es hacerlo CON SEGURIDAD: dark launches, canary, feature flags, chaos con blast radius controlado, synthetic monitoring. La pregunta no es 'testing en prod SÍ o NO' sino '¿cómo hacerlo SEGURO?'.", "correct": true, "why": "Correcto. Charity Majors (Honeycomb) escribió el manifiesto: 'I test in production'. Realidad: (1) staging tiene 1/1000 de datos, no reproduce; (2) integraciones externas se mockean; (3) hardware/network son distintos; (4) los bugs de producción vienen de condiciones producción-only. Solución NO es más staging (never enough) sino instrumentation + observability + techniques safe (canary, flags, dark launch)." },
+        { "letter": "B", "text": "Testing en prod siempre es irresponsable.", "correct": false, "why": "Postura idealista que en la práctica se traduce en más bugs de producción, no menos. Con instrumentation moderna, testing en prod es más seguro que apostar todo a staging." },
+        { "letter": "C", "text": "Solo hacer testing en producción, ignorar staging.", "correct": false, "why": "Contra-extremo. Staging útil para basic sanity, integration tests con doubles fieles, load testing initial. Testing en prod complementa, no reemplaza." },
+        { "letter": "D", "text": "Testing en prod requiere aprobación del CTO cada vez.", "correct": false, "why": "Burocracia mata la velocidad. Con infra segura (flags, canary automation, monitoring), testing en prod es rutina no evento." }
+      ],
+      "explanation": "'Testing in production' es una mentalidad realista promovida por Charity Majors, Cindy Sridharan, y la comunidad SRE moderna. Reconoce que staging es ficción parcial. Requisitos: (1) observability rica (traces, metrics, logs); (2) feature flags para control granular; (3) canary automation con auto-rollback; (4) chaos engineering para descubrir problemas antes; (5) synthetic monitoring para 'always-on tests' en prod; (6) monitoring de business metrics, no solo tech (conversion, revenue). Con estos elementos, testing en prod es SEGURO — de hecho más seguro que ceguera en staging.",
+      "realWorld": "Charity Majors 'I Test in Prod' articles/talks. Honeycomb.io construida sobre esta filosofía. Cindy Sridharan 'Testing in Production'. Increment magazine dedicó issue a 'Testing'. Google SRE Book Ch. 17 'Testing for Reliability' incluye production testing techniques.",
+      "tags": ["testing in production", "Charity Majors", "observability", "staging vs prod"],
+      "tech": ["Honeycomb", "feature flags", "observability tools"],
+      "references": [
+        { "title": "Charity Majors — 'I Test in Production'" },
+        { "title": "Increment magazine — Testing issue" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "resilience",
+      "topic": "Synthetic monitoring",
+      "difficulty": "mid",
+      "scenario": "Necesitas saber en 1 minuto si tu web app está caída para usuarios en Sydney, Tokyo, y São Paulo — no cuando alguien reporte.",
+      "question": "¿Qué es synthetic monitoring y cómo se implementa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Synthetic tests = bots que ejecutan scripts predefinidos periódicamente desde múltiples ubicaciones geográficas: cargar homepage, hacer login, comprar producto, verificar responses. Alerta cuando fallan. Datadog Synthetic, Grafana Synthetic Monitoring, Pingdom, Checkly (moderno con Playwright).", "correct": true, "why": "Correcto. Synthetic = 'usuario robot' probando always-on. Ventajas: (a) coverage geográfico (revela problemas de CDN, DNS regionales); (b) 24/7 alerting sin depender de usuarios reales; (c) baseline de latencia por región; (d) probar flujos críticos (login, checkout) end-to-end regularmente. Checkly usa Playwright para scripts modernos; Datadog integra con RUM." },
+        { "letter": "B", "text": "Real User Monitoring (RUM) reemplaza synthetic.", "correct": false, "why": "Complementarios. RUM captura métricas de usuarios REALES (más representativo, más ruidoso). Synthetic da baseline controlado + 24/7 sin depender de tráfico. Empresas maduras usan ambos: RUM para 'qué experimentan realmente', synthetic para 'está funcionando ahora mismo'." },
+        { "letter": "C", "text": "Synthetic solo prueba HTTP GET.", "correct": false, "why": "Falso. Moderno: scripts complejos con Playwright/Puppeteer que ejecutan flujos completos (login, navigation, form submit), verifican DOM, screenshots comparativas, performance metrics." },
+        { "letter": "D", "text": "Alertas de synthetic reemplazan health checks del LB.", "correct": false, "why": "Distintos niveles. LB health checks son pod-level (aliveness). Synthetic es user-level (experiencia). Ambos necesarios." }
+      ],
+      "explanation": "Synthetic monitoring = 'test scripts as monitoring'. Configuración: scripts (Playwright, Selenium, custom HTTP), locations (Datadog tiene 25+ globales, Checkly 20+), frequency (1-30 min típico), alerting (immediate on failure, degradation trends). Casos: (1) homepage load < 3s desde N regiones; (2) login flow completo funciona; (3) API endpoints críticos responden 200; (4) checkout no roto tras deploy. Costo modesto vs valor: detecta issues antes que usuarios, evita reputational damage. Integrar con on-call rotation (alertas actuables).",
+      "realWorld": "Datadog Synthetic es líder enterprise. Checkly (open source alternative con Playwright) muy adoptado en dev-first orgs. Grafana Synthetic Monitoring integra a la stack Grafana. Google (paperless) ejecuta synthetic tests desde 100+ locations globales para sus servicios.",
+      "tags": ["synthetic monitoring", "Playwright", "RUM", "Datadog Synthetic", "Checkly"],
+      "tech": ["Datadog", "Checkly", "Grafana", "Playwright", "Pingdom"],
+      "references": [
+        { "title": "Datadog Synthetic Monitoring" },
+        { "title": "Checkly — Playwright monitoring as code" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "resilience",
+      "topic": "Game days",
+      "difficulty": "mid",
+      "scenario": "Tu equipo tiene runbook para failover manual entre regiones pero nadie lo ha ejecutado nunca.",
+      "question": "¿Qué es un game day y por qué es útil?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Game day = ejercicio simulado o real de un escenario de fallo, con el equipo presente, para practicar el runbook y descubrir gaps. Ejemplo: 'hoy simulamos que us-east-1 se cae y hacemos failover a us-west-2, con timer'. Se aprende: qué runbook está desactualizado, qué automation falta, quién sabe hacer qué, cuánto tarda realmente.", "correct": true, "why": "Correcto. Game days convierten el runbook en muscle memory. Descubrimientos típicos: (a) runbook menciona un endpoint que ya no existe; (b) credencial de terraform no la tiene el equipo actual; (c) failover tarda 3 horas y decían '30 min'; (d) monitoring gap durante failover. Google llama a esto 'DiRT' (Disaster Recovery Testing). Netflix 'Chaos Kong' es game day automatizado. Amazon corre game days para AWS internamente." },
+        { "letter": "B", "text": "Game day es un after-work team building.", "correct": false, "why": "Confusión con team building. Game day es serio, engineering-focused, con hipótesis y aprendizajes documentados." },
+        { "letter": "C", "text": "Game days son solo para incidents mayores.", "correct": false, "why": "También útiles para minor: 'game day de rotar credenciales sin downtime', 'game day de scaling a 10x'. Practicar lo que puedes necesitar bajo presión." },
+        { "letter": "D", "text": "Basta con leer el runbook periódicamente.", "correct": false, "why": "Leer != practicar. Runbook con typo, dep desactualizada, script que falla — solo se descubre EJECUTANDO." }
+      ],
+      "explanation": "Game days = training + verification. Formato típico: (1) pre-brief: equipo, escenario, hipótesis, criterios éxito; (2) ejecución: alguien 'orquesta' el fallo, equipo responde con runbook, cronómetro; (3) debrief: qué funcionó, qué no, action items; (4) documentación: runbook actualizado, tickets creados. Frecuencia: mensual/trimestral para orgs maduras. AWS Well-Architected recomienda regular game days. Combinar con chaos engineering (game day usando AWS FIS para inducir el fallo real).",
+      "realWorld": "Amazon publicó sobre game days internos ('Operational Readiness'). AWS re:Invent talks regularmente presentan game days de clientes (Capital One, Netflix). Google DiRT (Disaster Recovery Testing) corre múltiples veces al año a escala global — testing todo desde 'oficina X pierde internet' hasta 'earthquake en data center'.",
+      "tags": ["game day", "DiRT", "runbook", "chaos engineering"],
+      "tech": ["AWS FIS", "runbook", "chaos engineering"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability Pillar" },
+        { "title": "Google SRE Book — Ch. 17 Testing" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "resilience",
+      "topic": "Contract testing",
+      "difficulty": "mid",
+      "scenario": "Servicio A depende de B. Cada equipo deploya independiente. A veces B rompe A al cambiar formato de response.",
+      "question": "¿Cómo previene contract testing este problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Consumer-driven contract testing (Pact-style): A (consumer) define expectations sobre cómo llama a B (provider) y qué espera. Contract se comparte con B; B corre 'verification' en CI para asegurar que su implementación matches el contract. Si B cambia response de forma que rompe contract, su CI falla ANTES del deploy.", "correct": true, "why": "Correcto. Pact.io es la implementación de referencia. Flow: (1) Test unit del consumer genera 'pact file' (JSON con requests/responses esperados); (2) Provider corre 'pact verifier' que ejecuta esos requests contra su impl y verifica responses matchean; (3) Broker centraliza contracts + versioning. Rompe contract = CI provider falla = no deploy = no incident de integración. Consumer-driven: consumer decide qué necesita (interface segregation)." },
+        { "letter": "B", "text": "OpenAPI/Swagger documenta el contrato y basta con revisar el swagger antes de cambios.", "correct": false, "why": "Swagger es DOCUMENTACIÓN, no test. Puede desactualizarse. Contract testing es EJECUTABLE: CI valida contract automáticamente. Ambas se complementan (Swagger describe, Pact verifica)." },
+        { "letter": "C", "text": "E2E tests entre A y B en cada deploy.", "correct": false, "why": "E2E son lentos, flaky, requieren infra corriendo, y no aíslan la causa cuando fallan. Contract tests son rápidos, deterministicos, específicos al contrato." },
+        { "letter": "D", "text": "Confiar en semantic versioning: si B bump major version, A sabe que hay breaking change.", "correct": false, "why": "SemVer funciona SI la disciplina se respeta. En realidad hay bugs 'unintended breaking' que van en minor/patch. Contract test verifica behavior, no version number." }
+      ],
+      "explanation": "Contract testing = pact entre servicios explícito y verificable. Pact.io es standard (multi-lenguaje, broker service). Spring Cloud Contract (Java) alternativa. Bidireccional (consumer-driven + provider-driven). Beneficios: (a) desacopla deploys (cada equipo independiente confiando en contracts); (b) detecta breakages en CI; (c) documenta expectations vivas; (d) evita E2E para muchos casos. Trade-off: overhead inicial de escribir tests, mantenimiento de contracts. Vale la pena cuando >3-4 servicios se comunican.",
+      "realWorld": "Pact.io es open source, popular en JS, Java, Ruby, .NET, Go. AtlaP (fundadores Pact) publicó extensivamente. ThoughtWorks Tech Radar incluye Pact desde 2013. Netflix, Uber, muchas empresas con microservicios tienen sistemas contract testing internos o basados en Pact.",
+      "tags": ["contract testing", "Pact", "consumer-driven", "microservices"],
+      "tech": ["Pact.io", "Spring Cloud Contract"],
+      "references": [
+        { "title": "Pact.io docs" },
+        { "title": "Martin Fowler — ConsumerDrivenContracts" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "resilience",
+      "topic": "Test doubles taxonomy",
+      "difficulty": "mid",
+      "scenario": "Un test 'de unit' importa el módulo Redis real y falla cuando no hay Redis corriendo.",
+      "question": "¿Cuál es la taxonomía correcta de test doubles?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Meszaros (xUnit patterns): (a) Dummy — pasa como placeholder, no se usa; (b) Stub — devuelve respuestas hardcoded; (c) Fake — implementación funcional simplificada (in-memory DB); (d) Spy — registra llamadas para inspeccionar; (e) Mock — verifica interacciones (que se llamó con X args). El escenario NO es unit test — necesita mock/stub del cliente Redis, no la conexión real.", "correct": true, "why": "Correcto. La taxonomía Meszaros diferencia por PROPÓSITO. Confusión común: 'mock' se usa como paraguas para todos. Fowler ('Mocks Aren't Stubs') clarifica: stubs solo dan respuestas, mocks verifican comportamiento. El escenario: si querías unit test, debiste stub el cliente Redis (no conectar real); si querías integration, deberías usar Testcontainers con Redis real en Docker." },
+        { "letter": "B", "text": "Mock y stub son sinónimos.", "correct": false, "why": "Comúnmente se usan intercambiablemente pero técnicamente son distintos. Stub = provee response. Mock = verifica interaction (assertion sobre llamadas)." },
+        { "letter": "C", "text": "Usar production Redis siempre en tests para 'realismo'.", "correct": false, "why": "Anti-patrón: tests dependientes de infra externa son flaky, lentos, requieren state cleanup. Testcontainers para Redis real efímero en Docker es mejor para integration." },
+        { "letter": "D", "text": "In-memory fake es lo mismo que mock.", "correct": false, "why": "Fake es implementación funcional (ej. in-memory hashmap que se comporta como Redis para tests). Mock solo verifica llamadas. Fake permite tests que ejercitan lógica real; mock verifica solo la interacción." }
+      ],
+      "explanation": "Test doubles según Meszaros: distinguir propósito ayuda a diseñar tests correctos. Fake in-memory es útil cuando tu código realmente ejercita el comportamiento (query, put, ttl). Stubs cuando solo necesitas 'devolver Y ante X'. Mocks para verificar side effects (que se llamó a analytics.track()). Testcontainers cambia el juego para integration: Redis, Postgres, Kafka reales en Docker durante tests — cerca-real sin ser flaky. Frameworks: Mockito (Java), unittest.mock (Python), sinon (JS), Moq (.NET), gomock (Go).",
+      "realWorld": "Gerard Meszaros 'xUnit Test Patterns' es el libro canónico. Martin Fowler 'Mocks Aren't Stubs' es el artículo canónico. Testcontainers ha desplazado LocalStack en muchos casos por realismo.",
+      "tags": ["test doubles", "mock vs stub", "Testcontainers", "Meszaros"],
+      "tech": ["Mockito", "Sinon", "Testcontainers", "unittest.mock"],
+      "references": [
+        { "title": "Martin Fowler — Mocks Aren't Stubs" },
+        { "title": "Meszaros — xUnit Test Patterns" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "resilience",
+      "topic": "A/B testing infra",
+      "difficulty": "senior",
+      "scenario": "Producto quiere A/B testear un nuevo checkout: 50% users versión A, 50% B. Medir conversion.",
+      "question": "¿Qué consideraciones INFRA tiene A/B testing bien hecho?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Segmentación estable: mismo usuario debe ver siempre la misma variante (bucketing por userId hash, no random per-request). Sino, un usuario ve A y luego B → invalida el análisis.", "correct": true, "why": "Correcto. Bucketing por hash(userId + experimentId) % 100 garantiza estabilidad. Random per-request rompe la validez estadística. Herramientas A/B (LaunchDarkly, Optimizely, Statsig) implementan bucketing consistente automáticamente." },
+        { "letter": "B", "text": "Statistical significance: no declarar ganador con muestra pequeña (menos de N conversiones). Correr experimento hasta alcanzar power estadístico. Bayesian methods (vs frecuentista clásico) permiten early stopping en algunos casos.", "correct": true, "why": "Correcto. Falso positivo común: 'B convierte 5% más!' con muestra chica es ruido. Herramientas calculan sample size necesario y significance. Bayesian tools (Statsig, algunos LaunchDarkly features) permiten decisiones más flexibles vs t-test estricto." },
+        { "letter": "C", "text": "Métricas guardrail (canary de experimento): además de la métrica primaria (conversion), monitorizar guardrails (latencia, error rate, revenue absoluto). Si conversion sube 5% pero latencia sube 20%, evaluar trade-off, no solo declarar ganador.", "correct": true, "why": "Correcto. Un experimento puede 'ganar' en su métrica pero degradar otras. Guardrails: latencia p99, error rate, revenue (no solo conversion %), bounce rate. Airbnb, Booking.com publican metodologías con guardrails múltiples." },
+        { "letter": "D", "text": "Instrumentación: enviar 'exposure event' cuando el usuario ve la variante (no cuando se le asigna). Analytics correlacionar con conversion events. Sin instrumentación correcta, el análisis es basura.", "correct": true, "why": "Correcto. 'User asignado a B' != 'User vio B'. Muchos asignados nunca llegan a la página del experimento. Log exposure event 'variant shown' + downstream conversion events con userId link. Sin esto, dilución del efecto." },
+        { "letter": "E", "text": "A/B testing y feature flags son sistemas totalmente distintos con nula relación.", "correct": false, "why": "Falso. Feature flags son la infra base; A/B testing usa flags con targeting + tracking. LaunchDarkly, Statsig, Split.io ofrecen ambos como producto integrado." }
+      ],
+      "explanation": "A/B testing bien hecho combina: (1) infra (bucketing estable, targeting, exposure tracking); (2) statistics (sample size, significance, guardrails); (3) analytics (event tracking correlacionado con userId+experiment); (4) organización (owner del experimento, hipótesis clara, timeline, decisión documentada). Herramientas: Statsig (moderno, Bayesian), LaunchDarkly (experimentation add-on), Optimizely (veterano marketing-focused), Split.io. Empresas grandes construyen internamente (Netflix Xperiments, Booking.com sistema propio, Airbnb ERF).",
+      "realWorld": "Netflix publicó 'It's All A/Bout Testing' documentando su cultura de experiment-driven. Booking.com corre miles de experimentos simultáneos. Airbnb ERF (Experimentation Reporting Framework) open source hasta cierto punto. Statsig fue fundada por ex-Facebook para llevar sus técnicas de experimentation a otros.",
+      "tags": ["A/B testing", "bucketing", "statistical significance", "guardrails", "Statsig"],
+      "tech": ["Statsig", "LaunchDarkly", "Optimizely", "Split.io"],
+      "references": [
+        { "title": "Netflix — It's All A/Bout Testing" },
+        { "title": "Booking.com — Experimentation platform" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "resilience",
+      "topic": "Chaos in CI/CD",
+      "difficulty": "staff",
+      "scenario": "Tu equipo ejecuta chaos experiments manualmente 1x/mes. Un ingeniero propone integrarlos al pipeline de CI/CD.",
+      "question": "¿Cómo integrar chaos engineering en pipelines?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Post-deploy stage: tras el deploy a staging (o canary de prod), ejecutar batería de chaos experiments (kill instance, latency injection en dep crítica). Si el sistema recupera dentro de umbrales → deploy continúa. Sino → auto-rollback. Automatiza la 'verification' que humanos harían en game day.", "correct": true, "why": "Correcto. Chaos as regression testing: verificar que cada release mantiene la resiliencia probada previamente. Ejemplo: (1) deploy a canary; (2) trigger AWS FIS experiment 'kill 1 pod'; (3) medir recovery time; (4) si < SLA → pass, promote canary; (5) si > SLA → rollback + investigate. Litmus Chaos (K8s) tiene 'workflows' que integran a Argo Rollouts. Chaos Toolkit similar." },
+        { "letter": "B", "text": "Chaos experiments en CI son irresponsables — solo manual con humanos.", "correct": false, "why": "Manual limita frecuencia + reproducibility. Automation con safety guardrails (blast radius, stop conditions) permite chaos como parte del ciclo normal. Manual seguirá siendo útil para experimentos grandes / novel." },
+        { "letter": "C", "text": "Ejecutar chaos en producción directamente sin canary primero.", "correct": false, "why": "Blast radius. Chaos en canary/staging primero, prod con % pequeño después." },
+        { "letter": "D", "text": "Chaos experiments son incompatibles con pipelines rápidos.", "correct": false, "why": "Falso. Experiment corto (2-5 min) con targeting específico integra bien a pipeline. Larger experiments corren en scheduled cadence separada." }
+      ],
+      "explanation": "Chaos as continuous verification es la evolución. Herramientas soportan integration: (a) AWS FIS + CodePipeline/EventBridge; (b) Litmus Chaos con Argo Workflows; (c) Chaos Toolkit con pipelines genéricos; (d) Gremlin con CI plugins. Diseño: definir experiments como CODE (yaml/json), versionados en repo, ejecutados como stages. Stop conditions críticas (CloudWatch alarms como safety net). Reports de resultados como artifacts. Objetivo: hacer resilience un attribute continuously verified, no periodically manually tested.",
+      "realWorld": "Litmus Chaos (CNCF) integra a Argo. Netflix ChAP (Chaos Automation Platform) corre experimentos continuamente. Grafana Labs publica sobre chaos en su blog. AWS FIS 'experiment templates' pueden triggering via SDK/API desde pipelines.",
+      "tags": ["chaos in CI/CD", "Litmus", "Argo Rollouts", "continuous verification"],
+      "tech": ["Litmus", "AWS FIS", "Argo Workflows", "Chaos Toolkit"],
+      "references": [
+        { "title": "Litmus Chaos docs" },
+        { "title": "Netflix ChAP (Chaos Automation Platform)" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "resilience",
+      "topic": "Postmortems blameless",
+      "difficulty": "senior",
+      "scenario": "Tras un incident, el manager pregunta '¿quién fue el que rompió esto?'.",
+      "question": "¿Qué es un postmortem blameless y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Blameless postmortem: análisis del incident focus en FACTORES SISTÉMICOS que permitieron el fallo (falta de guardrail, monitoring gap, runbook desactualizado, training) — no en culpar personas. Cultura: 'humanos cometerán errores; el sistema debería tolerarlos'. Objetivo: aprendizaje + prevención, no castigo. Etsy, Google popularizaron.", "correct": true, "why": "Correcto. Blame = miedo = incidents ocultos = MÁS incidents en el futuro. Blameless = openness = aprendizaje = MENOS incidents. Google SRE: 'you can't fire your way to reliability'. Etsy publicó su template blameless. Cada action item del postmortem debe ser sistémico (agregar validación, mejorar monitoring, actualizar runbook) — no 'X debe tener más cuidado'." },
+        { "letter": "B", "text": "Blameless = no hay accountability.", "correct": false, "why": "Confusión común. Blameless != no accountability. Sigue habiendo owners, responsabilidades. Pero la culpa individual no es útil — la mejora sistémica sí. 'Failing fast to learn' cultura." },
+        { "letter": "C", "text": "Solo se hacen postmortems para incidents mayores (SEV1).", "correct": false, "why": "Postmortems para incidents menores también aportan aprendizaje. Escalar el rigor según severity, pero no saltarse por 'menor'." },
+        { "letter": "D", "text": "Postmortem = documento privado del equipo.", "correct": false, "why": "En empresas maduras, postmortems se comparten cross-team (hasta a veces públicamente — GitLab, Cloudflare, AWS publican). Aprender de fallos ajenos es multiplicador." }
+      ],
+      "explanation": "Blameless postmortem template típico: (1) Summary — qué pasó; (2) Impact — usuarios afectados, revenue, duración; (3) Timeline — eventos detallados con timestamps; (4) Root cause analysis — 5 whys sistémicos; (5) What went well — sí, celebrar buenas decisiones bajo presión; (6) What went wrong — factores contribuyentes; (7) Action items — asignados con owner y deadline. Cultura: reunión de review sin culpar, docs públicos internamente, action items tracked. AWS publica postmortems (Service Health Dashboard). GitHub, Cloudflare, GitLab similar.",
+      "realWorld": "Google SRE Book Ch. 15 'Postmortem Culture'. Etsy publicó su template como referencia. Cloudflare publica postmortems públicos (transparencia + aprendizaje comunitario). AWS re:Post servicios health tienen post-event summaries. HackerNews suele discutir postmortems públicos con aprendizajes.",
+      "tags": ["postmortem", "blameless", "5 whys", "SRE culture"],
+      "tech": ["postmortem templates", "incident management"],
+      "references": [
+        { "title": "Google SRE Book — Postmortem Culture" },
+        { "title": "Etsy blog — Blameless Postmortems" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "resilience",
+      "topic": "Retry-storm en testing",
+      "difficulty": "senior",
+      "scenario": "Durante un chaos experiment (inyección de latencia en servicio B), tu servicio A colapsa cuando teóricamente debería graciosamente degradar.",
+      "question": "¿Qué reveló el experimento y cómo interpretarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El experimento reveló FALLA DE DISEÑO oculta: los retries en A sin backoff+jitter amplifican la latencia, agotando el pool de threads/conexiones. Es EXACTAMENTE el valor del chaos engineering: descubrir en experimento controlado lo que en incident sería outage. Action items: implementar backoff+jitter, circuit breaker, timeout agresivo, bulkhead per-dependency.", "correct": true, "why": "Correcto. Chaos = descubrimiento. El sistema NO 'falló en el experimento' — el experimento REVELÓ que el sistema ya estaba roto (solo faltaba la condición para manifestarse). Ahora se puede fixear controladamente. Sin el experimento, este outage llega en horario inconveniente con customer impact real." },
+        { "letter": "B", "text": "El experimento fue mal diseñado — no debería haber tumbado A.", "correct": false, "why": "El experimento hizo su trabajo. Si el experimento simula condición realista (dep lento por 2 min es normal en prod) y A se rompe, A está mal diseñado — no el experimento." },
+        { "letter": "C", "text": "Abortar chaos engineering — es peligroso.", "correct": false, "why": "Reactive equivocado. El chaos SIRVIÓ. Fix el sistema, no abandonas la práctica." },
+        { "letter": "D", "text": "Este es un caso raro, no vale la pena arreglar.", "correct": false, "why": "Dependency lenta NO es raro — es común (network issues, dep bajo carga, DB slow query). Este bug se manifestaría en algún momento; mejor arreglarlo ahora." }
+      ],
+      "explanation": "Chaos experiments 'fallidos' (sistema colapsa) son ÉXITOS de descubrimiento. Los verdaderos fracasos son experimentos donde nada falla y no aprendes nada — 'confirmation bias del sistema'. Cada experimento fallido genera action items: (a) resiliency pattern faltante; (b) monitoring gap; (c) runbook actualización; (d) automation para recovery. Post-fix, re-run el experimento para confirmar. Chaos = ciclo iterativo de descubrimiento y mejora.",
+      "realWorld": "Netflix publicó estadísticas: los primeros años de Chaos Monkey encontraron bugs semanalmente. Con años, la resiliencia mejoró tanto que chaos experiments rara vez causan visible degradation. Es el objetivo: sistema tan resiliente que chaos ordinarios pasan invisibles.",
+      "tags": ["chaos discovery", "retry amplification", "resilience patterns"],
+      "tech": ["circuit breaker", "backoff", "bulkhead"],
+      "references": [
+        { "title": "Netflix Tech Blog — Chaos Engineering learnings" },
+        { "title": "Cindy Sridharan — Distributed Systems Observability" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "resilience",
+      "topic": "Test data management",
+      "difficulty": "mid",
+      "scenario": "Tests de integración usan base de datos compartida y a veces fallan porque dejan state que otros tests asumen limpio.",
+      "question": "¿Cómo gestionar test data correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Tests aislados: cada test crea sus datos + limpia (transaction rollback, DB reset entre tests, o database-per-test con Testcontainers). Nunca compartir state global. Fixtures reproducibles (factories como Factory Bot/Faker) generan datos consistentes.", "correct": true, "why": "Correcto. State compartido = tests order-dependent = flaky. Opciones: (a) transaction que se rollback (rápido, works si no cross-transaction logic); (b) truncate tablas entre tests (más lento); (c) Testcontainers con nueva DB por test (más aislado, más lento); (d) factories para datos deterministicos. Regla: test debería pasar sin importar orden ni corrida N-1." },
+        { "letter": "B", "text": "Cargar dump grande de datos de producción una vez y todos los tests usan el mismo.", "correct": false, "why": "State compartido = flakiness. Además datos de prod pueden tener PII (privacy issue). Preferir factories que generan lo necesario sin trae PII." },
+        { "letter": "C", "text": "Tests deben depender del orden — es más eficiente.", "correct": false, "why": "Anti-patrón. Tests order-dependent son deuda técnica: falla intermitente, difícil debugging, no paralelizables." },
+        { "letter": "D", "text": "Correr tests en producción directamente.", "correct": false, "why": "Peligroso: tests que crean/borran datos en producción real. Reservado para synthetic monitoring con datos designados como test." }
+      ],
+      "explanation": "Test data management principles: (1) aislamiento (cada test independiente); (2) determinismo (mismo input → mismo outcome); (3) reproducibilidad (factory patterns, seed data); (4) representación (datos que reflejan casos reales, edge cases); (5) privacy (no PII de prod en tests). Herramientas: Factory Bot (Ruby), factory_boy (Python), fishery/faker (JS), Testcontainers para DBs efímeras. Anti-patrones: shared fixtures grandes, DB compartida sin limpieza, dependency de orden.",
+      "realWorld": "Testcontainers permitió avance en integration testing con DBs reales. Rails Factory Bot fue influyente en el patrón. Property-based testing (Hypothesis Python, fast-check JS) genera datos aleatorios reproducibles para descubrir edge cases.",
+      "tags": ["test data", "fixtures", "Factory Bot", "Testcontainers", "aislamiento"],
+      "tech": ["Testcontainers", "Factory Bot", "faker", "Hypothesis"],
+      "references": [
+        { "title": "Testcontainers docs" },
+        { "title": "Martin Fowler — Test Double patterns" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "resilience",
+      "topic": "Observability en testing",
+      "difficulty": "senior",
+      "scenario": "Un chaos experiment causa comportamiento raro. Los logs no capturan lo que pasó exactamente. Necesitas más visibilidad.",
+      "question": "¿Qué observability es CRÍTICA para chaos y testing en prod?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Distributed tracing (OpenTelemetry, X-Ray, Jaeger): ver la ruta de un request a través de múltiples servicios, con timing por span. Sin esto, 'algo tarda' es misterio.", "correct": true, "why": "Correcto. En chaos con latencia inyectada, tracing muestra exactamente dónde se acumula el delay. Sin trazas: cada servicio dice 'yo respondí en 200ms', pero el flujo total tarda 5s — trazas muestran dónde." },
+        { "letter": "B", "text": "High-cardinality metrics: dimensiones custom (userId, region, feature flag variant, canary vs baseline) para slicing. Honeycomb, Datadog, New Relic soportan.", "correct": true, "why": "Correcto. Cardinality alta permite queries como 'p99 latency por canary vs baseline' en real-time. Prometheus tradicional no maneja bien cardinality alta; observability platforms modernas sí. Cindy Sridharan y Charity Majors escriben extensivamente sobre esto." },
+        { "letter": "C", "text": "Structured logging con correlation IDs: cada log entry incluye traceId, requestId, userId, experimentId. Búsquedas por experimento posibles.", "correct": true, "why": "Correcto. Sin correlation IDs, imposible reconstruir un flow. traceId permite unir logs de N servicios que atendieron un request. Powertools (AWS), OpenTelemetry SDK, structured loggers." },
+        { "letter": "D", "text": "Debugging con print() suele ser suficiente.", "correct": false, "why": "En sistemas distribuidos, print() es ceguera. Necesitas structured logging + tracing + metrics agregadas + correlation." },
+        { "letter": "E", "text": "Screenshot cada 5 segundos del dashboard para tener history.", "correct": false, "why": "Chapuza. Dashboards deben ser queryable históricamente (Grafana + Prometheus, Datadog, Honeycomb). Screenshots no permiten queries retroactivas." }
+      ],
+      "explanation": "Observability = capacidad de responder 'por qué' post-hoc, no solo 'qué' current. 3 pilares: logs (structured, con contexto), metrics (baseline + custom, alta cardinality), traces (distributed). Herramientas: Honeycomb (pionera high-cardinality), Datadog (all-in-one enterprise), Grafana stack (Loki + Prometheus + Tempo open source), OpenTelemetry (standard vendor-neutral). Sin observability, chaos engineering es ciego; con ella, cada experiment enseña algo. Regla: instrument BEFORE, no after.",
+      "realWorld": "Honeycomb.io construida sobre high-cardinality observability. Charity Majors 'Observability Engineering' book es referencia. OpenTelemetry es CNCF standard con wide adoption. Google publicó papers sobre Dapper (tracing interno) que inspiró Jaeger/Zipkin.",
+      "tags": ["observability", "distributed tracing", "high cardinality", "OpenTelemetry"],
+      "tech": ["OpenTelemetry", "Jaeger", "Honeycomb", "Datadog", "Grafana"],
+      "references": [
+        { "title": "Honeycomb — Observability Engineering (book)" },
+        { "title": "OpenTelemetry — Concepts" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "resilience",
+      "topic": "Culture and organization",
+      "difficulty": "staff",
+      "scenario": "Convences a tu equipo de hacer chaos engineering pero management dice 'ya tenemos suficientes incidents, no busquemos más'.",
+      "question": "¿Cómo se justifica y organiza chaos engineering en una empresa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Framing: chaos NO 'causa' incidents — REVELA los latentes. Costo esperado: descubrir un problema en experiment (1 hora, blast controlado) vs en incident real (horas, blast completo, revenue lost, SLA breach). ROI típico: cada experiment que revela un bug prevendría un incident de $X. Comenzar pequeño (blast radius mínimo), reportar wins (bugs encontrados, incidents evitados), escalar cuando probado.", "correct": true, "why": "Correcto. La conversation con management debe ser en negocio, no tech: 'cada experimento cuesta $Y en tiempo del equipo; cada incident prevenido ahorra $Z (10x más). Empezamos con blast radius 1% durante horario laboral con equipo cerca. Reportamos hallazgos.' Escalar gradualmente construye confianza. Muchos programs chaos empiezan con game day trimestral, evolucionan a experimentos automáticos. AWS Well-Architected respalda esto." },
+        { "letter": "B", "text": "Chaos engineering solo funciona en empresas 'nativas cloud' como Netflix.", "correct": false, "why": "Falso. Bancos (Capital One usa FIS), retail (Target), gobierno (US Digital Service), enterprise clásico lo adoptan. Adaptar prácticas al contexto, no rechazar por ser 'no Netflix'." },
+        { "letter": "C", "text": "Requiere equipo dedicado de 10+ ingenieros.", "correct": false, "why": "Falso. Puede empezar con 1 ingeniero dedicando 20% tiempo. Herramientas managed (AWS FIS, Gremlin) reducen fricción. Cultural es más importante que headcount." },
+        { "letter": "D", "text": "Si no lo hace tu competencia, no vale la pena.", "correct": false, "why": "Anti-argumento — hacer lo que ya hace competencia es no diferenciarse. Chaos engineering es ventaja competitiva en confiabilidad (menos outages = mejor NPS)." }
+      ],
+      "explanation": "Adoptar chaos engineering es cultural + técnico. Fases típicas: (1) awareness (evangelización, hablas de por qué); (2) exploration (game day manual con management observando); (3) implementation (herramientas, experiments regulares, action items); (4) automation (chaos en pipelines); (5) mastery (cultura instalada, chaos como parte del ciclo). Comunicación clave: reportar métricas (experiments run, bugs found, incidents prevented). AWS Well-Architected Framework Reliability Pillar y Google SRE Book brindan cover con autoridades reconocidas. Empresas maduras publican sus programs (Netflix, LinkedIn, Uber, Capital One).",
+      "realWorld": "Capital One publicó su journey de chaos engineering en banking. LinkedIn adoption story. AWS re:Invent regular tiene sessions de clientes enterprise chaos. Casey Rosenthal (co-founder Chaos Community Day) escribió libros sobre adopción organizacional.",
+      "tags": ["chaos culture", "adopción", "management", "ROI"],
+      "tech": ["AWS FIS", "Gremlin", "Chaos Toolkit"],
+      "references": [
+        { "title": "Casey Rosenthal — 'Chaos Engineering' (book)" },
+        { "title": "Capital One — Chaos engineering journey" }
+      ]
+    }
+  ]
+}

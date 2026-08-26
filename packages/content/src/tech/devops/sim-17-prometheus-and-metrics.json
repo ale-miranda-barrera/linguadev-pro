@@ -1,0 +1,418 @@
+{
+  "id": "devops-sim-17-prometheus-and-metrics",
+  "trackId": "devops",
+  "order": 17,
+  "title": "Simulacro 17 — Prometheus y métricas",
+  "focus": "Arquitectura Prometheus (server, exporters, PushGateway), PromQL, tipos de métricas (counter, gauge, histogram, summary), cardinality explosion, recording/alerting rules, federation, Cortex/Thanos/Mimir para long-term storage y HA.",
+  "areaCoverage": ["monitoring"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "monitoring",
+      "topic": "Modelo pull de Prometheus",
+      "difficulty": "junior",
+      "scenario": "Un colega viene de un mundo con StatsD y Graphite (los servicios PUSHean métricas al agregador) y no entiende por qué Prometheus funciona al revés: hace scrape de endpoints /metrics HTTP.",
+      "question": "¿Cómo funciona el modelo de recolección de Prometheus y por qué se eligió pull sobre push?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Prometheus PULL: el server hace HTTP GET periódicamente a /metrics de cada target (default 15s). Ventajas: (1) service discovery centralizado en Prometheus (no en cada app); (2) health check implícito (si scrape falla, el target está caído — puedes alertar con up==0); (3) devs pueden abrir /metrics en browser para debug; (4) evita 'thundering herd' cuando muchos clients pushean al mismo tiempo; (5) el rate limiting es trivial (Prometheus controla el scrape interval). El PushGateway existe para casos edge (batch jobs cortos).", "correct": true, "why": "Correcto. El modelo pull es filosofía Prometheus (heredada de Borgmon en Google). El server define QUÉ scrapear y CADA CUÁNDO, con service discovery integrado (Kubernetes, Consul, EC2, file_sd). Cuando up{job='api'}==0, sabes que el target está caído — no necesitas heartbeat separado." },
+        { "letter": "B", "text": "Push: los servicios envían métricas al server via HTTP POST cada vez que cambian.", "correct": false, "why": "Incorrecto para el flujo principal. StatsD/Graphite/InfluxDB tradicionalmente son push. Prometheus es pull deliberadamente. El PushGateway existe pero es la excepción, no la regla." },
+        { "letter": "C", "text": "gRPC streaming bidireccional entre server y targets.", "correct": false, "why": "Prometheus usa HTTP simple con formato de exposición de texto (o Protobuf en OpenMetrics). Sin streaming — cada scrape es un GET independiente." },
+        { "letter": "D", "text": "Los targets escriben directamente a disco compartido con el server.", "correct": false, "why": "No es como Prometheus opera. El TSDB local del server se llena SOLO desde scrapes HTTP (o remote_write ingest para casos especiales)." }
+      ],
+      "explanation": "Arquitectura Prometheus: (1) Server (scrape + TSDB + query engine + alerting rules); (2) Exporters (traducen métricas de sistemas legacy a formato Prometheus — node_exporter, mysql_exporter, blackbox_exporter); (3) PushGateway (para batch jobs cortos que mueren antes de scrape); (4) Alertmanager (routing + dedupe + silence de alerts); (5) Service Discovery (Kubernetes SD, Consul, DNS, EC2, file_sd). Pull vs push debate: pull da health check gratis y control centralizado; push necesario para batch jobs o funciones serverless. Regla: usa pull siempre que puedas; PushGateway solo para casos donde el target no vive suficiente para ser scraped.",
+      "realWorld": "Prometheus nació en SoundCloud (2012) como replacement de StatsD + Graphite que no escalaban. Los creadores (Julius Volz, Matt Proud) venían de Google y trajeron el modelo Borgmon. Donado a CNCF en 2016, segundo proyecto graduado tras Kubernetes. Hoy es el estándar de facto para métricas en Kubernetes.",
+      "tags": ["Prometheus", "pull model", "scrape", "arquitectura"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "prometheus.io — Overview" }, { "title": "SoundCloud Backstage Blog — Prometheus origins" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "monitoring",
+      "topic": "Tipos de métricas: Counter",
+      "difficulty": "junior",
+      "scenario": "Quieres medir 'cuántos requests HTTP ha atendido tu API'. Sabes que solo puede crecer (no puede decrecer) excepto cuando el proceso reinicia y vuelve a 0.",
+      "question": "¿Qué tipo de métrica de Prometheus usar y cómo se consulta el rate?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Counter: monotónico creciente, resets a 0 en restart. Se expone el TOTAL acumulado (no incrementos). Para obtener rate por segundo: rate(http_requests_total[5m]) — Prometheus maneja el reset automáticamente detectando cuando el valor decrece. Convention naming: sufijo _total.", "correct": true, "why": "Correcto. Counter es la métrica más común y simple. La regla clave: EXPÓN el total, no el delta. rate() calcula (last-first)/duration en la ventana, detectando resets. irate() para gráficas volátiles (usa últimos 2 puntos). Para agregar por dimension: sum(rate(http_requests_total[5m])) by (status)." },
+        { "letter": "B", "text": "Gauge, porque cambia con el tiempo.", "correct": false, "why": "Anti-patrón. Gauge es para valores que suben Y bajan (memoria, temp, queue depth). Un counter que expones como gauge pierde detección automática de resets y complica rate calculations." },
+        { "letter": "C", "text": "Summary con quantiles.", "correct": false, "why": "Summary es para latencies/tamaños con distribución (calcula quantiles client-side). No es para contadores simples." },
+        { "letter": "D", "text": "Reset manualmente cada minuto en la app y expón como gauge.", "correct": false, "why": "Fuente de bugs. Perderás muestras si el reset y el scrape no están coordinados. Prometheus está diseñado para manejar counters — deja que él haga el trabajo." }
+      ],
+      "explanation": "Counter properties: (1) monotónico (solo sube); (2) reset a 0 en process restart; (3) rate() / irate() / increase() manejan resets. Funciones: rate(counter[5m]) = per-second rate promedio; increase(counter[5m]) = incremento total en la ventana; irate(counter[5m]) = rate instantáneo (últimos 2 samples). Naming convention: sufijo _total (ej. http_requests_total, errors_total). Anti-patrón común: exponer 'requests per second' pre-calculado en la app — pierdes la habilidad de re-agregar en distintas ventanas de tiempo.",
+      "realWorld": "Todos los frameworks de instrumentación siguen esta convención: client_golang, prometheus-client-python, micrometer (Java), prom-client (Node). Errores clásicos en producción: exponer el rate en vez del total y luego preguntarte por qué las alertas fluctúan en restarts.",
+      "tags": ["counter", "rate", "PromQL", "tipos de métricas"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "prometheus.io — Metric types" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "monitoring",
+      "topic": "Histogram vs Summary",
+      "difficulty": "senior",
+      "scenario": "Necesitas medir latencia de tu API con p50, p95, p99. Sabes que Prometheus ofrece Histogram y Summary. Los devs eligieron Summary porque 'ya viene calculado el p99'. En producción, no puedes agregar los p99 de 10 instancias — el resultado matemáticamente no tiene sentido.",
+      "question": "¿Cuál es la diferencia fundamental entre Histogram y Summary y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Summary calcula quantiles CLIENT-SIDE (en la app, sobre una ventana móvil) y expone valores fijos (p50, p95, p99). No se pueden agregar entre instancias (promediar p99s no da el p99 real). Histogram expone BUCKETS pre-agregables (le_0.005, le_0.01, ... le_+Inf) y calcula quantiles SERVER-SIDE con histogram_quantile(0.99, sum by (le) (rate(bucket[5m]))). Histogram es la elección correcta 95% del tiempo — permite agregación cross-instance.", "correct": true, "why": "Correcto. Es LA distinción más importante en Prometheus. Regla: si necesitas agregar percentiles entre instancias/pods/regiones (casi siempre en microservicios) → Histogram. Summary solo si es un solo proceso y no vas a agregar. La razón matemática: no puedes promediar percentiles — un p99 de 100ms y un p99 de 500ms NO dan un p99 de 300ms. Con buckets, sí puedes sumar buckets y recalcular." },
+        { "letter": "B", "text": "Son sinónimos con nombres distintos.", "correct": false, "why": "Muy incorrecto. Comportamiento fundamentalmente distinto. Summary hace cálculo local; Histogram delega al server. Cardinality profile distinto también." },
+        { "letter": "C", "text": "Summary es más eficiente porque no envía buckets.", "correct": false, "why": "Cierto que Summary envía menos datos por scrape, pero pierdes la habilidad de re-preguntar quantiles distintos y agregar. Trade-off usualmente no vale la pena." },
+        { "letter": "D", "text": "Histogram no soporta quantiles.", "correct": false, "why": "Sí los soporta via histogram_quantile(). El cálculo es una interpolación lineal sobre buckets — precisión depende de bucket granularity." }
+      ],
+      "explanation": "Histogram implementation: expone http_request_duration_seconds_bucket{le='0.005'}, {le='0.01'}, ..., {le='+Inf'}, más _count y _sum. Query: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))). Buckets deben cubrir el rango esperado — default de client libs suele ser malo para APIs (empieza en 0.005s pero termina en 10s). Configura buckets basados en tus SLOs (ej. si SLO es p99 <200ms, tienes buckets alrededor: 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5, 1, 2). Alternativa moderna: Native Histograms (aka Sparse Histograms) — Prometheus 2.40+, buckets dinámicos exponenciales, mucha menor cardinality con más precisión. Uber's M3 y Grafana Mimir soportan.",
+      "realWorld": "Grafana Labs migró internamente de summaries a histograms hace años tras encontrar bugs de agregación. Uber's M3 (backend metrics interno pre-open-source) originalmente sufrió mismos problemas. La documentation oficial de Prometheus explícitamente recomienda Histogram sobre Summary para casos donde agregación es necesaria.",
+      "tags": ["histogram", "summary", "quantiles", "percentiles", "agregación"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "prometheus.io — Histograms and summaries" }, { "title": "Prometheus 2.40 — Native Histograms" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "monitoring",
+      "topic": "Cardinality explosion",
+      "difficulty": "senior",
+      "scenario": "Un dev añade una label user_id a la métrica http_requests_total. Tienen 500K usuarios activos. En 24h, Prometheus consume 40GB de RAM y OOMs. El SRE dice 'labels crean series únicas'. ¿Cuál es el problema y cómo se resuelve?",
+      "question": "¿Qué es cardinality explosion y cómo prevenirla?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cada combinación única de labels crea una time series independiente en el TSDB. http_requests_total{user_id='123', method='GET', status='200'} y http_requests_total{user_id='124', ...} son series distintas. 500K usuarios × 5 métodos × 20 status codes = 50M series. Cada serie consume RAM (índices) y disco. Regla: labels deben tener CARDINALITY ACOTADA — status codes (bounded, ~10 valores), method (bounded, ~7), region (bounded). NUNCA labels con user_id, email, request_id, timestamp, UUID.", "correct": true, "why": "Correcto. Es EL problema #1 de operar Prometheus a escala. Prometheus indexa por combinación de labels, y cada serie ocupa ~1-3KB de RAM en el índice + samples en disco. 10M series es el límite práctico en un solo Prometheus." },
+        { "letter": "B", "text": "IDs de alta cardinality pertenecen a LOGS o TRACES, no a métricas. Si necesitas ver requests por user específico, busca en logs (Loki, ELK) o traces (Tempo, Jaeger) con exemplars linkeando de la metric al trace. Métricas son AGREGADAS por dimensión de baja cardinality.", "correct": true, "why": "Correcto. Es el principio arquitectónico: metrics = agregado (RED, USE), logs = eventos detallados, traces = requests individuales. Exemplars (feature Prometheus + Grafana) permiten click desde metric bucket a trace específico." },
+        { "letter": "C", "text": "Herramientas para detectar: Prometheus expone prometheus_tsdb_head_series (total series), tsdb-analyzer, promtool tsdb analyze <block>. Grafana Cloud tiene Mimirtool. Query topk(20, count by (__name__) ({__name__=~'.+'})) — top métricas por series count.", "correct": true, "why": "Correcto. Detección proactiva es crítica. Set alerts en prometheus_tsdb_head_series > threshold. Reviewa top métricas mensualmente. Cloudflare, Grafana Labs tienen tools internos para esto." },
+        { "letter": "D", "text": "Solución: aumentar RAM del server infinitamente.", "correct": false, "why": "Fix temporal. El problema es de diseño de instrumentación. Aumentar RAM retrasa el problema pero no lo resuelve — la app seguirá creando series nuevas cada día." },
+        { "letter": "E", "text": "Prometheus tiene un límite duro de 100 series.", "correct": false, "why": "No hay límite duro. El límite práctico depende de RAM/disco. Grafana Mimir/Cortex/Thanos escalan a decenas de millones. Un solo Prometheus típicamente maneja bien hasta ~10M." }
+      ],
+      "explanation": "Cardinality math: (label_1_valores) × (label_2_valores) × ... = series totales. UUID como label = 1 series por request unique = memory bomb. Labels aceptables (baja cardinality): status_code, method, endpoint (si el enum es acotado — usa route pattern /users/:id, no /users/123), region, environment, version. Labels NUNCA usar: user_id, session_id, request_id, IP, email, full URL con query string, timestamp. Solución cuando ya explotó: (1) drop label via metric_relabel_configs en scrape_config; (2) use recording rules para pre-agregar por labels de baja cardinality; (3) elimina la métrica y re-instrumenta la app. Prevención: code review sobre nuevas métricas.",
+      "realWorld": "Cloudflare tuvo un incidente famoso (2018) donde una label 'colo' (data center) fue combinada con 'customer' — millions de series. Documentaron el proceso de mitigation. Grafana Labs escribe extensively sobre cardinality en su blog. GitLab publicó postmortems por esto. Uber M3 fue construido específicamente para escalar más allá del límite de un solo Prometheus.",
+      "tags": ["cardinality", "labels", "TSDB", "escalabilidad"],
+      "tech": ["Prometheus", "Grafana Mimir", "promtool"],
+      "references": [{ "title": "Grafana Labs — Cardinality is King" }, { "title": "prometheus.io — Instrumentation best practices" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "monitoring",
+      "topic": "PromQL: rate vs irate vs increase",
+      "difficulty": "senior",
+      "scenario": "Necesitas alertar 'error rate > 5%' y también graficar la actividad en un dashboard. Debates: irate() es más 'preciso'; rate() es más 'estable'; increase() es más 'intuitivo'.",
+      "question": "¿Cuándo usar cada función y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "rate(counter[5m]) = per-second rate promediado sobre la ventana (interpolación lineal cross-reset). Uso: alerting y dashboards estables. irate(counter[5m]) = per-second rate usando los ÚLTIMOS 2 samples de la ventana. Uso: gráficas donde quieres ver spikes rápidos (más volátil). increase(counter[5m]) = incremento absoluto sobre la ventana (= rate × window_seconds). Uso: contar eventos totales ('cuántos errores en 5min'). Regla: alerting → rate; exploración volátil → irate; totales humanos → increase.", "correct": true, "why": "Correcto. Las tres son parte de la trilogía. rate() es la más común. irate() puede ocultar problemas: si sample entre spike es plano, irate=0 aunque hubo mucho tráfico. Regla oficial: 'siempre usar rate() para alerts, irate() solo para gráficas de alta resolución'." },
+        { "letter": "B", "text": "irate() es siempre mejor porque usa datos más recientes.", "correct": false, "why": "Peligroso para alerts — irate() puede oscilar wildly y triggerar/apagar alerts. Los últimos 2 samples pueden ser scrape jitter, no signal real." },
+        { "letter": "C", "text": "increase() y rate() dan el mismo resultado numérico.", "correct": false, "why": "Casi. increase() = rate() × window_seconds. Numéricamente distintos, semánticamente equivalentes." },
+        { "letter": "D", "text": "sum(counter) sobre la ventana es equivalente a rate().", "correct": false, "why": "sum() suma valores actuales de series distintas (agregación por labels), no calcula rate. Confundir estos es error común de junior — llevan a queries que devuelven basura." }
+      ],
+      "explanation": "PromQL cheat sheet: (1) rate(counter[5m]) — averaged per-second, use for alerts + stable dashboards; (2) irate(counter[5m]) — instantaneous per-second, use for volatile debug graphs, NEVER for alerts; (3) increase(counter[5m]) — total in window, equivalent to rate × window_seconds; (4) delta(gauge[5m]) — SOLO para gauges (no counters), diferencia first-last. Trampas comunes: (a) usar rate() en gauge (undefined behavior); (b) window muy corta ([1m]) puede tener menos de 4 samples si scrape es 15s — rate() requiere ≥2 samples, idealmente 4+ para estabilidad; (c) [30s] con scrape de 15s = 2 samples = mismo que irate. Regla: rate(x[Nm]) donde N ≥ 4 × scrape_interval.",
+      "realWorld": "Prometheus docs, Robust Perception blog (Brian Brazil, ex-SoundCloud, founder de Robust Perception) tienen guías canonical. Grafana Labs bloguea extensively. Errores en producción: alert de rate([1m]) con scrape 30s = 2 samples = alerta oscila.",
+      "tags": ["PromQL", "rate", "irate", "increase"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "Robust Perception — rate() vs irate() explained" }, { "title": "prometheus.io — Functions" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "monitoring",
+      "topic": "Recording rules vs alerting rules",
+      "difficulty": "senior",
+      "scenario": "Tu dashboard con 10 paneles tarda 30s en cargar. Cada panel ejecuta una query PromQL complexa con joins y agregaciones. El equipo de SRE menciona 'recording rules'.",
+      "question": "¿Qué son recording rules y alerting rules, y cuándo usar cada una?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Recording rules: pre-calculan queries expensivas y guardan el resultado como una nueva serie. Ejecutadas periódicamente (default 1min). Ejemplo: job:http_requests:rate5m = sum by (job) (rate(http_requests_total[5m])). El dashboard consulta la serie derivada — instantáneo. Alerting rules: evaluan una query PromQL periódicamente y si retorna resultado, disparan alerta a Alertmanager. Se usan MUCHO juntas: recording rule pre-calcula el ratio, alerting rule evalúa si > threshold.", "correct": true, "why": "Correcto. Es LA optimización clave para dashboards y alertas rápidas. Sin recording rules, un dashboard grande tarda segundos-minutos por panel. Las alerting rules over recording rules son más rápidas (query ya pre-calculada) y consistentes (alerta y dashboard usan el mismo valor)." },
+        { "letter": "B", "text": "Recording rules son solo para logging.", "correct": false, "why": "Confusión. Recording rules generan nuevas TIME SERIES, no logs. Ambas son features del server Prometheus." },
+        { "letter": "C", "text": "Alerting rules envían emails directamente.", "correct": false, "why": "Prometheus solo evalúa la rule y notifica al Alertmanager. Este último hace routing (email, Slack, PagerDuty, webhook), dedupe, grouping, silencing. Separación importante." },
+        { "letter": "D", "text": "Recording rules añaden latencia — evítalas.", "correct": false, "why": "Al contrario. Pre-calcular una vez y consultar N veces es más eficiente que calcular N veces on-the-fly. La latencia añadida es evaluate interval (1min típico) — trade-off aceptable." }
+      ],
+      "explanation": "Recording rules structure (YAML): groups: [{name: 'http', interval: 30s, rules: [{record: 'job:http_requests:rate5m', expr: 'sum by (job) (rate(http_requests_total[5m]))'}]}]. Naming convention: level:metric:operation (ej. job:http_errors_total:rate5m). Alerting rules: {alert: 'HighErrorRate', expr: 'job:http_errors:ratio5m > 0.05', for: '5m', labels: {severity: 'critical'}, annotations: {summary: '...'}}. Best practices: (1) recording rules para agregaciones de alta cardinality → baja cardinality; (2) alerting rules USAN recording rules (consistent + fast); (3) 'for' duration previene flapping — la condición debe ser cierta por N min antes de firear; (4) organiza en groups por dominio (http, db, kafka). Evaluación: rules corren en groups secuencialmente (previene race conditions dentro del group).",
+      "realWorld": "Grafana Labs opera Cortex/Mimir con miles de recording rules. Google SRE Book Ch. 6 detalla filosofía de rules. Netflix, Uber, Cloudflare todos tienen bibliotecas de rules comunes en git. Anti-patrón: rules gigantes (100+ series por rule) que consumen CPU en evaluate.",
+      "tags": ["recording rules", "alerting rules", "PromQL", "optimización"],
+      "tech": ["Prometheus", "Alertmanager"],
+      "references": [{ "title": "prometheus.io — Recording rules" }, { "title": "prometheus.io — Alerting rules" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "monitoring",
+      "topic": "Alertmanager: routing y silencing",
+      "difficulty": "mid",
+      "scenario": "Tu Prometheus dispara 50 alerts en 2 minutos cuando un data center se cae (todas relacionadas). Los ingenieros reciben 50 pages a las 3AM. Enloquece.",
+      "question": "¿Cómo Alertmanager resuelve este problema mediante grouping, inhibition y silencing?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Grouping: alerts con labels comunes se agrupan en UNA notificación. Config group_by: ['alertname', 'cluster']. Los 50 pages se convierten en 1 email/PagerDuty con la lista consolidada. group_wait (esperar N segundos antes de send inicial) y group_interval (add nuevas al mismo group).", "correct": true, "why": "Correcto. Es la feature más útil. Sin grouping, un fallo de infra desata storm de pages. Con grouping, un ticket claro '5 servicios afectados en us-east-1'." },
+        { "letter": "B", "text": "Inhibition rules: si alert A dispara, silencia B automáticamente. Ejemplo: si 'ClusterDown' fires, inhibe 'PodNotReady' y 'HighLatency' del mismo cluster — porque son consecuencia obvia. Reduces noise cuando la causa raíz es conocida.", "correct": true, "why": "Correcto. Elimina alertas 'obvias' derivadas. Ejemplo: NetworkPartition inhibe 100 ServiceDown alerts del cluster afectado. Se define en inhibit_rules con source_matchers, target_matchers y equal (labels que deben coincidir)." },
+        { "letter": "C", "text": "Silencing: durante mantenimiento planificado, silenceas via UI/API por N minutos con matchers específicos. Perfecto para deploys planificados que causarían alerts falsos. Silence NO afecta la evaluación de rules — solo bloquea notifications.", "correct": true, "why": "Correcto. Comando común: amtool silence add alertname='HighLatency' cluster='staging' --duration=2h. Herramienta esencial para maintenance windows sin ruido." },
+        { "letter": "D", "text": "Routing tree: envía alerts distintos a distintos canales por severity/team. Critical → PagerDuty, warning → Slack, info → email. Match por labels (severity, team, service).", "correct": true, "why": "Correcto. El árbol de routing es central. Root receiver es fallback; child routes con matchers específicos overrideán. Con continue: true puedes matchear múltiples routes." },
+        { "letter": "E", "text": "Alertmanager envía todos los alerts al webhook default sin filtrado.", "correct": false, "why": "Falso por diseño. Todo el punto de Alertmanager es filtrar/agrupar/rutear. Sin config, no notifica." }
+      ],
+      "explanation": "Alertmanager arquitectura: (1) Receivers (destinations: pagerduty_configs, slack_configs, webhook_configs, email_configs); (2) Route tree (match by labels → receiver, con nested routes que overrideán al parent); (3) Inhibit rules (source → target relationship); (4) Silences (temporary muting via UI/API). Config común: route: {group_by: ['alertname'], group_wait: 30s, group_interval: 5m, repeat_interval: 12h, receiver: 'default', routes: [{match: {severity: 'critical'}, receiver: 'pagerduty'}, {match: {team: 'db'}, receiver: 'db-slack'}]}. HA: correr 2-3 Alertmanager en cluster (gossip protocol para dedupe cross-instance). Best practice: repeat_interval largo (12h+) — si alert sigue firing tras 12h, algo está mal con response.",
+      "realWorld": "Robust Perception publicó best practices canonical. Google SRE Book Ch. 4 (my philosophy on alerting) cubre el tema. PagerDuty tiene guías de integración. Anti-patrón común: no configurar inhibition — resultado, storm de pages en cada incident grande.",
+      "tags": ["Alertmanager", "grouping", "inhibition", "silence", "routing"],
+      "tech": ["Prometheus", "Alertmanager"],
+      "references": [{ "title": "prometheus.io — Alertmanager configuration" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "monitoring",
+      "topic": "Long-term storage: Thanos vs Cortex vs Mimir",
+      "difficulty": "staff",
+      "scenario": "Tu Prometheus retiene solo 15 días de datos (default TSDB). Necesitas 1 año de retention para SLO reports y trend analysis. Y necesitas HA (si el Prometheus muere, no perder datos). Considerando Thanos, Cortex y Grafana Mimir.",
+      "question": "¿Cuál es la arquitectura y trade-offs de cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Thanos: sidecar containers junto a cada Prometheus suben blocks a object storage (S3, GCS). Componentes: Sidecar (upload), Store Gateway (query historic), Compactor (downsample), Querier (unified query engine — Prometheus + Store). Federation pattern: mantén Prometheus locales (recent data + scrape), Thanos para long-term. Cortex/Mimir: multi-tenant desde el inicio, remote_write ingest, arquitectura microservices distribuida (ingester, distributor, querier, compactor). Cortex fue el original (Weaveworks), Mimir es fork mejorado (Grafana Labs, 2022). Mimir escala más (billion series+ probado). Elección: Thanos si tienes Prometheus existentes y quieres extender; Mimir si es greenfield y necesitas multi-tenant + escala masiva.", "correct": true, "why": "Correcto. Todos son 'Prometheus-compatible long-term storage', pero arquitecturalmente distintos. Thanos preserva el modelo pull (Prometheus locales) y añade sidecar para upload. Cortex/Mimir usan remote_write (los Prometheus locales pushean a la ingester tier). Grafana Labs fork Cortex → Mimir en 2022 y añadió mejoras significativas de escala." },
+        { "letter": "B", "text": "Los tres son el mismo proyecto con nombres distintos.", "correct": false, "why": "Falso. Proyectos separados con arquitecturas y comunidades distintas, aunque comparten el goal (extender Prometheus)." },
+        { "letter": "C", "text": "Prometheus tiene long-term storage nativo — no necesitas estos.", "correct": false, "why": "Prometheus TSDB local está diseñado para retention corta (default 15d, práctico hasta ~30-60d). Escalar más allá requiere object storage backend, que estos proyectos proveen." },
+        { "letter": "D", "text": "Elegir el más nuevo siempre — Mimir.", "correct": false, "why": "Depende del contexto. Thanos tiene menor overhead operacional (menos componentes). Mimir es mejor para SaaS con miles de tenants. Cortex es intermedio." }
+      ],
+      "explanation": "Detalles: Thanos (CoreOS/Improbable, 2018) preserva modelo Prometheus pull, sidecar sube 2h blocks a S3, StoreGateway lee blocks históricos, Querier hace fan-out a Prometheus + StoreGateway. Compactor hace downsampling (5m, 1h) para queries eficientes de largo plazo. Cortex (Weaveworks, 2016): multi-tenant, remote_write ingest, ingester ring (consistent hashing), chunks storage backend (originalmente Cassandra/BigTable, ahora blocks en S3). Mimir (Grafana Labs, 2022, fork de Cortex): mejor performance, arquitectura simplificada, escala a mil millones series probado, licencia AGPLv3. Alternative: VictoriaMetrics — más simple operacionalmente, más eficiente en CPU/RAM, no distributed por default. Elección práctica: pequeño equipo + Kubernetes existente → Thanos; SaaS multi-tenant → Mimir; máxima eficiencia recursos → VictoriaMetrics.",
+      "realWorld": "Grafana Cloud corre Mimir para clientes (managed service). Improbable (game infra) creó Thanos. Weaveworks creó Cortex. GitLab usa Thanos. Grafana Labs publicó paper 'Mimir: scaling metrics to 1 billion series'. Uber corre M3 (proyecto propio, más viejo). Netflix Atlas es completely separate stack (no Prometheus-based).",
+      "tags": ["Thanos", "Cortex", "Mimir", "long-term storage", "escalabilidad"],
+      "tech": ["Thanos", "Cortex", "Grafana Mimir", "VictoriaMetrics"],
+      "references": [{ "title": "thanos.io — Documentation" }, { "title": "grafana.com/oss/mimir" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "monitoring",
+      "topic": "Federation",
+      "difficulty": "mid",
+      "scenario": "Tienes 20 Prometheus (uno por cluster Kubernetes). Necesitas dashboards globales que agreguen datos de todos. Y quieres alerts globales (ej. 'total error rate > 5%' across clusters).",
+      "question": "¿Qué es federation y cuándo NO usarla?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Federation: un Prometheus 'global' hace scrape de un endpoint especial (/federate?match[]=...) en los Prometheus 'locales', trayendo solo las métricas seleccionadas (típicamente recording rules ya agregadas). Uso correcto: agregar métricas de bajo volumen ya pre-agregadas (job:http_requests:rate5m). Uso INCORRECTO: intentar copiar todas las series raw de los locales al global — no escala, latencia enorme, punto único de falla. Para long-term storage y query global de datos raw, usa Thanos/Mimir en vez de federation.", "correct": true, "why": "Correcto. Federation está diseñada para 'hierarchical aggregation' — pre-agregas en el local, extrae solo lo agregado al global. Mal usada, es antipatrón. La regla: si necesitas los datos raw en el global, algo está mal — probablemente quieres remote_write a Cortex/Mimir." },
+        { "letter": "B", "text": "Federation es sinónimo de HA de Prometheus.", "correct": false, "why": "Confusión. HA de Prometheus se hace corriendo 2 instances con misma config (scrape mismos targets, replicated). Federation es diferente — jerárquico." },
+        { "letter": "C", "text": "Federation permite queries cross-cluster automáticas.", "correct": false, "why": "No — federation trae datos al global. Las queries son sobre el global. Para query fan-out, Thanos Querier o Mimir Query Frontend son mejores." },
+        { "letter": "D", "text": "Federation NO tiene límites — puedes federar toda la data.", "correct": false, "why": "Escalabilidad es problema. Cada federate scrape mueve N series por HTTP — con muchas series, latencia y overhead crecen. El global se convierte en bottleneck." }
+      ],
+      "explanation": "Federation config ejemplo (en Prometheus global): scrape_configs: [{job_name: 'federate', scrape_interval: 15s, honor_labels: true, metrics_path: '/federate', params: {'match[]': ['{job=\"api\"}', 'job:*:*']}, static_configs: [{targets: ['prom-us-east:9090', 'prom-eu-west:9090']}]}]. honor_labels: true preserva labels originales (crítico para no perder job/instance). Regla de oro: match[] debe seleccionar SOLO métricas ya agregadas (recording rules del local). Anti-patrón: match[]=({job='api'}) trae todas las series de api job — no escala. Alternativa moderna: Thanos con StoreGateway (query historic cross-cluster desde S3) o Mimir/Cortex con remote_write (locales pushean al global). Ambas escalan mucho mejor que federation.",
+      "realWorld": "Weaveworks documentó por qué crearon Cortex — federation no escalaba para su caso. Grafana Labs blogs sobre 'federation vs remote_write vs Thanos'. Empresas grandes usan Thanos o Mimir; federation queda para casos simples (2-3 clusters, métricas ya agregadas).",
+      "tags": ["federation", "escalabilidad", "cross-cluster"],
+      "tech": ["Prometheus", "Thanos"],
+      "references": [{ "title": "prometheus.io — Federation" }, { "title": "Grafana Labs — When federation is not enough" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "monitoring",
+      "topic": "Exporters ecosystem",
+      "difficulty": "mid",
+      "scenario": "Necesitas monitorear: máquinas Linux, base de datos MySQL, cluster Kafka, aplicación legacy Java sin instrumentación Prometheus, un endpoint HTTP externo (blackbox — sabes solo la URL).",
+      "question": "¿Qué son exporters y cuáles usar para cada caso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "node_exporter: métricas del sistema Linux (CPU, RAM, disk, network). Se corre en cada máquina/nodo. Es el exporter más usado del ecosistema.", "correct": true, "why": "Correcto. node_exporter es de-facto para host-level metrics. Instálalo en cada máquina o como DaemonSet en Kubernetes. Ojo: no confundir con nginx_exporter u otros." },
+        { "letter": "B", "text": "mysqld_exporter: consulta el MySQL via SHOW STATUS, SHOW VARIABLES, information_schema, y expone las métricas en formato Prometheus. Similar exporters para PostgreSQL, Redis, MongoDB, etc.", "correct": true, "why": "Correcto. Cada base de datos tiene su exporter. Convention: <system>_exporter. Config: connection string + qué queries ejecutar." },
+        { "letter": "C", "text": "JMX Exporter: para apps Java legacy que exponen métricas via JMX beans. El exporter se corre como Java agent en la misma JVM o como sidecar, traduce JMX a Prometheus format. Similar para .NET (prometheus-net), Ruby, etc.", "correct": true, "why": "Correcto. Perfecto para apps legacy sin instrumentar. Alternativa: instrumentar directamente con micrometer o client_java, pero requiere cambio de código." },
+        { "letter": "D", "text": "Blackbox exporter: sonda endpoints externos (HTTP, HTTPS, DNS, TCP, ICMP). Prometheus le pide 'sondea google.com', reporta latency, status code, cert expiry. Uso: availability monitoring de dependencias externas o synthetic monitoring.", "correct": true, "why": "Correcto. Blackbox es 'sondas desde fuera' — complementa métricas 'desde dentro'. Config: modules por tipo de check. Prometheus scrape ejemplo: /probe?target=https://example.com&module=http_2xx." },
+        { "letter": "E", "text": "Los exporters son propietarios y necesitan licencia comercial.", "correct": false, "why": "Falso. Todos los exporters oficiales son OSS (Apache 2.0). El ecosystem lista 100+ exporters comunitarios gratuitos." }
+      ],
+      "explanation": "Exporter model: cada exporter expone un endpoint HTTP /metrics con métricas del sistema traducido. Prometheus scrape ese endpoint. Categorías: (1) Official exporters (node_exporter, blackbox_exporter, snmp_exporter, alertmanager); (2) Application-specific (mysqld, postgres, redis, kafka, elasticsearch, mongodb, nginx, haproxy); (3) Cloud (cloudwatch_exporter para AWS, stackdriver para GCP); (4) Custom exporters (client_python + Flask, escribes tu propio). Instrumentation directa vs exporter: si la app es NUEVA, instrumenta directamente con client library (más eficient). Exporter es para código que NO puedes modificar. Deployment: exporters típicamente sidecar (Docker/K8s) o systemd service. node_exporter DaemonSet en K8s.",
+      "realWorld": "prometheus.io lista exporters oficiales. GitHub prometheus-community org tiene ecosystem. Grafana Labs publica dashboards oficiales para cada exporter. Empresas comunes: node + kubernetes-metrics + database exporter + application client libraries cubren 80% de casos.",
+      "tags": ["exporters", "node_exporter", "blackbox", "JMX"],
+      "tech": ["Prometheus", "node_exporter", "blackbox_exporter", "JMX exporter"],
+      "references": [{ "title": "prometheus.io — Exporters" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "monitoring",
+      "topic": "PushGateway — cuándo (y cuándo NO)",
+      "difficulty": "mid",
+      "scenario": "Tu equipo tiene un cronjob que corre cada noche a las 3AM. Termina en 5 minutos. Quieren enviar métricas de éxito/duración. Un dev propone 'usemos PushGateway'. Otro dice 'está mal usar PushGateway para todo'.",
+      "question": "¿Cuándo es apropiado usar PushGateway y cuándo NO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "USAR PushGateway: batch jobs cortos que mueren antes del scrape interval. El job termina, empuja métricas al PushGateway, este las persiste, Prometheus las scrape desde ahí. Ejemplos válidos: nightly ETL, backup jobs, database migrations. NO USAR PushGateway como reemplazo generalizado del modelo pull: para servicios de larga vida, el modelo pull es correcto. Anti-patrón: usar PushGateway para todo (perdiendo health check, service discovery, y el PushGateway se convierte en SPOF).", "correct": true, "why": "Correcto. PushGateway es solución específica para 'ephemeral batch jobs'. Prometheus docs son explícitos: no usar como replacement general. Problems si abusas: (1) sin health check via up (PushGateway siempre está up); (2) staleness (métricas antiguas persisten hasta borrado manual); (3) SPOF (si PushGateway cae, pierdes todo)." },
+        { "letter": "B", "text": "PushGateway es la forma preferida — modelo push es más moderno.", "correct": false, "why": "Falso. Prometheus fue diseñado para pull. Push vs pull es religión pero los founders son claros: pull first, push solo para casos edge." },
+        { "letter": "C", "text": "PushGateway agrega métricas automáticamente entre múltiples jobs.", "correct": false, "why": "Peligroso — NO agrega. Cada push con el mismo job/instance labels SOBRESCRIBE. Jobs paralelos con misma identidad pierden datos. Fix: usa labels únicos (instance=<UUID>) pero luego cardinality explota." },
+        { "letter": "D", "text": "PushGateway resuelve el problema de firewall (targets detrás de NAT).", "correct": false, "why": "Aunque físicamente permite push desde fuera, la solución correcta para firewall es proxy inverso o VPN, no PushGateway. Su rationale es batch jobs, no NAT traversal." }
+      ],
+      "explanation": "PushGateway use case: batch job envía POST /metrics/job/<jobname>/instance/<id> con datos. Prometheus scrape el PushGateway. Cuidados: (1) DELETE explícito tras job success (o métricas persisten para siempre); (2) evitar cardinality explosion en labels; (3) PushGateway NO tiene retención propia — solo persist las últimas metrics recibidas por labelset. Alternativas modernas: (a) Prometheus 2.30+ tiene remote_write receive endpoint (algunos usan esto); (b) OpenTelemetry Collector con Prometheus exporter recibe push y expone /metrics para scrape; (c) instrumenta el batch job para que su duración sea > scrape interval (raro). Herramienta relacionada: prometheus_client push_to_gateway() en Python client.",
+      "realWorld": "Prometheus documentation es explícita sobre limitations. Uber, Grafana Labs bloguean sobre alternativas modernas. Muchas empresas terminan con PushGateway 'zoo' de métricas viejas que nadie limpia — es tech debt operacional.",
+      "tags": ["PushGateway", "batch jobs", "push vs pull"],
+      "tech": ["Prometheus", "PushGateway"],
+      "references": [{ "title": "prometheus.io — When to use the Pushgateway" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "monitoring",
+      "topic": "Service Discovery en Kubernetes",
+      "difficulty": "senior",
+      "scenario": "Tienes un cluster Kubernetes con 200 pods de 20 servicios distintos, más nuevos deploys constantemente. No quieres hardcodear IPs en Prometheus config.",
+      "question": "¿Cómo funciona Kubernetes Service Discovery en Prometheus?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Prometheus consulta la Kubernetes API para descubrir targets dinámicamente. Config: kubernetes_sd_configs con role (node, service, pod, endpoints, ingress). Cada role expone metadata en labels __meta_kubernetes_*. Ejemplo: role: pod trae todos los pods; luego relabel_configs filtra por annotation prometheus.io/scrape='true'. Sin restart de Prometheus — actualiza discovery cada N segundos.", "correct": true, "why": "Correcto. Es el patrón estándar. Los devs anotan sus Pods con prometheus.io/scrape, prometheus.io/port, prometheus.io/path, y Prometheus los descubre automáticamente. Alternativa moderna: kube-prometheus-stack + PodMonitor/ServiceMonitor CRDs (Prometheus Operator)." },
+        { "letter": "B", "text": "Prometheus Operator (kube-prometheus-stack): CRDs ServiceMonitor y PodMonitor definen QUÉ scrapear declaratively. En vez de editar prometheus.yml, cada servicio provee su ServiceMonitor. El operator regenera config automáticamente. Standard de-facto en Kubernetes hoy.", "correct": true, "why": "Correcto. kube-prometheus-stack (Helm chart) instala Prometheus Operator + Grafana + Alertmanager + node_exporter + kube-state-metrics. ServiceMonitor por servicio = self-service para devs, GitOps friendly." },
+        { "letter": "C", "text": "kube-state-metrics: expone métricas del CLUSTER STATE (deployments, pods, services desired vs actual). Complementa cAdvisor (que expone resource usage). Ambos son esenciales para monitorear Kubernetes.", "correct": true, "why": "Correcto. kube-state-metrics = 'estado del control plane objects'. cAdvisor (built-in kubelet) = 'resource usage por container'. Los dos son complementarios y ambos necesarios para monitoreo completo K8s." },
+        { "letter": "D", "text": "Relabel configs permiten transformar labels DURING scrape: keep/drop targets por regex, rename labels, extraer info de metadata, ajustar target host. Es magia pero indispensable — el 80% de Prometheus config real es relabel_configs.", "correct": true, "why": "Correcto. Ejemplo típico: relabel drop metrics innecesarias, extraer namespace y pod name de __meta_kubernetes_pod_name, renombrar __address__ para usar port específico. metric_relabel_configs es post-scrape (aplicar a series ingested)." },
+        { "letter": "E", "text": "Prometheus requiere reiniciar cada vez que un pod se despliega.", "correct": false, "why": "Falso — todo el punto de SD es dinamismo. Prometheus refresca targets cada scrape_interval sin restart." }
+      ],
+      "explanation": "K8s SD roles: (1) node — un target por nodo (útil para node_exporter); (2) service — servicios K8s (útil para blackbox); (3) pod — todos los pods (usa annotation-based filtering); (4) endpoints — endpoints de services (recomendado para service mesh); (5) ingress — ingress objects. Prometheus Operator patterns: ServiceMonitor referencia un Service via selector; PodMonitor va directo a Pods. Los CRDs generan prometheus.yml automáticamente. Alternative: Grafana Alloy (nuevo agent unificado de Grafana, sustituye promtail + Prometheus agent + otros). El futuro es CRD-driven en Kubernetes.",
+      "realWorld": "kube-prometheus-stack es el helm chart más downloaded en el mundo K8s. CoreOS creó el Prometheus Operator (adquirido por Red Hat, ahora comunidad). Grafana Labs mantiene alternativas. Empresas grandes suelen tener un Prometheus por cluster + Thanos/Mimir global.",
+      "tags": ["service discovery", "Kubernetes", "Prometheus Operator", "relabeling"],
+      "tech": ["Prometheus", "Prometheus Operator", "kube-state-metrics"],
+      "references": [{ "title": "prometheus.io — Kubernetes SD" }, { "title": "github.com/prometheus-operator" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "monitoring",
+      "topic": "RED y USE methods",
+      "difficulty": "mid",
+      "scenario": "Nuevo servicio HTTP en producción. Debate: '¿qué métricas exponemos?'. Un ingeniero dice 'las que se me ocurran'. Otro cita 'RED method'. Otro dice 'USE method'.",
+      "question": "¿Qué son RED y USE, y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RED method (Tom Wilkie, Weaveworks): para SERVICIOS request-driven — R = Rate (requests por segundo), E = Errors (errores por segundo o ratio), D = Duration (latency distribution, especialmente percentiles). Aplica a: APIs HTTP, gRPC, background workers procesando queue. USE method (Brendan Gregg, Netflix): para RECURSOS del sistema — U = Utilization (% tiempo usado), S = Saturation (queue depth, tasks esperando), E = Errors. Aplica a: CPU, memory, disk, network. Complementarios: RED para el service level, USE para infrastructure level.", "correct": true, "why": "Correcto. Son los dos frameworks canonical de instrumentación. Aplicándolos, cubres los 80% de monitoreo relevante. RED se popularizó con microservices; USE es más viejo (Solaris/Linux performance). Google Golden Signals (Latency, Traffic, Errors, Saturation) es una tercera versión relacionada." },
+        { "letter": "B", "text": "RED es para databases, USE es para APIs.", "correct": false, "why": "Al revés. RED = servicios/requests. USE = recursos/infra." },
+        { "letter": "C", "text": "Los dos miden lo mismo.", "correct": false, "why": "No. RED mide el trabajo entrando (requests). USE mide el estado del recurso procesando." },
+        { "letter": "D", "text": "Solo necesitas uno — elegir es cuestión de preferencia.", "correct": false, "why": "Falso. Sistemas reales necesitan ambos niveles. Sin RED no sabes cómo va el servicio; sin USE no sabes por qué degrada." }
+      ],
+      "explanation": "Golden Signals (Google SRE Book) es sinónimo cercano: Latency (RED-D), Traffic (RED-R), Errors (RED-E + USE-E), Saturation (USE-S). Implementación: (1) por servicio, instrument requests con Histogram para duration + Counter para requests_total con label status; (2) por recurso, node_exporter da USE (cpu_usage_seconds_total, memory_MemFree_bytes, node_disk_io_time_seconds_total, node_network_receive_bytes_total). Dashboards típicos: RED dashboard para cada service (rate, error rate, p50/p95/p99), USE dashboard por cluster/nodo (CPU util + saturation + errors por recurso). Alertas: burn rate de SLO (RED-based), y USE errors (disk full, OOM kills).",
+      "realWorld": "Tom Wilkie escribió el paper RED (Weaveworks blog, 2015). Brendan Gregg escribió USE method (2013, sitio propio). Google SRE Book Ch. 6 (Monitoring Distributed Systems). RED es más popular en el mundo Kubernetes/microservices. Grafana Labs tiene template dashboards oficiales para ambos.",
+      "tags": ["RED method", "USE method", "Golden Signals", "instrumentation"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "Weaveworks — The RED Method" }, { "title": "brendangregg.com — USE method" }, { "title": "Google SRE Book Ch. 6" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "monitoring",
+      "topic": "TSDB internals",
+      "difficulty": "staff",
+      "scenario": "Team lead pregunta: '¿por qué Prometheus TSDB es rápido? ¿Cómo maneja millions de series? ¿Por qué block-based storage?'.",
+      "question": "¿Cuál es la arquitectura del TSDB de Prometheus?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Prometheus TSDB (v2, 2017): storage basado en BLOCKS inmutables de 2h. Estructura: head block (in-memory, current 2h) + WAL (write-ahead log para durability) + blocks históricos (persistidos a disco). Cada block tiene chunks (encoded samples), index (mapping label→series→chunk), y meta.json. Compactor merge blocks pequeños en blocks más grandes (2h → 24h → varios días). XOR encoding (Gorilla, Facebook 2015) comprime samples floating-point efficient. Retención: blocks más viejos que retention_time se borran. Query engine: PromQL parser + evaluator lee blocks + head.", "correct": true, "why": "Correcto. Esta arquitectura fue rediseño mayor de Björn Rabenstein/Fabian Reinartz 2017. Fue crítico para escalabilidad. Fundamentos: (1) blocks inmutables permite parallel query; (2) WAL da crash recovery; (3) XOR encoding basado en Facebook Gorilla paper reduce disco 10x; (4) compaction en background evita fragmentación." },
+        { "letter": "B", "text": "TSDB usa PostgreSQL como backend.", "correct": false, "why": "Falso. TSDB es storage engine propio, no relacional. Uso PostgreSQL sería mucho más lento y no manejaría escala." },
+        { "letter": "C", "text": "TSDB guarda cada sample en un archivo separado.", "correct": false, "why": "Antipatrón operacional. Filesystem colapsa con millions files. Los blocks agrupan datos comprimidos." },
+        { "letter": "D", "text": "TSDB requiere Kafka para ingesta.", "correct": false, "why": "No. Ingest es directo desde scraper al WAL + head. Kafka es opcional en arquitecturas externas (remote_write pipeline)." }
+      ],
+      "explanation": "TSDB detalles: (1) Head block — 2h de datos en RAM, chunks se van encoding progressively; (2) WAL — cada sample también escrito a WAL en disco para durability (replay en crash); (3) M-mapping — chunks del head son mmap'd (evita duplicate copies en RAM); (4) Block layout — index file usa inverted index (label → posting list de series), TOC al final; (5) Compaction — background process merge blocks. Retention: --storage.tsdb.retention.time=15d (default). Métricas TSDB útiles: prometheus_tsdb_head_series, prometheus_tsdb_head_chunks, prometheus_tsdb_wal_corruptions_total, prometheus_tsdb_compactions_total. promtool tsdb analyze <block> = herramienta debug. XOR encoding basado en Gorilla paper (Facebook 2015): ~1.37 bytes por sample promedio en floats típicos.",
+      "realWorld": "Björn Rabenstein presenté TSDB v2 en PromCon 2017. Fabian Reinartz escribió posts detallando internals. Grafana Labs blog cover Mimir TSDB (basado en Prometheus TSDB). VictoriaMetrics tiene TSDB alternativo (mensaje: 'más eficiente en RAM').",
+      "tags": ["TSDB", "storage", "compression", "internals"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "Fabian Reinartz — Writing a TSDB from scratch" }, { "title": "Facebook Gorilla paper" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "monitoring",
+      "topic": "Alerts efectivos: symptoms vs causes",
+      "difficulty": "senior",
+      "scenario": "Equipo debate: alertar en 'CPU > 90%' o alertar en 'p99 latency > 500ms'? Un manager dice 'los dos'. SRE dice 'solo síntomas'. Junior dice '¿cuál es la diferencia?'.",
+      "question": "¿Qué filosofía de alerting propone el SRE Book y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Alerta en SÍNTOMAS (impacto al usuario) no en CAUSAS. Latency alta, error rate alta, availability baja = síntomas del user. CPU 90%, memory 85%, disk 70% = causas potenciales. Si alertas en causas, tienes MUCHO ruido (CPU alto puede ser normal, no siempre impacta users). Si alertas en síntomas, el humano se despierta SOLO cuando hay problema real. CAUSAS se investigan tras la alerta de síntoma vía dashboards + traces + logs. Google SRE regla: 'every page must be actionable — you can do something about it right now'.", "correct": true, "why": "Correcto. Es filosofía SRE Book. Alertar en causas = alert fatigue = ignoras alerts = paras de responder. Alertas en síntomas = pocas alertas = cada una importante = respondes rápido. Excepción: causes que INEVITABLEMENTE llevarán a síntomas (disk 95% full que se llenará en 1h) = alerta anticipatoria." },
+        { "letter": "B", "text": "Alerta en todas las métricas por si acaso.", "correct": false, "why": "Anti-patrón masivo. Alert fatigue destruye equipos. Después de 20 alerts irrelevantes, todas se ignoran incluyendo la que sí importa." },
+        { "letter": "C", "text": "Solo alerta en logs — métricas son ruido.", "correct": false, "why": "Falso. Métricas agregadas son ideales para alerts (bajo overhead, agregación matemática). Logs son ruidosos para triggers." },
+        { "letter": "D", "text": "Machine learning debe elegir qué alertar.", "correct": false, "why": "AIOps promete esto pero en 2026 el estado del arte requiere significant human tuning. ML detecta anomalías útiles pero no reemplaza thoughtful SLO-based alerting." }
+      ],
+      "explanation": "Symptoms-first alerting: (1) SLO-based (burn rate alerts — 'consumiendo error budget muy rápido'); (2) User-visible (availability, latency percentiles, correctness); (3) Downstream impact (payments failing, checkout errors). Symptoms typicos: HighErrorRate (>5%), HighLatency (p99 > SLO), LowAvailability (<99%). Causes que sí alertar: DiskAlmostFull (95% → llegará a 100%), CertExpiringSoon (7d antes), RateLimitedByExternal. Regla del Golden Signal: burn rate alerts multi-window (2% budget en 1h + 5% en 6h — captura tanto fast burns como slow leaks). Anti-patrones: alertar CPU/RAM sin correlación con impacto; alertar cada excepción individual.",
+      "realWorld": "Google SRE Book Ch. 4 (My Philosophy on Alerting) es referencia canonical. Rob Ewaschuk paper original 'My Philosophy on Alerting' (2014). SLO burn rate alerts publicados por Google en 2019. Netflix, Slack, Cloudflare todos aplican esto. Empresas con alerts causal-heavy → burnout de on-call.",
+      "tags": ["alerts", "symptoms", "SLO", "burn rate"],
+      "tech": ["Prometheus", "Alertmanager"],
+      "references": [{ "title": "Google SRE Book Ch. 4" }, { "title": "sre.google — Alerting on SLOs" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "monitoring",
+      "topic": "Native Histograms",
+      "difficulty": "staff",
+      "scenario": "Tu equipo usa Histograms tradicionales para latency. Con 20 buckets por métrica × 500 endpoints × 50 pods = 500K series solo por latency. Grafana Labs menciona 'Native Histograms' como solución.",
+      "question": "¿Qué son Native Histograms y qué problema resuelven?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Native Histograms (Prometheus 2.40+, 2022): un SOLO tipo de sample que contiene bucket data completa (schema exponencial, resolución configurable). En vez de 20 series por histogram tradicional, es 1 serie con datos internos. Cardinality dramáticamente reducida. Más precisión (buckets exponenciales cubren rango wide con resolución alta). Compatible con histogram_quantile(). Trade-offs: (1) todavía experimental (2026: estable pero aún adoptándose); (2) requiere ingest path y query engine actualizado (Mimir/Thanos versiones recientes); (3) client libraries deben soportar (Go, Java, Python están al día).", "correct": true, "why": "Correcto. Native Histograms (formalmente 'sparse histograms') fueron introducidos en Prometheus 2.40 (Nov 2022) por Beorn Rabenstein y equipo. Resuelven el problema de cardinality de histograms clásicos. Basado en OpenHistogram / HDR Histograms conceptualmente. Es la evolución mayor de Prometheus TSDB en años recientes." },
+        { "letter": "B", "text": "Native Histograms son syntactic sugar sobre buckets tradicionales.", "correct": false, "why": "Falso. Storage format completamente distinto en el TSDB. No syntactic sugar." },
+        { "letter": "C", "text": "Solo funcionan en cloud, no self-hosted.", "correct": false, "why": "Funcionan en Prometheus OSS. Cloud vendors (Grafana Cloud, etc.) también soportan." },
+        { "letter": "D", "text": "Reemplazan gauges y counters también.", "correct": false, "why": "No. Solo son sustituto de histograms clásicos. Counter y gauge siguen igual." }
+      ],
+      "explanation": "Native Histograms técnica: schema exponencial (buckets con boundaries en 2^(k/2^schema)), resolución ajustable (schema -4 muy sparse, schema 8 muy fino). Ejemplo: schema 0 = boundaries en powers of 2 (1, 2, 4, 8...). Un histogram nativo puede representar rango de nanoseconds a horas en un solo tipo. Migration path: (1) instrument code con client library que soporta native (Go: prometheus/client_golang v1.13+); (2) Prometheus 2.40+; (3) storage backend compatible (Mimir 2.7+, Thanos 0.30+ para query). Coexistence: ambos histograms clásicos y nativos pueden vivir en el mismo Prometheus durante migration. Grafana Labs, Cloudflare están migrando.",
+      "realWorld": "Björn Rabenstein presenté en PromCon 2022. Grafana Labs bloguea sobre migración interna. Cloudflare adoptando gradualmente. El objetivo: reducir cardinality de metrics históricamente costosas. Es el mayor cambio en Prometheus desde TSDB v2.",
+      "tags": ["Native Histograms", "sparse histograms", "cardinality"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "prometheus.io — Native Histograms" }, { "title": "Grafana Labs — Native histograms in Prometheus" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "monitoring",
+      "topic": "Exemplars: bridge metrics → traces",
+      "difficulty": "senior",
+      "scenario": "Ves en Grafana un p99 spike de latency. Preguntas: '¿qué request específico fue el lento?'. Con metrics solos, no puedes bajar del agregado al request individual.",
+      "question": "¿Qué son exemplars y cómo permiten bajar de metric a trace?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Exemplars: cada bucket de histogram puede llevar un ejemplo REAL (trace_id, timestamp, valor). Cuando instrumentas latency, la client library adjunta el trace_id del OpenTelemetry span actual al bucket correspondiente. En Grafana, al ver p99 spike, click en el punto muestra el trace_id ejemplar → click abre el trace en Tempo/Jaeger. Bridge directo entre agregado (metric) y detalle (trace).", "correct": true, "why": "Correcto. Es LA feature que unifica metrics + traces. Concepto propuesto en OpenMetrics 2019, implementado en Prometheus 2.26+ (2021), en Grafana 7.4+. Sin exemplars, click-through de metric → trace es imposible; con exemplars, es un click." },
+        { "letter": "B", "text": "Exemplars aumentan cardinality dramáticamente.", "correct": false, "why": "Falso. Exemplars son datos ADICIONALES a los buckets, no crean nuevas series. Cardinality unchanged. Solo storage extra por sample de exemplar." },
+        { "letter": "C", "text": "Solo funcionan con Jaeger, no con Tempo o Zipkin.", "correct": false, "why": "Funcionan con cualquier trace backend — el trace_id es agnóstico. Grafana datasource config linka trace_id → tu backend elegido." },
+        { "letter": "D", "text": "Requieren reemplazar Prometheus por otro TSDB.", "correct": false, "why": "Prometheus soporta exemplars nativamente desde 2.26. No requiere reemplazo." }
+      ],
+      "explanation": "Exemplar workflow: (1) app instrumentada con OpenTelemetry — cada request tiene trace_id activo; (2) al observar latency (histogram.Observe(0.150)), la lib checkea el active span y adjunta trace_id como exemplar; (3) exemplar viaja con el sample al Prometheus; (4) query engine lo devuelve en response; (5) Grafana renderiza como diamond points sobre el gráfico. Storage overhead: 1 exemplar por bucket por scrape es negligible. Config: en Prometheus start flag --enable-feature=exemplar-storage. Client libraries: Go/Java/Python actualizadas soportan. Grafana panel setting: 'Show exemplars'.",
+      "realWorld": "OpenMetrics spec (2019) formalizó exemplars. Grafana Labs presenté como parte de 'unified observability' vision. Datadog, New Relic, Honeycomb tienen equivalentes propietarios. Es el estándar para hacer observability actionable (metric → trace → log correlation).",
+      "tags": ["exemplars", "traces", "unified observability", "OpenMetrics"],
+      "tech": ["Prometheus", "Grafana", "Tempo", "OpenTelemetry"],
+      "references": [{ "title": "prometheus.io — Exemplars" }, { "title": "grafana.com — Exemplars in Grafana" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "monitoring",
+      "topic": "Scrape config avanzado",
+      "difficulty": "senior",
+      "scenario": "Tu Prometheus scrape de 500 targets. Ves que scrape_duration_seconds está alto (>10s) para algunos. Prometheus consume mucha CPU al scraping. Necesitas optimizar.",
+      "question": "¿Qué opciones de scrape config y relabeling ayudan a escalar Prometheus?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "scrape_timeout debe ser menor a scrape_interval (si scrape tarda más que interval, el próximo se skipea). Default: scrape_interval=15s, scrape_timeout=10s. Ajusta según sensibilidad requerida vs load del target.", "correct": true, "why": "Correcto. Regla: timeout < interval. Sí target lento, no puedes bajar interval — el scrape acumula backlog. Alerta si scrape_duration_seconds > threshold." },
+        { "letter": "B", "text": "metric_relabel_configs con action: drop elimina métricas innecesarias POST-scrape antes de ingest al TSDB. Ejemplo: {source_labels: [__name__], regex: 'go_.*', action: drop} elimina todas las métricas Go runtime (típicamente cientos por target). Reduces ingestion y storage.", "correct": true, "why": "Correcto. Filtro más importante para reducir volumen. Cada exporter/lib expone métricas que no necesitas — filtrar en scrape es más eficiente que filtrar en query." },
+        { "letter": "C", "text": "sample_limit y series_limit protegen contra targets malos que exponen millones de series. Si target excede el limit, Prometheus dropea todo el scrape y marca up=0. Previene cardinality explosion desde un mal deploy.", "correct": true, "why": "Correcto. Escuadrón anti-cardinality. sample_limit: 10000 en scrape_configs previene que un dev accidentalmente rompa Prometheus con nueva métrica cardinality-explota." },
+        { "letter": "D", "text": "Sharding: múltiples Prometheus, cada uno scrape un subset de targets (consistent hashing por target). Útil cuando un solo Prometheus no puede con la carga. Combinado con Thanos/Mimir para query unified.", "correct": true, "why": "Correcto. Vertical scaling tiene límite (~1M active series por Prometheus típicamente). Horizontal via sharding es la ruta a >10M series." },
+        { "letter": "E", "text": "Prometheus escala infinitamente en un solo binario.", "correct": false, "why": "Falso. Vertical scaling tiene límite práctico. Beyond, necesitas sharding + long-term storage." }
+      ],
+      "explanation": "Optimizaciones scrape: (1) tune interval (15s típico, 30s+ para targets caros); (2) drop metrics innecesarias con metric_relabel_configs; (3) sample_limit / label_limit para protección; (4) honor_timestamps: false si target expone timestamps antiguos; (5) shard con hashmod (relabel: {source_labels: [__address__], modulus: N, target_label: __tmp_hash, action: hashmod} + {source_labels: [__tmp_hash], regex: <shard_id>, action: keep}). Monitoreo del propio Prometheus: prometheus_target_scrape_pool_reloads_failed_total, prometheus_tsdb_head_samples_appended_total (ingest rate), prometheus_engine_query_duration_seconds. Herramienta: promtool para validate configs pre-deploy.",
+      "realWorld": "Grafana Labs opera millones series con sharding + Mimir. Cloudflare tiene fleet de Prometheus regionales sharded. Best practices canonical en robustperception.io. Anti-patrón común: no filtrar métricas Go runtime — cada Go app añade ~50 series de runtime.",
+      "tags": ["scrape", "relabeling", "sharding", "escalabilidad"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "prometheus.io — Configuration" }, { "title": "robustperception.io" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "monitoring",
+      "topic": "Multi-window burn rate alerts",
+      "difficulty": "staff",
+      "scenario": "Tu SLO: 99.9% availability. Definir alertas de error budget burn rate. Un ingeniero propone 'alerta si error rate > 1%'. Otro propone 'multi-window'. ¿Diferencia?",
+      "question": "¿Qué es multi-window multi-burn-rate alerting y por qué es superior al threshold simple?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-window: dos condiciones ANDed sobre distintas ventanas. Ejemplo (fast burn): error_rate[1h] > 14.4×SLO AND error_rate[5m] > 14.4×SLO — captures fast burn (consumirías todo el budget en 2h). Ejemplo (slow burn): error_rate[6h] > 6×SLO AND error_rate[30m] > 6×SLO — captures slow leak. La ventana larga da signal statistical robusto (no false positives); la corta da recency (no alerta 6h tarde). Google SRE Workbook publica tabla exacta de thresholds y windows.", "correct": true, "why": "Correcto. Es LA best practice moderna para SLO alerting. Threshold simple '> 5%' sufre: (1) false positives por spikes cortos; (2) latencia de detection (window largo alerta muy tarde). Multi-window resuelve ambos combinando short y long windows. Publicado por Google en 'The Site Reliability Workbook' Ch. 5." },
+        { "letter": "B", "text": "Multi-window es lo mismo que threshold simple con distintas ventanas.", "correct": false, "why": "Distinto. Threshold simple: OR de condiciones. Multi-window: AND de long + short window en la misma condición. Purpose: robustez estadística + recency." },
+        { "letter": "C", "text": "Machine learning detecta el burn automáticamente.", "correct": false, "why": "Frameworks manuales (multi-window) son más robustos y explicables que ML para SLO alerting. ML tiene su lugar en anomaly detection, no burn rate." },
+        { "letter": "D", "text": "Solo aplica a availability SLOs.", "correct": false, "why": "Aplica a cualquier SLO: latency, correctness, freshness. Cualquier SLI que puedas medir tiene burn rate." }
+      ],
+      "explanation": "Burn rate math: si SLO=99.9%, error budget=0.1% (43.2min/mes). Burn rate 1 = consumes exactly budget over 30 days. Burn rate 14.4 = consumes entire month budget in 2h. Burn rate 6 = consumes en 5 días. Multi-window pairs (from SRE Workbook Table 5-2): (2h/5m, 14.4x) → fast burn alert; (6h/30m, 6x) → slower alert; (24h/2h, 1x) → warning slow leak. Cada nivel routed a distinto severity (critical page → warning ticket). Implementation en Prometheus recording rules pre-calcula burn rate; alerting rules AND las dos ventanas. Herramientas: sloth (config declarative de SLOs → Prometheus rules), Nobl9, Grafana SLO.",
+      "realWorld": "Google publicó tabla canonical en SRE Workbook (2018). Netflix, Slack, Cloudflare, Stripe implementan. Adrian Cockcroft, Jaana Dogan blog frecuentemente. Emerging: Alertmanager v2 con multiwindow alerts nativos. En 2026, SLO tooling es mucho más mainstream que hace 5 años.",
+      "tags": ["burn rate", "SLO", "multi-window", "alerts"],
+      "tech": ["Prometheus", "Alertmanager", "Sloth"],
+      "references": [{ "title": "Google SRE Workbook Ch. 5" }, { "title": "sre.google — Alerting on SLOs" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "monitoring",
+      "topic": "Prometheus vs alternatives",
+      "difficulty": "mid",
+      "scenario": "Tu team evalúa métricas backends: Prometheus, InfluxDB, Datadog, VictoriaMetrics, M3 (Uber), Atlas (Netflix). Cada uno tiene tradeoffs. Team lead pide comparativa.",
+      "question": "¿Cuáles son los trade-offs principales entre estos sistemas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Prometheus: OSS estándar, pull model, PromQL potente, ecosystem enorme. Limits: single-node retention limitada, cardinality bounded. Fortaleza: madurez, comunidad, Kubernetes-native.", "correct": true, "why": "Correcto. Estado del arte OSS para métricas. CNCF graduated, adoption masiva. Weakness histórica: single node — Thanos/Mimir/Cortex resuelven a costo de complejidad." },
+        { "letter": "B", "text": "InfluxDB: TSDB propio (v1 con LSM tree, v2 con FDB, v3 con IOx/Arrow). Push model, Flux o SQL. Adopción mediana, buena para IoT (event-driven). Debate comunitario tras cambios de licencia y arquitectura entre versiones.", "correct": true, "why": "Correcto. InfluxDB fue popular antes de Prometheus. Perdio adoption por cambios frecuentes de arquitectura y confusión de versiones. v3 (IOx) está en Rust + Apache Arrow, prometedor pero adoption incierta." },
+        { "letter": "C", "text": "VictoriaMetrics: OSS, Prometheus-compatible (PromQL, remote_write), single binary o cluster mode, más eficiente en RAM/CPU que Prometheus vanilla. Buena elección si Prometheus vanilla scale hurts, sin adoptar complejidad de Thanos/Mimir.", "correct": true, "why": "Correcto. VictoriaMetrics ha ganado adoption por simplicidad operacional. Un solo binario reemplaza Prometheus + Thanos. Trade-off: menos features (algunos avanzados de Prometheus faltan), pero mucho más simple." },
+        { "letter": "D", "text": "Uber M3 y Netflix Atlas: sistemas propios open-sourced. M3 (Cassandra-inspired distributed TSDB) para escala Uber. Atlas (Netflix, in-memory optimized) para queries fast. Ambos válidos pero complejidad operacional alta, adoption fuera de sus empresas madre limitada.", "correct": true, "why": "Correcto. Ambos legítimos ingeniería pero requieren SRE team dedicated. Empresas fuera de FAANG raramente adoptan — Prometheus + Mimir cubre 95% de casos con mucha menos complejidad." },
+        { "letter": "E", "text": "Datadog es siempre mejor porque es SaaS.", "correct": false, "why": "Falso. Datadog es excelente producto pero costos escalan wildly con cardinality/hosts. Empresas serias tienen alternative (OSS + hosted) para mantener costos predictables. Datadog es fácil arranque, caro largo plazo." }
+      ],
+      "explanation": "Categorización: (1) OSS pull-based: Prometheus (+ Thanos/Mimir/VictoriaMetrics para escala); (2) OSS push-based: Graphite (legacy), InfluxDB; (3) SaaS: Datadog, New Relic, Dynatrace, Chronosphere (M3 comercial); (4) Cloud-native: AWS Managed Prometheus, GCP Cloud Monitoring, Azure Monitor; (5) Internal FAANG: M3 (Uber), Atlas (Netflix), Monarch (Google). Criterios de decisión: (a) scale (millions vs billions series); (b) cost tolerance; (c) team size (SaaS ahorra ops effort); (d) compliance (data residency); (e) ecosystem (Kubernetes = Prometheus wins). 2026 landscape: OpenTelemetry standardizando el instrumentation layer — código instrumentado con OTel puede exportar a cualquier backend.",
+      "realWorld": "State of Observability 2024 report (Chronosphere, Grafana Labs, otros) muestra Prometheus dominant en Kubernetes. Uber open-sourced M3 en 2018 pero adoption fuera de Uber limitada. Netflix Atlas OSS 2014, similar. Chronosphere (spinoff M3) es empresa comercial exitosa. Grafana Cloud/Labs líder en managed OSS-based stack.",
+      "tags": ["Prometheus", "InfluxDB", "VictoriaMetrics", "M3", "Atlas", "Datadog"],
+      "tech": ["Prometheus", "InfluxDB", "VictoriaMetrics", "M3", "Datadog"],
+      "references": [{ "title": "prometheus.io — Comparison to alternatives" }, { "title": "State of Observability Report" }]
+    }
+  ]
+}

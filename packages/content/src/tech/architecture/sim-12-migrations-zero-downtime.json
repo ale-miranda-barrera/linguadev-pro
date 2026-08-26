@@ -1,0 +1,479 @@
+{
+  "id": "architecture-sim-12-migrations-zero-downtime",
+  "trackId": "architecture",
+  "order": 12,
+  "title": "Simulacro 12 — Migraciones sin downtime: blue/green, canary, expand-contract",
+  "focus": "Deploys sin caída: blue/green, canary, rolling, expand-contract para schemas DB, feature flags, cutover, rollback, testing en shadow.",
+  "areaCoverage": ["resilience", "microservices"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "microservices",
+      "topic": "Blue/Green — cuándo usarlo",
+      "difficulty": "senior",
+      "scenario": "Necesitas desplegar una nueva versión de tu API. El compañero propone 'blue/green': levantar el ambiente Green nuevo, cambiar el LB, y apagar Blue.",
+      "question": "¿Qué es correcto sobre blue/green deployment?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Blue/green mantiene DOS ambientes paralelos completos. El tráfico se cambia atómicamente (típicamente por LB o DNS). Ventaja principal: rollback casi instantáneo — solo cambias el pointer de vuelta a Blue. Coste: doble infra durante la ventana.", "correct": true, "why": "Correcto. Es el pattern más simple mentalmente y con rollback más rápido. Coste real: 2x infra mientras dura el switch (minutos u horas). En cloud con autoscaling, este coste es transitorio y aceptable para servicios críticos." },
+        { "letter": "B", "text": "Funciona bien para servicios stateless. Para servicios con state persistido (DB, cache, sesiones), el 'flip' requiere que ambas versiones sean COMPATIBLES con el mismo state — sino el rollback rompe.", "correct": true, "why": "Correcto y crítico. Si Green escribe con schema nuevo y Blue no puede leerlo, el rollback rompe. Regla: cualquier cambio de state (DB schema, formato de mensajes) debe seguir expand-contract para permitir rollback." },
+        { "letter": "C", "text": "En AWS: ECS con CodeDeploy blue/green (crea nuevo Task Set, cambia listener del ALB), Lambda con aliases (traffic shifting entre versiones), Route 53 weighted records para app-level.", "correct": true, "why": "Correcto. AWS ofrece blue/green en varios niveles. CodeDeploy con ECS gestiona la transición del ALB target group. Lambda aliases permiten traffic shifting (10%, 50%, 100% Canary style). Route 53 permite shifting a nivel DNS pero cuidado con TTLs (visto en sim-03)." },
+        { "letter": "D", "text": "Blue/green resuelve automáticamente las migraciones de schema DB.", "correct": false, "why": "Falso. La DB es COMPARTIDA típicamente entre Blue y Green — el schema hay que migrarlo con expand-contract independiente del pattern de deploy. Sin esto, Green con nuevo schema y Blue con viejo pueden romperse mutuamente." },
+        { "letter": "E", "text": "Blue/green es más caro que rolling deploy y siempre menos preferible.", "correct": false, "why": "Trade-off, no verdad absoluta. Blue/green: rollback más rápido, más simple mentalmente, mejor para incidentes. Rolling: menos infra, más lento, rollback menos limpio. Ambos válidos según contexto." }
+      ],
+      "explanation": "Blue/green es el pattern de deploy con MEJOR ROLLBACK: un solo click. Trade-off: 2x infra durante la transición. En 2024 con autoscaling elástico y containers, el sobrecosto es marginal. Combina bien con feature flags (activar features gradualmente aunque el código esté 100% Green) y con canary (routing 10%/50%/100% del tráfico progresivamente). Requiere disciplina de compatibilidad DB — sin expand-contract, blue/green es una trampa.",
+      "realWorld": "Netflix es famoso por su 'red/black' deployment (mismo concepto, distinto nombre). AWS re:Invent regular tiene talks de blue/green en ECS. CodeDeploy fue diseñado alrededor de este pattern y su integración con ALB.",
+      "tags": ["blue/green", "rollback", "CodeDeploy", "traffic shifting"],
+      "tech": ["ECS", "CodeDeploy", "Lambda aliases", "ALB", "Route 53"],
+      "references": [
+        { "title": "Martin Fowler — BlueGreenDeployment" },
+        { "title": "AWS — Blue/Green Deployments with CodeDeploy" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "microservices",
+      "topic": "Canary deployment",
+      "difficulty": "senior",
+      "scenario": "Vas a desplegar una nueva versión que introduce un cambio no trivial en la lógica de checkout. Quieres minimizar el blast radius si algo va mal.",
+      "question": "¿Cómo se hace un canary bien hecho?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rutear 1-5% del tráfico a la nueva versión y observar KPIs (error rate, latencia p99, business metrics como conversion). Si están dentro de umbrales, subir a 10%, 25%, 50%, 100% progresivamente. Rollback automático si degradación detectada. Automatizado con herramientas como Flagger, Argo Rollouts, o CloudWatch + CodeDeploy hooks.", "correct": true, "why": "Correcto. Canary = 'detección temprana' controlando el blast radius. Puntos clave: (1) porcentaje pequeño primero (1-5%); (2) métricas de éxito DEFINIDAS antes del deploy (SLIs); (3) tiempo de observación por etapa (típ. 5-15 min); (4) rollback automático (no manual — un humano no reacciona en segundos). Flagger (Kubernetes), Argo Rollouts, AWS CodeDeploy con CloudWatch alarms, Datadog Deployment Tracking hacen esto." },
+        { "letter": "B", "text": "Desplegar al 100% inmediato y observar. Si hay problema, revert.", "correct": false, "why": "Es 'big bang deploy'. Rollback tarda minutos; un bug puede afectar millones de usuarios. Canary limita el daño a 1-5%." },
+        { "letter": "C", "text": "Canary es solo para APIs, no para frontends.", "correct": false, "why": "Falso. Frontends también: rutear un % de usuarios (por cookie, user-id hash, geo) a la versión nueva. Facebook, Google despliegan frontend con canary + feature flags." },
+        { "letter": "D", "text": "Canary requiere Kubernetes obligatoriamente.", "correct": false, "why": "Falso. Se puede hacer con ALB (weighted target groups), Lambda aliases (weighted routing), API Gateway (canary settings), Envoy/Istio (traffic splitting), o app-level (feature flag por %)." }
+      ],
+      "explanation": "Canary vs blue/green: canary es GRADUAL (1%→100%), blue/green es ATÓMICO (0% o 100%). Canary detecta problemas con bajo blast radius; blue/green da rollback más rápido cuando ya detectado. Se combinan: canary con retención de la versión Blue para rollback instant. Métricas para canary automático (SLIs): error rate (5xx, 4xx aumento), latencia p99, saturation (CPU, memoria), business (conversion rate, ARR events). Herramienta clave: canary analysis con statistical significance (no un simple 'threshold') — Netflix's Kayenta open source hace esto.",
+      "realWorld": "Netflix desarrolló Kayenta para canary analysis automatizado (open source, base de Spinnaker canary). Google's SRE Book capítulo 'Canarying Releases' es la referencia. AWS CodeDeploy tiene 'traffic shifting' con configs pre-baked (Canary10Percent5Minutes, etc.).",
+      "tags": ["canary", "traffic shifting", "SLI", "Kayenta", "Flagger"],
+      "tech": ["Flagger", "Argo Rollouts", "Kayenta", "CodeDeploy", "Lambda aliases"],
+      "references": [
+        { "title": "Netflix Kayenta — automated canary analysis" },
+        { "title": "Google SRE Book — Canarying Releases" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "microservices",
+      "topic": "Rolling update",
+      "difficulty": "mid",
+      "scenario": "Tu ECS service tiene 10 tasks. Deployas nueva versión con default settings de rolling update.",
+      "question": "¿Cómo funciona el rolling update por default y qué configurar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rolling: reemplaza tasks viejos por nuevos en batches. minimumHealthyPercent (default 100%) = mínimo % de tasks corriendo durante deploy; maximumPercent (default 200%) = máximo % durante deploy. Con 10 tasks, 100/200 permite subir 10 nuevos, esperar healthy, apagar 10 viejos. Sin downtime si health checks configurados.", "correct": true, "why": "Correcto. Los dos knobs controlan el trade-off: (a) minimumHealthy 100% + max 200% = zero downtime pero pico de 2x recursos (blue/green-ish); (b) minimumHealthy 50% + max 100% = economiza recursos pero degrada capacidad durante deploy. Health checks del ALB / ECS son críticos: sin ellos, ECS puede rotar tasks que 'están corriendo' pero aún no listas." },
+        { "letter": "B", "text": "Rolling siempre reemplaza 1 task a la vez.", "correct": false, "why": "Configurable con los porcentajes. Con 100/200 puede rotar todos en paralelo." },
+        { "letter": "C", "text": "Rolling no funciona para APIs stateful.", "correct": false, "why": "Depende. Si el 'state' está fuera (Redis, DB), rolling funciona. Si tienes state in-memory por instancia (sesiones, cache local), rolling puede perder ese state — mitigación: sticky sessions + graceful shutdown que espera a drain." },
+        { "letter": "D", "text": "Rolling es más lento que blue/green siempre.", "correct": false, "why": "No necesariamente. Rolling puede ser rápido si tasks arrancan rápido. Blue/green espera al ambiente entero antes del switch. Depende del startup time y configuración." }
+      ],
+      "explanation": "Rolling update es el default de ECS/K8s y funciona bien para la mayoría de servicios. Config crítica: (1) health checks (readiness probe en K8s, ALB health check en ECS) que detecten 'listo para tráfico' (no solo 'proceso corre'); (2) graceful shutdown: SIGTERM handler que deja de aceptar nuevas conns, drena in-flight, luego cierra; (3) preStop hook con sleep breve para dar tiempo a que el LB deregistre; (4) PDB (Kubernetes) para no perder demasiada capacidad simultáneamente. Rolling ideal para servicios estateless con startup rápido; blue/green ideal para rollback crítico; canary ideal para cambios de riesgo.",
+      "realWorld": "AWS App Mesh + ECS demos muestran rolling con drain time. Airbnb usa rolling en Kubernetes con PodDisruptionBudgets estrictos para no bajar de N réplicas simultáneas.",
+      "tags": ["rolling update", "minimumHealthy", "graceful shutdown", "readiness probe"],
+      "tech": ["ECS", "Kubernetes", "ALB", "PodDisruptionBudget"],
+      "references": [
+        { "title": "AWS — ECS Deployment configuration" },
+        { "title": "Kubernetes — Deployments rolling update strategy" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "resilience",
+      "topic": "Expand-contract para agregar columna",
+      "difficulty": "senior",
+      "scenario": "Necesitas agregar una columna 'last_login_at' a la tabla users. La app tiene 20 réplicas y se despliega con rolling. Un ingeniero propone: 'ALTER TABLE ADD COLUMN NOT NULL DEFAULT NOW() y deploy'.",
+      "question": "¿Por qué es peligroso y cuál es el patrón CORRECTO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Peligros: (1) ALTER NOT NULL DEFAULT en Postgres <11 reescribe toda la tabla (bloqueo largo); (2) durante rolling, algunas réplicas viejas hacen INSERT sin la columna → falla NOT NULL. Patrón correcto (expand-contract): PASO 1 add column NULLABLE (rápido, no rewrite en PG 11+); PASO 2 deploy código nuevo que escribe la columna; PASO 3 backfill de nulls existentes; PASO 4 ALTER SET NOT NULL; PASO 5 (opcional) drop DEFAULT.", "correct": true, "why": "Correcto. Expand-contract (a.k.a. 'parallel change' de Martin Fowler) separa el cambio en pasos que mantienen COMPATIBILIDAD entre versiones viejas y nuevas del código simultáneamente. Cada paso es reversible independientemente. En Postgres 11+, ADD COLUMN DEFAULT no reescribe (usa metadata trick); antes de 11 sí reescribía. NOT NULL es lo mismo: en PG 11+ ALTER SET NOT NULL sigue requiriendo scan (pero puede optimizarse validando en un CHECK NOT VALID primero)." },
+        { "letter": "B", "text": "Es seguro porque Postgres es ACID.", "correct": false, "why": "ACID no protege contra bloqueos largos ni contra código viejo escribiendo. Es un tema de concurrent deployment, no de propiedades ACID." },
+        { "letter": "C", "text": "Solución: parar la app, migrar, reiniciar.", "correct": false, "why": "Anti-patrón: causa downtime. Además, no siempre es tolerable (24/7 services). Expand-contract logra el mismo cambio SIN downtime." },
+        { "letter": "D", "text": "Usar CREATE TABLE nueva con la columna y migrar todo por copia.", "correct": false, "why": "Overkill para agregar 1 columna. Es una técnica válida para reestructuras grandes (rename table + copy + swap), pero para 1 columna es expand-contract." }
+      ],
+      "explanation": "Expand-contract es EL pattern para migraciones DB sin downtime, publicado por Martin Fowler ('ParallelChange'). Idea central: introducir el cambio en pasos donde CODE y SCHEMA nuevo y viejo coexisten temporalmente. Ejemplos: (a) ADD COLUMN nullable → backfill → SET NOT NULL; (b) rename column: agregar nueva, doble-escribir (código lee viejo, escribe ambos), backfill vieja→nueva, cambiar lecturas, borrar vieja; (c) split column: similar. Postgres específico: usar CREATE INDEX CONCURRENTLY (sin lock), ALTER SET NOT NULL con NOT VALID CHECK primero luego VALIDATE (evita full scan bloqueante). MySQL online-DDL con pt-online-schema-change (Percona) o gh-ost (GitHub) para tables grandes.",
+      "realWorld": "GitHub creó gh-ost tras un incident con migraciones bloqueantes en MySQL. Stripe publicó guide 'Online migrations at scale' documentando su método expand-contract sin downtime en millones de rows. Shopify usa strong_migrations gem (Rails) que bloquea PR con migraciones peligrosas.",
+      "tags": ["expand-contract", "parallel change", "DB migration", "zero downtime"],
+      "tech": ["Postgres", "MySQL", "gh-ost", "strong_migrations", "pt-online-schema-change"],
+      "references": [
+        { "title": "Martin Fowler — ParallelChange" },
+        { "title": "Stripe — Online migrations at scale" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "resilience",
+      "topic": "Expand-contract para renombrar campo",
+      "difficulty": "staff",
+      "scenario": "Necesitas renombrar la columna 'user_email' a 'primary_email' en una tabla de 100M rows. El equipo tiene 5 servicios que leen/escriben esta columna.",
+      "question": "¿Cuál es la SECUENCIA correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "1) ADD COLUMN primary_email nullable. 2) Deploy código que ESCRIBE en ambas (dual-write) pero LEE de user_email. 3) Backfill primary_email desde user_email en background (batch chunks para no saturar). 4) Deploy código que ESCRIBE en ambas y LEE de primary_email (fallback a user_email si null). 5) Deploy código que solo usa primary_email. 6) DROP user_email (después de verificar en logs que nadie la usa).", "correct": true, "why": "Correcto. Rename column es el ejemplo canónico de expand-contract con MÁS PASOS. Clave: durante toda la transición, código viejo y nuevo coexisten sin romperse. Backfill en batches (1000-10000 rows) evita bloqueos. Verificación pre-drop: revisar logs de query o pg_stat_user_tables. El drop es el commit final — antes puedes rollback en cualquier paso." },
+        { "letter": "B", "text": "1) ALTER TABLE RENAME COLUMN user_email TO primary_email. 2) Deploy código actualizado.", "correct": false, "why": "Rompe rolling deploy: durante el rolling, réplicas viejas siguen queryando user_email (que ya no existe → error) mientras las nuevas usan primary_email. Es big-bang y causa downtime o errores." },
+        { "letter": "C", "text": "1) Crear VIEW con ambos nombres. 2) Deploy nuevo. 3) DROP VIEW y column vieja.", "correct": false, "why": "Views pueden ayudar en algunos casos pero no resuelven el INSERT/UPDATE con el nombre nuevo si la column base tiene otro nombre. Se puede hacer con INSTEAD OF triggers pero es más complejo que dual-write nativo." },
+        { "letter": "D", "text": "Simplemente correr la migración durante mantenimiento nocturno.", "correct": false, "why": "Servicios 24/7 no tienen ventana de mantenimiento. Además, incluso en ventana, el RENAME de una columna en tabla grande no es instantáneo y puede requerir minutos de bloqueo (dependiendo del RDBMS)." }
+      ],
+      "explanation": "Rename column expandido es el 'hello world' del expand-contract avanzado. Pasos = pequeños commits reversibles. Backfill es la parte más delicada: chunks con WHERE + LIMIT, esperando entre chunks para no saturar (self-throttling), monitor con métricas (rows/min, replication lag si hay). Herramientas: (a) tools genéricos como Flyway/Liquibase para versionar; (b) pt-online-schema-change/gh-ost para MySQL; (c) Postgres directo con scripts + cron para chunks; (d) Airflow para orquestar backfills complejos. Nunca hagas rename sync-blocking en table grande.",
+      "realWorld": "Shopify documentó extensamente su proceso 'Rails migrations at scale' con expand-contract. Discord publicó cómo migró de MongoDB a Cassandra (2017) usando expand-contract dual-write durante meses.",
+      "tags": ["rename column", "dual-write", "backfill", "expand-contract"],
+      "tech": ["Postgres", "Flyway", "Liquibase", "Airflow"],
+      "references": [
+        { "title": "Stripe engineering — Online migrations" },
+        { "title": "Discord — How Discord Stores Billions of Messages (2017)" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "resilience",
+      "topic": "Feature flags como safety net",
+      "difficulty": "senior",
+      "scenario": "Vas a lanzar un rediseño mayor de checkout. Riesgo alto, quieres poder desactivar sin redeploy.",
+      "question": "¿Cómo usar feature flags para migraciones y deploys seguros?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Wrap del código nuevo en flag. Deploy código con flag OFF (equivalente al viejo). Progresivamente encender: 1% users, 10%, 50%, 100%. Kill switch instantáneo sin redeploy.", "correct": true, "why": "Correcto. Feature flags desacoplan DEPLOY de RELEASE. Deployas código nuevo sin actualizar comportamiento; enciendes por segmento cuando estás seguro. Rollback = flag OFF (segundos vs minutos de un redeploy)." },
+        { "letter": "B", "text": "Segmentación: por user_id hash (canary), por geografía, por plan (paid vs free), por A/B test. LaunchDarkly, Flagsmith, Unleash, ConfigCat, o AWS AppConfig.", "correct": true, "why": "Correcto. Flags no son solo on/off — son targeting. Combinan con canary (1% users), con A/B testing (medir impact), con gradual rollout (day 1 free tier, day 3 paid, day 7 100%). Herramientas SaaS: LaunchDarkly (líder), Flagsmith/Unleash (open source), AWS AppConfig (nativo)." },
+        { "letter": "C", "text": "Flags evitan la necesidad de expand-contract en DB migrations.", "correct": false, "why": "Falso. Flags controlan CÓDIGO, no schema. Si la migración cambia schema, expand-contract sigue siendo necesario. Flags pueden controlar QUÉ COLUMNA usar (útil durante dual-read en un rename), pero no sustituyen la disciplina de schema." },
+        { "letter": "D", "text": "Deuda técnica: los flags acumulados se convierten en spaghetti. Establecer lifecycle: cada flag tiene expiry date y hay proceso de cleanup post-launch.", "correct": true, "why": "Correcto y a menudo olvidado. Un flag 'temporal' que dura 2 años y quedan 500 en el código = caos. LaunchDarkly y otros dashboards muestran flags 'stale'. Regla: cada flag tiene owner + expiry; post-release en 100%, en 2 sprints se remueve el código muerto." },
+        { "letter": "E", "text": "Flags evaluación siempre debe hacerse remotamente por request para tener control instantáneo.", "correct": false, "why": "Trade-off. Evaluación remota (SDK llama al servicio flag) da control instantáneo pero añade latencia + dependencia. Evaluación con SDK que sincroniza flags localmente (cache) da baja latencia pero propagación con delay (segundos-minutos). Mayoría de herramientas usan modelo híbrido: SDK cache local + streaming updates." }
+      ],
+      "explanation": "Feature flags son parte core del arsenal moderno de deploys. Ventajas: (1) deploy != release; (2) rollback instantáneo sin CI/CD; (3) canary por targeting; (4) A/B testing; (5) kill switch para bugs en prod. Disciplina requerida: naming, ownership, expiry, cleanup process. Anti-patterns: flags de meses/años sin cleanup, flags que controlan flags (nested logic), flags de infra en código de negocio. Combinar con circuit breakers (circuit breaker abre → flag desactiva feature dependiente).",
+      "realWorld": "Facebook publicó early sobre 'gatekeepers' (su sistema interno de flags). LaunchDarkly nació como spinoff de la idea. Netflix, Uber, Airbnb todos tienen sistemas internos. AWS AppConfig es la respuesta nativa de AWS. GitHub tiene su sistema Scientist (open source) para probar reemplazos de código en producción vía flag + comparación.",
+      "tags": ["feature flags", "LaunchDarkly", "kill switch", "gradual rollout"],
+      "tech": ["LaunchDarkly", "Unleash", "Flagsmith", "AWS AppConfig", "ConfigCat"],
+      "references": [
+        { "title": "Martin Fowler — FeatureToggle" },
+        { "title": "LaunchDarkly — Feature Management best practices" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "resilience",
+      "topic": "Backfill de datos",
+      "difficulty": "senior",
+      "scenario": "Añadiste una columna computed y ahora necesitas backfilear 500M rows existentes. Un ingeniero corre 'UPDATE users SET computed = ... WHERE computed IS NULL' y se cuelga la DB.",
+      "question": "¿Cómo se hace un backfill CORRECTO?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Chunks pequeños (1000-10000 rows) con LIMIT + PRIMARY KEY range (WHERE id > last_id LIMIT 5000). Commit por chunk. Sleep entre chunks (100-500ms) para no saturar. Loguea progreso.", "correct": true, "why": "Correcto. Single UPDATE de 500M rows: (a) lock enorme; (b) WAL/redo log gigante; (c) replication lag catastrófico. Chunks: bloqueos cortos, replication mantiene lag bajo, puedes pausar/resume. Sleep entre chunks previene saturación (permite otros queries)." },
+        { "letter": "B", "text": "Monitorizar: replication lag, IO wait, cola de queries. Ajustar chunk size y sleep dinámicamente si algo se degrada (self-throttling).", "correct": true, "why": "Correcto. Backfill sin monitorización es cavar a ciegas. Métricas clave: pg_stat_replication (lag en bytes), locks activos, latencia p99 de tu app. Herramientas como pt-online-schema-change y gh-ost hacen self-throttling nativo. Airflow/scripts custom deben implementarlo." },
+        { "letter": "C", "text": "Usar transaction ID (Postgres) o similar para saber por dónde ibas si se cae el job. Job idempotente (WHERE computed IS NULL) permite reejecutar.", "correct": true, "why": "Correcto. El backfill puede tardar horas o días; debe ser resumable. Idempotencia: WHERE computed IS NULL (o versión check) evita re-procesar. Checkpoint en tabla auxiliar del último id procesado. Job re-startable sin reprocesar todo." },
+        { "letter": "D", "text": "Ejecutar el backfill como un solo UPDATE — Postgres es rápido.", "correct": false, "why": "Anti-patrón. UPDATE de N millones = lock enorme + WAL gigante + replicación colgada. Postgres es rápido, no mágico." },
+        { "letter": "E", "text": "Para backfill masivo también considerar herramientas dedicadas: pg_repack (Postgres para reorganizar sin lock), DMS (AWS Database Migration Service) para replicar y transformar en flight, o batch jobs con Spark/AWS Batch si el backfill implica cómputo pesado.", "correct": true, "why": "Correcto. Para backfills muy grandes o complejos, herramientas dedicadas: pg_repack (Postgres, reorganiza sin AccessExclusiveLock), DMS (streaming replication con transformación), Spark/EMR (batch compute pesado). No reinventar la rueda si existe herramienta probada." }
+      ],
+      "explanation": "Reglas del backfill: (1) chunks pequeños; (2) monitorización + throttling adaptativo; (3) idempotencia + checkpointing; (4) sleep entre chunks; (5) horario off-peak si posible; (6) verificar con SELECT COUNT WHERE columna IS NULL descendiendo a 0. Anti-patrones: single UPDATE, no monitorización, no resumable, correr en pico. Para tablas huge (>100M): considerar hacer una tabla nueva + copy en background + swap (blue/green table). Postgres: pg_repack lo hace por ti para reorgs.",
+      "realWorld": "GitHub gh-ost es un tool famoso de MySQL para online schema change con backfill throttled. Stripe describe backfills de años en su blog. Slack migró de MySQL a Vitess con backfills continuos por meses.",
+      "tags": ["backfill", "chunks", "throttling", "idempotencia", "pg_repack"],
+      "tech": ["Postgres", "MySQL", "gh-ost", "pg_repack", "DMS", "Airflow"],
+      "references": [
+        { "title": "GitHub Engineering — gh-ost" },
+        { "title": "Stripe — Online migrations best practices" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "resilience",
+      "topic": "Cutover atómico",
+      "difficulty": "staff",
+      "scenario": "Estás migrando de Postgres self-hosted a Aurora. Ya tienes replicación configurada y Aurora al día. Necesitas el 'cutover': cortar la escritura vieja, verificar sync, apuntar la app a Aurora.",
+      "question": "¿Cuál es el procedimiento MÁS SEGURO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "1) Bajar tráfico de escritura (read-only mode en app o LB). 2) Esperar drenado de writes en flight. 3) Verificar replication lag = 0 (SELECT pg_last_wal_replay_lsn). 4) Verificar row counts / checksums en tablas críticas. 5) Cambiar connection string en app config (variable env, service discovery, DNS interno). 6) Habilitar escritura de nuevo. 7) Monitorizar métricas. Rollback: cambiar connection string de vuelta.", "correct": true, "why": "Correcto. Ventana de write-freeze breve permite garantizar consistencia total antes del switch. Verificaciones múltiples: replication lag + counts + checksums. Cambio de connection string vía config = rápido (segundos con AppConfig/service discovery) y reversible. Todo el proceso planificado, ensayado en dev/stg, con runbook detallado." },
+        { "letter": "B", "text": "Cambiar directamente la DNS de la DB para apuntar a Aurora, sin freeze.", "correct": false, "why": "TTL DNS causa flapping: algunas conexiones al viejo, otras al nuevo. Writes se pierden en el viejo o generan conflictos. Además, DNS caching es hostil (visto en sim-03)." },
+        { "letter": "C", "text": "Correr ambas DBs en paralelo indefinidamente y decidir después.", "correct": false, "why": "Complejidad enorme mantener dual-write bidireccional. Riesgo de divergencia. Cutover es un evento discreto, no un estado permanente. Dual-write puede ser paso intermedio corto." },
+        { "letter": "D", "text": "Confiar en la replicación async — se pondrá al día eventualmente.", "correct": false, "why": "Async replication NO garantiza que en el momento del switch los últimos writes estén replicados. Si cortas writes al viejo y activas al nuevo sin verificar lag=0, PIERDES los últimos segundos de writes." }
+      ],
+      "explanation": "El cutover es el momento MÁS crítico de una migración. Requisitos: (a) minimizar ventana de freeze (idealmente segundos); (b) verificar consistencia (lag=0, counts iguales, checksums de sample); (c) atómico (todos los servicios apuntan al nuevo simultáneamente); (d) rollback rápido (connection string, config swap). Ensayo previo: correr el cutover completo en staging (idealmente con datos representativos). Runbook: documento paso a paso, quién hace qué, criterios go/no-go, rollback plan. Comunicación: stakeholders informados, tiempo estimado, canal de status. Post-cutover: monitor 24-48h para regresiones.",
+      "realWorld": "GitLab documentó su migración de PostgreSQL 11 a 13 con cutover step-by-step público. Discord (2017) migró de MongoDB a Cassandra con cutover meses después de dual-write validado. Airbnb migró de MySQL monolítico a Vitess con cutovers por shard.",
+      "tags": ["cutover", "replication lag", "connection string", "runbook"],
+      "tech": ["Postgres", "Aurora", "DMS", "connection string"],
+      "references": [
+        { "title": "AWS DMS — Database Migration Service migration playbook" },
+        { "title": "GitLab — Postgres major version upgrade" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "resilience",
+      "topic": "Rollback plan",
+      "difficulty": "senior",
+      "scenario": "Deployas una versión que introduce cambios en API y schema. A las 2 horas detectas un bug crítico. ¿Puedes rollback?",
+      "question": "¿Qué hace que un rollback sea POSIBLE o IMPOSIBLE?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rollback posible SOLO si: (a) schema DB es backward-compatible (expand-contract disciplinado, sin drops todavía); (b) formato de mensajes/eventos backward-compatible (no romper consumers viejos); (c) datos escritos por versión nueva son legibles por versión vieja. Si N escribió columnas que N-1 no entiende, o dropeó columnas que N-1 lee, o cambió schema JSON incompatible, rollback rompe.", "correct": true, "why": "Correcto. El rollback es una CONSECUENCIA del diseño de la migración, no una operación mágica. Si tu versión N tiene cambios NO backward-compatible, deployarla es un compromiso: no hay vuelta atrás segura. Por eso expand-contract enfatiza pequeños pasos reversibles. Fowler llama a esto 'evolvability'." },
+        { "letter": "B", "text": "Rollback siempre posible con blue/green.", "correct": false, "why": "Falso si la DB (compartida) cambió incompatible. Blue/green da rollback rápido del CÓDIGO, no del schema. Sin expand-contract disciplinado, blue/green falso confort." },
+        { "letter": "C", "text": "Restore desde backup soluciona todo.", "correct": false, "why": "Restore = pérdida de datos escritos DESPUÉS del backup. Aceptable solo en catástrofes; para bug lógico, es desproporcionado." },
+        { "letter": "D", "text": "Rollback es problema del equipo de ops, no de arquitectura.", "correct": false, "why": "Rollback es CONSECUENCIA DE ARQUITECTURA. Las decisiones de schema, API contracts, event formats determinan si rollback existe. Es responsabilidad del que diseña, no post-deploy." }
+      ],
+      "explanation": "Roll-forward vs rollback: en cambios con schema irreversible, muchas empresas prefieren 'roll forward' (fixear el bug con hotfix rápido) antes que intentar rollback destructivo. Pero el ROLL FORWARD también depende de tener CI/CD rápido, feature flags para desactivar el bug, y monitoring que detecte el problema pronto. Regla de diseño: 'nunca hagas un cambio del que no puedas rollback en <15min por N sprints'. Cada 'N' donde N-1 existe expand-contract. Después de N estable, se puede contract (drop old column, etc.) — pero ya sabiendo que ese step contrae la ventana de rollback.",
+      "realWorld": "Knight Capital 2012: deploy fallido sin rollback plan efectivo, pérdida de $440M en 45 minutos. Después de bugs, la empresa quebró. Es el caso extremo. GitLab tiene public 'incident retrospectives' con menciones específicas de rollback capability o su ausencia.",
+      "tags": ["rollback", "backward compatibility", "roll forward", "runbook"],
+      "tech": ["expand-contract", "feature flags", "CI/CD"],
+      "references": [
+        { "title": "Knight Capital 2012 case study — SEC report" },
+        { "title": "Martin Fowler — ParallelChange" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "resilience",
+      "topic": "Shadow testing",
+      "difficulty": "staff",
+      "scenario": "Vas a reemplazar el servicio de pricing legacy con uno nuevo. Ambos deberían dar el mismo resultado. Quieres validar con tráfico REAL antes de switch.",
+      "question": "¿Qué es shadow testing (a.k.a. dark launch)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Duplicar cada request al servicio nuevo (en paralelo con el viejo) pero SIN devolver la respuesta al usuario. Comparar los resultados en logs/métricas. Detectar discrepancias en producción con tráfico real, sin riesgo para el usuario.", "correct": true, "why": "Correcto. Shadow = 'sombra': el sistema nuevo procesa una copia del tráfico real pero su output NO afecta al usuario (el usuario ve solo la respuesta del viejo). Comparas outputs para detectar diferencias. Ventajas: (a) tráfico real (edge cases que synthetic tests no cubren); (b) sin riesgo (usuario nunca ve el nuevo si falla); (c) load testing gratis. Costos: 2x carga en downstream, complejidad de comparación." },
+        { "letter": "B", "text": "Shadow es lo mismo que canary.", "correct": false, "why": "Canary: parte del tráfico va al nuevo Y el usuario ve esa respuesta. Shadow: TODO el tráfico va al nuevo pero solo en background, usuario ve el viejo. Riesgos distintos." },
+        { "letter": "C", "text": "Shadow solo funciona para reads.", "correct": false, "why": "Principalmente reads. Para writes es más delicado: el sistema shadow no debe escribir en el DB real (o escribiría duplicado). Se usa DB shadow separada o modo 'dry-run'. Para writes puros, comparar diff es más difícil." },
+        { "letter": "D", "text": "Shadow requiere modificar el frontend.", "correct": false, "why": "Se implementa en el backend/gateway: proxy que envía request a A (retornado) y B (shadow, comparado). Frontend no cambia." }
+      ],
+      "explanation": "Shadow testing / dark launch: técnica para validar rewrites/refactors con tráfico real. Implementación: (a) proxy layer (ALB con dupe, Envoy con mirror filter, Istio mirror); (b) app-level (código llama a ambos, retorna del viejo, compara en background); (c) tools especializados (Diffy de Twitter, Scientist de GitHub — este último famous para refactors en Ruby). Métricas a comparar: response body diff, latencia, error rate, edge cases. Cuidado con side effects: shadow no debe enviar emails reales, cobrar tarjetas, o escribir a producción DB — usa mocks/sandbox para downstream side-effectful.",
+      "realWorld": "GitHub Scientist (open source Ruby) mantiene famous library para 'refactor con confianza' vía shadow comparison. Twitter Diffy es equivalente para HTTP. Facebook usa dark launches para features nuevas — enable en backend sin UI, valida behavior antes de expose.",
+      "tags": ["shadow testing", "dark launch", "Scientist", "Diffy", "traffic mirroring"],
+      "tech": ["Envoy", "Istio", "GitHub Scientist", "Twitter Diffy"],
+      "references": [
+        { "title": "GitHub Scientist — refactoring with confidence" },
+        { "title": "Twitter Diffy — automated regression testing" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "microservices",
+      "topic": "API versioning",
+      "difficulty": "senior",
+      "scenario": "Tu API pública v1 tiene 50 clientes externos. Necesitas breaking change para nueva feature.",
+      "question": "¿Cuáles son opciones idiomáticas para versionar APIs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "URL versioning: /v1/users, /v2/users. Simple, cache-friendly, visible. La mayoría de APIs REST lo usan.", "correct": true, "why": "Correcto. Más común y simple. Cache HTTP funciona natural, docs se organizan por versión. Trade-off: ruteo con múltiples versiones vivas simultáneamente." },
+        { "letter": "B", "text": "Header versioning: Accept: application/vnd.api.v2+json. Más RESTful puro pero menos visible en debugging.", "correct": true, "why": "Correcto. Preferido por puristas REST (URI identifica recurso, header negocia representación). Github v3/v4 lo usa. Trade-off: caching más complicado (Vary header), debug menos obvio, algunos proxies no lo respetan bien." },
+        { "letter": "C", "text": "Backward-compatible evolution: siempre añadir campos, nunca romper. Deprecar viejos con warning header + timeline público. Solo hacer breaking change cuando estrictamente necesario.", "correct": true, "why": "Correcto y preferible. Mejor forma de versionar es NO versionar: evolucionar aditivamente. Nuevos campos son OK (clientes viejos ignoran). Renames/removes NO. Cuando necesario breaking, sí versión nueva. Stripe es famoso por esto: cada breaking change se identifica con date-based version, mantiene backward compat por AÑOS." },
+        { "letter": "D", "text": "Query param: ?version=2. Común en algunas APIs internas.", "correct": true, "why": "Correcto aunque menos común externamente. Fácil de implementar, testable via URL. Trade-off: cache keys incluyen query string." },
+        { "letter": "E", "text": "Nunca versionar, solo romper y forzar a clientes a actualizar.", "correct": false, "why": "Falso. Rompe ecosystem — clientes externos con integraciones caídas, backlash grave. Solo aceptable en APIs internas con control absoluto de consumers." }
+      ],
+      "explanation": "Versionar APIs es contrato con consumers. Reglas: (1) additive changes NO requieren nueva version (nuevos campos, nuevos endpoints); (2) breaking changes (rename, remove, semantics change) SÍ; (3) mantener N-1 por al menos 6-12 meses tras release de N; (4) telemetría de uso por versión (saber cuándo puedes deprecar); (5) comunicación proactiva con clientes (email, headers de deprecation, docs con timeline). GraphQL evita versioning al ser client-driven: cada cliente pide solo lo que usa. gRPC usa proto packages y field numbering para forward/backward compat.",
+      "realWorld": "Stripe mantiene decenas de API versions vivas (por date). GitHub deprecó v3 a favor de v4 GraphQL con años de aviso. Twitter API breaking changes con clientes externos causaron backlash famous en 2022-2023. Amazon: 'once an API is public, it's forever' (Bezos).",
+      "tags": ["API versioning", "backward compatibility", "deprecation"],
+      "tech": ["REST", "GraphQL", "gRPC", "API Gateway"],
+      "references": [
+        { "title": "Stripe — API versioning" },
+        { "title": "GitHub — API v4 (GraphQL) evolution" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "microservices",
+      "topic": "Event schema evolution",
+      "difficulty": "staff",
+      "scenario": "Publicas eventos en Kafka. Consumers son múltiples servicios independientes. Necesitas modificar el schema del evento.",
+      "question": "¿Cómo gestionar schema evolution en eventos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar Schema Registry (Confluent, AWS Glue Schema Registry) con Avro/Protobuf/JSON Schema. Enforce compatibility rules: BACKWARD (nuevos consumers leen eventos viejos), FORWARD (consumers viejos leen eventos nuevos), FULL (ambos). Compatibility check en CI antes de publicar schema nuevo.", "correct": true, "why": "Correcto. Schema Registry gestiona versiones de schemas centralizadamente + valida compatibilidad. Avro/Protobuf tienen reglas nativas de evolución (agregar field con default = safe, remove required = breaking). JSON Schema similar. La disciplina: definir el compatibility level por topic (BACKWARD_TRANSITIVE es común: nuevo schema compatible con TODAS las viejas versions, no solo la anterior)." },
+        { "letter": "B", "text": "Publicar en un nuevo topic cada vez que cambie el schema.", "correct": false, "why": "Explota en cantidad de topics + fragmenta consumers. Solo para breaking changes intencionales, no para evolución normal." },
+        { "letter": "C", "text": "Coordinar con todos los consumers antes de publicar cambios.", "correct": false, "why": "Anti-patrón microservicios (acoplamiento). Con muchos consumers autonomous, coordinación no escala. Usar contract-first con schema evolution rules." },
+        { "letter": "D", "text": "Usar solo JSON sin schema — flexibilidad máxima.", "correct": false, "why": "Ilusión de flexibilidad — realidad de caos. Consumers rompen silenciosamente cuando productor cambia. Schema explícito es la disciplina que hace evolvable el sistema." }
+      ],
+      "explanation": "Event schema evolution es EL problema hard de arquitecturas event-driven a escala. Herramientas: Confluent Schema Registry (Kafka), AWS Glue Schema Registry (Kinesis, MSK), Buf (Protobuf ecosystem). Reglas de evolución Avro/Protobuf: (a) agregar field OPCIONAL con default = SAFE; (b) borrar field OPCIONAL = SAFE; (c) rename = BREAKING (usa aliases en Avro); (d) cambiar tipo = generalmente BREAKING (except promotions). Deploy order: (1) publicar schema nuevo compatible; (2) upgrade consumers (aún leyendo formato antiguo); (3) upgrade producer (empieza a usar campos nuevos); (4) eventual cleanup. Sin registry: caos garantizado.",
+      "realWorld": "LinkedIn (creador de Kafka) publica papers sobre schema evolution en escala petabyte. Confluent Schema Registry es el estándar de facto para Kafka. AWS Glue Schema Registry integra con MSK y Kinesis para nativas AWS.",
+      "tags": ["schema registry", "Avro", "Protobuf", "event evolution", "compatibility"],
+      "tech": ["Confluent Schema Registry", "AWS Glue Schema Registry", "Avro", "Protobuf", "Kafka"],
+      "references": [
+        { "title": "Confluent — Schema Registry compatibility types" },
+        { "title": "AWS — Glue Schema Registry" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "microservices",
+      "topic": "Idempotency en migrations",
+      "difficulty": "mid",
+      "scenario": "Corres una migration en producción. Timeout de conexión. No sabes si aplicó parcial. La corres de nuevo y falla porque 'ya existe la columna'.",
+      "question": "¿Qué prácticas evitan este problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Migrations idempotentes: usar 'IF NOT EXISTS' / 'IF EXISTS' cuando el DDL lo soporta. Migration framework (Flyway, Liquibase, Alembic, Rails migrations) que trackea qué migrations ya se aplicaron en tabla de metadata — no reejecuta las ya aplicadas.", "correct": true, "why": "Correcto. Postgres soporta CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, ALTER TABLE ... ADD COLUMN IF NOT EXISTS (PG 9.6+). Frameworks: Flyway usa tabla schema_history, Liquibase usa databasechangelog, Alembic usa alembic_version. Al correr, saltan las ya aplicadas. Idempotencia + tracking = seguridad para retry." },
+        { "letter": "B", "text": "Correr todas las migrations en una transacción gigante para que un fallo revierta todo.", "correct": false, "why": "En Postgres muchas DDL son transaccionales (bueno para revert), pero: (a) CREATE INDEX CONCURRENTLY no puede estar en transacción; (b) migrations muy largas + wrapped en 1 tx = lock enorme; (c) MySQL no soporta DDL transaccional. Idempotencia + tracking es más robusto." },
+        { "letter": "C", "text": "No correr migrations automáticamente — siempre manualmente.", "correct": false, "why": "Anti-DevOps. Manual = propenso a error humano + no auditado. CI/CD debe correr migrations con framework probado." },
+        { "letter": "D", "text": "Postgres es tan robusto que no importa correr una migration 2 veces.", "correct": false, "why": "Falso. Sin IF NOT EXISTS + tracking, la segunda corrida falla con 'already exists'." }
+      ],
+      "explanation": "Migrations en producción DEBEN ser: (1) idempotentes (safe to retry); (2) tracked (schema_history table); (3) versionadas (no ad-hoc); (4) revisadas (PR con approval); (5) testeadas en dev/stg antes; (6) documentadas (por qué, no solo qué). Framework de choice depende del stack: Flyway/Liquibase para Java/multilenguaje, Alembic para Python, Rails migrations para Ruby, Prisma migrate para Node/TS moderno, sqlx-migrate para Rust. TODOS trackean via tabla de metadata que hace idempotente el conjunto.",
+      "realWorld": "Rails introdujo el concepto 'migration file with version' en 2004, standard-setter. Flyway es el más usado en Java enterprise. GitHub tiene tools internos para gestión coordenada de migrations en flotas grandes de bases de datos.",
+      "tags": ["migrations", "idempotencia", "Flyway", "Liquibase", "schema_history"],
+      "tech": ["Flyway", "Liquibase", "Alembic", "Rails migrations", "Prisma"],
+      "references": [
+        { "title": "Flyway — Concepts and best practices" },
+        { "title": "Liquibase — Change tracking" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "resilience",
+      "topic": "Testing migrations",
+      "difficulty": "senior",
+      "scenario": "Tu equipo trata las migrations DB como 'infalibles' — se corren en prod sin ensayo. Un ALTER en tabla de 500M filas se hace 30 min en producción bloqueando writes.",
+      "question": "¿Cómo se testean migraciones?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ejecutar la migration en un clon de producción (snapshot restore) con datos equivalentes en tamaño. Medir tiempo, locks, replication lag. Ajustar si necesario (chunks, CONCURRENTLY).", "correct": true, "why": "Correcto. Testing en clon reproduce fielmente el impacto real. Aurora tiene 'clone' (COW rápido) que permite crear clon en minutos. RDS snapshots también. Anti-patrón: probar en base de datos vacía o con 1000 rows — no informa nada sobre la real de 500M." },
+        { "letter": "B", "text": "Static analysis: gems/plugins como strong_migrations (Rails) o linters SQL detectan patrones peligrosos antes de merge (ALTER sin CONCURRENTLY, DEFAULT NOT NULL en tabla grande, drops sin expand-contract).", "correct": true, "why": "Correcto. strong_migrations (Rails) es famous — falla el CI si detecta patrones dangerous con explicación de por qué. sqruff, sqlfluff, o custom linters para SQL puro. Detección temprana = mejor que descubrir en prod." },
+        { "letter": "C", "text": "Ensayar el runbook de cutover / migration en staging múltiples veces antes del deploy real. Cronometrar. Verificar rollback plan también.", "correct": true, "why": "Correcto. Ensayo = confidence + descubrimiento de gotchas. Runbook con pasos explícitos, timing esperado, criterios go/no-go. Google SRE lo llama 'game day' cuando es a nivel de major operation." },
+        { "letter": "D", "text": "Confiar en que 'si pasa el CI local funciona en prod'.", "correct": false, "why": "Anti-patrón. Datos y volumen de prod son muy distintos de dev. Migration puede pasar en 1s con 100 rows y colgar 30 min con 500M." },
+        { "letter": "E", "text": "Correr con feature flag: la migration se aplica pero la app no la usa hasta activar flag. Descubierto que rompe, flag OFF, mitigar sin panic.", "correct": true, "why": "Correcto. Combina expand-contract + feature flag: el schema nuevo existe pero el código nuevo (que lo usa) está detrás de flag. Rollback = flag OFF. Muy poderoso para features arriesgadas dependientes de nuevo schema." }
+      ],
+      "explanation": "Testing migrations es cultura, no solo tooling. Elementos: (1) clon de producción (Aurora clones, RDS snapshots) — mide impact real; (2) static analysis en CI (strong_migrations, sqlfluff) — bloquea PRs peligrosas; (3) runbook ensayado; (4) monitorización en tiempo real durante ejecución (locks, replication lag, connections); (5) feature flags para desacoplar migration de release; (6) rollback plan verificado (no asumido). Empresas maduras tienen 'migration review board' o proceso formal para migrations riesgosas.",
+      "realWorld": "Shopify strong_migrations es open source y ampliamente usado en la comunidad Rails. GitLab tiene checklist pública para 'Postgres migration reviews'. Notion publicó cómo migró su Postgres a sharded arch con testing riguroso.",
+      "tags": ["testing migrations", "strong_migrations", "Aurora clone", "runbook"],
+      "tech": ["strong_migrations", "Aurora", "RDS snapshots", "sqlfluff"],
+      "references": [
+        { "title": "Shopify strong_migrations (GitHub)" },
+        { "title": "GitLab — Migration review guidelines" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "microservices",
+      "topic": "Deployment ordering",
+      "difficulty": "mid",
+      "scenario": "Servicio A llama a Servicio B. Los desarrollas conjunta: A necesita un nuevo endpoint en B. ¿Cuál desplegas primero?",
+      "question": "¿Cuál es la regla del deployment ordering?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Deploy PROVIDER primero (B con el nuevo endpoint), luego CONSUMER (A que lo usa). Backward compatible en B (el endpoint nuevo no rompe existentes). Así, cuando A empieza a llamar, B ya está listo. Rollback: A rollback primero (deja de llamar), luego opcional B (aunque el endpoint nuevo no molesta a nadie).", "correct": true, "why": "Correcto. Regla: 'provider first, consumer later'. Provider debe estar preparado ANTES que consumer empiece a llamar. Sino, A deployado primero llama a endpoint que no existe → 404. Rollback simétrico invertido: consumer first, luego provider si necesario." },
+        { "letter": "B", "text": "Consumer primero para forzar que el provider se prepare.", "correct": false, "why": "Rompe: A llama endpoint que no existe → error. Anti-patrón." },
+        { "letter": "C", "text": "Simultáneo con coordinación.", "correct": false, "why": "Coordinar deploys de servicios distintos rompe la autonomía de microservicios. Ordenar bien es mejor." },
+        { "letter": "D", "text": "El orden no importa si el CI es bueno.", "correct": false, "why": "El CI no compensa la falta de orden en deploys distribuidos. Race condition entre deploys puede causar errores intermitentes." }
+      ],
+      "explanation": "Reglas de deploy ordering en microservicios: (1) providers antes que consumers para agregar features; (2) al remover: consumers primero (dejan de usar), luego provider quita (ya nadie llama); (3) contratos backward-compatible siempre que se pueda (para desacoplar el orden); (4) contract testing (Pact) valida en CI que ambos lados están alineados. Anti-patrón: 'big bang deploy' de N servicios acoplados — pierde beneficios de microservicios y crea single point of coordination.",
+      "realWorld": "Netflix, con miles de microservicios, tiene proceso de contract testing (Pact-like) para garantizar deploys independientes. Spotify también lo documenta en su 'Squad' framework. Coordinación cross-team es SEÑAL DE ALARMA arquitectural.",
+      "tags": ["deploy ordering", "provider-consumer", "contract testing", "Pact"],
+      "tech": ["Pact", "contract testing", "microservices"],
+      "references": [
+        { "title": "Pact.io — Contract testing" },
+        { "title": "Sam Newman — 'Building Microservices'" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "resilience",
+      "topic": "Long-running migrations",
+      "difficulty": "senior",
+      "scenario": "Necesitas migrar 2 billones de rows de una tabla legacy a un nuevo formato. Estimas 3-4 días de procesamiento.",
+      "question": "¿Cómo gestionar migraciones que tardan DÍAS?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Diseñar como job continuo, no como script one-shot. Usar orchestrator (Airflow, Step Functions, Argo Workflows) con reintentos, monitoring, resume desde checkpoint.", "correct": true, "why": "Correcto. Job de días no puede ser 'script.sh corriendo en tmux'. Orchestrator provee: retry policy, checkpoint (resume desde donde quedó), monitor UI, alertas. Airflow es el estándar en data engineering. Step Functions es el nativo AWS. Argo Workflows para Kubernetes." },
+        { "letter": "B", "text": "Ejecutar en workers dedicados (no en el server de app) para no impactar performance del servicio. Escalar workers según carga tolerable del DB.", "correct": true, "why": "Correcto. Aislar impact: workers separados (EC2, Fargate, Lambda) que no compiten por recursos con la app. Escalar según capacidad disponible del DB (throttling adaptativo si latencia sube). Métricas del DB (CPU, IOPS, replication lag) guían el throttling." },
+        { "letter": "C", "text": "Diseñar dual-write durante toda la migración: nueva escritura va a ambos formatos, backfill llena huecos históricos. Cuando backfill 100%, cambiar lecturas al nuevo, luego drop viejo.", "correct": true, "why": "Correcto. Dual-write mantiene consistencia durante la migración. Backfill se ocupa solo del historic. Cuando ambos están sincronizados, switch de lecturas. Es expand-contract a escala grande." },
+        { "letter": "D", "text": "Bajar el sistema por las 3-4 días para acelerar la migración.", "correct": false, "why": "Inaceptable para servicios en producción. Además, sin dual-write, riesgo de perder datos escritos en el intervalo." },
+        { "letter": "E", "text": "Considerar hardware específico para acelerar: I/O provisionado (io2), CPU alta, network optimized. Coste vs tiempo trade-off.", "correct": true, "why": "Correcto. Migración de 4 días costando N vs 1 día en instancia mayor costando 2N puede compensar (menos ventana de riesgo, menos toil operativo). Aurora IOPS provisionadas, gp3 con throughput ajustado, RDS instancia mayor temporal. Post-migración, downgrade." }
+      ],
+      "explanation": "Migraciones que tardan días son proyectos, no scripts. Requisitos: orchestration + checkpointing + monitoring + throttling adaptativo + dual-write para consistencia. Ejemplos famosos: Notion migró Postgres a sharded en meses (dual-write, backfill continuo, cutover por shard). Discord de MongoDB a Cassandra en meses. Slack Vitess migration en años. Todos comparten: expand-contract disciplinado, herramientas dedicadas, equipo dedicado, comunicación clara con stakeholders sobre timeline.",
+      "realWorld": "Notion publicó 'The great re-shard' documentando su migración de Postgres monolito a Postgres sharded (2021). Discord 'Why we chose Cassandra' documenta 2017 migration de MongoDB. Ambos en el orden de meses.",
+      "tags": ["long-running migration", "orchestration", "dual-write", "backfill"],
+      "tech": ["Airflow", "Step Functions", "Argo Workflows", "Aurora"],
+      "references": [
+        { "title": "Notion — 'The great re-shard' (2021)" },
+        { "title": "Discord — 'How Discord Stores Trillions of Messages'" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "microservices",
+      "topic": "Feature flags vs branch",
+      "difficulty": "mid",
+      "scenario": "El equipo debate: '¿trabajamos features en branch long-lived o en main con feature flag?'",
+      "question": "¿Cuáles son los trade-offs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Feature flags + trunk-based development son preferidos: main siempre desplegable, merges frecuentes evitan integration hell, feature toggled hasta ready. Branch long-lived acumulan drift, merge conflicts, y postergan la integración (donde emergen los problemas reales).", "correct": true, "why": "Correcto y es la práctica moderna (Google, Facebook, Netflix, Amazon). 'Trunk-based development' con flags para features en progreso es opuesto a 'GitFlow long-lived branches'. Ventajas: (1) integración continua real (no fake 'CI' pero branches divergidas); (2) main siempre deployable; (3) rollout gradual con flag targeting; (4) A/B testing built-in. Trade-off: disciplina de flag cleanup + observability para flags." },
+        { "letter": "B", "text": "Branches long-lived son mejores para features grandes.", "correct": false, "why": "Contra-argumento: features grandes CRECEN el problema. Cuanto más divergido, más doloroso el merge. Feature flags permiten mergear el 'esqueleto' temprano y añadir behind flag." },
+        { "letter": "C", "text": "GitFlow con release branches es el estándar moderno.", "correct": false, "why": "GitFlow (Vincent Driessen 2010) es historically influential pero criticado hoy para SaaS con deploy frecuente. Válido para software con releases explícitas (mobile apps con versión, software distribuido). SaaS con deploy diario prefiere trunk-based." },
+        { "letter": "D", "text": "No importa el modelo si CI es bueno.", "correct": false, "why": "El modelo de branching AFECTA CI/CD: trunk-based facilita CI real (todo se integra en main); long-lived branches complican (múltiples integrations parciales)." }
+      ],
+      "explanation": "Trunk-based + feature flags es la mainstream práctica en SaaS moderno. Requiere: (a) CI fast y confiable; (b) flags con targeting; (c) code review estricto (main es deploy); (d) cultura de commits pequeños; (e) monitoring/observability. Alternativas: GitFlow para versioned software (mobile, desktop, on-prem enterprise). GitHub Flow (light: main + short PR branches, merge quickly) es intermedio popular. Amazon, Google internamente son trunk-based extremos con miles de developers en 1 repo.",
+      "realWorld": "Google publicó 'Why Google Stores Billions of Lines of Code in a Single Repository' (monolithic repo, trunk-based). Facebook similar. Martin Fowler y Continuous Delivery literature promueven trunk-based. DORA metrics research (Accelerate book) muestra correlación entre trunk-based y high-performing teams.",
+      "tags": ["trunk-based", "feature flags", "GitFlow", "CI/CD"],
+      "tech": ["Git", "feature flags", "CI/CD"],
+      "references": [
+        { "title": "Trunk-based Development (trunkbaseddevelopment.com)" },
+        { "title": "Accelerate — DORA metrics research" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "resilience",
+      "topic": "Deploy freeze windows",
+      "difficulty": "mid",
+      "scenario": "Tu empresa tiene 'code freeze' del 20 diciembre al 5 enero. Nadie deploya.",
+      "question": "¿Es una buena práctica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es común pero controversial. Argumentos a favor: menor personal (vacaciones), Black Friday/Cyber Monday termina, riesgo alto de incidente en horario reducido. Contra: si tu CI/CD y monitoring son sólidos, deploy debería ser rutinario incluso en holidays. Alternativa moderna: freeze de features arriesgadas + permitir hotfixes y small changes con normal process.", "correct": true, "why": "Correcto. Freeze total es historia legacy — 'no toquemos nada por si acaso'. Empresas high-performing (DORA metrics) deployan varias veces al día, incluidos fines de semana. Pero para empresas con incidents costosos (retail e-com en cyber monday, financial exchanges) freeze de cambios grandes es defensible. Distinción: freeze de RIESGO alto vs freeze TOTAL." },
+        { "letter": "B", "text": "Sí, freeze es siempre buena práctica.", "correct": false, "why": "Absolutista. Freeze puede acumular riesgo (deploys grandes en enero) y frena la capacidad de responder rápido a bugs/features urgentes." },
+        { "letter": "C", "text": "No, freeze es siempre malo.", "correct": false, "why": "También absolutista. Para eventos críticos (holiday retail, Super Bowl streaming) freeze de cambios innecesarios es prudente." },
+        { "letter": "D", "text": "Freeze es lo mismo que sprint de tech debt.", "correct": false, "why": "Conceptos distintos. Freeze = no deploys. Tech debt sprint = deploys de refactors internos. Confusión terminológica." }
+      ],
+      "explanation": "Freeze windows son trade-off cultural + técnico. Argumentos: (1) reducir riesgo en periodos alto-impact; (2) permitir descanso del equipo; (3) presión de negocio (no deploy en día de $Ymillones de revenue). Contra-argumentos: (1) build-up de cambios post-freeze = deploy grande = más riesgo; (2) freeze prolongado sugiere que deploys normales son inseguros — problema de fondo; (3) hotfixes urgentes bloqueados = incidents peores. Enfoque moderno: freeze SELECTIVO (features arriesgadas, cambios de infra grande) + permitir routine deploys.",
+      "realWorld": "Amazon publica que deployan cada 11.7 segundos en promedio (2011 stat, aún más ahora). Etsy famosa por deploys en Black Friday. Contraste: bancos legacy con freezes de semanas en trimestres. Cultura DevOps madura reduce necesidad de freeze.",
+      "tags": ["deploy freeze", "code freeze", "DORA", "cultura DevOps"],
+      "tech": ["CI/CD", "feature flags"],
+      "references": [
+        { "title": "Accelerate — Nicole Forsgren et al." },
+        { "title": "Google SRE Book — Chapter on Release Engineering" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "resilience",
+      "topic": "Dependencia entre migrations",
+      "difficulty": "staff",
+      "scenario": "Migration A: agrega columna X. Migration B: agrega índice sobre X. Ambas en el mismo release. Deploys rolling, algunas réplicas viejas siguen ejecutando queries.",
+      "question": "¿Qué orden en la ejecución mantiene la app estable?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "1) Ejecutar A (add column) ANTES del deploy del código (compatible con réplicas viejas, columna nullable no rompe). 2) Deploy código nuevo (que usa columna). 3) Ejecutar B (add index) DESPUÉS del deploy, idealmente CONCURRENTLY (no bloquea writes). 4) Backfill si aplica.", "correct": true, "why": "Correcto. Orden crucial: schema changes que NO rompan compat se pueden hacer pre-deploy; changes que asumen código nuevo se hacen post-deploy. Index CONCURRENTLY (Postgres) crea sin AccessExclusiveLock — puede tardar mucho pero no bloquea. Antes del deploy, la app vieja tampoco se beneficia del índice, así que timing flexible. Después del deploy, con nueva query pattern, el índice es útil." },
+        { "letter": "B", "text": "Ejecutar B (index) primero para performance, luego A.", "correct": false, "why": "Imposible — índice sobre columna que no existe. B depende de A." },
+        { "letter": "C", "text": "Ambas simultáneamente para minimizar ventana.", "correct": false, "why": "Índice bloqueante (no CONCURRENTLY) + write traffic = puede bloquear tu app. Además si algo falla mid-way, es más difícil identificar." },
+        { "letter": "D", "text": "El framework de migrations las ordena automáticamente sin necesidad de pensar.", "correct": false, "why": "Framework ejecuta en orden que le indicas (por timestamp/nombre), pero las CONSECUENCIAS del orden en app viva son responsabilidad del developer. El framework no sabe si tu columna es 'antes o después' de la ola de deploys." }
+      ],
+      "explanation": "Migrations en el contexto de rolling deploy requieren pensar en la coexistencia temporal de código viejo y nuevo. Reglas: (1) schema changes ADDITIVE y backward-compatible antes o durante deploy; (2) schema changes que asumen nuevo código, post-deploy; (3) drops (contract) SIEMPRE post-deploy y solo cuando NO hay más código usándolo; (4) índices típicamente CONCURRENTLY para no bloquear; (5) constraints CHECK con NOT VALID + VALIDATE en 2 pasos para no bloquear (Postgres); (6) foreign keys similar. Herramienta strong_migrations (Rails) documenta cada patrón con explicación.",
+      "realWorld": "Shopify strong_migrations tiene ejemplo por ejemplo con notas de riesgo. GitLab tiene 'Postgres tips for developers' públicos. AWS documenta best practices para migrations en RDS Postgres.",
+      "tags": ["migration ordering", "CONCURRENTLY", "rolling deploy", "expand-contract"],
+      "tech": ["Postgres", "strong_migrations", "Rails migrations"],
+      "references": [
+        { "title": "Shopify strong_migrations (GitHub)" },
+        { "title": "Postgres — CREATE INDEX CONCURRENTLY docs" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "microservices",
+      "topic": "Post-deploy verification",
+      "difficulty": "senior",
+      "scenario": "Deployaste una versión nueva. ¿Cómo verificas que fue exitoso, más allá de 'los pods están running'?",
+      "question": "¿Qué componen una post-deploy verification robusta?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Health checks + readiness probes pasando (obvious).", "correct": true, "why": "Correcto pero mínimo. Health check dice 'proceso responde a /health'. NO garantiza que la lógica funciona correctamente." },
+        { "letter": "B", "text": "Synthetic tests / smoke tests post-deploy: llamar endpoints críticos con requests conocidos y verificar responses (200 OK + payload correcto). Automatizados en pipeline.", "correct": true, "why": "Correcto. Smoke tests ejecutan una 'batería mínima' de comportamientos críticos post-deploy. Si fallan, el deploy se marca red y puede auto-rollback. Herramientas: k6, Datadog Synthetic, Grafana Synthetic Monitoring, custom scripts en pipeline." },
+        { "letter": "C", "text": "Métricas comparadas antes/después: error rate, latencia p50/p99, RPS, business metrics (orders/min). Deploy considered successful solo si dentro de baseline durante N minutos.", "correct": true, "why": "Correcto. 'Deployment tracking' en Datadog, New Relic, Grafana: marca en la timeline cuando ocurrió el deploy y compara métricas antes/después. Automatización avanzada: canary analysis (Kayenta) evalúa statistical significance." },
+        { "letter": "D", "text": "Verificar logs de startup: sin errors fatales al arrancar.", "correct": true, "why": "Correcto y a veces olvidado. Un app puede pasar health check pero loguear 'FATAL: dependency X unreachable, running in degraded mode'. Logs de startup en primeros minutos importantes." },
+        { "letter": "E", "text": "Preguntar en Slack '¿alguien nota algo raro?'.", "correct": false, "why": "No es verificación. Es reactivo, no proactivo. Verificación DEBE ser automatizada, medible, y con rollback trigger automático si falla." }
+      ],
+      "explanation": "Verificación post-deploy robusta = automatización + métricas + smoke tests + rollback automático si degradación. Pipeline moderno: (1) deploy con canary; (2) smoke tests contra canary; (3) monitor métricas comparadas al baseline; (4) statistical canary analysis (Kayenta); (5) si todo verde → promote a 100%; (6) si no → auto-rollback. Herramientas integradas: Argo Rollouts, Flagger, Spinnaker, AWS CodeDeploy con CloudWatch alarms. Sin verificación automatizada, 'deploy exitoso' es esperanza, no hecho.",
+      "realWorld": "Netflix Spinnaker es el orquestador con automated canary analysis (Kayenta). Datadog Deployment Tracking marca automáticamente cambios en métricas post-deploy. Google Cloud Deploy tiene verification hooks nativos. Todas las empresas con deploy diario tienen versión de esto.",
+      "tags": ["post-deploy verification", "smoke tests", "canary analysis", "auto-rollback"],
+      "tech": ["Spinnaker", "Kayenta", "Argo Rollouts", "Datadog", "CodeDeploy"],
+      "references": [
+        { "title": "Netflix Spinnaker + Kayenta" },
+        { "title": "Google SRE Book — Release Engineering" }
+      ]
+    }
+  ]
+}

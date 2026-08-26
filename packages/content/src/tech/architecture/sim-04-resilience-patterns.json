@@ -1,0 +1,424 @@
+{
+  "id": "architecture-sim-04-resilience-patterns",
+  "trackId": "architecture",
+  "order": 4,
+  "title": "Simulacro 04 — Resilencia: retries, circuit breakers, bulkheads, timeouts",
+  "focus": "Patrones para sistemas que fallan bien: qué hacer cuando un dependency externa se degrada o cae.",
+  "areaCoverage": ["resilience", "microservices"],
+  "timeLimitMin": 60,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "resilience",
+      "topic": "Vocabulario básico — availability y nines",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr dice: 'nuestro SLA es 99.99%, ¿cuánto downtime nos permite al año?'.",
+      "question": "¿Cuál es la respuesta correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "99.99% = ~52 minutos de downtime/año (0.01% × 8760 horas × 60 min = 52.56 min).", "correct": true, "why": "Correcto. 'Nines' de availability: 99% = 3.65 días/año. 99.9% (three nines) = 8.76 hours. 99.99% (four nines) = 52.56 min. 99.999% (five nines) = 5.26 min. 99.9999% = 31.5 seconds. Cada nine adicional cuesta ~10x más en infra." },
+        { "letter": "B", "text": "99.99% = 0 downtime — nunca puede fallar.", "correct": false, "why": "No existe 100%. Todo sistema real tiene fallos; SLA compromete un budget." },
+        { "letter": "C", "text": "99.99% = 1 día de downtime/año.", "correct": false, "why": "Confunde con 99.7%. 1 día = 0.27% downtime." },
+        { "letter": "D", "text": "99.99% se refiere a latencia, no availability.", "correct": false, "why": "Availability y latency son SLIs distintos. Puedes tener alta availability con latencia alta." }
+      ],
+      "explanation": "Availability nines: memoria mnemónica útil. Cada nine adicional requiere aumentar significativamente ingeniería: multi-AZ (~99.99%), multi-region (~99.999%), chaos engineering, extensive automation. Cinco nines es realista para servicios AWS core (S3, DynamoDB). Six nines (~31s/año) suele ser marketing — un solo bug afecta más que eso. Google SRE: 'the only value of five nines is bragging rights'. La discussion moderna: SLO based on user experience (p95 latency, error rate) es más útil que availability nine chasing.",
+      "realWorld": "AWS S3 SLA 99.9% (compensación si menos). DynamoDB Multi-Region 99.999%. GitHub tiene reportadas incidentes que rompen sus SLAs. La transparency del status page (statuspage.io) es señal de madurez.",
+      "tags": ["availability", "SLA", "nines", "fundamentos"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 4 SLOs" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "resilience",
+      "topic": "Failure modes — clasificación",
+      "difficulty": "mid",
+      "scenario": "Un sistema puede fallar de varias maneras. Distinguirlas es el primer paso para responder correctamente.",
+      "question": "¿Cuál es la clasificación CORRECTA de failure modes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Crash (fail-stop): proceso muere abruptamente, otros lo detectan; (2) Omission: mensaje no llega o respuesta perdida; (3) Timing: respuesta llega fuera de spec (lenta); (4) Response: respuesta incorrecta (bug); (5) Byzantine: comportamiento arbitrario/malicioso.", "correct": true, "why": "Correcto. Esta taxonomía viene del paper 'Fault Tolerance' (Cristian, 1991). Cada tipo requiere estrategia distinta: crash faults se detectan con heartbeats + failover; omission se combate con retries; timing con timeouts; response con validación; Byzantine con consenso (Raft, Paxos, PBFT). La mayoría de sistemas asumen crash+omission model, no Byzantine (que requiere BFT como en blockchains)." },
+        { "letter": "B", "text": "Solo dos tipos: sistema up o down.", "correct": false, "why": "Simplification peligrosa. 'Gray failures' (Kingsbury) son los más traicioneros: el sistema técnicamente responde pero degrada (5% error rate, latencia 10x). No es up, no es down." },
+        { "letter": "C", "text": "Todos los fallos son bugs.", "correct": false, "why": "Muchos fallos son operacionales: network partitions, hardware failures, disk full, dependencies down. No bugs, pero pass fail." },
+        { "letter": "D", "text": "Failure modes = solo memory leaks y crashes.", "correct": false, "why": "Miopía: cascading failures, thundering herds, metastable failures, gray failures son categorías críticas ausentes." }
+      ],
+      "explanation": "Failure modes taxonomy es fundamental para diseño resilience. 'Gray failures' (Huang et al., 2017) merecen mención especial: system parcialmente funcional (some replicas OK, others slow), monitoring dice 'todo bien' pero users experiencian problemas. Detección requiere multi-perspective observability (client-side probes, distributed tracing). 'Metastable failures' (Bronson et al., 2021): sistema estable, un pequeño perturbation lo empuja a estado degradado del que no se recupera sin intervention (retry storms, thundering herds). Los patterns resilientes se diseñan asumiendo failure modes específicos — 'assume nothing is up all the time'.",
+      "realWorld": "Cloudflare 2020 outage: gray failure — algunos servers slow por bug en config, no fully down. Facebook 2021: cascading failure de BGP + DNS. AWS US-East-1 recurrentes por metastable failures. Chaos engineering (Netflix Chaos Monkey) test específicamente para failure modes.",
+      "tags": ["failure modes", "fault tolerance", "gray failures", "metastable"],
+      "tech": [],
+      "references": [{ "title": "Cristian — 'Understanding Fault-Tolerant Distributed Systems'" }, { "title": "Huang et al. — 'Gray Failure'" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "resilience",
+      "topic": "Health checks — el corazón del auto-healing",
+      "difficulty": "mid",
+      "scenario": "Kubernetes tiene liveness, readiness, y startup probes. Un dev configura todas iguales: check `/health` cada 10s.",
+      "question": "¿Cuál es el propósito de cada probe y por qué NO son iguales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Todas hacen lo mismo — verificar que el pod esté vivo.", "correct": false, "why": "Distinción crítica. Confundirlas causa restarts innecesarios (liveness fires durante slow startup → CrashLoopBackOff) o serving traffic sin ready (5xx spike)." },
+        { "letter": "B", "text": "Liveness: '¿está el proceso vivo o hay que reiniciarlo?' — falla → Kubernetes MATA el pod. Readiness: '¿puede recibir tráfico?' — falla → Service quita el pod del LB (no lo mata, puede recuperarse). Startup: '¿ya arrancó?' — protege durante boot slow (imports pesados, JVM warmup) para que liveness no dispare prematuramente.", "correct": true, "why": "Correcto. Cada probe tiene action distinta. Liveness debe ser BÁSICO — 'proceso responde algo' (evitar depender de DBs, downstream services). Readiness puede ser más strict — 'DB accessible, dependencies OK'. Startup evita el conflict entre 'app tarda 60s en arrancar' y 'liveness cada 10s' — startup extends the grace period." },
+        { "letter": "C", "text": "Liveness debería verificar DB, cache, external APIs.", "correct": false, "why": "Anti-pattern grave: si DB está lenta o caída, liveness falla → Kubernetes MATA todos tus pods → outage total. DB down debería NO afectar liveness. Readiness sí puede, para quitar tráfico al pod." },
+        { "letter": "D", "text": "Solo readiness es necesaria.", "correct": false, "why": "Sin liveness, un proceso hang (deadlock, memory leak) queda inservible sin restart automático." }
+      ],
+      "explanation": "Health check design principles: (1) Liveness = 'am I healthy?' — SIMPLE, no dependencies, para restart decision; (2) Readiness = 'can I serve traffic?' — puede incluir dependencies, para load balancer decision; (3) Startup = 'am I fully started?' — solo durante boot phase, luego handoff a liveness. Common mistakes: liveness verifica DB → cascading failure; readiness sin startup → CrashLoopBackOff en boot lento; probe endpoint hace real work → probe overhead. Configuración: initialDelaySeconds, periodSeconds, failureThreshold. Best practice: liveness /healthz muy simple (return 200), readiness /ready verifica dependencies críticas (con timeout corto), startup para apps con boot >30s. En load balancers (ALB, NLB): similar concept — health check independiente per instance.",
+      "realWorld": "Kubernetes documentation es autoridad. Google SRE Book warns extensively sobre 'deep health checks'. Incidentes clásicos: cascading failure porque 100 pods matados simultaneously cuando DB dio 5s de slowness (liveness verificaba DB). Patterns modernos: liveness sin dependencies, readiness con selective dependencies, circuit breakers on flaky ones.",
+      "tags": ["health checks", "Kubernetes probes", "liveness", "readiness"],
+      "tech": ["Kubernetes", "ALB health checks"],
+      "references": [{ "title": "Kubernetes docs — Liveness and Readiness Probes" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "resilience",
+      "topic": "Graceful degradation — patterns",
+      "difficulty": "mid",
+      "scenario": "Tu e-commerce depende de recommendation service. Cuando cae, la home page devuelve 500 error. Un colega propone 'si recommendation falla, mostrar productos populares como fallback'.",
+      "question": "¿Cuál es la aplicación correcta de graceful degradation?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Graceful degradation: cuando un dependency non-critical falla, servir UN mejor esfuerzo (fallback), no error. Ejemplos: recomendaciones down → productos populares cached; reviews down → esconder sección; personalization down → contenido default. UX degrada, funcionalidad crítica preserved.", "correct": true, "why": "Correcto. Es el principio de 'features graceful degradation': identifica qué es CRÍTICO (checkout, search, login) vs SUPPLEMENTAL (recommendations, reviews, ads). Supplemental fallbacks. Crítico circuit-breakers + timeouts + retries. Los mejores sites siguen funcionando cuando el 70% de servicios están degraded." },
+        { "letter": "B", "text": "Fallbacks deben estar CACHED o ser DEFAULTS estáticos, no llamar más servicios que puedan también fallar. Cache stale > llamar otra API que también podría estar down.", "correct": true, "why": "Correcto. Anti-pattern: fallback que también depende de otro service down → cascading failure. Fallback ideal: (a) cached data (aún stale, mejor que error); (b) default hardcoded; (c) computation local simple. Complexity budget en fallback debe ser MÍNIMA." },
+        { "letter": "C", "text": "Feature flags permiten disable dinámico de features cuando degradan. LaunchDarkly, Flagsmith, Split — o self-hosted. Cuando incident, ops team disable feature X → sistema vuelve estable.", "correct": true, "why": "Correcto pattern crítico. Feature flags para 'kill switch' rápido sin deploy. Un incident afecta feature X → disable el flag → traffic normal restaurado en segundos. Complementa graceful degradation con manual override para casos que automation no captura." },
+        { "letter": "D", "text": "Todos los fallbacks son iguales — mostrar 'error, retry'.", "correct": false, "why": "Anti-UX. 'Error' cripples la experiencia. Fallback debe intentar dar VALOR aunque sea reduced. 'Retry' es carga adicional." },
+        { "letter": "E", "text": "Circuit breaker abierto significa devolver 500 al user.", "correct": false, "why": "Circuit breaker ABIERTO es señal para APLICAR FALLBACK, no propagar error. Circuit breaker + graceful degradation es combinación estándar." }
+      ],
+      "explanation": "Graceful degradation es el arte de 'fallar bien'. Principios: (1) identify critical vs supplemental features (checkout critical, recommendations no); (2) design fallbacks per feature (cached data, defaults, hidden sections); (3) fallbacks must be independent (no chain de failures); (4) feature flags para kill-switch dinámico; (5) monitor degradation rate — cuando alto, alert (indica fallback siempre-on = feature real está roto). Patterns relacionados: (a) chaos engineering (Netflix ChaosMonkey) — force failures to test degradation; (b) 'defensive design' (assume dependencies fail); (c) 'shed load' (return 503 to prioritize critical requests when overloaded). El goal: 'partial functionality' > 'no functionality'.",
+      "realWorld": "Netflix es maestro: home page funciona sin recommendation, sin search, sin most services (aunque degraded). Amazon: retail seguir funcionando durante S3 outages parciales via cached data. Wikipedia: read-only mode durante DB issues. Muchos sites hoy: falla auth backend = TOTAL outage — mala arquitectura de degradation.",
+      "tags": ["graceful degradation", "fallback", "feature flags", "resilience"],
+      "tech": ["LaunchDarkly", "Flagsmith", "Split"],
+      "references": [{ "title": "Google SRE Book — Ch. 22 Cascading Failures" }, { "title": "Michael Nygard — 'Release It!' Ch. 5" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "resilience",
+      "topic": "Idempotency + retries — patrón inseparable",
+      "difficulty": "mid",
+      "scenario": "Cliente HTTP hace POST /transfer $100 to account X. Timeout de 5s. Después de 5s no llega respuesta. Cliente reintenta. Server recibió el request y lo procesó, pero respuesta se perdió. ¿$200 transferidos?",
+      "question": "¿Cómo se resuelve idempotency + retries?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "No reintentar POST — es la forma segura.", "correct": false, "why": "Impractical: network fallos son comunes. Requerir usuarios manualmente reintentar es mala UX. La solución correcta permite retry seguro." },
+        { "letter": "B", "text": "Cliente envía Idempotency-Key único en header. Server registra la key + result. Si llega retry con misma key: devuelve el result cached en vez de re-procesar. Duplicados naturales de network se eliminan. Stripe API, Shopify API, GitHub API todos hacen esto.", "correct": true, "why": "Correcto. Es el pattern universal. Cliente genera UUID por operación. Server: (1) verifica si key existe → devuelve cached response; (2) si no existe → procesa + INSERT key en tabla (misma transacción) + return response; (3) TTL de key (24h típico). Retries del cliente son safe: mismo key → mismo effect exactly-once." },
+        { "letter": "C", "text": "Server debe ser stateless y no rastrear requests.", "correct": false, "why": "Confusión: 'stateless' se refiere a session state per user, no idempotency tracking. Idempotency tracking es transactional per operation." },
+        { "letter": "D", "text": "Usar GET en vez de POST.", "correct": false, "why": "GET no debe tener side effects. Transferir dinero es side effect — semánticamente debe ser POST. Idempotency-Key resuelve el problema sin violar HTTP semantics." }
+      ],
+      "explanation": "Idempotency-Key pattern: (1) Client genera unique key per operation (UUID); (2) Client envía en header (X-Idempotency-Key o Idempotency-Key); (3) Server verifica dedupe table (SELECT + INSERT con unique constraint, in transaction); (4) Si key exists → return cached response; else → process + save response + save key; (5) Response is cached for TTL. Considerations: (a) TTL debe > max retry window del client; (b) key debe ser truly unique (client-generated UUID); (c) transaction crítica para evitar race — process + record key deben ser atomic; (d) client debe usar MISMA key para retries. HTTP semantics: GET/PUT/DELETE son idempotent naturally (repeated → same result); POST no. Idempotency-Key extiende semántica idempotent a POST. Frameworks: Stripe pioneered public API con detailed docs.",
+      "realWorld": "Stripe: https://stripe.com/docs/api/idempotent_requests — canónico. GitHub, Shopify, PayPal, todas las serious APIs de pagos y state-changing. Sin idempotency-key + retries, tienes doble cobros, doble ordenes, doble notifications. Es el pattern más important en API design de sistemas críticos.",
+      "tags": ["idempotency", "retries", "Idempotency-Key", "at-least-once"],
+      "tech": ["Stripe API", "REST APIs"],
+      "references": [{ "title": "Stripe — 'Idempotency in APIs'" }, { "title": "AWS Builders' Library — 'Making retries safe with idempotent APIs'" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "resilience",
+      "topic": "Retries — cuándo son peligrosos",
+      "difficulty": "senior",
+      "scenario": "Tu API llama al servicio de pricing. A veces falla. Un compañero propone: 'retry hasta 5 veces con delay de 100ms entre intentos'. Bajo carga, esto empeora TODO el sistema — un fallo momentáneo se amplifica y otras APIs sanas se caen.",
+      "question": "¿Cómo se implementa un retry PROFESIONAL?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Exponential backoff: cada retry duplica el delay (100ms, 200ms, 400ms, 800ms...). Da tiempo al servicio a recuperarse en lugar de martillear.", "correct": true, "why": "Correcto. Backoff exponencial es defense contra 'thundering herd': si 10.000 clientes fallan y todos reintentan a 100ms, se rompen los servidores. Con backoff, la carga se distribuye en el tiempo." },
+        { "letter": "B", "text": "Jitter (aleatoriedad): añadir ±25% aleatorio al delay. Si N clientes fallan simultáneamente, no reintentan sincronizados. Sin jitter, el backoff exponencial crea oleadas periódicas.", "correct": true, "why": "Correcto. Jitter es crítico y a menudo olvidado. Con backoff+jitter, la carga distribuida. Marc Brooker (AWS) escribió el paper canónico 'Exponential Backoff And Jitter'." },
+        { "letter": "C", "text": "Retry SOLO en errores idempotentes (GET, PUT con Idempotency-Key) y transitorios (5xx, 429, network timeout). NUNCA retry POST no idempotente ni errores 4xx (excepto 408, 429).", "correct": true, "why": "Correcto. Retry de POST no idempotente = doble cobro. Retry de 400 (bad request) = mismo error para siempre. Distinguir 'transient error' (temporal, retry vale la pena) vs 'permanent' (retry no ayuda) es fundamental." },
+        { "letter": "D", "text": "Retry sin límite hasta que funcione — eventualmente el servicio se recupera.", "correct": false, "why": "Sin límite = cliente colgado indefinidamente. Además puede degradar más el servicio (retry storm). Siempre define max retries + max total wait." },
+        { "letter": "E", "text": "Retry al detectar QUALQUIER excepción con except: para máxima cobertura.", "correct": false, "why": "Anti-patrón: puede reintentar errores de programación (NullPointerException) que nunca se recuperarán, ocultando bugs reales. Solo retry excepciones específicas." }
+      ],
+      "explanation": "Retries mal hechos amplifican fallos ('retry amplification' o 'metastable failure'). Retries bien hechos siguen: (1) exponential backoff; (2) jitter; (3) max retries + max total time; (4) solo en errores retriables; (5) solo operaciones idempotentes. Librerías: Polly (.NET), Resilience4j (Java), Tenacity (Python), retry (Go). Todas implementan estos patrones probados.",
+      "realWorld": "El outage de Twitter Fabric en 2015 fue amplificado por retries sin backoff. AWS DynamoDB tuvo un incidente en 2015 donde retries agresivos amplificaron un fallo transitorio en un outage regional. Netflix 'Hystrix' se creó específicamente para prevenir estos.",
+      "tags": ["retries", "backoff", "jitter", "idempotencia", "resilience"],
+      "tech": ["Polly", "Resilience4j", "Tenacity", "AWS SDK retry"],
+      "references": [{ "title": "AWS Builders' Library — Exponential Backoff and Jitter" }, { "title": "Marc Brooker — 'Timeouts, retries, and backoff with jitter'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "resilience",
+      "topic": "Circuit Breaker — cuándo abrirlo",
+      "difficulty": "senior",
+      "scenario": "Tu servicio A depende de servicio B. B se cae (500s). A sigue enviando requests a B, cada uno espera 30s de timeout antes de fallar. Los threads de A se saturan esperando timeouts → A también se cae aunque su código esté sano.",
+      "question": "¿Cómo funciona un Circuit Breaker y por qué previene esta cascada?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El circuit breaker mide fallos recientes. Si supera un umbral (ej. >50% en últimos 10s), 'abre' el circuito: futuras requests a B fallan INMEDIATAMENTE sin llamar a B. Después de X segundos, entra en 'half-open': deja pasar 1 request de prueba. Si funciona, cierra el circuito. Si no, sigue abierto.", "correct": true, "why": "Correcto. El nombre viene de un breaker eléctrico: cuando hay sobrecarga se corta el flujo, protegiendo el sistema. En software, protege al CLIENTE (A) de ser arrastrado por el fallo del proveedor (B). Los threads de A dejan de bloquearse en timeouts. B recibe menos carga y puede recuperarse. Half-open permite detectar la recuperación sin volver a sobrecargar." },
+        { "letter": "B", "text": "Circuit breaker es un rate limiter que bloquea si el cliente hace muchas requests.", "correct": false, "why": "Confunde con rate limiting. Rate limiter mira RATE del cliente. Circuit breaker mira FALLOS del proveedor. Objetivos distintos." },
+        { "letter": "C", "text": "Circuit breaker es lo mismo que retry con timeout — solo cambia el nombre.", "correct": false, "why": "No. Retry INTENTA MÁS; circuit breaker DEJA DE INTENTAR. Son complementarios: primero retry con backoff; si el error persiste, abrir circuit para no seguir gastando recursos." },
+        { "letter": "D", "text": "Circuit breaker previene deadlocks entre servicios.", "correct": false, "why": "Deadlock es un problema de locks compartidos, no directamente relacionado. Circuit breaker previene 'cascading failure', que es distinto." }
+      ],
+      "explanation": "Circuit breaker: tres estados (CLOSED = requests pasan, OPEN = requests fallan rápido, HALF-OPEN = 1 request de prueba). Configuración típica: umbral 50% fails en ventana de 10s, cooldown 30s. Se combina con: (1) timeouts agresivos (no esperes 30s por B si tu SLA es 200ms); (2) bulkheads (aislar pools de threads por dependency, así B saturado no ahoga a C); (3) fallback (respuesta degradada cuando circuito abierto — cached, default, sensible error). Librerías: Hystrix (deprecated), Resilience4j, Polly, Istio (a nivel service mesh).",
+      "realWorld": "Netflix inventó Hystrix precisamente porque un solo servicio caído tumbaba el streaming. Estuvo en producción con 100+ microservicios. Airbnb, Amazon, todos los grandes lo usan. Sin circuit breaker, un sistema distribuido complejo es una bomba de tiempo.",
+      "tags": ["circuit breaker", "cascading failure", "bulkhead", "resilience"],
+      "tech": ["Hystrix", "Resilience4j", "Polly", "Istio"],
+      "references": [{ "title": "Michael Nygard — 'Release It!'" }, { "title": "Martin Fowler — 'CircuitBreaker'" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "resilience",
+      "topic": "Timeouts — el 99% de sistemas los pone mal",
+      "difficulty": "senior",
+      "scenario": "Diseñas un endpoint que llama a otro servicio interno. Tu SLA con el cliente es responder en <500ms p99. ¿Qué timeout configuras al llamar al servicio interno?",
+      "question": "¿Cuál es el criterio correcto y qué anti-patrones evitar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "30 segundos (default de la mayoría de HTTP clients). Es lo seguro.", "correct": false, "why": "Anti-patrón #1 en sistemas distribuidos. Con timeout 30s: si el servicio interno se degrada a 2s (aún dentro de 30s), tu SLA se ha roto pero sigues esperando. Además, los threads/conexiones se apilan. En incidents, esto causa cascadas." },
+        { "letter": "B", "text": "Menos de tu SLA. Ej: si SLA es 500ms, timeout al dep interno ~200-300ms. Deja margen para tu propio procesamiento + variability. Si el dep tarda más, es MEJOR fallar rápido y devolver error/degraded response al cliente que hacerle esperar y romper el SLA de todas formas.", "correct": true, "why": "Correcto. Regla: timeout downstream < tu SLA menos overhead. Si tardas 100ms procesando la respuesta, y SLA es 500ms, timeout debe ser <400ms (ideal 200-300ms para dar margen). Falla rápido, devuelve respuesta degradada (cached, default, 503) — pero no rompas SLA. Cadena de servicios A→B→C: los timeouts deben decrecer río abajo." },
+        { "letter": "C", "text": "1 segundo. Timeout uniforme para todos los servicios.", "correct": false, "why": "Sin criterio. Cada dep tiene un SLA distinto — el timeout debe calibrar a él, no arbitrario." },
+        { "letter": "D", "text": "No configurar timeout: dejar que el TCP haga el suyo (~2 horas).", "correct": false, "why": "Desastre absoluto. Un pod colgado espera 2h antes de fallar. Los threads se saturan mucho antes. Es una de las causas más comunes de outage." }
+      ],
+      "explanation": "Regla del arquitecto senior: 'Todo I/O tiene timeout, y ese timeout se calcula, no se copia'. El timeout deriva de: (1) tu SLA con el cliente; (2) SLA del proveedor (si tiene 99%ile de 100ms, timeout ~500ms deja margen para variability); (3) qué haces si vence (fallback? error?). Cadena A→B→C: timeout A→B < SLA A; timeout B→C < SLA B, etc. Cada nivel debe fallar antes que el nivel superior. Este mismo principio aplica a DB queries, HTTP externas, file I/O. Sin timeout, un fallo momentáneo se convierte en outage.",
+      "realWorld": "Muchos outages de AWS/Google han sido causados por timeouts mal configurados amplificando fallos leves. Cloudflare tuvo un incidente en 2019 relacionado. En cada post-mortem serio verás 'inadequate timeouts' listado como contributor.",
+      "tags": ["timeouts", "SLA", "cascading failure", "resilience"],
+      "tech": ["HTTP clients", "gRPC deadlines"],
+      "references": [{ "title": "AWS Builders' Library — 'Timeouts, retries and backoff'" }, { "title": "Google SRE Book — Ch. 22 Addressing Cascading Failures" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "resilience",
+      "topic": "Bulkhead pattern — aislamiento de recursos",
+      "difficulty": "senior",
+      "scenario": "Tu app tiene un thread pool de 100 threads. Cuando dependency X se degrada (latencia 30s), TODOS los threads quedan bloqueados esperando X. Requests a Y (dependency sana) también fallan por thread starvation.",
+      "question": "¿Qué es el bulkhead pattern y cómo se implementa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Aumentar el thread pool a 1000. Habrá threads para todos.", "correct": false, "why": "Palliative: cuando el dep degrade otra vez, se saturan los 1000. Además, 1000 threads = mucha memoria (~1MB stack per thread), context switching overhead, etc. No resuelve el problema fundamental de shared pool." },
+        { "letter": "B", "text": "Bulkhead pattern: aislar recursos (thread pools, connection pools, semaphores) POR DEPENDENCY. Pool de 30 threads para X, 30 para Y, 30 para Z. Si X se satura, sus 30 threads bloquean, pero Y y Z siguen atendiendo. Análogo a compartments in un barco — un compartment inunda, el barco flota.", "correct": true, "why": "Correcto. El nombre viene de barcos: mamparos (bulkheads) separan el casco en compartments para que un daño no hunda el barco. En software: aislar recursos evita que un failure de una dependency ahogue todas las requests. Combinado con circuit breaker (para cortar cuando X está claramente down) y timeouts (para no bloquear indefinidamente), es defense en profundidad." },
+        { "letter": "C", "text": "Circuit breaker sirve para el mismo propósito — no necesitas bulkhead.", "correct": false, "why": "Complementarios. Bulkhead evita starvation ANTES de que circuit breaker se abra (thread pool separado). Circuit breaker previene requests a un servicio que ya sabes down. Ambos combinados son más robustos que cualquiera solo." },
+        { "letter": "D", "text": "Meterlo todo en Lambda funciones para aislar automáticamente.", "correct": false, "why": "Lambda tiene su modelo (each invocation isolated) pero introduces cold start + cost + limits. No es la respuesta general a bulkhead. Válido para algunos casos, no todos." }
+      ],
+      "explanation": "Bulkhead pattern implementations: (1) Separate thread pools per dependency (Java: Executor per client, Netflix Hystrix); (2) Separate connection pools per DB/API; (3) Semaphores limiting concurrent calls to a dependency; (4) Process-level isolation (separate JVMs, containers per critical path). Kubernetes: separate pods per critical service. Considerations: (a) sizing pools (too small = normal capacity limited, too big = defeats purpose); (b) monitoring pool exhaustion (metric por pool); (c) reject fast when pool full (429 or fallback vs blocking). Bulkhead + circuit breaker + timeout + retry + fallback = 'stability patterns' (Michael Nygard's 5 pillars). Libraries: Resilience4j (thread pool bulkhead + semaphore bulkhead), Hystrix (deprecated but classic).",
+      "realWorld": "Netflix Hystrix invented modern bulkhead pattern in Java. Nygard's 'Release It!' es lectura obligada. Kubernetes uses bulkhead-like isolation by design (pods per service). Envoy proxy supports connection pool limits per upstream cluster. Sin bulkheads, una dependency slow puede tumbar todo.",
+      "tags": ["bulkhead", "isolation", "thread pool", "resilience patterns"],
+      "tech": ["Resilience4j", "Hystrix", "Kubernetes"],
+      "references": [{ "title": "Michael Nygard — 'Release It!' Ch. 5" }, { "title": "Netflix Tech Blog — 'Hystrix'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "resilience",
+      "topic": "Chaos engineering — testing failures deliberately",
+      "difficulty": "senior",
+      "scenario": "Tu equipo asume que 'la infraestructura es confiable'. Netflix propone 'chaos engineering' — matar cosas en producción a propósito. Sun senior team resiste: 'suena loco'.",
+      "question": "¿Qué es chaos engineering y por qué funciona?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Chaos engineering: introducir failures controlados en producción para EXPONER debilidades ANTES de que ocurran organicamente. Chaos Monkey (Netflix) mata pods aleatoriamente. Chaos Kong toma down regiones enteras. Los sistemas descubren sus assumptions rotas en un contexto controlado (business hours, on-call ready), no a las 3AM.", "correct": true, "why": "Correcto. La idea contraintuitiva: si tu system depende de que nada falla, ESO es el problema. Chaos engineering makes failure normal, forzando resilience by design. Netflix pioneer, ahora industry standard. Herramientas: Gremlin, LitmusChaos, Chaos Mesh, AWS Fault Injection Simulator (FIS)." },
+        { "letter": "B", "text": "Principios: (1) definir 'steady state' (métricas normales); (2) hypothesize que un failure no romperá steady state; (3) inject failure; (4) verify hypothesis. Si failure rompe steady state → aprendiste una debilidad → fix. Blast radius controlado (empieza pequeño: 1% traffic, dev env), escalar cuando confianza aumenta.", "correct": true, "why": "Correcto. Es método científico: hypothesis → experiment → learn. Blast radius progressive: (a) dev/staging first; (b) 1% production; (c) 10%, 50%, 100%. Rollback ready. Metrics dashboards live durante experiment. Post-mortem si hypothesis wrong. 'Principles of Chaos Engineering' es el manifiesto (principlesofchaos.org)." },
+        { "letter": "C", "text": "Chaos engineering es solo matar pods.", "correct": false, "why": "Reduccionista. Failures modes son variados: network partition (Toxiproxy, tc), latency injection (add 500ms), CPU/memory pressure, disk fill, DNS failures, dependency failures. Cada dimension expone assumptions distintos." },
+        { "letter": "D", "text": "Chaos engineering se hace SOLO en producción.", "correct": false, "why": "Empieza en staging/pre-prod. Producción cuando (a) infrastructure ready (feature flags, monitoring, rollback), (b) team ready (on-call, runbooks), (c) leadership buy-in. Producción es donde de verdad descubres cosas, pero no empiezes ahí sin preparación." },
+        { "letter": "E", "text": "GameDays: exercises planeados donde el team simula incident scenarios. Práctica para responder (comunicación, coordination, tooling). Complementa chaos automation con human aspect de incident response.", "correct": true, "why": "Correcto complemento. GameDays entrenan al equipo (declare incident, coordinate, communicate, debug bajo pressure). Muchos equipos hacen quarterly GameDays con escenarios ficticios. Incident response es skill entrenable, no assumido." }
+      ],
+      "explanation": "Chaos engineering framework: (1) Steady state (métricas de baseline health); (2) Hypothesis (X failure won't break Y metric); (3) Experiment (inject failure controlled); (4) Observe (verify hypothesis); (5) Learn (fix if wrong). Tools: Chaos Monkey (kills pods), Chaos Kong (regions), Netflix Simian Army (broad suite), Gremlin (SaaS commercial), LitmusChaos (Kubernetes-native, CNCF), Chaos Mesh (Kubernetes), AWS FIS (managed AWS), Azure Chaos Studio. Advanced: Failure Injection Testing (FIT) at Netflix — mocked dependency failures for services. Modes: pod kills, network chaos (latency, packet loss, partition), CPU/memory pressure, disk fill, DNS failures, dependency chaos. Cultural: 'blameless post-mortems' (Google SRE) enable psychological safety para experimentar en prod.",
+      "realWorld": "Netflix: Chaos Monkey (2011), Simian Army complete suite, permanent chaos engineering team. Amazon: GameDays across services. Google: DiRT (Disaster Recovery Testing) quarterly. Facebook: Storm (kill entire data center periodically). Toda big tech modern practices chaos. Startups can start small: kill 1 pod in staging, learn, expand.",
+      "tags": ["chaos engineering", "Chaos Monkey", "GameDays", "resilience testing"],
+      "tech": ["Chaos Monkey", "Gremlin", "LitmusChaos", "AWS FIS"],
+      "references": [{ "title": "Principles of Chaos Engineering" }, { "title": "Netflix — 'Chaos Engineering Upgraded'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "resilience",
+      "topic": "Fallback strategies — spectrum of degradation",
+      "difficulty": "senior",
+      "scenario": "Dependencies fallan. Tu servicio debe seguir sirviendo algo. Debate: qué fallback usar por caso.",
+      "question": "¿Cuáles son las estrategias de fallback y cuándo cada una?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cached response (stale-while-revalidate): si dependency falla, devolver la última respuesta cached aunque esté stale. TTL soft (data 'freshness ideal') + TTL hard (max staleness aceptable). Trade-off: users ven data vieja, pero ven ALGO.", "correct": true, "why": "Correcto. Es el fallback preferido en general — data stale >> error para most cases. Redis o local cache. Combina bien con circuit breaker (si dep está down, no intentes; sirve cache). Adecuado para: catalogo, recommendations, user profiles, feature flags." },
+        { "letter": "B", "text": "Default/hardcoded value: si personalization service falla, mostrar 'top products' hardcoded. Si preferences service falla, usar default settings. Simplicity: no dependencies para fallback path.", "correct": true, "why": "Correcto para features supplementary. Fallback debe ser SIMPLE (sin dependencies que también puedan fallar). Hardcoded values o config-file-based. Ejemplos: default currency = USD si geo-lookup falla; default language = EN; recommended products = top-sellers globales." },
+        { "letter": "C", "text": "Async / queue for later: si dependency escritura falla, encolar el operation para retry after. User ve 'submitted, processing'. Adecuado para writes no-inmediatas: notifications, analytics events, audit logs.", "correct": true, "why": "Correcto pattern. Write path degradation via async queue. User no espera al downstream lento. SQS/Kafka con retry policies + DLQ para failed messages. Trade-off: no confirmation inmediata (UX debe explicar 'processing')." },
+        { "letter": "D", "text": "Return null/empty: if search fails, return empty results. If user profile fails, return empty user.", "correct": false, "why": "Peligroso: puede corromper downstream logic que asume data. 'empty user' puede ser tratado como 'valid user with no data' — bugs. Mejor: explicit error/degraded state que downstream puede handle. Null como fallback es fuente común de bugs." },
+        { "letter": "E", "text": "Retry infinitamente hasta que dependency funcione.", "correct": false, "why": "Anti-pattern discussed antes: causes cascading failures, user waiting forever. Fallback debe ser rápido y determinístico." }
+      ],
+      "explanation": "Fallback strategies spectrum (from most degraded to least): (1) Full functionality (no fallback needed — dep is up); (2) Cached stale response (data slightly outdated); (3) Default/hardcoded value (generic response, not personalized); (4) Empty state con explicit indication ('recommendations unavailable, showing top products'); (5) Async processing (write path — 'submitted, will process'); (6) Explicit error (last resort — 'try again later'). Design principles: (a) fallback must be independent (no chain of failures); (b) fallback path tested regularly (Chaos engineering); (c) monitor fallback rate — alto = feature real broken; (d) fallback complexity budget MÍNIMO — simple code; (e) explicit user communication if degraded UX. Feature flags para toggle behaviors: 'if flag `recommendations_enabled` == false, always show top products' — kill switch pattern.",
+      "realWorld": "Netflix: extensive fallback design — home page functional aún cuando 70% servicios down (each service has fallback). Amazon: retail cached agressively — S3 outage 2017 revealed dependencies that lacked fallbacks. Reddit: shows cached feeds during Redis issues. Facebook: 'gracefully degraded' comments during PHP issues. Los best sites: fallback design es first-class concern, no afterthought.",
+      "tags": ["fallback", "graceful degradation", "cached", "resilience"],
+      "tech": ["Redis", "SQS", "Feature Flags"],
+      "references": [{ "title": "Nygard — 'Release It!' — Fallback pattern" }, { "title": "Netflix Tech Blog — 'Chaos Engineering Upgraded'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "resilience",
+      "topic": "Load shedding — cuando decir no",
+      "difficulty": "senior",
+      "scenario": "Tu servicio recibe traffic spike 10x normal. Backend saturated. Todos los requests degradan a 5s+ latency. Users se quejan y hacen más retries → aumenta traffic → más saturación (metastable failure). ¿Cómo salir del death spiral?",
+      "question": "¿Qué es load shedding y cómo se implementa?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Load shedding: DELIBERADAMENTE rechazar requests cuando system está saturated. Return 503 Service Unavailable + Retry-After header. Better serve subset of requests well than serve all requests poorly (or fail all).", "correct": true, "why": "Correcto. Counterintuitive pero fundamental. Sin load shedding, systems overloaded degrade ALL users. Con load shedding, subset users get good service, others get fast rejection (may retry later). Preserva capacity para requests que sí puedes servir." },
+        { "letter": "B", "text": "Priority-based: user-facing requests > background jobs. Paid tier > free tier. Retry requests menos priority que fresh (a menudo retries indican problems elsewhere). Deep in queue → shed first.", "correct": true, "why": "Correcto. Not all requests equal. Load shedding informed by priority. Google SRE talks sobre 'critical path first'. Implementation: request tags/headers indicando priority; queue with priority levels; explicit rejection of low-priority when saturated." },
+        { "letter": "C", "text": "Adaptive concurrency limits: measure system health (latency, error rate), adjust concurrency dynamically. When latency rises, decrease max concurrent requests. Netflix's Adaptive Concurrency Limits (ACL) library. Envoy adaptive concurrency filter.", "correct": true, "why": "Correcto. Static limits (max 100 concurrent) requires manual tuning + may be wrong for peak. Adaptive: system self-tunes based on observed performance. When p99 latency exceeds threshold, decrease concurrency; when healthy, increase. Prevents overload without manual intervention." },
+        { "letter": "D", "text": "Auto-scaling siempre resuelve el problema.", "correct": false, "why": "Auto-scaling toma minutos (spin up instances, warm up). Spike de 10x en segundos supera scaling speed. Load shedding es la defensa inmediata; auto-scaling es respuesta media plazo. Ambos complementarios." },
+        { "letter": "E", "text": "Return 429 Too Many Requests con backoff hint permite clients auto-throttle.", "correct": true, "why": "Correcto. 429 con Retry-After header signals: 'estoy overloaded, retry después'. Clients bien diseñados hacen exponential backoff. Reduce continued pressure. Combined con rate limiting per client, load shedding centralized es effective." }
+      ],
+      "explanation": "Load shedding es 'admission control' — decide qué requests aceptar cuando capacity limited. Sin ella, systems suffer metastable failures (spiral into permanent degradation). Techniques: (1) fixed concurrency limits (max N in-flight); (2) adaptive concurrency (self-tuning based on health); (3) priority queuing (critical requests served, low priority shed); (4) LIFO vs FIFO under load (fresh requests better than old queued); (5) circuit breakers on internal calls (avoid cascading load). Responses: 503 Service Unavailable (server overloaded) o 429 Too Many Requests (client-specific limit). Include Retry-After header (seconds or HTTP date). Metrics: goodput (requests served successfully) > throughput (total requests). Aim to maximize goodput during peaks, even if throughput drops.",
+      "realWorld": "Google SRE Book has extensive chapter on load shedding. Netflix Adaptive Concurrency Limits (open source, based on Little's Law). Envoy supports adaptive concurrency filter. Amazon uses aggressive load shedding — 'preserve some capacity for critical requests'. Facebook, LinkedIn, all mature systems have layered load shedding. Startups often lack it and experience metastable failures during viral events.",
+      "tags": ["load shedding", "admission control", "metastable failure", "graceful degradation"],
+      "tech": ["Envoy", "Netflix concurrency-limits", "Istio"],
+      "references": [{ "title": "Google SRE Book — Ch. 21 Handling Overload" }, { "title": "Netflix — 'Performance under load'" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "resilience",
+      "topic": "Distributed tracing — cómo se debug distribuido",
+      "difficulty": "senior",
+      "scenario": "Una request de usuario que atraviesa 12 microservicios tarda 8 segundos. Con logs y métricas convencionales, no puedes saber DÓNDE se fueron los 8 segundos.",
+      "question": "¿Cómo se debug con distributed tracing?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Distributed tracing propaga un TRACE ID a través de todos los servicios. Cada servicio crea SPANS (unidad de trabajo con start/end + tags). El backend (Jaeger, Tempo, X-Ray, Datadog) reconstruye la trace completa. Visual timeline muestra: cada span, duración, dependencies, waterfall.", "correct": true, "why": "Correcto. Distributed tracing responde 'dónde se fue el tiempo' de una request específica. Trace = colección de spans conectados en árbol. Cada span tiene: operation name, start/end timestamp, tags (attributes), events (logs within span), parent span. UI muestra flamegraph/waterfall — ves de un vistazo el bottleneck." },
+        { "letter": "B", "text": "OpenTelemetry (OTel) es el estándar 2026: single API/SDK, muchos backends (Jaeger, Tempo, Datadog, New Relic, Honeycomb). Reemplaza forks previos (OpenTracing, OpenCensus). Auto-instrumentation para lenguajes populares.", "correct": true, "why": "Correcto. OpenTelemetry (CNCF, 2019 merger of OpenTracing + OpenCensus) es el estándar. Vendor-neutral: instrumenta una vez, envía a cualquier backend. Auto-instrumentation cover HTTP clients/servers, DBs, message brokers para JavaScript, Java, Python, Go, .NET, etc. Custom instrumentation para business logic." },
+        { "letter": "C", "text": "Sampling es crítico: full tracing (100% de requests) es EXPENSIVE (storage, network). Sample 1% típicamente (o 100% de errors, slow requests). Head sampling (decide al inicio) vs tail sampling (decide al final con full trace visibility) trade-offs.", "correct": true, "why": "Correcto. Tracing overhead significativo: storage backend proporcional a spans (miles per request × millions of requests = TBs). Sampling strategies: (1) probabilistic 1-10%; (2) always-on for errors/slow requests; (3) tail sampling (Datadog, Honeycomb) — buffer spans, decide whole trace based on outcome. Cost/insight tradeoff — start 1%, adjust based on need." },
+        { "letter": "D", "text": "Tracing reemplaza logs y metrics.", "correct": false, "why": "Trinity of observability discussed antes: metrics para 'what/how much', logs para 'exact context', traces para 'where did time go'. Complementarios, no replacements. Traces caros — no reemplazan cheap metrics." },
+        { "letter": "E", "text": "W3C Trace Context es el estándar de headers HTTP: traceparent, tracestate. Propagación consistente cross-vendors.", "correct": true, "why": "Correcto. W3C Trace Context (2020) estandariza headers. traceparent: '00-{trace-id}-{parent-span-id}-{flags}'. Antes de esto: cada vendor su formato (X-B3-*, X-Datadog-*, X-Amzn-Trace-Id). Con W3C, mixing servicios de diferentes vendors funciona. OTel usa W3C por default." }
+      ],
+      "explanation": "Distributed tracing components: (1) Trace = flujo de una request end-to-end; (2) Span = trabajo en un servicio (HTTP request handler, DB query, etc); (3) Parent-child relationships build tree; (4) Trace ID + Span ID propagated via headers (W3C Trace Context); (5) Backend collects, stores, visualizes. Modern stack: Application → OpenTelemetry SDK (instrumentation) → OTel Collector (aggregation, sampling, routing) → Backend (Jaeger, Tempo, Datadog, Honeycomb). Best practices: (1) semantic attributes standardized (http.method, db.system, messaging.system); (2) meaningful span names (operation, not URL); (3) tag with business context (user_id, tenant_id — helps debugging); (4) sampling strategy alignada con needs (higher for errors); (5) exemplars link metrics to traces (Prometheus + Tempo integration).",
+      "realWorld": "Google Dapper (2010) originated modern tracing. Twitter Zipkin, Uber Jaeger open-sourced it. Netflix Atlas + Salp. Grafana Tempo affordable storage. Datadog APM widely adopted. Honeycomb pioneers 'observability 2.0' with high-cardinality events. Sin distributed tracing, debugging distributed systems es adivinar.",
+      "tags": ["distributed tracing", "OpenTelemetry", "observability", "W3C Trace Context"],
+      "tech": ["OpenTelemetry", "Jaeger", "Tempo", "Datadog APM", "Honeycomb"],
+      "references": [{ "title": "OpenTelemetry docs" }, { "title": "Sigelman et al. — 'Dapper: A Large-Scale Distributed Systems Tracing Infrastructure'" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "resilience",
+      "topic": "Backup and Recovery — RTO y RPO",
+      "difficulty": "senior",
+      "scenario": "Tu DB tiene 500GB. Backup diario nightly. Un usuario borra data crítica accidentalmente. Recovery tarda 4 horas. Un incidente peor: DB corruption a las 2AM, backup nightly 8h atrás.",
+      "question": "¿Qué son RTO/RPO y cómo diseñar la estrategia? (Selecciona todas las opciones correctas)",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "RTO (Recovery Time Objective): cuánto tiempo máximo aceptable de downtime. RPO (Recovery Point Objective): cuánta data máxima aceptable perder. Ambos definen requirements de backup/DR strategy.", "correct": true, "why": "Correcto. RTO responde 'qué tan rápido recuperamos' — impact business (each hour down = $X lost). RPO responde 'cuánto data podemos perder' — data pérdida < X hours es aceptable. Typical requirements: RTO 4h, RPO 1h para business-critical; RTO 24h, RPO 24h para non-critical. Backups strategy debe SATISFY both." },
+        { "letter": "B", "text": "Backup strategies: (1) Full daily backup: RPO 24h, RTO horas. Simple, poor RPO. (2) Full weekly + incremental daily: mejor storage, similar restore time. (3) Point-in-time recovery (PITR): continuous WAL/log archive → puede restaurar a CUALQUIER momento. RPO segundos, RTO 30min-2h. Modern DBs (Postgres, RDS, Aurora, Cosmos DB) soportan.", "correct": false, "why": "Descripción correcta pero incompleta — no responde 'cómo diseñar la estrategia'." },
+        { "letter": "C", "text": "Diseño correcto: (1) definir RTO/RPO requirements (business input); (2) elegir strategy que satisface (PITR para RPO minutos, replicas cross-AZ para RTO minutos); (3) BACKUP AUTOMATIZADO regular; (4) TEST recovery periodically (GameDays!); (5) DR plan documented, runbooks para restore; (6) monitor backup completion (alerts si fail); (7) test escenarios: full restore, PITR to timestamp, cross-region.", "correct": true, "why": "Correcto framework completo. Muchos equipos tienen backups pero nunca probaron restore (untested backups = no backups). Definir RTO/RPO explicitly permite justify infra costs. Test regularly: quarterly full restore drill. PITR es standard 2026 — no reason to lose more than seconds of data para DBs críticas." },
+        { "letter": "D", "text": "Solo restore desde backup nightly.", "correct": false, "why": "RPO 24h típicamente inaceptable. Perder 24h de transactions puede ser business-ending para muchos casos. PITR es standard, no lujo." }
+      ],
+      "explanation": "Backup and recovery strategy: (1) Define RTO/RPO with business — 'un business day lost' vs 'seconds of data lost'? (2) Choose strategy accordingly: PITR para low RPO, cross-region replicas para low RTO. (3) Test recovery — untested backup no vale nada. Types: (a) Full backup (snapshot); (b) Incremental (changes since last); (c) Differential (changes since last full); (d) Continuous / WAL archive (Postgres) para PITR; (e) Snapshot volumes (EBS snapshots, cheap). Managed DBs: RDS automated backups (7-35 days retention), PITR up to 5min RPO. Aurora backtrack (revert to prior state). DynamoDB PITR (35 days). Multi-region: cross-region replicas (RTO minutes, some RPO). Backup security: encrypt at rest, restrict access, off-site copies (S3 cross-region), test restore in isolated environment. Retention policies: legal/compliance (7 years for financial), operational (30-90 days typical).",
+      "realWorld": "GitLab 2017 famoso incident: perdieron 6 hours de production data because backup restore failed (backups untested, encryption issues). Public post-mortem is required reading. Since then GitLab publicó extensive backup drills. Cloudflare, AWS, everyone has similar stories. Netflix restores TBs regularly to test. 'Backups: schrödinger's cat' - not real until you restore them.",
+      "tags": ["backup", "recovery", "RTO", "RPO", "PITR"],
+      "tech": ["RDS PITR", "Aurora Backtrack", "DynamoDB PITR", "pg_dump", "wal-g"],
+      "references": [{ "title": "GitLab — Postmortem 2017 database incident" }, { "title": "AWS — 'Backup and restore best practices'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "resilience",
+      "topic": "Blue-green vs Canary vs Rolling deploys",
+      "difficulty": "senior",
+      "scenario": "Deploy strategy para app en producción. Debate: blue-green (dos environments, switch), canary (5% traffic al new, gradual), rolling (replace pods gradually).",
+      "question": "¿Trade-offs de cada estrategia y cuándo cada una?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Blue-green: dos environments idénticos (blue = current prod, green = new version). Deploy to green, test, switch traffic 100% blue→green instantly (via LB, DNS, o feature flag). Rollback = switch back. Requiere 2x infra durante deploy. Migration atomic (todos ven la misma version en un momento).", "correct": true, "why": "Correcto. Blue-green es simple: dos versiones simultáneas, cutover atómico. Ventajas: fast rollback (flip back), zero downtime, tested version before switch. Trade-offs: 2x infra cost during deploy, DB schema migrations complicadas (both versions read/write, must be compatible during transition — expand and contract pattern), stateful sessions requieren manejo cuidadoso." },
+        { "letter": "B", "text": "Canary: deploy new version to SMALL subset first (5% traffic o 1% users), monitor metrics, gradually increase to 100%. If metrics degrade at any %, rollback. Requires: traffic routing capability, good metrics/SLIs, automated rollback ideally. AWS App Mesh, Istio, LaunchDarkly, Argo Rollouts hacen esto.", "correct": true, "why": "Correcto. Canary detecta bugs con IMPACT LIMITADO. Bug afecta 5% users, no 100%. Métricas dictan advance/rollback: error rate, latency p99, business metrics. Progressive: 5% → 25% → 50% → 100% con gates en cada paso. Feature flags añaden granularity per user/segment." },
+        { "letter": "C", "text": "Rolling deploy: replace instances gradually (5 old + 5 new during transition). Kubernetes rolling update default. Simple, no extra infra, but slower deploys, mixed versions during transition (both handling requests — must be compatible).", "correct": true, "why": "Correcto. Rolling es default de Kubernetes (max surge, max unavailable configs). Pros: no extra infra, gradual traffic shift. Cons: durante transition, mixed versions serve traffic — bugs en new version affect proportion until fully rolled. Slower than blue-green (each pod at a time). Rollback = rolling back a previous version (also slow)." },
+        { "letter": "D", "text": "Feature flags separate DEPLOY de RELEASE: deploy code with feature dark, enable via flag when ready. Enables trunk-based development (merge to main frequently) sin exposing incomplete features. Combines well con canary (release to 5% via flag).", "correct": true, "why": "Correcto. Feature flags decouple deployment de release. LaunchDarkly, Flagsmith, Split. Deploy code dark → test in prod (dark launch) → enable for internal users → enable for 1% → gradual rollout. Kill switch = disable flag if issue. Modern deployment practice. Combined with observability, safest way to release." },
+        { "letter": "E", "text": "Rolling deploys nunca requieren backward compatibility.", "correct": false, "why": "Al revés: rolling deploys REQUIEREN backward compatibility (both versions co-exist, share DB, share cache). If new version incompatible con old, rolling deploy corrompe. This is fundamental design constraint." }
+      ],
+      "explanation": "Deploy strategies comparison: (1) Blue-green — instant cutover, 2x infra, atomic. (2) Canary — progressive %, monitored, rollback friendly. (3) Rolling — gradual pod replacement, no extra infra, slower. (4) Recreate — kill all, deploy new, downtime (only for dev/tools). (5) A/B testing (different from canary) — long-term testing variants for user preference, not gradual rollout. Feature flags orthogonal: enable code paths without redeploying. Best practice 2026: canary + feature flags + automated rollback. Kubernetes: rolling default; Argo Rollouts para canary/blue-green nativo; Flagger integrates with Istio/App Mesh for auto-canary based on Prometheus metrics. Database migrations: MUST be backward compatible during rolling/canary (expand and contract pattern, no dropping columns until all versions upgraded).",
+      "realWorld": "Netflix uses canary extensively (Spinnaker pioneered CD). Facebook uses feature flags for everything (thousands of active flags). GitHub deployment strategy: incremental (canary-like). Google uses rolling. Kubernetes ecosystem: Argo Rollouts, Flagger for automated progressive delivery. Sin CD pipelines maduros, deploys son eventos estresantes — con CD, son non-events.",
+      "tags": ["deploy strategies", "blue-green", "canary", "feature flags"],
+      "tech": ["Kubernetes", "Argo Rollouts", "Flagger", "LaunchDarkly"],
+      "references": [{ "title": "Martin Fowler — 'BlueGreenDeployment'" }, { "title": "Netflix — 'Spinnaker'" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "resilience",
+      "topic": "Postmortems — culture y aprendizaje",
+      "difficulty": "staff",
+      "scenario": "Un ingeniero causa un outage grave. La reacción típica: buscar al culpable, procesos punitivos, memos. Un colega senior propone 'blameless post-mortem'.",
+      "question": "¿Qué es un blameless post-mortem y por qué funciona?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Blameless post-mortem: analizar el incident FOCUS EN SISTEMAS, no personas. La pregunta no es 'quién hizo mal' sino 'qué en nuestro sistema (código, procesos, tooling, docs, alerts) permitió que un human error se convirtiera en incident'. Un good engineer following bad process = process is the problem.", "correct": true, "why": "Correcto. Blameless culture (Google SRE, John Allspaw) es FUNDAMENTAL para safety y learning. Si people fear blame, oculten errors, no reportan near-misses, no propose risky improvements. Sin transparency, no learning. Fundamental theorem: 'humans will make mistakes; systems should make mistakes safe and detectable'." },
+        { "letter": "B", "text": "Post-mortem structure: (1) Summary (what happened, impact, duration); (2) Timeline (detailed chronology); (3) Root cause analysis (5 Whys, Cynefin, contributing factors); (4) What went well (things that limited blast radius); (5) What went poorly (gaps that made it worse); (6) Action items (concrete, owned, tracked).", "correct": true, "why": "Correcto template. Timeline crítica: minute-by-minute lo que occurred, what people knew, decisions taken. 5 Whys goes deep — 'why did DB crash?' → 'why was memory not monitored?' → 'why not alerted?' → 'why did on-call not respond?' Each level exposes systemic issues. Action items: specific, owned, deadlines. Sin follow-through, post-mortems son teatro." },
+        { "letter": "C", "text": "'Human error' es NUNCA la root cause — es un symptom. Real root causes: process gaps, missing safeguards, undocumented knowledge, unclear ownership, cognitive overload, poor UX in tools. Fix these, not the humans.", "correct": true, "why": "Correcto. Sidney Dekker, James Reason (Swiss Cheese Model) — accidents happen cuando múltiples layers de defense fallan simultaneously. Blaming individual ignores systemic factors. Real fix: harden the system so human error is contained. Examples: prod deploys require review (process), rollback button prominent (UX), runbooks tested regularly (docs), on-call rotation sustainable (organization)." },
+        { "letter": "D", "text": "Post-mortems públicos (dentro de la empresa) accelerate learning. Otros equipos aprenden de errors sin repetirlos. Culture de sharing failure > hiding it.", "correct": true, "why": "Correcto. Cloudflare, GitLab, Google publish post-mortems (Cloudflare famous public status page with details). Internal transparency: post-mortem docs shared across engineering. Reduces recurrence of similar issues in other teams. Requires blameless culture — else no one shares." },
+        { "letter": "E", "text": "El engineer que causó el incident debe ser fired.", "correct": false, "why": "Anti-pattern grave: (1) discourages transparency (next time hide it); (2) el engineer que causó y aprendió es AHORA the most careful person; (3) systemic issues remain unfixed. Etsy famously has 'John Allspaw' quote: 'having engineers who have made big mistakes is an asset — they've learned expensive lessons'." }
+      ],
+      "explanation": "Blameless post-mortem culture: (1) Focus on systems, not individuals; (2) Structured process (timeline, contributing factors, action items); (3) Actionable outcomes (concrete improvements owned and tracked); (4) Shared learning (internal transparency, sometimes public); (5) No punishment for honest mistakes. Frameworks: Google SRE post-mortem template, PagerDuty post-mortem docs. Anti-patterns: 'root cause = human error' (never sufficient — why did system allow it?), no follow-through on action items (theater), private post-mortems (siloed learning), long documents no one reads. Modern practices: incident retrospectives quarterly to identify patterns; post-mortem action items tracked in same tool as regular work; some companies (Etsy) celebrated 'best post-mortem' as learning artifact. Culture > process — blameless requires leadership modeling.",
+      "realWorld": "Google SRE Book has extensive coverage. Cloudflare publishes public post-mortems (great learning resource). PagerDuty open-sourced their post-mortem docs. GitLab publishes engineering handbook incl. incident review process. AWS post-mortems shared internally, sometimes summarized publicly. Fostering blameless culture is hardest — many organizations claim it but don't practice.",
+      "tags": ["post-mortem", "blameless culture", "incident review", "SRE"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 15 Postmortem Culture" }, { "title": "Sidney Dekker — 'The Field Guide to Understanding Human Error'" }, { "title": "PagerDuty — Post-mortem docs" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "resilience",
+      "topic": "On-call — sustainable operations",
+      "difficulty": "staff",
+      "scenario": "Tu equipo tiene rotación on-call. La misma persona lleva 6 meses siendo despertada 3+ veces por semana. Otros ingenieros evitan estar on-call. Alta rotación en el equipo.",
+      "question": "¿Cuáles son los principios de sustainable on-call?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Google SRE benchmark: <2 pages per shift (12h shift). Más = burnout, incident fatigue (real pages ignored), poor decision making. Si más de 2/shift consistentemente: hay problema estructural — o el service tiene bugs, o alerting es noisy, o architecture es unstable.", "correct": true, "why": "Correcto. On-call load es indicador de system health. High page rate no es 'part of the job' — es SIGNAL de problems to fix. Reduction cadre: 5 pages/shift → identify top 3 alert sources → fix or tune → measure. Sustainable on-call = healthy service." },
+        { "letter": "B", "text": "Alerts must be ACTIONABLE: alert page only if requires HUMAN INTERVENTION NOW. Auto-recoverable issues → no page. 'FYI' issues → dashboard/email, not page. Every noisy alert erodes trust — engineer starts ignoring, misses real incidents.", "correct": true, "why": "Correcto. 'Alert fatigue' es real safety issue. Rule: 'if this alert fires and there is NOTHING I need to do, this alert should not fire'. Every page must have runbook, be actionable, indicate REAL user-impacting problem. Frequently review alert history — silence never-actioned ones." },
+        { "letter": "C", "text": "Rotate on-call fairly (each engineer equal load). Compensate on-call (paid, or time-off comp). Provide runbooks for common issues (reduce cognitive load 3AM). Onboard new on-call (shadow first, then primary with backup). Post-page: log to identify patterns.", "correct": true, "why": "Correcto. On-call es infra work. Rotation fair (typically weekly, with primary + secondary). Compensation varies (financial or comp time). Runbooks are CRITICAL — 3AM is not time to design solutions. Google SRE mandates 50% eng time for reducing toil / improving reliability — includes reducing on-call load." },
+        { "letter": "D", "text": "Escalation policy: primary → secondary (after 15min no response) → team lead → engineering director. Everyone knows the chain. Ensures issues get attention even if primary unavailable (real life: illness, phone dead, wrong shift).", "correct": true, "why": "Correcto. Escalation must be automated (PagerDuty, Opsgenie) with clear SLA per level. Business hours: shorter escalation. Off-hours: longer to primary, faster escalation if no ack. Everyone knows their role in chain." },
+        { "letter": "E", "text": "'On-call is opt-out — if you don't want to, don't do it'.", "correct": false, "why": "Anti-pattern: concentrates burden on few, resenting culture. If service requires on-call and you're the team, on-call is part of the job. If genuine reason to opt-out (mental health, life circumstances), accommodate — but as exception, not norm." }
+      ],
+      "explanation": "Sustainable on-call principles: (1) Load target: <2 pages per 12h shift (Google SRE benchmark); (2) Alerts actionable: NO noisy alerts, everything paged needs immediate human action; (3) Runbooks: 3AM is not for design work — pre-written procedures; (4) Rotation: weekly rotation typical, primary + secondary; (5) Escalation: automated chain with clear SLAs; (6) Compensation: financial or time-off for on-call burden; (7) Continuous improvement: retro alerts, fix noisy ones, reduce recurrent issues. Error budgets (Google SRE): if SLO consumed by incidents, freeze feature deploys, focus on reliability. Alignes org incentives — feature teams share on-call load. Modern tools: PagerDuty, Opsgenie, VictorOps for on-call rotations. Incident management: FireHydrant, Rootly, Blameless for incident lifecycle. Sin sustainable on-call, best engineers leave — quality declines — outages increase.",
+      "realWorld": "Google SRE Book covers extensively. Netflix invests heavily in operability. Companies with unsustainable on-call practices (early Uber, some startups) had famous burnout stories. Modern practice: on-call as first-class citizen, invested in tooling and culture. Basecamp/37signals notably no on-call for many services — architected for reliability without human intervention.",
+      "tags": ["on-call", "SRE", "alert fatigue", "sustainable operations"],
+      "tech": ["PagerDuty", "Opsgenie", "VictorOps"],
+      "references": [{ "title": "Google SRE Book — Ch. 11 Being On-Call" }, { "title": "PagerDuty — 'On-call best practices'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "resilience",
+      "topic": "Cascading failure — el killer #1",
+      "difficulty": "staff",
+      "scenario": "Servicio A depende de B y C. B suddenly slow (2s per request). A's threads all block waiting on B. A becomes slow. Callers of A retry, adding load. A saturates. A calls C too, C now also saturated by A's retries. Full outage in 5 minutes.",
+      "question": "¿Cuál es el análisis completo del cascading failure y las defensas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cascading failure = un fault se propaga a través de dependencies, amplificándose. Common triggers: (1) sudden load spike (traffic, retries); (2) resource exhaustion propagating (thread pools, connection pools, memory); (3) inefficient retries amplifying original failure; (4) shared state (DB) becoming bottleneck.", "correct": true, "why": "Correcto. Cascading failure es el #1 killer en microservices. Un problema local becomes system-wide via feedback loops. Retries can amplify 10x. Thread pool exhaustion blocks caller. Shared DB gets overloaded. Once cascading starts, hard to stop without full restart (metastable failure)." },
+        { "letter": "B", "text": "Defenses (layered): (1) Timeouts aggressive (fail fast, don't wait); (2) Circuit breakers (stop calling failing services); (3) Bulkheads (isolate resources per dependency); (4) Retries with backoff+jitter (don't amplify); (5) Load shedding (reject before saturation); (6) Auto-scaling (add capacity dynamically, but slow). Sin combinación de estos, cascading failure inevitable.", "correct": true, "why": "Correcto. Defense in depth. Each layer catches different cases: timeouts fail fast when downstream slow; circuit breakers stop retrying failed dependencies; bulkheads prevent one bad dep from starving all threads; retries with backoff don't amplify; load shedding preserves capacity for served requests. Layered application means single mechanism failure doesn't cause cascade." },
+        { "letter": "C", "text": "Detection: monitor 'saturation' (queue depth, thread pool utilization, connection pool). RED metrics (Rate, Errors, Duration) per service. Distributed tracing to see propagation. Alert on error rate spikes, latency shifts.", "correct": true, "why": "Correcto. Sin observability, cascading failure is opaque. Metrics to watch: (a) error rate por servicio (baseline vs anomaly); (b) latency p99 (shifts indicate degradation); (c) thread pool utilization (>80% = pre-saturation); (d) queue depth (growing = producer-consumer imbalance); (e) connection pool usage. Alert BEFORE saturation, not after outage." },
+        { "letter": "D", "text": "Recovery from cascading: often requires FULL restart of the cluster (restart clears saturated pools, allows recovery). Restart in stages (avoid all-at-once). Preserve context (logs, dumps) for post-mortem.", "correct": true, "why": "Correcto. Cascading failures often 'metastable' — once in bad state, don't self-recover even if trigger removed (retries keep flowing, pools stay full). Recovery: (1) shed load (429 all incoming); (2) restart affected services; (3) gradually restore traffic; (4) after clear, allow normal traffic. Los systemas famosos por cascading failures (Amazon DynamoDB 2015) required region restart." },
+        { "letter": "E", "text": "Cascading failure siempre es fault de bad code.", "correct": false, "why": "Overly simplistic. Cascading failures often occur with 'correct' code because of emergent properties of distributed systems (retry amplification, positive feedback loops). Prevention requires ARCHITECTURAL patterns (bulkhead, circuit breaker) not just clean code." }
+      ],
+      "explanation": "Cascading failure mecánicas: (1) Trigger event (dependency slow, resource spike); (2) Local impact (threads blocked, memory grows); (3) Amplification (retries, requests queue up); (4) Propagation (callers see slowness, also degrade); (5) System-wide failure. Prevention: layered defenses. Timeouts as short as possible while permitting normal operation. Circuit breakers per dependency. Bulkheads isolating resources. Backoff with jitter on retries. Load shedding based on health. Auto-scaling with sensible cooldowns. Detection: metric per service (RED), per resource (USE), per dependency. Alert on leading indicators (saturation, error rate uptick), not just outages. Recovery: sometimes requires full stack restart to clear saturated state; do progressively to prevent thundering herd. Post-cascading: post-mortem to identify amplification mechanisms — fix at each layer.",
+      "realWorld": "AWS S3 outage 2017 (bad command triggered cascading), DynamoDB 2015 (retry storms), Facebook 2021 (BGP + DNS cascading), Cloudflare 2019 (bad regex triggered cascading CPU). Cada major outage postmortem shows cascading dynamics. Google SRE Book Ch. 22 is definitive read. Modern architectures with proper defenses (circuit breakers, bulkheads, load shedding) survive individual failures without cascading.",
+      "tags": ["cascading failure", "metastable", "amplification", "defense in depth"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 22 Addressing Cascading Failures" }, { "title": "AWS Builders' Library — 'Avoiding fallback in distributed systems'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "resilience",
+      "topic": "Resilience testing — validate architecture",
+      "difficulty": "staff",
+      "scenario": "Tu arquitectura tiene circuit breakers, retries, bulkheads. Pero nunca probaste que funcionan bajo failure real. Un colega dice: 'está en código, funciona'.",
+      "question": "¿Cómo se TESTEA que resilience patterns realmente funcionan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Chaos engineering (discussed antes): inject failures deliberately in prod-like environments to verify circuit breakers open, bulkheads isolate, fallbacks activate. If a failure test doesn't trigger the expected defense, the defense is buggy.", "correct": true, "why": "Correcto. Chaos engineering es specifically para this: verify resilience por design es resilience en práctica. Test scenarios: kill pods (bulkhead works?), inject latency (circuit breaker opens?), fail dependency (fallback activates?). Each test validates specific pattern. Sin testing, patterns are aspirational." },
+        { "letter": "B", "text": "Unit tests: mock dependencies, simulate failures (throw exceptions, timeout), assert circuit breaker state, retry counts, fallback returns. Fast, cheap, run in CI.", "correct": true, "why": "Correcto. Unit-level testing catches configuration bugs. Test circuit breaker con failure sequence: 10 failures in 10s → verify state=OPEN, subsequent calls return fallback immediately. Test retry: verify max retries not exceeded, backoff between attempts. Test timeout: verify request cancels after N seconds. Frameworks (Resilience4j, Polly) have testing utilities." },
+        { "letter": "C", "text": "Integration/load tests con fault injection: Toxiproxy (adds latency, packet loss), Chaos Mesh (Kubernetes), tc (Linux traffic control). Test how system behaves under network failure, DB latency, service down. Measure: does p99 stay bounded? Do requests fail fast?", "correct": true, "why": "Correcto. Integration tests con real fault injection reveal issues unit tests miss. Toxiproxy popular: middleware between app and dep, inject latency/failures. Simulate: '2 seconds added latency on Postgres' — measure app behavior. Chaos Mesh for Kubernetes similar for pods/network. Load test + fault injection combined = comprehensive validation." },
+        { "letter": "D", "text": "GameDays: team exercises simulating incidents. 'DB is down, respond'. Team practices coordination, tooling, communication. Reveals gaps in runbooks, alerts, escalation. Complements automated testing con human aspect.", "correct": true, "why": "Correcto. GameDays validate people + processes (not just code). Simulate incident: 'Redis unreachable — go!'. Team responds: detects, diagnoses, mitigates, communicates. Reveals: are runbooks accurate? Alerts firing correctly? Escalation working? Coordination smooth? Regular GameDays keep teams sharp." },
+        { "letter": "E", "text": "Resilience testing es siempre disruptive y expensive.", "correct": false, "why": "Depende scope. Unit tests cheap. Chaos in staging cheap. Progressive rollout to prod (small blast radius) low risk. Sin testing, disruption occurs organicamente (unplanned outages) — much more expensive." }
+      ],
+      "explanation": "Resilience testing pyramid: (1) Unit tests con mocked failures (fast, cheap, run in CI); (2) Integration tests con fault injection (Toxiproxy, WireMock); (3) Chaos engineering in staging (LitmusChaos, Chaos Mesh); (4) Controlled chaos in production (Netflix Chaos Monkey, Gremlin); (5) GameDays (team exercises). Each level tests different scope. Tools: Resilience4j has testing utilities; Toxiproxy for network fault injection; Chaos Mesh for Kubernetes chaos; WireMock for mocking HTTP dependencies with programmable failures; AWS Fault Injection Simulator for AWS resources. Test scenarios: dependency failures (down, slow), resource exhaustion (CPU, memory, disk), network issues (packet loss, latency, partition), region failures. Metrics validation: does p99 latency stay bounded during dep failure? Does error rate spike or system degrades gracefully? Does auto-recovery work after fault removed?",
+      "realWorld": "Netflix Simian Army pioneered systematic chaos. AWS runs FIS internally. Google DiRT (Disaster Recovery Testing) quarterly. Facebook Storm (destroy datacenter). Modern SRE practice: resilience is CONTINUOUSLY tested, not one-time. Legacy code often lacks tests around resilience — high-impact place to invest in engineering.",
+      "tags": ["resilience testing", "chaos engineering", "fault injection", "GameDays"],
+      "tech": ["Toxiproxy", "Chaos Mesh", "LitmusChaos", "WireMock"],
+      "references": [{ "title": "Principles of Chaos Engineering" }, { "title": "Toxiproxy — GitHub docs" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "resilience",
+      "topic": "Framework de decisión — designing for resilience",
+      "difficulty": "staff",
+      "scenario": "Nuevo servicio critical. Arquitecto senior. Debes definir approach a resilience desde day 1. Presenta framework aplicable.",
+      "question": "¿Cuál es el framework completo para diseñar sistemas resilientes?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Step 1: DEFINE requirements. SLO (target availability, latency), RTO/RPO (recovery objectives), blast radius acceptable. Sin numbers, no decisions. 'Highly available' es aspirational; '99.9% uptime, p99 <200ms' es actionable.", "correct": true, "why": "Correcto. Resilience is not binary — it's calibrated to needs. 99.9% requires different arch than 99.99%. Business tells you cost of downtime; ops tells you cost of resilience. Meet in middle. SLI/SLO framework (Google SRE) makes decisions data-driven, not opinion-driven." },
+        { "letter": "B", "text": "Step 2: IDENTIFY failure modes. What can go wrong? DB down, dependency slow, DNS fails, region outage, memory leak, buggy deploy, ddos, human error. For EACH: prevention (design out), detection (monitoring), recovery (mitigation). Failure Mode and Effects Analysis (FMEA) formal method.", "correct": true, "why": "Correcto. Systematic identification prevents 'unknown unknowns'. FMEA: enumerar failure modes, assess likelihood + impact, prioritize mitigation. Chaos engineering discovers ones you missed. Post-mortems teach you new modes as they occur. Failure catalog es living document." },
+        { "letter": "C", "text": "Step 3: APPLY patterns per failure mode. Timeouts everywhere. Retries with backoff+jitter for transient. Circuit breakers for persistent. Bulkheads for isolation. Fallbacks for degradation. Load shedding for overload. Multi-AZ for infrastructure failures. Backups for data loss. Each pattern targets specific mode.", "correct": true, "why": "Correcto. Patterns are toolkit, applied to specific mode. Not 'use all patterns everywhere' — deliberate, targeted. Configuration matters: timeout values, retry counts, circuit breaker thresholds all tunable. Frameworks (Resilience4j, Polly, Istio) simplify implementation." },
+        { "letter": "D", "text": "Step 4: OBSERVE relentlessly. Metrics per service (RED), per resource (USE), per dependency. Alerts on leading indicators. Distributed tracing for causal analysis. Logs for context. Dashboards for real-time. Sin observability, resilience patterns activate silently or fail silently.", "correct": true, "why": "Correcto. Observability is prerequisite to resilience. Every pattern must be observable: circuit breaker state (open? closed? half-open?), retry counts (excessive?), timeout occurrences (too aggressive?), fallback rates (too often?). Metrics inform tuning; without metrics, patterns are guesses." },
+        { "letter": "E", "text": "Step 5: TEST + PRACTICE. Chaos engineering to validate patterns work. GameDays to practice human response. Blameless post-mortems to learn from incidents. Regular DR drills. Culture of 'assume failure' throughout org.", "correct": true, "why": "Correcto. Patterns in code + monitoring in dashboards is NECESARIO, no SUFICIENTE. Testing verifies patterns work as designed. Practice keeps team ready. Learning from failures continuously improves. Resilience is process, not artifact — requires ongoing investment." }
+      ],
+      "explanation": "Framework para diseñar resilience: (1) Requirements — SLOs, RTO/RPO, business impact. (2) Failure mode analysis — enumerate what can go wrong. (3) Pattern application — timeouts, retries, circuit breakers, bulkheads, fallbacks, load shedding, backups. (4) Observability — metrics, traces, logs, alerts. (5) Testing + practice — chaos engineering, GameDays, post-mortems. Iterate. Meta-principles: (a) 'design for failure' — assume things break, plan for it; (b) 'defense in depth' — multiple layers, not single point; (c) 'observability first' — can't fix what you can't measure; (d) 'blameless learning' — culture that encourages honesty; (e) 'automate recovery' — reduce dependence on human at 3AM. Anti-patterns: no timeouts, unbounded retries, single points of failure, untested backups, alerts nobody responds to, tribal knowledge, hero culture (one person knows everything). Investing in resilience pays back multiplied — one prevented major outage often justifies years of investment.",
+      "realWorld": "AWS Well-Architected Framework has entire Reliability pillar. Google SRE Book is the canonical read. Netflix Tech Blog documents evolution. Books: 'Release It!' (Nygard), 'Chaos Engineering' (Rosenthal), 'Site Reliability Engineering' (Google). Companies that invest deeply in resilience (Netflix, Amazon, Google) have famously high availability; those that don't experience recurring outages until they invest. Resilience is competitive advantage.",
+      "tags": ["framework decisión", "resilience", "SRE", "reliability"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book" }, { "title": "AWS Well-Architected — Reliability pillar" }, { "title": "Michael Nygard — 'Release It!'" }]
+    }
+  ]
+}

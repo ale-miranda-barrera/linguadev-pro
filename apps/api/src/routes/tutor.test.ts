@@ -86,4 +86,44 @@ describe('POST /api/ai/tutor (regresión SSE)', () => {
     });
     expect(res.status).toBe(503);
   });
+
+  it('descuenta budget: segunda call rechazada si la primera excedió (regresión)', async () => {
+    // Provider fake que reporta usage enorme para forzar exceso de budget en una sola call.
+    // Antes del fix, tutor.ts descartaba el usage y este test no fallaba nunca.
+    setProviderForTests(
+      fakeProvider({
+        streamText: async (opts: { onToken: (t: string) => void }) => {
+          opts.onToken('Hi');
+          // 1M tokens output * $15/M = $15, muy por encima del budget default de $1.
+          return { usage: { inputTokens: 500_000, outputTokens: 1_000_000 } };
+        },
+      }),
+    );
+    process.env.AI_DAILY_BUDGET_USD = '1';
+    const sessionId = `tut-budget-${Date.now()}`;
+    const app = buildApp();
+    const body = JSON.stringify({
+      sessionId: 'sid-1',
+      level: 'B1',
+      scenario: 'chat',
+      turns: [{ role: 'user', text: 'hi' }],
+    });
+    // 1ª call: pasa, gasta ~$16.5
+    const first = await app.request('/api/ai/tutor', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-session-id': sessionId },
+      body,
+    });
+    expect(first.status).toBe(200);
+    await first.text();
+    // 2ª call con la misma x-session-id: budget guard debe rechazar antes de streamear.
+    const second = await app.request('/api/ai/tutor', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-session-id': sessionId },
+      body,
+    });
+    expect(second.status).toBe(402);
+    const json = (await second.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('BUDGET_EXCEEDED');
+  });
 });

@@ -1,0 +1,423 @@
+{
+  "id": "devops-sim-39-incident-response-and-oncall",
+  "trackId": "devops",
+  "order": 39,
+  "title": "Simulacro 39 — Incident Response y on-call sostenible",
+  "focus": "Incident Response profesional: runbooks vivos, rol de Incident Commander (inspirado en NIMS), ChatOps (Slack + bots), PagerDuty analytics, eliminación de alert fatigue, principio de alertas accionables, escalation policies (primary/secondary/manager), follow-the-sun rotation, on-call sostenible (rotation 6-8+, compensación), cultura de post-mortems blameless, NIST SP 800-61 IR framework, comms templates durante incidents.",
+  "areaCoverage": ["reliability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "reliability",
+      "topic": "¿Qué es un runbook?",
+      "difficulty": "junior",
+      "scenario": "A las 3AM te pagean por 'DB CPU >90%'. Nunca has visto este alert. No hay documentación. Tardas 45 minutos buscando en Slack quién sabe del tema.",
+      "question": "¿Qué es un runbook y por qué es crítico para on-call?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un runbook es documentación PASO A PASO para diagnosticar y remediar un alert específico. Debería incluir: (1) qué significa el alert (business impact), (2) queries/dashboards para investigar, (3) pasos de mitigación conocidos (con comandos exactos), (4) cuándo escalar y a quién, (5) link a post-mortems relacionados. Cada alert accionable DEBE tener runbook vinculado. Sin runbook, el responder pierde 30-60 min de descubrimiento por incidente.", "correct": true, "why": "Correcto. PagerDuty On-Call Handbook y Google SRE Book Ch. 8 son claros: 'un alert sin runbook no debería existir'. El runbook convierte tribal knowledge en algo accionable a las 3AM cuando el cerebro no funciona al 100%." },
+        { "letter": "B", "text": "Un runbook es una lista de contactos de emergencia.", "correct": false, "why": "Reducción. Los contactos son PARTE del runbook (sección 'escalación') pero no la esencia. El core es el procedimiento de diagnóstico y mitigación." },
+        { "letter": "C", "text": "Un runbook es solo para junior engineers.", "correct": false, "why": "Falso. Incluso seniors necesitan runbooks a las 3AM. La cognición cae 40-60% dormido; el mejor engineer despierto sigue peor que él mismo con checklist claro." },
+        { "letter": "D", "text": "Los runbooks son innecesarios si tienes automation.", "correct": false, "why": "Complementarios, no sustitutos. La automation cubre casos conocidos y frecuentes; los runbooks guían al humano en casos raros o cuando la automation falla. Novel incidents siempre requieren humano+runbook base." }
+      ],
+      "explanation": "Un runbook efectivo sigue estructura: HEADER (alert name, severity, owner team), CONTEXT (qué mide, por qué importa), DIAGNOSIS (dashboards, queries listas para copiar-pegar), REMEDIATION (comandos exactos, orden), ESCALATION (cuándo y a quién), REFERENCES (post-mortems, docs de arquitectura). Los runbooks DEBEN vivir cerca del código (Git, Confluence linkeado desde alert). Regla: si el runbook está desactualizado, el post-mortem del próximo incidente incluye actualizarlo como action item. 'Living document' es la mentalidad — cada uso puede mejorarlo.",
+      "realWorld": "Google SRE Book Ch. 8 dedica capítulo entero a 'Release Engineering' y menciona runbooks constantemente. PagerDuty On-Call Handbook tiene template público de runbook. Stripe, GitLab publican sus runbooks internos parcialmente en GitHub. Charity Majors (Honeycomb): 'runbooks son solo el 20% — el otro 80% es observability para incidents que no anticipaste'.",
+      "tags": ["runbook", "on-call", "incident response", "documentation"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 8 Release Engineering" }, { "title": "PagerDuty On-Call Handbook — Runbooks" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "reliability",
+      "topic": "Actionable alerts principle",
+      "difficulty": "junior",
+      "scenario": "Tu equipo tiene 200 alerts configurados. El on-call recibe 30 pages por semana. De estos, 25 son 'ya sé, no es nada' y 5 son reales. Los devs empiezan a ignorar Slack.",
+      "question": "¿Qué principio están violando y cómo se corrige?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Violan el 'actionable alerts principle': todo alert debe requerir ACCIÓN HUMANA URGENTE. Si el responder puede pensar 'esto se resuelve solo' o 'lo veo mañana', NO es page — es log/dashboard. Fix: (1) auditar todos los alerts, (2) mover no-urgentes a ticketing/email/dashboard, (3) eliminar los que son puramente informativos, (4) tunear thresholds para reducir falsos positivos, (5) enforcer regla 'alert nuevo = requiere runbook + criterio SLO'.", "correct": true, "why": "Correcto. Google SRE Book: 'every page should require intelligence to handle. If it can be handled by a script, it should be handled by a script'. El principio es filtro estricto — el paging es un recurso finito (sueño humano). Cada page falso disminuye la respuesta al siguiente." },
+        { "letter": "B", "text": "Todos los alerts son necesarios — el problema es que el team es junior.", "correct": false, "why": "Blame culture. Si 83% de alerts son ruido, el problema es SISTÉMICO (configuración), no del team. Ningún team responde bien a alert fatigue." },
+        { "letter": "C", "text": "Agregar más alerts para 'no perder ningún problema'.", "correct": false, "why": "Anti-patrón. Más alerts = más ruido = MENOS detección de problemas reales (perdidos en el noise). Menos es más en alerting." },
+        { "letter": "D", "text": "Deshabilitar todos los alerts y usar solo dashboards.", "correct": false, "why": "Overreaction. Necesitas paging para incidents reales. La solución es CURACIÓN, no eliminación total." }
+      ],
+      "explanation": "Alert Fatigue es el problema #1 en on-call. Estudios (PagerDuty analytics 2022): teams con >10 pages/semana/persona tienen 3x más burnout, MTTR 2x más alto (por ignoración), turnover 5x. El principio 'actionable' se descompone en 4 preguntas para cada alert: (1) ¿requiere acción HUMANA? (si no, automatizar); (2) ¿requiere acción URGENTE? (si puede esperar horas, ticket); (3) ¿hay runbook claro? (si no, no es accionable); (4) ¿está tied a SLO? (si no impacta objetivo de negocio, ¿por qué page?). Alert cleanup es proyecto continuo — cada post-mortem debe revisar si los alerts durante el incident fueron útiles.",
+      "realWorld": "Google publica en SRE Book Ch. 6 que solo 20-30% de sus alerts históricos pasaron el 'actionable filter' cuando lo aplicaron. PagerDuty analytics muestra que teams con Alert Response Rate <60% tienen incidentes 3x más largos. Charity Majors: 'si tu pager suena y no sabes qué hacer, tu observability está rota, no tu servicio'.",
+      "tags": ["alert fatigue", "actionable alerts", "on-call", "SRE"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 6 Monitoring Distributed Systems" }, { "title": "PagerDuty — Alert Fatigue Research" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "reliability",
+      "topic": "Incident Commander role",
+      "difficulty": "mid",
+      "scenario": "Incident P1 en curso: DB caído, 5 devs debuggeando en paralelo en Slack, comms al CEO paralelas, support respondiendo tickets sin info. Nadie sabe quién decide qué. Después de 90 min sin coordinar, el CTO llama y toma control.",
+      "question": "¿Qué rol falta y cómo se define?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Falta un Incident Commander (IC): persona ÚNICA responsable de coordinar la respuesta. NO debugea — DELEGA. Sus funciones: (1) mantener timeline público, (2) asignar roles (Ops Lead debug, Comms Lead updates, Scribe log), (3) tomar decisiones de trade-off (rollback vs fix forward), (4) escalar cuando necesario, (5) declarar mitigación/resolución. Rota entre engineers entrenados, no siempre el senior.", "correct": true, "why": "Correcto. Rol inspirado en NIMS (National Incident Management System, FEMA) usado por bomberos/policía. Adaptado a tech por Google (SRE Book Ch. 14 'Managing Incidents'), PagerDuty, Facebook. El IC evita el caos de '5 devs debugeando sin coordinación'." },
+        { "letter": "B", "text": "El IC debe SER un ejecutivo (CTO/VP) para tener autoridad.", "correct": false, "why": "Anti-patrón común. Ejecutivos raramente son buenos ICs (no tienen context técnico ni entrenamiento en respuesta). El IC es un ROL entrenado, no una jerarquía. Google: ICs son ingenieros senior con IR training específico." },
+        { "letter": "C", "text": "El IC debe tener autoridad para tomar decisiones de trade-off (ej. degradar servicio para preservar core, activar disaster recovery, comunicar a clientes) sin pedir permiso durante incident.", "correct": true, "why": "Correcto. Delayed decisions = incidents más largos. El IC tiene autoridad delegada durante el incident (típicamente hasta cierto costo/impacto). Post-incident se justifica en post-mortem." },
+        { "letter": "D", "text": "El IC mantiene un 'source of truth' (Slack channel dedicado o incident doc) con timeline, hipótesis actuales, próximos pasos. Evita duplicación de esfuerzo cuando join gente nueva ('read the pinned doc' vs 'que me expliquen todo').", "correct": true, "why": "Correcto. En incidents largos entra y sale gente. Sin source of truth, cada persona nueva consume 10 min del team para catch-up = incident se alarga. La disciplina de mantener timeline público es duro pero paga." },
+        { "letter": "E", "text": "El IC debe ser el que más sepa técnicamente del sistema afectado.", "correct": false, "why": "Anti-patrón. La persona con más conocimiento técnico debería estar DEBUGGEANDO como Ops Lead, no coordinando. IC coordina, no ejecuta. Confundir ambos = ni coordinación ni debug efectivo." }
+      ],
+      "explanation": "El framework IC más citado es ICS (Incident Command System) de NIMS, adaptado a tech. Roles típicos: IC (coordina), Ops Lead (dirige debug técnico), Comms Lead (updates a stakeholders + support + status page), Scribe (mantiene timeline y decisions log). Para incidents pequeños, una persona puede tomar varios roles; en P0/P1, se separan. La regla clave: el IC NO debe hacer 'hands-on debugging' — su función es tener visión de 30k pies. Entrenamiento IC incluye tabletop exercises (simulacros sin sistema real) y game days (Chaos Engineering con roles definidos).",
+      "realWorld": "Google SRE Book Ch. 14 explica su modelo de IC en detalle. PagerDuty tiene 'Incident Response Training' pública (incident-response.pagerduty.com) con material entrenamiento gratuito. Slack (empresa) publicó lessons learned de sus outages 2019 mencionando IC. GitLab publica todos sus incident reviews con el IC nombrado.",
+      "tags": ["incident commander", "NIMS", "ICS", "incident response"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 14 Managing Incidents" }, { "title": "PagerDuty Incident Response Documentation" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "reliability",
+      "topic": "ChatOps para incident response",
+      "difficulty": "mid",
+      "scenario": "Durante incidents, tu equipo hace: comandos SSH desde laptops privadas, cambios manuales en AWS Console sin log, decisiones por DM que nadie ve, timeline reconstruido de memoria en post-mortem (mal).",
+      "question": "¿Qué es ChatOps y por qué transforma la respuesta a incidents?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ChatOps = ejecutar operaciones (comandos, queries, changes) desde el mismo canal de chat (Slack/Teams) donde el incident se coordina. Bots ejecutan comandos autorizados y postean output al canal. Beneficios: (1) TODO queda logged públicamente (timeline gratis), (2) visibility — todo el equipo ve qué se hace, (3) auditability — quién ejecutó qué y cuándo, (4) knowledge sharing — juniors aprenden viendo, (5) reduce mistakes (peer review implícito).", "correct": true, "why": "Correcto. Pioneered por GitHub (Hubot, 2013) con 'ChatOps: A beginner's guide'. Slack + bots como Rundeck, PagerDuty ChatBot, custom Slack apps convierten el chat en un 'IDE de operaciones'. El timeline es 'free' porque el chat log ES la fuente." },
+        { "letter": "B", "text": "ChatOps = solo notificaciones de alerts en Slack.", "correct": false, "why": "Reducción. Alerts en Slack es 1% de ChatOps. La esencia es EJECUCIÓN de operaciones desde el chat, no solo lectura." },
+        { "letter": "C", "text": "ChatOps es inseguro — todo comando debe ejecutarse por SSH manual.", "correct": false, "why": "Al revés. ChatOps es MÁS seguro que SSH manual porque: (a) auth centralizada del bot, (b) audit log completo, (c) command whitelisting (bot solo ejecuta lo permitido), (d) MFA integrado." },
+        { "letter": "D", "text": "ChatOps solo funciona en startups pequeñas.", "correct": false, "why": "GitHub, GitLab, Etsy, Facebook, Google usan ChatOps a escala. Escala mejor que SSH ad-hoc porque los bots pueden aplicar rate limiting, approval flows, RBAC." }
+      ],
+      "explanation": "ChatOps se compone de: (1) CANAL DE INCIDENT dedicado (#inc-2025-01-15-payments), (2) BOTS que ejecutan comandos (deploy, rollback, restart, query DB read-only, etc), (3) INTEGRATIONS con PagerDuty (ack/resolve), Jira (crear ticket), status page (update), (4) HUMANS interactuando en lenguaje natural + comandos. Patrones: /pd ack, /deploy rollback prod-v42, /db query 'SELECT count...', /statuspage post 'investigating'. El chat log se convierte automáticamente en timeline oficial del incident — postmortems escriben solos. Governance: comandos destructivos requieren 2FA o approval de otro user; read-only comandos son libres.",
+      "realWorld": "GitHub Hubot (2013) inauguró el pattern. Slack tiene marketplace lleno de incident bots (PagerDuty, Opsgenie, incident.io, FireHydrant). GitLab publica sus incident templates y ChatOps commands en GitHub. Etsy escribió 'Deploying at Etsy' con ChatOps flow visible.",
+      "tags": ["ChatOps", "Slack", "bots", "incident response", "audit"],
+      "tech": [],
+      "references": [{ "title": "GitHub Engineering — ChatOps" }, { "title": "PagerDuty — ChatOps guide" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "reliability",
+      "topic": "Escalation policies",
+      "difficulty": "mid",
+      "scenario": "Configura escalation en PagerDuty. Necesitas: primary responder debe ACK en 5 min o escalar; secondary debe ACK en 10 min más o escalar; manager on-call en 15 min más; hard-limit 30 min antes de wake up al VP.",
+      "question": "¿Cómo estructurar escalation policies correctamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Levels graduales: L1 primary on-call (respond ACK < 5 min) → L2 secondary on-call (< 10 min más) → L3 team lead / engineering manager (< 15 min más) → L4 director/VP (hard escalation solo si business-critical y no ACK'd en 30 min total).", "correct": true, "why": "Correcto. Gradual escalation respeta la jerarquía: primary responde first; si duerme profundo o falla dispositivo, secondary cubre; management involucrado solo cuando hay riesgo real de no respuesta. VP wake up es último recurso — evita alert fatigue ejecutivo." },
+        { "letter": "B", "text": "Time thresholds ajustados por severity: SEV1 (business down) escala rápido (5/10/15 min); SEV2 (degradation) más relajado (10/20/30 min); SEV3 (minor) puede esperar business hours.", "correct": true, "why": "Correcto. No todo tiene la misma urgencia. Escalar rápido SEV3 despierta gente para nada; escalar lento SEV1 costa dinero. PagerDuty y Opsgenie permiten escalation policies por servicio con severity mapping." },
+        { "letter": "C", "text": "Secondary on-call debe ser de OTRO team (para redundancia).", "correct": false, "why": "Anti-patrón. Secondary debe conocer el sistema (mismo team). Cross-team es 'expertise externa' que llamas a specific requests, no fallback default. El fallback default de otro team = responder sin context = extending MTTR." },
+        { "letter": "D", "text": "Configurar overrides: vacaciones, sick days, timezone changes. Un on-call de vacaciones no debe recibir pages — debe estar quitado del rotation ANTES.", "correct": true, "why": "Correcto. PagerDuty tiene 'schedule overrides' precisamente para esto. Wake up a alguien de vacaciones = burn out garantizado y probable no-ACK (buffer offline). Buenos on-call managers revisan overrides antes de weekends/holidays." },
+        { "letter": "E", "text": "Configurar hard escalation directamente al CEO en <5 min.", "correct": false, "why": "Ridículo. CEOs no responden pages; su rol es estratégico, no tactical. La única excepción es Chief SRE / Head of Engineering en emergencias reales de negocio (data breach, complete outage business-critical, regulatory)." }
+      ],
+      "explanation": "Escalation policies bien diseñadas balancean: (1) NO WAKE UP innecesario (respect on-call sleep), (2) NO ALERT LOSS (si primary no responde, secondary cubre), (3) MANAGEMENT INVOLVEMENT graduado (solo si business impact escala). Anti-patrones: (a) escalation demasiado rápida = wake up muchos; (b) demasiado lenta = MTTR alto; (c) sin secondary = single point of failure; (d) CEO en L1 = pánico ejecutivo por cosas rutinarias. Best practice: revisar analytics de escalations mensualmente — si primary escala >20% a secondary, hay problema (dispositivos rotos, primary sobrecargado, alerts en horarios malos).",
+      "realWorld": "PagerDuty publica benchmarks: median MTTA (Time To Acknowledge) elite teams <2 min, high <5 min, low >15 min. Facebook 2010 outage escaló hasta Zuckerberg porque tardaron horas en identificar rootcause (DNS/BGP). GitLab publica timeline de sus incidents con timestamps de escalation visibles.",
+      "tags": ["escalation policy", "PagerDuty", "on-call", "MTTA"],
+      "tech": [],
+      "references": [{ "title": "PagerDuty Escalation Policies documentation" }, { "title": "Opsgenie Incident Management" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "reliability",
+      "topic": "Alert fatigue diagnostics",
+      "difficulty": "mid",
+      "scenario": "Tu team tiene 22 pages/persona/semana promedio. El on-call reporta 'no puedo dormir sin escuchar el phone'. Turnover subió 40% en 6 meses.",
+      "question": "¿Cómo diagnosticar y eliminar alert fatigue?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Audit: exportar TODOS los pages de los últimos 30 días de PagerDuty. Clasificar cada uno: (1) actionable + resolvió incident real, (2) actionable pero se auto-resolvió, (3) falso positivo, (4) informativo (no debía page). Meta: >80% deben ser categoría 1.", "correct": true, "why": "Correcto. Data-driven approach. PagerDuty tiene analytics built-in ('Response Time Report', 'Noise Report'). Sin data específica, no puedes atacar el problema — cada team tiene alerts ruidosos distintos." },
+        { "letter": "B", "text": "Aplicar Pareto: los 20% de alerts que generan 80% del ruido. Fixear/eliminar esos primero (mayor impacto por effort). Ej: 1 alert de 'disk >70%' que dispara diario aunque el sistema opera bien.", "correct": true, "why": "Correcto. En cada análisis real hay 3-5 alerts culpables de la mayoría del ruido. Fixear esos (tune threshold, add hysteresis, mover a ticket) da relief inmediato al team." },
+        { "letter": "C", "text": "Definir SLO/error budget: solo alertar cuando el error budget se está consumiendo peligrosamente (burn rate high). Esto elimina alerts de eventos aislados que no afectan SLO.", "correct": true, "why": "Correcto. Google SRE Book Ch. 4-5 desarrolla alerting basado en SLO. Alert por 'error rate > X en Y ventana con Z% budget consumido' es mucho más significativo que 'error count > 100'. Reduce dramáticamente falsos positivos." },
+        { "letter": "D", "text": "Objetivo: <5 pages/persona/semana. Si un team pasa esto sostenidamente, el problema es alerts o carga, no la persona.", "correct": true, "why": "Correcto. Google SRE 'target < 2 páges por shift'. PagerDuty benchmark: teams saludables <10 pages/semana/persona. >20 sostenido = burnout inevitable, humanos no pueden compensar." },
+        { "letter": "E", "text": "Ignorar alerts hasta que se calmen solos.", "correct": false, "why": "Peor camino posible. Ignorar entrena al team a no responder → cuando llega uno real, tampoco responden → outage largo. Fixear el ruido activamente." }
+      ],
+      "explanation": "Framework de reducción de alert fatigue: (1) MEDIR baseline actual (pages/persona/semana, ACK time, actionable ratio), (2) AUDITAR top N alerts culpables, (3) FIXEAR con: tune threshold, add hysteresis, agrupar alerts relacionados (deduplication), agregar SLO-based alerting, mover no-urgentes a ticket, (4) MONITOR y iterar cada sprint. Herramientas: PagerDuty Intelligent Insights (ML-based dedup), Opsgenie noise reduction, incident.io analytics. Cultural: dedicar tiempo de sprint EXPLÍCITO a alert cleanup (10-20%). Sin tiempo dedicado, siempre hay 'algo más urgente' y el ruido crece.",
+      "realWorld": "Google SRE Book Ch. 4 dedica 'The Art of the Postmortem' a este tema. Charity Majors (Honeycomb blog): 'Alerts should be actionable, urgent, and correlated with user impact'. PagerDuty publica 'State of Digital Operations' anual con benchmarks de alert fatigue por industria. Empresas con alert fatigue tienen 2-3x turnover ingenieros SRE.",
+      "tags": ["alert fatigue", "burnout", "on-call sustainability", "SLO"],
+      "tech": [],
+      "references": [{ "title": "Charity Majors — Honeycomb Blog Alert Fatigue" }, { "title": "Google SRE Book — Ch. 4 SLOs" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "reliability",
+      "topic": "On-call rotation sustainability",
+      "difficulty": "mid",
+      "scenario": "Team de 3 devs. Rotación semanal — cada dev está on-call 1 semana de cada 3. Turnover subió; los ingenieros se quejan de 'no puedo hacer planes' y de recibir pages viernes de familia.",
+      "question": "¿Qué reglas hacen un on-call sostenible?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Rotation size mínimo 6-8 personas: cada uno on-call <15-20% del tiempo. Con 3 personas (33% del tiempo cada uno), burnout es inevitable. Solución: (a) crecer team, (b) cross-train con team adyacente, (c) follow-the-sun con otra región, (d) shared on-call temporal con SRE central.", "correct": true, "why": "Correcto. Google SRE recomienda rotations de 6-8+ personas. PagerDuty analytics: teams con <5 personas tienen 2.5x más burnout, 40% más turnover. Es matemática pura de sueño y life balance." },
+        { "letter": "B", "text": "Compensación: on-call es TRABAJO, no volunteer. Formas: (a) comp time (día libre después de shift), (b) differential pay (bonus por shift), (c) time off in lieu si recibe pages fuera de horario, (d) reducción de otra carga durante on-call week. Sin compensación, es explotación disfrazada.", "correct": true, "why": "Correcto. GitHub, Stripe, muchas empresas modernas pagan on-call ($200-500/semana típico en EEUU) además de comp time por pages nocturnas. Sin compensación, incentivos son inversos: nadie quiere quedarse, turnover sube, se cobra por otro lado (contratación)." },
+        { "letter": "C", "text": "Handoff formal entre rotations: reunión de 30-60 min entre outgoing e incoming on-call cubriendo: (a) incidents activos, (b) alerts frecuentes de la semana, (c) contexto de próximos deploys, (d) 'watch out for X'.", "correct": true, "why": "Correcto. Sin handoff, cada nuevo on-call empieza sin context = MTTR alto, decisiones malas. 30 min de handoff ahorra horas de reactive debugging." },
+        { "letter": "D", "text": "Right to disconnect: on-call semanal no debe interferir con vida no-laboral fuera del horario de guardia. Si el on-call NO está de guardia (semana off), no debe recibir pings 'urgentes' que rompen su descanso. Enforcement: manager llama al que ESTÁ de guardia, no al que sabe.", "correct": true, "why": "Correcto. Anti-patrón común: hay un 'experto de Kafka' al que llaman siempre aunque no esté de guardia = el experto burnout. Solución: cross-training para que TODOS puedan responder, aunque menos óptimo que el experto." },
+        { "letter": "E", "text": "On-call es 'gaje del oficio' — no hace falta pensar en sostenibilidad.", "correct": false, "why": "Mentalidad tóxica que causa turnover, burnout, y en último caso demanda laboral. On-call es un trabajo especializado que requiere compensación, entrenamiento, y sostenibilidad." }
+      ],
+      "explanation": "On-call sustainability requiere 4 pilares: (1) TAMAÑO — mínimo 6-8 rotators (aim <20% of time on-call), (2) COMPENSATION — explícita y visible (comp time + $ + reduced load), (3) LOAD — reducción activa de pages (alert cleanup, automation, runbooks), (4) SUPPORT — training, buddy system, escalation clara. Métrica: 'on-call satisfaction survey' cada quarter, action items públicos. GitLab publica su compensación de on-call ($350/week base + comp time por pages). Zoom, Datadog, muchas empresas tech publican políticas similares. Sin sustainability, retention de SRE cae 30-50%.",
+      "realWorld": "Google SRE Book Ch. 11 'Being On-Call' es referencia. PagerDuty publica 'On-Call Compensation Report' anual con benchmarks industria. Empresas con burnout alto (2020-2022 pandemic era) sufrieron pérdida masiva de talento SRE — Twitter, Meta, Amazon vieron éxodos parcialmente atribuibles a on-call insostenible.",
+      "tags": ["on-call", "sustainability", "burnout", "compensation", "rotation"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 11 Being On-Call" }, { "title": "PagerDuty On-Call Handbook — Compensation" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "reliability",
+      "topic": "Follow-the-sun rotation",
+      "difficulty": "mid",
+      "scenario": "Tu empresa tiene offices en San Francisco, Dublin, Sydney. Actualmente SF hace 24/7 on-call — devs pageados a las 3AM constantemente. Turnover 45%.",
+      "question": "¿Qué es follow-the-sun rotation y cómo se implementa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Follow-the-sun = distribuir on-call entre regiones para que SIEMPRE sea business hours para el on-call. Ejemplo: Sydney cubre 09:00-17:00 AEST, Dublin cubre 09:00-17:00 IST, SF cubre 09:00-17:00 PST — 24/7 combined sin que NADIE reciba pages nocturnas. Requiere: (1) teams entrenados en cada región (no solo relays), (2) handoff formal entre regiones (30 min transition), (3) shared runbooks/tooling, (4) inversión en cada región equivalente.", "correct": true, "why": "Correcto. Follow-the-sun es golden standard para empresas globales. Google, Facebook, Amazon, Microsoft lo usan. Elimina pages nocturnas = elimina la peor parte de on-call. Costoso (requiere teams multi-región) pero paga en retention y quality de respuesta." },
+        { "letter": "B", "text": "Follow-the-sun = outsourcing a country con horario diferente.", "correct": false, "why": "Anti-patrón común. Outsourcing barato genera responders sin context, MTTR alto, escalation constante al team primary de todos modos. Follow-the-sun REAL requiere teams internos con expertise real en cada región." },
+        { "letter": "C", "text": "Follow-the-sun solo funciona en empresas con >1000 ingenieros.", "correct": false, "why": "Escalas medianas también pueden. Requiere 2-3 offices con <=6-8 engineers cada uno = ~20-25 total mínimo. Empresas de 200 ingenieros pueden implementarlo." },
+        { "letter": "D", "text": "Follow-the-sun no aplica si tienes SRE central.", "correct": false, "why": "SRE central típicamente ES quien más se beneficia (rotación global). Product teams pueden mantener local on-call para su feature, con SRE global para infraestructura." }
+      ],
+      "explanation": "Follow-the-sun se implementa en fases: (1) IDENTIFICAR regiones con offices y team density, (2) CONTRATAR/GROW teams equivalentes en cada región (no solo pass-through), (3) DEFINIR handoff windows (típicamente 1 hora overlap entre regiones), (4) TRAINING común: runbooks, incident response process, escalation, ChatOps, (5) MONITORING de balance — que no una región lleve más carga por horarios de incidents. Costo real: 20-30% más caro que single-region (headcount + infra), pero retention y quality justifican. Alternativa parcial: 'follow-the-sun para P2+, single region on-call para P0' — reduce pero no elimina wake ups.",
+      "realWorld": "Google, Facebook implementan follow-the-sun formal. GitLab (all-remote) tiene rotation global aprovechando team distribution. Cloudflare (SF/London/Singapore) documenta su rotation. Empresas que fallan al implementarlo: teams remotos sin autoridad real → todo escala a HQ = beneficio anulado. Cloudflare 2017 Cloudbleed response se benefició de tener teams en múltiples zonas horarias.",
+      "tags": ["follow-the-sun", "global on-call", "rotation", "sustainability"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Workbook — Distributed On-Call" }, { "title": "Cloudflare Engineering Blog" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "reliability",
+      "topic": "Blameless post-mortem",
+      "difficulty": "mid",
+      "scenario": "Outage P1 causado por comando manual mal escrito (typo en un rm). En el post-mortem: manager pregunta 'quién lo escribió, va a haber consecuencias'. El dev se defiende, oculta detalles. Root cause queda enterrada.",
+      "question": "¿Qué es blameless post-mortem y por qué es crítico?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Blameless = enfocar el post-mortem en el SISTEMA, no en la persona. El typo del dev es un SÍNTOMA de fallas del sistema: (1) ¿por qué el sistema permitía comandos destructivos manuales? (2) ¿por qué no había confirmation/dry-run? (3) ¿por qué se necesitaba comando manual en vez de tooling? (4) ¿por qué no había peer review para production changes? El dev es honesto SOLO si sabe que no habrá castigo — información clave para prevenir recurrencia.", "correct": true, "why": "Correcto. Etsy 'Debriefing Facilitation Guide' (John Allspaw, 2016) es la referencia. Blame culture = engineers ocultan información = root causes escondidas = incidents se repiten. Blameless culture = engineers comparten hipótesis honestas = mejora sistémica real. Google SRE Book Ch. 15 dedica capítulo entero." },
+        { "letter": "B", "text": "Blameless = no aprender del incident.", "correct": false, "why": "Malentendido común. Blameless NO es 'sin accountability' — es 'accountability sobre el sistema, no sobre el individuo'. Los action items son concretos: mejorar tooling, cambiar procesos, adicionar guardrails. El dev NO es castigado personalmente, pero el sistema SÍ es mejorado." },
+        { "letter": "C", "text": "Blameless = despedir al que causó el incident silenciosamente.", "correct": false, "why": "Peor de todos los mundos. Tácticamente 'blameless en público' pero castigando en privado destruye trust total y hace que nadie hable en el próximo post-mortem." },
+        { "letter": "D", "text": "Blameless solo aplica a incidents pequeños.", "correct": false, "why": "Falso — es MÁS crítico en incidents grandes. Grandes outages requieren information completa para prevenir recurrencia; blame culture en un P0 = información parcial = riesgo alto de repetir." }
+      ],
+      "explanation": "Blameless post-mortem tiene rituales concretos: (1) LENGUAJE — 'action X caused Y' en vez de 'person P did X'; (2) TIMELINE factual — qué pasó cuándo, sin juicio; (3) 5 WHYS — llegar a causa sistémica, no individual; (4) ACTION ITEMS enfocados en sistema (guardrails, tooling, training, alerting); (5) PUBLICATION — post-mortem público (interno mínimo, ideal externo para user-facing). Anti-patrones: 'lessons learned' vagos, action items 'be more careful', llamar el post-mortem 'RCA meeting' (implica hay un culprit único). Empresas con blameless real: Etsy, Google, Netflix, Stripe.",
+      "realWorld": "John Allspaw (Etsy CTO) escribió 'Blameless PostMortems and a Just Culture' 2012 — landmark article. Google SRE Book Ch. 15 detalla proceso. Etsy publica su template público. Empresas famosas por blame culture: banking tradicional, gobierno (public accountability political). El estudio Westrum 'A typology of organisational cultures' clasifica: pathological (blame), bureaucratic (silo), generative (blameless). Generative correlaciona con high DORA performance.",
+      "tags": ["blameless", "post-mortem", "just culture", "learning"],
+      "tech": [],
+      "references": [{ "title": "John Allspaw — Blameless PostMortems and a Just Culture" }, { "title": "Google SRE Book — Ch. 15 Postmortem Culture" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "reliability",
+      "topic": "PagerDuty analytics",
+      "difficulty": "mid",
+      "scenario": "Tu team lleva 1 año usando PagerDuty. El director pregunta '¿cómo estamos vs benchmarks? ¿dónde debemos invertir?'",
+      "question": "¿Qué métricas de PagerDuty analytics son las más útiles?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "MTTA (Mean Time To Acknowledge): tiempo desde page hasta ACK. Elite <2 min, high <5 min, low >15 min. MTTA alto = dispositivos rotos, alerts en horarios malos, o burnout.", "correct": true, "why": "Correcto. MTTA es leading indicator de team health. Un MTTA subiendo indica burnout antes de que el team explote formalmente. PagerDuty analytics grafica MTTA trend por rotator." },
+        { "letter": "B", "text": "MTTR (Mean Time To Resolve): tiempo desde ACK hasta resolución. Elite <30 min, high 1-2h, low >24h. MTTR alto = falta de observability, runbooks pobres, o escalation lento.", "correct": true, "why": "Correcto. Parte de las métricas DORA (una de las 4 canónicas). MTTR es lag indicator; MTTA es leading. Ambas juntas dan visión completa." },
+        { "letter": "C", "text": "Pages per person per week: >10 sostenido = alert fatigue riesgo. >20 = burnout imminente. Comparar vs benchmark industry.", "correct": true, "why": "Correcto. PagerDuty publica benchmark: mediana industry ~5-8 pages/persona/semana. Above 15 correlated con turnover subiendo. Métrica clave para on-call sustainability." },
+        { "letter": "D", "text": "Off-hours page ratio: % de pages fuera de business hours. Alto = disrupción máxima al sleep. Meta reducir a <30% mediante follow-the-sun o resiliency.", "correct": true, "why": "Correcto. Pages nocturnas son 3-4x más disruptivas que business hours pages (sleep interruption). Optimizar off-hours ratio es maximum-impact intervention. PagerDuty reporta este metric explícitamente." },
+        { "letter": "E", "text": "Número total de servicios monitoreados como métrica de éxito.", "correct": false, "why": "Vanity metric. Más servicios monitoreados no significa mejor operations — significa más superficie. Métrica útil sería SLO compliance por servicio, no cantidad." }
+      ],
+      "explanation": "PagerDuty Analytics dashboard incluye: MTTA, MTTR, Pages Volume, Response Time por rotator, Noise Report (alerts que auto-resolvieron sin acción), Off-hours Ratio, Escalation Rate. Uso estratégico: (1) MENSUAL review con team — trends, top offenders alerts, individual burnout signals; (2) QUARTERLY con management — investment decisions (más headcount? más SRE? follow-the-sun?); (3) POR SERVICIO — cuál pagea más? Priorizar reliability work. Herramientas competidoras: Opsgenie analytics, incident.io insights, FireHydrant. Todas convergen en las mismas métricas core.",
+      "realWorld": "PagerDuty 'State of Digital Operations Report' 2023 publica benchmarks: elite performers ACK <2 min, resolve <30 min; median <10 min ACK, <2h resolve. Empresas que usan analytics activamente reducen alert volume 30-50% en 6 meses. Datadog, Grafana, New Relic también publican benchmarks similares.",
+      "tags": ["PagerDuty", "analytics", "MTTA", "MTTR", "on-call metrics"],
+      "tech": [],
+      "references": [{ "title": "PagerDuty Analytics Documentation" }, { "title": "PagerDuty State of Digital Operations 2023" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "reliability",
+      "topic": "NIST SP 800-61 IR framework",
+      "difficulty": "senior",
+      "scenario": "Tu empresa (fintech, compliance PCI-DSS) requiere un framework formal de Incident Response. Auditor menciona NIST SP 800-61.",
+      "question": "¿Cuáles son las 4 fases de NIST SP 800-61 (Computer Security Incident Handling Guide) y cómo aplican?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "1. PREPARATION: capacidades pre-incident. Incluye: policies, IR team formado (con roles y contactos), tools (SIEM, forensics, comms), runbooks, training/tabletop exercises, evidence handling procedures. Sin preparation, las otras fases se improvisan.", "correct": true, "why": "Correcto. NIST enfatiza que 'la respuesta empieza ANTES del incident'. Empresas sin preparation formal tienen incidents 3-5x más largos y más costosos (Ponemon reports). Compliance frameworks (PCI, HIPAA, SOX) requieren documented IR plan explícitamente." },
+        { "letter": "B", "text": "2. DETECTION & ANALYSIS: identificar que un incident está ocurriendo. Sources: alerts (SIEM, IDS/IPS), user reports, threat intelligence, anomaly detection. Análisis: triage severity, scope, containment options, notification obligations.", "correct": true, "why": "Correcto. NIST distingue 'events' (algo pasó) de 'incidents' (evento con impacto). El análisis determina cuál es cuál — la mayoría de events son ruido. Herramientas: SIEM (Splunk, Sentinel), EDR (CrowdStrike), log correlation." },
+        { "letter": "C", "text": "3. CONTAINMENT, ERADICATION, RECOVERY: contener el impacto (isolate systems affected, preserve evidence for forensics), erradicar la causa (patch vulnerability, remove malware, close attack vector), recuperar operaciones (restore from backup, rebuild systems, verify integrity).", "correct": true, "why": "Correcto. Estas 3 sub-fases están comprimidas en una fase NIST. Cada una tiene decisiones críticas: containment agresivo (aislar) vs preserving business (allow degraded); recovery apurado vs verificado. Errores comunes: skipping evidence preservation → no forensics posible; skipping verification → same attacker vuelve." },
+        { "letter": "D", "text": "4. POST-INCIDENT ACTIVITY: 'lessons learned' meeting, actualizar runbooks/playbooks, actualizar detection rules, reportar a stakeholders (compliance, regulators si aplica). Feed back learnings to Preparation phase — loop cerrado.", "correct": true, "why": "Correcto. Sin esta fase, los otros pasos son 'firefighting sin aprender'. Regulators (GDPR, PCI-DSS) requieren post-incident reports en timelines específicos (72h GDPR). Empresas mediocres saltan esta fase = repiten incidents." },
+        { "letter": "E", "text": "NIST SP 800-61 solo aplica a incidents de seguridad, no a outages operacionales.", "correct": false, "why": "Técnicamente cierto (título es 'Computer Security Incident Handling') pero el framework es genérico y widely adopted para outages operacionales. Google SRE, PagerDuty basan sus procesos parcialmente en NIST framework adaptado a operations." }
+      ],
+      "explanation": "NIST SP 800-61 rev 2 es el estándar de facto para IR estructurado. Adoptado por US Government, contractors (DFARS 252.204-7012), PCI-DSS (requirement 12.10), HIPAA (requires IR plan). El framework enfatiza cyclical improvement — post-incident feeds back to preparation. Diferencia con ITIL Incident Management: NIST más orientado a security/forensics; ITIL más orientado a service restoration. Empresas maduras integran ambos. Otros frameworks relevantes: SANS PICERL (Preparation, Identification, Containment, Eradication, Recovery, Lessons Learned) — variación con 6 fases. ISO/IEC 27035 — international version.",
+      "realWorld": "Equifax 2017 breach ilustró qué pasa sin IR maduro: detección tardía (2.5 meses después del breach), containment insuficiente (data exfiltrada continuamente), disclosure delayed 6 semanas — resultado: multas $700M, CEO removed. Cloudflare 2017 Cloudbleed en contraste: transparency rápida, containment horas, disclosure detallada al día siguiente — reputational damage minimal. Diferencia = madurez IR.",
+      "tags": ["NIST SP 800-61", "IR framework", "compliance", "security"],
+      "tech": [],
+      "references": [{ "title": "NIST SP 800-61 Rev 2 — Computer Security Incident Handling Guide" }, { "title": "SANS PICERL Framework" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "reliability",
+      "topic": "Comms templates during incidents",
+      "difficulty": "senior",
+      "scenario": "Incident P1 en curso. Support está bombardeado con tickets. Sales pregunta 'qué digo a clientes?'. Legal pregunta 'notificamos regulador?'. El engineer que debugea no puede parar a responder emails cada 5 min.",
+      "question": "¿Cómo estructurar comms durante incident?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Comms Lead role dedicado: persona (no el IC, no el debuggeador) responsable de: (1) status page updates cada 15-30 min, (2) internal Slack broadcast channels (#eng-status, #all-hands), (3) escribir templates para support/sales, (4) coordinar con legal/PR si es major. Rota entre engineers entrenados.", "correct": true, "why": "Correcto. Sin Comms Lead, o el IC pasa todo el tiempo escribiendo updates (perdiendo coordinación) o el debuggeador (perdiendo enfoque técnico). Comms es un ROL, no un afterthought. Google SRE Book Ch. 14 y PagerDuty IR training enfatizan esto." },
+        { "letter": "B", "text": "Templates pre-escritos por severity: (a) 'Investigating' — reconocemos el issue, investigando; (b) 'Identified' — sabemos la causa, trabajando en fix; (c) 'Monitoring' — fix deployado, monitoreando; (d) 'Resolved' — issue completamente resuelto, resumen breve. Llenar detalles en tiempo real, no escribir de cero.", "correct": true, "why": "Correcto. Templates ahorran tiempo crítico (5-10 min por update). Statuspage, Atlassian Statuspage, Instatus tienen templates built-in siguiendo este patrón. La cadencia de updates (cada 15-30 min mínimo) es clave — silencio genera panic más que malas noticias." },
+        { "letter": "C", "text": "Regla de honestidad: NO minimizar impacto en comms externa. Si 30% de users afectados, decir '30%', no 'a small subset'. Si no sabes causa, decir 'investigating'. Los users detectan spin y pierden trust permanentemente.", "correct": true, "why": "Correcto. Equifax 2017 minimizó impacto → catástrofe reputational. Cloudflare 2017 Cloudbleed dijo la verdad brutalmente → community respetó y trust se preservó. Regla del CEO Ben Horowitz: 'tell it like it is, especially in a crisis'." },
+        { "letter": "D", "text": "Legal/regulatory notifications: pre-decidir triggers. Ej: 'data breach afectando >X users → notify DPO en <1h → GDPR notification decision <72h'. No decidir esto EN el incident — pre-work esencial.", "correct": true, "why": "Correcto. GDPR requiere breach notification a authorities en 72h, users 'sin retraso indebido'. HIPAA, PCI-DSS tienen requirements similares. Compliance decision tree pre-approved por legal es esencial. Sin pre-work, decisiones ad-hoc bajo stress → violations." },
+        { "letter": "E", "text": "Silencio hasta tener la solución completa.", "correct": false, "why": "Peor estrategia. Users detectan el outage por sus propios medios; silencio genera especulación, tickets masivos, y erosión de trust. Reconocer con 'investigating' toma segundos y calma la ansiedad." }
+      ],
+      "explanation": "Comms structure madura tiene 3 audiences: (1) INTERNAL — engineering (Slack incident channel), all-hands (status), support/sales (Q&A talking points); (2) EXTERNAL — status page (público), tweets si major, direct email a customers key, blog post postmortem; (3) REGULATORY — DPO, legal counsel, auditors dependiendo de compliance. Cadencia: internal cada 15 min mínimo, external cada 30 min mínimo. Templates viven en Confluence/Notion, linked desde runbook del incident. Post-incident: retrospectiva de comms también — ¿fuimos honestos? ¿respondimos rápido? ¿users se enteraron a tiempo?",
+      "realWorld": "Cloudflare 2017 Cloudbleed: John Graham-Cumming publicó blog post de 3000 palabras al día siguiente explicando technical details completos, timeline, y mitigación. Community elogió. Contraste: Equifax 2017 tardó 6 semanas en disclosure público → congressional hearings, CEO Rick Smith renunció, multas billion+. Atlassian 2022 outage de 14 días: comms fueron criticadas por lenta cadencia. GitLab public.gitlab.com muestra su status page + post-mortems como best practice.",
+      "tags": ["incident comms", "status page", "transparency", "GDPR", "communication"],
+      "tech": [],
+      "references": [{ "title": "Cloudflare — Incident report on memory leak (Cloudbleed)" }, { "title": "Atlassian Statuspage Best Practices" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "reliability",
+      "topic": "Severity levels y decision matrix",
+      "difficulty": "senior",
+      "scenario": "Un dev reporta 'algo raro pasa'. Otro dice 'es P1'. Otro dice 'es P3'. Sin definición clara, el response es proporcional al drama del reporter, no al impacto real.",
+      "question": "¿Cómo definir severity levels que sean accionables y no ambiguos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Matriz basada en impacto medible: SEV1 (business down — >50% users afectados, revenue loss, safety issue) → all-hands response, IC dedicado, 15 min comms cadence; SEV2 (major degradation — significant subset users, alt path exists) → team response, 30 min cadence; SEV3 (limited impact — small subset, workaround exists) → business hours, ticket-based; SEV4 (informational — no immediate user impact) → backlog. Criterios ejemplificados con números específicos (% users, $ revenue, RTO/RPO) evitan ambigüedad.", "correct": true, "why": "Correcto. La matriz debe ser SPECIFIC, no cualitativa. 'Major impact' es ambiguo; '>50% users OR >$X/hora revenue loss' es medible. PagerDuty, Google SRE, Atlassian publican matrices ejemplo. Sin definiciones claras, el response es proporcional al drama, no al impacto real." },
+        { "letter": "B", "text": "Severity = lo que el customer más ruidoso reporta.", "correct": false, "why": "Anti-patrón que genera injusticia: enterprise customer llorando > el 90% de usuarios afectados silenciosamente. Severity debe basarse en impacto AGREGADO, no en volume del reporter individual." },
+        { "letter": "C", "text": "Todos los incidents son P1 hasta demostrar lo contrario.", "correct": false, "why": "Alerts fatigue máxima. Si todo es P1, nada es P1 — el team pierde capacidad de priorizar. Triage inicial (5-10 min) debe determinar severity real con criterios claros." },
+        { "letter": "D", "text": "Severity la decide el manager, no criterios objetivos.", "correct": false, "why": "Manager como bottleneck en decisión que debe ser rápida = MTTR alto. Criterios objetivos permiten al on-call decidir en <5 min, sin esperar a manager (que puede estar en meeting/durmiendo)." }
+      ],
+      "explanation": "Severity matrix efectiva tiene: (1) EJES múltiples — user impact %, revenue $, safety, regulatory, reputation; (2) OR logic — cualquier eje disparando eleva severity; (3) EXAMPLES concretos — 'checkout broken → SEV1', 'search slow → SEV3'; (4) DECISION AUTHORITY — IC puede escalar/desescalar durante incident basado en new info; (5) RESPONSE MATRIX — qué comportamiento por SEV (cadence, comms, escalation, all-hands). Publicar la matrix públicamente en wiki reduce disputes. Revisar quarterly — thresholds pueden cambiar según growth.",
+      "realWorld": "PagerDuty publica su severity matrix ejemplo en su Incident Response docs. GitLab publica su definición en handbook. Google SRE Book Ch. 14 discute severity structure. Empresas famosas con severity claras: Stripe (SEV0-SEV3), Netflix, Amazon. Empresas con severity ambigua: la mayoría de startups pre-Series B — everything es P1, everyone is burned out.",
+      "tags": ["severity", "triage", "incident response", "SEV"],
+      "tech": [],
+      "references": [{ "title": "PagerDuty Incident Response — Severity Levels" }, { "title": "GitLab Handbook — Severity Definitions" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "reliability",
+      "topic": "Post-mortem action items",
+      "difficulty": "senior",
+      "scenario": "Post-mortem termina con 15 action items vagos: 'improve monitoring', 'better testing', 'update docs'. Nadie asignado, sin fechas. 6 meses después, el mismo incident ocurre.",
+      "question": "¿Cómo hacer que los action items sean efectivos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SMART criteria: Specific ('add alert X para signal Y con threshold Z'), Measurable (deploy exitoso, no 'improve'), Assignable (persona única owner), Realistic (dentro de sprint capacity), Time-bound (deadline específica, típicamente 2 semanas para HIGH priority, 1 mes para MEDIUM).", "correct": true, "why": "Correcto. Action items vagos ('improve monitoring') nunca se completan porque no hay definition of done. SMART los convierte en tareas de sprint reales, trackeable en Jira/Linear." },
+        { "letter": "B", "text": "Priorización tiered: (a) HIGH — prevent recurrence directamente (must ship <2 weeks); (b) MEDIUM — improve detection/response (must ship <1 month); (c) LOW — nice to have (backlog). Focus en HIGH — 3-5 items HIGH bien ejecutados > 15 vagos.", "correct": true, "why": "Correcto. 15 action items nunca se completan; 3 HIGH sí. Focus > breadth. Google SRE Book: 'the best post-mortem has few but shippable action items'." },
+        { "letter": "C", "text": "Tracking obligatorio: action items live en sprint board (Jira, Linear), con dashboards de status. Weekly review de outstanding post-mortem items. Escalación si >2 weeks overdue.", "correct": true, "why": "Correcto. Sin tracking, action items 'live' en el post-mortem doc y mueren. Moving a sprint board = normal PM tracking = execution real. Etsy publicó que dedican explicit sprint capacity a post-mortem items." },
+        { "letter": "D", "text": "Follow-up retrospective quarterly: ¿de los últimos 3 meses de post-mortems, cuántos action items shipped? ¿reducimos recurrence de patrones similares? Meta: >80% action items HIGH completados on-time.", "correct": true, "why": "Correcto. Meta-level review previene que el proceso mismo se corrompa. Si <50% de action items ship, el proceso está roto (o son demasiados, o el team no tiene capacity, o priorización mal). Correction al nivel proceso, no individual." },
+        { "letter": "E", "text": "Los action items son opcionales — el aprendizaje es lo que cuenta.", "correct": false, "why": "'Aprender sin cambiar' es teatro. Sin action items ejecutados, el post-mortem es ritual sin efecto. El aprendizaje se demuestra en cambios sistémicos, no en documentos leídos." }
+      ],
+      "explanation": "Action items efectivos siguen el flujo: (1) IDENTIFY durante post-mortem con team full brainstorming; (2) FILTER — cuál realmente previene recurrencia? Nice to haves separados; (3) PRIORITIZE HIGH/MEDIUM/LOW con criterios claros; (4) ASSIGN owner único (compartido = ninguno); (5) DEADLINE específica; (6) TRACK en sprint board con visibility; (7) REVIEW weekly + quarterly. Anti-patrones: 'todos son owners' (nadie), 'when we have time' (nunca), 'improve testing' (qué? cómo? cuándo?). Cultural: Google SRE tiene 'error budget' — si un servicio quema budget, feature work se pausa hasta shippear reliability action items.",
+      "realWorld": "Google publica que 60-80% de sus post-mortem action items HIGH se ship en 30 días. Etsy dedica sprint capacity fija (10-15%) a reliability incluyendo post-mortem items. GitLab publica todos sus post-mortems públicos con action items visibles. Empresas que ejecutan action items ven MTBF (Mean Time Between Failures) subir dramáticamente en 6-12 meses; empresas que solo escriben post-mortems no ven cambio.",
+      "tags": ["post-mortem", "action items", "SMART", "execution"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Postmortem Culture" }, { "title": "Etsy — Debriefing Facilitation Guide" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "reliability",
+      "topic": "Chaos Engineering + game days para IR training",
+      "difficulty": "senior",
+      "scenario": "Tu team nunca practica IR. Cuando llega un incident real, es la primera vez que el on-call ve la herramienta X, corre el comando Y, escala a Z. MTTR es alto por falta de práctica.",
+      "question": "¿Cómo entrenar IR con chaos engineering y game days?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Game Days: ejercicios programados donde el team simula un incident REAL con Chaos Engineering tools (Gremlin, Chaos Monkey, custom scripts). El facilitador inyecta failures (kill pods, network partition, DB slow), el team responde como si fuera producción — usando IC role, ChatOps, runbooks. Post-exercise, retrospective. Frecuencia: mensual mínimo, semanal ideal. Beneficios: (1) muscle memory de tools/runbooks, (2) descubre gaps (runbook desactualizado, permiso faltante, tool no funciona), (3) entrena new hires sin producción real, (4) reduce MTTR real por familiaridad.", "correct": true, "why": "Correcto. Netflix pioneered con Chaos Monkey (2011). Amazon, Google, Facebook, LinkedIn hacen game days regulares. Es el equivalente a 'fire drills' — practicar cuando NO es emergencia para responder mejor cuando SÍ lo es." },
+        { "letter": "B", "text": "Solo practicar cuando llegue un incident real.", "correct": false, "why": "Anti-patrón. 'Practice under fire' garantiza MTTR alto en cada incident. Militares, bomberos, pilotos no practican solo en emergencia real — practican en simulacro. Software debe seguir el mismo modelo." },
+        { "letter": "C", "text": "Game days solo son útiles en empresas grandes.", "correct": false, "why": "Falso. Startup de 10 devs puede hacer un game day mensual: 1 hora, 1 dev diseña scenario, resto responde. Costo mínimo, valor alto. La escala solo cambia la sofisticación de las herramientas, no la utilidad del ejercicio." },
+        { "letter": "D", "text": "Chaos Engineering se debe hacer solo en producción.", "correct": false, "why": "Empezar por staging/QA. Producción llegará después (con blast radius controlado). 'Chaos in prod' es endpoint del maturity journey, no starting point." }
+      ],
+      "explanation": "Game Day framework: (1) PLAN scenario — Facilitador (no revela al team) diseña 'DB caído', 'DNS propagation issue', 'authentication service slow'; (2) ANNOUNCE — 'game day tal día, será tal ventana'; (3) EXECUTE — facilitator inyecta failure con Chaos tool, team responde con proceso IR completo (IC, ChatOps, runbook, comms); (4) OBSERVE — facilitator toma notas sin intervenir; (5) DEBRIEF — retrospective inmediata: ¿qué funcionó, qué gaps?, action items. Chaos Engineering principles (Netflix): hipótesis explícita, empezar pequeño blast radius, monitor closely, learn iteratively. Herramientas: Chaos Monkey, Gremlin (paid), LitmusChaos (k8s), custom scripts.",
+      "realWorld": "Netflix Chaos Monkey (2011) landmark — mata random EC2 instances constantemente para forzar resiliency. AWS GameDay programa para ingenieros. Google DiRT (Disaster Recovery Testing) — game days regulares. Amazon 'Prime Day' preparation incluye chaos exercises masivos. Estudio de 2021 Netflix: teams que hacen game days regulares tienen MTTR 40% más bajo en incidents reales.",
+      "tags": ["chaos engineering", "game days", "IR training", "Netflix"],
+      "tech": [],
+      "references": [{ "title": "Netflix Chaos Monkey — Principles of Chaos Engineering" }, { "title": "Google DiRT Documentation" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "reliability",
+      "topic": "SRE handoff to product teams",
+      "difficulty": "senior",
+      "scenario": "Tu equipo SRE central maneja on-call de 15 servicios de product teams distintos. Cada mes hay más services. El SRE team está saturado; MTTR sube; los product teams no sienten pain de operar sus servicios.",
+      "question": "¿Cómo estructurar el handoff de SRE a product teams (Google SRE model)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Servicio nuevo = product team on-call desde día 1. SRE puede consultar/ayudar pero NO tomar on-call primary. Esto asegura 'you build it, you run it' desde inception. Los devs internalizan operational cost al diseñar.", "correct": true, "why": "Correcto. Amazon '2003+ each service team owns operations'. Google SRE variante: SRE toma over solo si servicio cumple criteria (SLOs definidos, runbooks, error budget balance). Muchos servicios nunca 'graduate' a SRE — se quedan con product team on-call." },
+        { "letter": "B", "text": "SRE handback: si un servicio SRE-owned consume >50% del tiempo del team (violando error budget sostenidamente, alerts crecientes), SRE 'devuelve' el on-call al product team hasta que se estabilice.", "correct": true, "why": "Correcto. Google SRE Book Ch. 32 documenta este mecanismo. Es incentive strong para product team a fixear problemas — si no lo hacen, they own on-call de nuevo. Alinea incentivos: SRE no queda 'stuck' con servicios rotos indefinidamente." },
+        { "letter": "C", "text": "Error budget policy: cada servicio tiene SLO. Si error budget se consume, product team debe pausar feature work y invertir en reliability. Sin esta policy, product team empuja features y deja SRE pagar el costo.", "correct": true, "why": "Correcto. Google SRE Book Ch. 3-4. Error budget es contrato entre SRE y product: 'ustedes pueden shippear rápido MIENTRAS respeten el SLO'. Cuando queman budget, disciplina — feature freeze, reliability work priorizado." },
+        { "letter": "D", "text": "Training explícito: SRE entrena product team en on-call básico (runbooks, escalation, ChatOps) ANTES de handoff. Shadow rotations por 2-4 semanas. Certificación informal antes de tomar primary rotation.", "correct": true, "why": "Correcto. Handoff sin training = product team responde sin skill = MTTR alto + burnout rápido = servicios devuelto a SRE = ciclo pierde. Investment en training upfront paga en handoff exitoso." },
+        { "letter": "E", "text": "SRE debería tomar TODOS los servicios permanentemente.", "correct": false, "why": "Escalabilidad imposible. SRE central no puede escalar linealmente con growth de servicios. Además rompe 'you build it, you run it' — devs sin skin in the game de operations diseñan sistemas operacionalmente pobres." }
+      ],
+      "explanation": "SRE engagement model (Google SRE Book Ch. 32): (1) CONSULTING — SRE avisora sin tomar on-call; (2) SHARED — SRE y product team co-own on-call durante estabilización; (3) FULL SRE — SRE toma primary on-call, product team backup; (4) HANDBACK — si error budget consumido, devuelve. La regla '50% cap on toil' (SRE Book) mantiene SRE haciendo engineering, no ops puro. Product teams típicamente detestan on-call inicial pero después aprecian el visibility en operational costs — 'if I don't want to be paged for X, I should engineer X well'. Empresas híbridas: startup con SRE central + product teams graduating gradualmente.",
+      "realWorld": "Google publica su modelo en SRE Book detalladamente. Facebook similar approach ('production engineering'). Netflix diferente ('freedom and responsibility' — cada team owns todo). Stripe híbrido — SRE central para infra core, product teams para features. Ver Charity Majors thesis 'The Future of Ops is Developers' — argumenta que SRE central debería ser mínimo, developers son los ops en modelo maduro.",
+      "tags": ["SRE", "handoff", "error budget", "you build it you run it"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book — Ch. 32 Evolving SRE Engagement Model" }, { "title": "Charity Majors — The Future of Ops is Developers" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "reliability",
+      "topic": "Public post-mortems — transparencia",
+      "difficulty": "senior",
+      "scenario": "Después de un outage major público, marketing dice 'no publiquen post-mortem, es admisión de failure'. Legal dice 'liability'. Engineering dice 'transparency builds trust'.",
+      "question": "¿Cuándo y cómo publicar post-mortems públicos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Publicar SIEMPRE que el incident sea customer-visible. Contenido: (1) timeline detallado (con timestamps), (2) root cause técnica (sin exponer secrets/security details), (3) impacto medido (users afectados, duración), (4) action items concretos con owners. Beneficios: (a) trust — customers aprecian honestidad vs spin; (b) reputación en engineering community; (c) auditors/enterprise customers preguntan por procesos IR — post-mortems públicos son proof. Excluir: proprietary secrets, individual names (blameless también en público), attack vectors específicos si security incident.", "correct": true, "why": "Correcto. Cloudflare, GitLab, Stripe, Datadog publican post-mortems públicos regularmente y ven bump en engineering hiring y customer trust. Community de engineers respeta transparency; percibe empresas que ocultan como 'algo esconden'." },
+        { "letter": "B", "text": "Nunca publicar — es admisión de failure.", "correct": false, "why": "Estrategia obsoleta. Customers ya saben del outage (lo experimentaron); publicar honestly minimiza rumor y speculation. Ocultar = comunidad asume peor. Cloudbleed (Cloudflare 2017) es case study: publicar full technical post-mortem restauró trust rápidamente." },
+        { "letter": "C", "text": "Publicar solo si legal aprueba cada palabra (delay meses).", "correct": false, "why": "Balance sensible es involucrar legal para revisión SPECIFIC items (compliance obligations, potential liability language) pero no permitir bloqueo total. Delayed post-mortems pierden valor de trust — publicar en 2 semanas ideal, 1 mes acceptable, >3 meses inútil." },
+        { "letter": "D", "text": "Post-mortems públicos solo para outages menores.", "correct": false, "why": "Al revés — los outages GRANDES son los que MÁS necesitan post-mortem público. Silencio en outages grandes es más dañino que cualquier admisión honesta. Users ya notaron el outage grande." }
+      ],
+      "explanation": "Framework de decisión: (1) CUSTOMER IMPACT visible? → post-mortem público casi siempre; (2) SECURITY INCIDENT? → involucrar security team, GDPR/regulatory, considerar delay hasta patch shipped; (3) LEGAL RISK REAL? → revisar con counsel, edit specific claims si necesario, pero publicar; (4) BRAND RISK? → transparencia mejora brand long-term (short-term hit sí). Elements clave: timestamp accurate timeline (users pueden verificar contra sus logs), root cause honesta (no spin — 'código nuestro falló' > 'unexpected environmental factors'), action items visibles (los users verán si los cumplen en próximo incident). Empresas top: Cloudflare, GitLab, GitHub, Fly.io publican post-mortems detallados regularmente.",
+      "realWorld": "Cloudflare Cloudbleed 2017 (John Graham-Cumming): 3000-word technical post-mortem al día siguiente, con timeline exacto, root cause (bug en parser HTML de ragel), memoria dump analysis. Community reaction: positivamente. Contraste Equifax 2017: 6 semanas de silencio, admissions gradualemente, spin corporativo, CEO Rick Smith removed, multas $700M. GitLab 2017 database outage: publicaron post-mortem detallado admitiendo human error + missing backup verification — earned respect masivo. Fly.io publica cada incident con detail técnico obsesivo.",
+      "tags": ["public post-mortem", "transparency", "trust", "Cloudflare"],
+      "tech": [],
+      "references": [{ "title": "Cloudflare — Cloudbleed Incident Report" }, { "title": "GitLab — Database Incident Post-mortem" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "reliability",
+      "topic": "Multi-team incidents y cross-team coordination",
+      "difficulty": "senior",
+      "scenario": "Incident afecta 3 servicios owned por 3 teams distintos. Cada team abre su propio incident channel, escala por su cuenta, comunica separadamente. El customer ve 3 status updates contradictorios en 1 hora. Los teams no ven el impacto agregado.",
+      "question": "¿Cómo coordinar incidents multi-team correctamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Un SOLO incident channel maestro (#inc-XXX-master) donde IC coordina cross-team. Cada team puede tener su sub-channel para debug técnico, pero DECISIONES y COMMS pasan por el master. IC único (no un IC por team) toma decisiones de priorización cross-team.", "correct": true, "why": "Correcto. Sin coordinación central, teams optimizan localmente (fixear su servicio) sin ver el picture global (order of operations importa — fixear A antes de B puede empeorar). Master channel + IC único = single source of truth." },
+        { "letter": "B", "text": "Comms EXTERNA unificada: 1 status page update, 1 mensaje coherente, 1 owner (Comms Lead). NO cada team publicando su propio status — user ve contradicciones y pierde trust. Aggregate impact visible ('this incident affects services X, Y, Z; ETA restoration Z time').", "correct": true, "why": "Correcto. Customers no piensan en tu org chart; piensan en 'la app está rota'. Comms fragmentada = user experience fragmentada. Un solo mensaje coherente es minimum standard." },
+        { "letter": "C", "text": "Escalation cross-team pre-definida: si servicio X depende de servicio Y y Y tiene incident, X team escala AUTOMÁTICAMENTE. No 'wait and see' — proactive escalation reduce discovery time. Dependency map documentado facilita.", "correct": true, "why": "Correcto. Dependencies opacas = descubrimiento tardío. 'Ah, esto es por Y' descubierto 40 min into incident es fail común. Dependency map + auto-escalation reduce esto a minutos." },
+        { "letter": "D", "text": "Post-mortem CONJUNTO cross-team — no 3 post-mortems separados. Root cause frequently reveal issues at INTERFACES (contracts, dependency assumptions). Post-mortems separados esconden estos.", "correct": true, "why": "Correcto. La causa raíz de incidents multi-team típicamente vive EN LOS BORDES entre teams (contract violations, undocumented dependencies, assumption mismatches). Post-mortem conjunto revela esto; separados esconden — cada team culpa al otro." },
+        { "letter": "E", "text": "Cada team maneja su propio incident independientemente.", "correct": false, "why": "Anti-patrón que causó el problema original del scenario. Sin coordinación, incidents multi-team duran 2-3x más y comunican mal. Coordination overhead pequeño (1 IC central) vs coordination fail costo enorme." }
+      ],
+      "explanation": "Multi-team incidents requieren: (1) SINGLE IC — one person coordina, no 3; (2) MASTER CHANNEL — single source of truth; (3) SUB-CHANNELS técnicos por team para debug detallado; (4) UNIFIED COMMS — 1 status page voice, coherente; (5) DEPENDENCY VISIBILITY — mapa de servicios/dependencies para descubrimiento rápido; (6) CROSS-TEAM RUNBOOKS — para incidents conocidos multi-team (ej. DB primary fail affects 5 services); (7) JOINT POST-MORTEM — root cause en interfaces. Herramientas: incident.io, FireHydrant, Slack workflows para automation multi-team. Cultural: 'no me lavo las manos' — un team no puede decir 'no es mi servicio' si el incident afecta a users; ownership colectivo mientras dura el incident.",
+      "realWorld": "AWS S3 outage 2017 causó cascada multi-team en internal Amazon services — post-mortem publicó que la coordinación cross-team fue key aprendizaje. Facebook 2021 6-hour outage tuvo componentes BGP + DNS + auth — coordination masiva requerida. GitLab publica incidents multi-team con estructura clara: 1 lead IC + team leads + Comms Lead + Post-mortem conjunto.",
+      "tags": ["multi-team", "cross-team coordination", "incident commander", "dependencies"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Workbook — Ch. 9 Incident Response" }, { "title": "Slack Engineering — Incident Response at Scale" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "reliability",
+      "topic": "Metrics para evaluar salud IR program",
+      "difficulty": "senior",
+      "scenario": "Board pregunta '¿cómo sabemos que nuestro incident response program funciona? Give me metrics'.",
+      "question": "¿Qué métricas evalúan salud de un IR program?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "MTTR (Mean Time To Resolve): trend downward = program mejorando. Elite <30 min, high 1-2h, low >24h. Benchmark vs industry + vs own history. Baja MTTR indica: (1) runbooks efectivos, (2) team training, (3) observability madura, (4) automation de mitigation.", "correct": true, "why": "Correcto. MTTR es LA métrica de resolution quality. DORA una de las 4 canónicas. Trend importa más que valor absoluto — declining trend = program funcionando." },
+        { "letter": "B", "text": "MTBF (Mean Time Between Failures): trend upward = system + program mejorando. Combina reliability real y prevention (action items ejecutados). Baja MTBF con alta MTTR = problema. Alta MTBF con baja MTTR = elite.", "correct": true, "why": "Correcto. MTBF es proxy de prevention effectiveness — ¿estamos previniendo recurrencia o solo apagando fuegos? Elite systems fallan raramente Y restauran rápido cuando fallan." },
+        { "letter": "C", "text": "% Post-mortem action items completed on time: <60% = process broken (o demasiados AI, o priorización mal, o team sin capacity). >80% = ejecución disciplinada.", "correct": true, "why": "Correcto. Meta-metric — ¿el proceso genera cambio real? Sin ejecución de AI, post-mortems son teatro. Trackear en dashboard visible al management." },
+        { "letter": "D", "text": "On-call satisfaction survey: cuestionario quarterly a rotators. Preguntas: satisfacción, burnout indicators, pages nocturnas frecuencia, adequacy de runbooks/tooling. Score <7/10 = team riesgo, action required.", "correct": true, "why": "Correcto. Leading indicator de retention. Engineers con on-call satisfaction bajo renuncian en 6-12 meses. Detectar antes = intervenir antes = retention alta. PagerDuty publishes benchmarks industry." },
+        { "letter": "E", "text": "Número total de incidents = program bueno si baja.", "correct": false, "why": "Vanity + misleading. Puedes bajar 'incidents count' cambiando definición (subiendo threshold) sin mejorar nada real. Métricas de calidad (MTTR, MTBF, SLO compliance) son más honestas." }
+      ],
+      "explanation": "IR program health dashboard debe incluir: (1) LAGGING — MTTR, MTBF, incident frequency, SLO compliance por servicio; (2) LEADING — on-call satisfaction, pages per person per week, alert actionable rate, post-mortem AI completion rate; (3) META — game day frequency, runbook coverage %, IC certification %. Review cadence: monthly team review, quarterly management review. Comparar vs benchmark (PagerDuty, DORA reports) y vs own historical trend. Alerts para métricas: MTTR subiendo 20% en 3 meses → root cause analysis; on-call satisfaction bajo 6/10 → intervention; AI completion <60% → process review. IR maturity model: Ad-hoc → Managed → Defined → Measured → Optimizing (CMMI-inspired).",
+      "realWorld": "PagerDuty 'State of Digital Operations 2023' publica benchmarks industry. Google SRE Book Ch. 3 discute SLO compliance como métrica central. DORA reports anuales dan benchmarks DevOps includendo MTTR. Empresas maduras (Netflix, Google, Stripe) publican estas métricas internamente con transparency total; empresas menos maduras las guardan como secret o no las miden.",
+      "tags": ["IR metrics", "MTTR", "MTBF", "on-call satisfaction", "program health"],
+      "tech": [],
+      "references": [{ "title": "PagerDuty State of Digital Operations 2023" }, { "title": "DORA State of DevOps Report" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "reliability",
+      "topic": "Caso comparativo — Cloudflare vs Equifax",
+      "difficulty": "senior",
+      "scenario": "Dos casos históricos: Cloudflare 2017 Cloudbleed (memory leak exponía data sensible en HTTP responses); Equifax 2017 breach (Apache Struts vuln no parcheada, 147M users PII expuesta). Ambos son incidents críticos con exposure de data.",
+      "question": "¿Qué diferencias en incident response ilustran los dos casos y qué lessons enseñan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CLOUDFLARE (bien): (1) detección rápida — Tavis Ormandy (Google Project Zero) reportó, Cloudflare mitigó en 47 min inicial, disable feature en <7h total; (2) transparencia total — John Graham-Cumming publicó technical post-mortem 3000 palabras el día siguiente con timeline exacto, root cause (bug en ragel HTML parser), memory dumps analysis, action items; (3) coordinación con affected parties — Google, Yahoo cleared caches proactively; (4) resultado: reputación INTACTA, community respeto elevado. EQUIFAX (mal): (1) detección tardía — attackers dentro 2.5 meses antes de detección; (2) disclosure delayed 6 semanas después de detection interna; (3) spin comms — minimizaron scope, sitio de check inicial no funcionaba, ofrecieron TrustedID (waived arbitration clause hidden); (4) resultado: CEO Rick Smith removed, CIO y CSO removed, $700M multas, class actions billion+, brand permanentemente damaged. LESSON: transparency + speed = trust preservation; delay + spin = reputational catastrophe.", "correct": true, "why": "Correcto. Es el case study contraste más citado en incident response education. Cloudbleed es benchmark de 'cómo responder bien'; Equifax de 'cómo destruir reputación'. Ambos con impact técnico severo, pero response completamente distinto = resultados completamente distintos." },
+        { "letter": "B", "text": "Ambos casos son idénticos en handling.", "correct": false, "why": "Radicalmente distintos. Cloudflare es case study de best practice; Equifax de failure. La diferencia principal: transparencia y velocidad de disclosure." },
+        { "letter": "C", "text": "Cloudflare debió haber ocultado el incident como Equifax.", "correct": false, "why": "Inversión de causalidad. Cloudflare preservó reputation POR ser transparent; Equifax la perdió por ocultar. Ocultar en industria con community técnica sofisticada (que detecta rápido) es imposible + backfires." },
+        { "letter": "D", "text": "Los dos casos no tienen lecciones aplicables.", "correct": false, "why": "Al contrario — son los case studies más enseñados en programas SRE, security, y IR training. NIST, SANS, universities incluyen ambos en curricula." }
+      ],
+      "explanation": "El contraste enseña principios universales: (1) DETECTION MATTERS — Equifax perdió por no detectar en 2.5 meses; Cloudflare ganó por respond en <1h; (2) TRANSPARENCY WINS — publicar la verdad honestamente, aunque duela, preserva trust; ocultarla la destruye cuando emerge; (3) TECHNICAL DEPTH — Cloudflare post-mortem tan detallado que la security community lo estudia; Equifax comms tan superficial que fue interpretado como cover-up; (4) EXECUTIVE HANDLING — Cloudflare CEO Matthew Prince publicó personalmente, Graham-Cumming (CTO) técnicamente; Equifax CEO se retiró antes de testimony congresional (percibido como huir); (5) VICTIM CARE — Cloudflare notificó a affected parties proactively; Equifax hizo TrustedID signup awkward y con clausulas escondidas. Framework: en cualquier incident significativo, pregunta '¿estamos siendo Cloudflare o Equifax hoy?'",
+      "realWorld": "Cloudflare Cloudbleed report (Feb 24, 2017): blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug. Equifax breach timeline y congressional hearings de septiembre-noviembre 2017. Book 'Breach: The Untold Story of the Equifax Data Breach' de Rick Smith documenta desde inside. NIST publicó lessons learned de Equifax. GDPR (in effect 2018 forward) codificó muchas de las lecciones Equifax en law — 72h breach notification máximo, no fine < 4% global revenue.",
+      "tags": ["Cloudflare", "Equifax", "case study", "transparency", "IR"],
+      "tech": [],
+      "references": [{ "title": "Cloudflare — Cloudbleed Incident Report Feb 2017" }, { "title": "US House Committee — Equifax Breach Report" }]
+    }
+  ]
+}

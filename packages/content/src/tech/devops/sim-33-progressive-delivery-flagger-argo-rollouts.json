@@ -1,0 +1,425 @@
+{
+  "id": "devops-sim-33-progressive-delivery-flagger-argo-rollouts",
+  "trackId": "devops",
+  "order": 33,
+  "title": "Simulacro 33 — Progressive Delivery: Flagger y Argo Rollouts",
+  "focus": "Progressive delivery patterns modernos: Flagger (con Istio/Linkerd/NGINX), Argo Rollouts (con service mesh o Ingress), automated canary analysis basado en métricas, Kayenta (Netflix), integración con Prometheus para promotions metrics-driven, differences entre Flagger y Argo Rollouts.",
+  "areaCoverage": ["deployment"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "deployment",
+      "topic": "Definición de progressive delivery",
+      "difficulty": "junior",
+      "scenario": "Tu compañero senior dice: 'necesitamos hacer progressive delivery en el nuevo servicio'. Nunca has oído el término. Preguntas '¿es lo mismo que CI/CD?'.",
+      "question": "¿Qué es progressive delivery y en qué difiere de CI/CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Progressive delivery es la EVOLUCIÓN de continuous delivery donde el rollout es GRADUAL y automatizado con analysis de métricas. CI/CD termina en 'deployed to production'; progressive delivery añade: canary automatizado, analysis de metrics (comparar new vs old), automatic promotion o rollback basado en criterios objetivos. James Governor (RedMonk) acuñó el término en 2018.", "correct": true, "why": "Correcto. CI/CD es 'llegar a producción'; progressive delivery es 'llegar a producción de forma SEGURA a scale'. Adds automated canary analysis (Kayenta, Flagger, Argo Rollouts) para decidir promotion sin human eyes. Es CD2 + observability + statistical analysis." },
+        { "letter": "B", "text": "Progressive delivery es solo un nombre nuevo para blue/green.", "correct": false, "why": "Falso. Blue/green es cutover instantáneo. Progressive delivery es gradual + analyzed. Distintos conceptos." },
+        { "letter": "C", "text": "Es específico de Kubernetes.", "correct": false, "why": "Falso. Aunque Kubernetes ecosystem (Argo, Flagger) es donde más se implementa, el concepto aplica a cualquier plataforma. Netflix Spinnaker para EC2/AWS también hace progressive delivery." },
+        { "letter": "D", "text": "Progressive delivery requiere abandonar CI/CD.", "correct": false, "why": "Al contrario — progressive delivery se BUILDS ON TOP de CI/CD. Sin CI/CD maduro, progressive delivery no es viable." }
+      ],
+      "explanation": "Progressive delivery pillars: (1) FEATURE FLAGS — decouple deploy de release; (2) PROGRESSIVE ROLLOUT — canary o gradual exposure; (3) OBSERVABILITY — metrics para saber qué está pasando; (4) EXPERIMENTATION — A/B testing capabilities; (5) AUTOMATED ANALYSIS — decisions sin human. Herramientas: Argo Rollouts, Flagger, Spinnaker + Kayenta (infra); LaunchDarkly, Split, Unleash (feature flags); Prometheus, Datadog (metrics). Anti-patrón común: 'tenemos Argo Rollouts' pero sin analysisTemplate configurado = solo pausa manual = no es progressive delivery real, es canary manual con más pasos.",
+      "realWorld": "James Governor (RedMonk) 2018 acuñó el término. Weaveworks (creators of Flagger) promueve concepto. Netflix pioneered con Spinnaker + Kayenta. Airbnb, Uber, Ticketmaster todos hacen progressive delivery. Google Cloud Deploy tiene progressive delivery features. AWS CodeDeploy tiene canary deployments (limited progressive).",
+      "tags": ["progressive delivery", "James Governor", "canary analysis"],
+      "tech": ["Argo Rollouts", "Flagger", "Spinnaker"],
+      "references": [{ "title": "RedMonk — Towards Progressive Delivery" }, { "title": "Weaveworks — Progressive Delivery" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "deployment",
+      "topic": "Argo Rollouts — qué es",
+      "difficulty": "junior",
+      "scenario": "Instalas Argo Rollouts en tu cluster K8s. Ves que crea nuevo CRD llamado Rollout. Un colega pregunta '¿por qué no usar solo Deployments de K8s?'.",
+      "question": "¿Qué es Argo Rollouts y por qué existe?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts es un controller de K8s que reemplaza el Deployment nativo con un CRD 'Rollout' con capabilities avanzadas: canary con weight-based traffic splitting (via Ingress/Service Mesh), blue/green nativo, analysis templates (Prometheus queries) para automated promotion/rollback, integration con AnalysisRun. K8s Deployment solo hace rolling update básico — no canary con weights, no analysis, no blue/green nativo.", "correct": true, "why": "Correcto. K8s Deployment tiene 2 strategies: RollingUpdate y Recreate. Ninguna es canary real ni blue/green real. Argo Rollouts extiende K8s con progressive delivery primitives. Parte de Argo CD ecosystem (Argoproj)." },
+        { "letter": "B", "text": "Argo Rollouts es un CI/CD tool que reemplaza Jenkins.", "correct": false, "why": "Falso. Argo Rollouts hace deployment strategies, no CI (build/test). Argo Workflows es el CI equivalent en Argo family." },
+        { "letter": "C", "text": "Argo Rollouts es un service mesh.", "correct": false, "why": "Falso. Argo Rollouts USA service meshes (Istio, Linkerd) para traffic control. No es un mesh en sí." },
+        { "letter": "D", "text": "Argo Rollouts requiere Istio obligatoriamente.", "correct": false, "why": "Falso. Soporta Istio, Linkerd, Envoy AWS ALB, NGINX Ingress, SMI (Service Mesh Interface), o replica-based rollout sin traffic mesh." }
+      ],
+      "explanation": "Argo Rollouts CRD Rollout ejemplo: strategy.canary.steps: [{setWeight: 10}, {pause: {duration: 30m}}, {setWeight: 25}, {analysis: {templates: [{templateName: success-rate}]}}]. analysisTemplate define Prometheus queries — successful = promote, fail = rollback. Trafficrouting: {istio: {virtualService: {name: my-vs}}} o {alb: {ingress: my-ingress}}. Rollout gestiona 2 ReplicaSets (canary + stable) y controla weight en el traffic router. Kubectl argo rollouts plugin permite: promote (avanzar step), abort (rollback), pause, resume. Integración con Argo CD para GitOps completo.",
+      "realWorld": "Argo Rollouts nació en Intuit (open sourced 2019). Ahora parte de Argoproj CNCF. Usado por Adobe, IBM, Airbnb, GoDaddy. Muy popular en K8s ecosystem porque es K8s-native (CRDs). Argo family = Argo CD (GitOps), Argo Workflows (CI), Argo Rollouts (progressive delivery), Argo Events (event-driven).",
+      "tags": ["Argo Rollouts", "CRD", "canary", "kubernetes"],
+      "tech": ["Argo Rollouts", "Kubernetes", "Argo CD"],
+      "references": [{ "title": "Argo Rollouts docs" }, { "title": "argoproj.github.io/argo-rollouts" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "deployment",
+      "topic": "Flagger — qué es",
+      "difficulty": "mid",
+      "scenario": "Tu equipo usa Flux (GitOps de Weaveworks). Quieren añadir progressive delivery. Flagger es mencionado como opción natural.",
+      "question": "¿Qué es Flagger y cómo se diferencia de Argo Rollouts?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Flagger es un operator K8s de Weaveworks (ahora CNCF sandbox) que orquesta progressive delivery. USA los K8s Deployment nativos (no reemplaza) — Flagger crea un Canary CRD que refleja el Deployment y orquesta el rollout con weighted traffic (Istio, Linkerd, App Mesh, NGINX, Gloo, etc.).", "correct": true, "why": "Correcto. Flagger es MÁS opinionated que Argo Rollouts. Diseñado para integrar con Flux GitOps. No reemplaza Deployments — orquesta encima de ellos." },
+        { "letter": "B", "text": "Flagger tiene análisis automatizado de canary con múltiples metric providers built-in: Prometheus, Datadog, New Relic, Amazon CloudWatch, InfluxDB, Google Cloud Monitoring, Graphite, Dynatrace, custom webhooks.", "correct": true, "why": "Correcto. Metric providers ecosystem amplio. Cada progression step corre queries y decide promote basado en thresholds. Similar a Argo Rollouts analysisTemplate pero más integrado por defecto." },
+        { "letter": "C", "text": "Argo Rollouts vs Flagger: (1) Argo reemplaza Deployment con Rollout CRD; Flagger deja Deployment intacto y añade Canary CRD encima; (2) Argo tiene primer-class integration con Argo CD; Flagger diseñado para Flux; (3) Ambos soportan mismas mesh/ingress backends; (4) Argo tiene más ecosystem community; Flagger es más simple/opinionated.", "correct": true, "why": "Correcto. Ambas herramientas hacen cosas similares pero con approaches distintos. La elección típicamente sigue la GitOps tool (Argo CD → Argo Rollouts; Flux → Flagger)." },
+        { "letter": "D", "text": "Flagger soporta canary, A/B testing (header-based) y blue/green con traffic mirroring.", "correct": true, "why": "Correcto. Flagger tiene 3 strategies: canary (weight-based), a/b (header-based), blue/green (con mirror opcional). Argo Rollouts tiene canary y blue/green pero header-based routing es más manual." },
+        { "letter": "E", "text": "Flagger requiere Weaveworks account.", "correct": false, "why": "Falso. Es open source, standalone. Puedes usarlo sin Weave Cloud." }
+      ],
+      "explanation": "Flagger arquitectura: (1) creas Canary CRD referencing el Deployment; (2) Flagger crea 'canary' Deployment como copy; (3) durante rollout, Flagger scales canary up + ajusta VirtualService weights; (4) en cada step, corre queries a metric provider; (5) if metrics pass, next step; if fail, rollback (scale canary down, weight back to 0); (6) if final step passes, promote (primary Deployment updated a nueva version). YAML declarative — configuras Canary CRD una vez, changes al Deployment triggerean automatic rollouts. Best fit: environments con Flux + Istio/Linkerd + Prometheus donde quieres progressive delivery declarative con minimum config.",
+      "realWorld": "Flagger creado por Weaveworks (Alexis Richardson, Stefan Prodan). Ahora Weaveworks acquired por CNCF/Progress. Usado por: Trend Micro, Twilio, WooCommerce, Uwatch, muchos con Istio+Flux stacks. Flagger fabric usa Prometheus queries built-in para SLI-based analysis.",
+      "tags": ["Flagger", "Weaveworks", "canary", "Flux"],
+      "tech": ["Flagger", "Flux", "Istio", "Prometheus"],
+      "references": [{ "title": "flagger.app docs" }, { "title": "Weaveworks — Flagger" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "deployment",
+      "topic": "Automated canary analysis — Kayenta",
+      "difficulty": "mid",
+      "scenario": "Argo Rollouts corre canary. Cada step evalúa 'success rate > 99%'. Compañero pregunta: '¿esto es realmente análisis? Es solo threshold. Netflix tiene algo llamado Kayenta que es más sophisticated'.",
+      "question": "¿Qué es Kayenta y cómo mejora el analysis vs thresholds simples?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kayenta (Netflix, OSS) es motor de automated canary analysis. En vez de thresholds fijos ('error < 1%'), compara STATISTICAMENTE distribuciones de métricas entre canary y baseline (v1 running en paralelo) usando Mann-Whitney U test. Produce score 0-100. Ventajas vs thresholds: (1) accounts for baseline variability (si v1 normalmente tiene 0.5% error, un canary con 0.6% no es problema); (2) usa datos apples-to-apples (mismo momento, misma carga, misma infra); (3) statistical significance evita false positives; (4) configurable per-metric weight y sensitivity.", "correct": true, "why": "Correcto. Kayenta es el estado-del-arte en canary analysis. Concepto clave: compara con BASELINE running en paralelo, no con historical data. Elimina bias de time-of-day, day-of-week, external events. Integrable con Spinnaker (Netflix's deployment tool) o standalone." },
+        { "letter": "B", "text": "Kayenta es una herramienta de A/B testing que reemplaza Optimizely.", "correct": false, "why": "Falso. Kayenta es específicamente para canary analysis (infra/technical metrics), no A/B testing (business metrics)." },
+        { "letter": "C", "text": "Kayenta es feature flag tool que reemplaza LaunchDarkly.", "correct": false, "why": "Falso. Kayenta no gestiona flags; hace analysis de métricas post-deploy." },
+        { "letter": "D", "text": "Kayenta solo funciona con Spinnaker de Netflix.", "correct": false, "why": "Kayenta puede ser standalone service (REST API). Aunque hoy la integración más común es con Spinnaker, es tool independiente." }
+      ],
+      "explanation": "Kayenta canary judge: (1) config define 'canary config' con list de metrics + weights + sensitivity; (2) durante canary, Kayenta consulta metric source (Prometheus, Datadog, Stackdriver, etc.) para datos de canary y baseline; (3) para cada metric, Mann-Whitney U test compara distribuciones; (4) score aggregate con weights; (5) si score > threshold (ej. 75/100), promote; else abort. Ventajas vs threshold-based: (a) accepts intrinsic noise en baselines; (b) detects subtle regressions que threshold miss; (c) less false positives. Desventajas: (a) requires baseline running paralelo (extra infra); (b) complexity de config; (c) requires enough data (canaries duración muy corta = poco data = poor statistical power). Blog Netflix 2017 explica origins.",
+      "realWorld": "Netflix Kayenta paper y OSS. Integration con Spinnaker (default en Netflix). Google Cloud lanzó service similar. Adopters: Waze, Salesforce, Home Depot. Argo Rollouts + AnalysisTemplate puede replicar Kayenta patterns pero requires custom code. Flagger tiene extension para Kayenta backend.",
+      "tags": ["Kayenta", "Netflix", "statistical analysis", "Mann-Whitney"],
+      "tech": ["Kayenta", "Spinnaker", "Prometheus"],
+      "references": [{ "title": "Netflix Tech Blog — Kayenta" }, { "title": "kayenta.io" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "deployment",
+      "topic": "Prometheus queries para canary analysis",
+      "difficulty": "mid",
+      "scenario": "Configuras AnalysisTemplate en Argo Rollouts que dice 'success rate > 95%'. Necesitas escribir la PromQL query. ¿Cómo la construyes?",
+      "question": "¿Qué patterns de Prometheus queries usar para canary analysis?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Success rate por servicio (5min window): sum(rate(http_requests_total{service='my-svc',code!~'5..'}[5m])) / sum(rate(http_requests_total{service='my-svc'}[5m])). Comparar canary vs stable subset.", "correct": true, "why": "Correcto. Ratio de non-5xx requests. Rate en 5min window smooth spikes. Umbrella queries pattern. Argo Rollouts / Flagger docs muestran variantes similares." },
+        { "letter": "B", "text": "P99 latency: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service='my-svc'}[5m])) by (le)). Compara canary p99 vs stable p99 — canary no debe ser >1.5x peor.", "correct": true, "why": "Correcto. Percentiles importante — mean ok pero tail latency degraded = user experience bad. Requires histogram metrics (buckets) instrumented." },
+        { "letter": "C", "text": "Resource usage: rate(container_cpu_usage_seconds_total{pod=~'canary-.*'}[5m]) vs stable pods. Detecta memory leaks o CPU regressions.", "correct": true, "why": "Correcto. Nueva version puede tener 2x CPU usage por bad code — detectable antes de que cause outage. cAdvisor metrics via kube-state-metrics." },
+        { "letter": "D", "text": "Custom business metrics: rate(orders_completed_total{version='canary'}[5m]) vs stable. Si canary genera menos orders, business regression aunque tech metrics ok.", "correct": true, "why": "Correcto. Business metrics catches bugs invisible en tech metrics (broken checkout button = 200 responses pero 0 orders). Requires app-level instrumentation." },
+        { "letter": "E", "text": "Simple counter total sin normalización.", "correct": false, "why": "Antipatrón. 'canary tiene menos errors totales' no dice nada — canary tiene menos traffic también. Siempre rate/ratio, no absolute counters." }
+      ],
+      "explanation": "Query patterns para canary analysis: (1) Success rate — ratio de good vs total; (2) Latency percentiles — histogram_quantile; (3) Saturation — CPU/memory usage; (4) Business KPIs — domain-specific counters. Argo Rollouts AnalysisTemplate config: provider: prometheus, address: http://prometheus:9090, query: '<PromQL>', successCondition: 'result[0] > 0.95', failureCondition: 'result[0] < 0.90'. Flagger similar con metricTemplates. Both support: (a) multiple metrics con AND/OR; (b) interval-based repeated checks; (c) failureLimit (# failed checks antes rollback). Best practices: (a) short intervals (30s-2min) para detección temprana; (b) failureLimit >1 para tolerar transient spikes; (c) reference baseline metric (compare canary vs stable no absolute threshold).",
+      "realWorld": "Argo Rollouts docs incluyen ejemplos de PromQL queries. Flagger's SLO recording rules pattern. Google Cloud Managed Service for Prometheus. Datadog similar con their query language. Adopters: Adobe (Argo), Twilio (Flagger), Airbnb custom. Best practices publicados por Weaveworks, Intuit.",
+      "tags": ["Prometheus", "PromQL", "canary analysis", "AnalysisTemplate"],
+      "tech": ["Prometheus", "PromQL", "Argo Rollouts"],
+      "references": [{ "title": "Argo Rollouts — AnalysisTemplate" }, { "title": "Flagger — Metrics" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "deployment",
+      "topic": "Setup canary steps — decision points",
+      "difficulty": "mid",
+      "scenario": "Configurando Argo Rollouts steps para primer canary. Opciones: [{setWeight: 10}, {pause: 5m}, {setWeight: 100}] vs [{setWeight: 5}, {analysis: 30m}, {setWeight: 25}, {analysis: 1h}, {setWeight: 50}, {analysis: 1h}, {setWeight: 100}].",
+      "question": "¿Cómo elegir la granularidad de steps?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Depende del RISK PROFILE del servicio. Servicios high-traffic con SLO estricto: steps más pequeños (1%, 5%, 25%, 50%, 100%) con analysis long (1h+) para statistical power. Servicios low-risk/low-traffic: fewer steps más grandes (10%, 50%, 100%) con analysis shorter (10min). Regla: cada step = observable time para catch problems + gradually increasing blast radius.", "correct": true, "why": "Correcto. No hay universal correct. High-risk services (payments, auth) merecen conservative steps. Low-risk (marketing site) puede ser fast. Duration tradeoff: too short = poco data para analysis = false positives o miss bugs; too long = deploys tardan horas = friction." },
+        { "letter": "B", "text": "Siempre usar 10 steps de 10% cada uno.", "correct": false, "why": "Rigid. 10 steps con analysis de 1h cada uno = 10h de deploy. Excesivo para most services." },
+        { "letter": "C", "text": "1 step al 50% es suficiente para detectar problemas.", "correct": false, "why": "50% traffic con bug = 50% users affected. Blast radius grande. Small steps first (1-10%) es standard." },
+        { "letter": "D", "text": "Sin analysis, solo pauses — human decides.", "correct": false, "why": "Elimina automation. Human at 3AM = poor decisions. Automated analysis diseñado para 24/7 objectivity." }
+      ],
+      "explanation": "Step design ejemplos: (1) High-risk service (payment): [{weight:1, analysis:15m}, {weight:5, analysis:1h}, {weight:25, analysis:2h}, {weight:50, analysis:4h}, {weight:100}]. Total ~8h; (2) Standard service: [{weight:10, analysis:30m}, {weight:50, analysis:1h}, {weight:100}]. Total ~1.5h; (3) Low-risk (staging/internal): [{weight:50, pause:10m}, {weight:100}]. Total ~15min. Consideraciones: (a) traffic volume — low-traffic services need longer windows para statistical significance; (b) SLO — stricter SLO = smaller steps; (c) team maturity — mature teams tolerate faster deploys; (d) business hours — deploys often nocturnos o business hours dependiendo strategy. Anti-patrón: all services con mismos steps default — customize per service class.",
+      "realWorld": "Netflix uses different canary configs per service tier (critical vs standard vs experimental). Amazon similar. Argo Rollouts docs muestran example configs. Flagger has best-practice examples. Intuit publicó experiencias con Argo Rollouts at scale.",
+      "tags": ["canary steps", "risk profile", "analysis duration"],
+      "tech": ["Argo Rollouts", "Flagger"],
+      "references": [{ "title": "Argo Rollouts — Canary Strategy" }, { "title": "Flagger — Progressive Delivery" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "deployment",
+      "topic": "Traffic routing — Istio integration",
+      "difficulty": "senior",
+      "scenario": "Argo Rollouts + Istio. Rollout progression cambia weight de 10% → 25% → 50% → 100%. ¿Qué está pasando bajo el capó con Istio?",
+      "question": "¿Cómo Argo Rollouts coordina con Istio para traffic splitting?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Rollout CRD tiene trafficRouting.istio.virtualService: name of pre-existing VirtualService. Argo Rollouts controller MUTA los weights en el VirtualService cada step: destinations[0].weight = 100 - canary_weight (stable), destinations[1].weight = canary_weight.", "correct": true, "why": "Correcto. Argo Rollouts modifica el VirtualService object en el K8s API. Istio control plane (istiod) detecta el cambio, updates Envoy sidecar configs, traffic split happens en data plane (pods)." },
+        { "letter": "B", "text": "DestinationRule required: define subsets (stable, canary) por labels. Argo Rollouts crea 2 ReplicaSets con labels distintos que corresponden a los subsets.", "correct": true, "why": "Correcto. DestinationRule tells Istio how to differentiate stable vs canary pods. Subsets referenciados desde VirtualService weights." },
+        { "letter": "C", "text": "Sin sidecar (Envoy) en cada pod, no funciona. Istio requires mesh instrumentation.", "correct": true, "why": "Correcto. Envoy sidecar aplica los weights. Sin mesh sidecar en pods, traffic no puede ser split declarative — cae a round-robin básico de K8s Service." },
+        { "letter": "D", "text": "Ambos ReplicaSets (canary y stable) tienen mismo Service, differ en labels. VirtualService referencia el Service, con weight routing a subsets basados en labels.", "correct": true, "why": "Correcto. Un Service, DestinationRule define subsets, VirtualService controla split. Pattern estándar Istio." },
+        { "letter": "E", "text": "Argo Rollouts requiere modificar Istio installation.", "correct": false, "why": "Falso. Argo Rollouts es plug-and-play con Istio installation estándar. Solo requires que Istio esté instalado." }
+      ],
+      "explanation": "Setup completo: (1) Deploy Istio (istioctl install); (2) Enable sidecar injection en namespace (label istio-injection=enabled); (3) Crear Service (que apunta a app); (4) Crear DestinationRule con subsets stable/canary; (5) Crear VirtualService con initial routing 100/0; (6) Crear Rollout CRD con trafficRouting.istio + steps. Argo Rollouts controller: watches Rollout, cuando new version detected, crea canary ReplicaSet, updates VirtualService weight gradualmente según steps. Advanced: canary por HEADER (Istio soporta match.headers) para test cohorts específicos antes de weight-based rollout. Envoy: sidecar proxy en cada pod, applies routing rules.",
+      "realWorld": "Airbnb usa Istio + Argo Rollouts para canary. IBM Cloud Kubernetes Service integrated similar. Adobe similar stack. Argo Rollouts docs tienen full example Istio integration. Flagger integration muy similar (both use Istio APIs).",
+      "tags": ["Istio", "Argo Rollouts", "VirtualService", "DestinationRule"],
+      "tech": ["Istio", "Envoy", "Argo Rollouts"],
+      "references": [{ "title": "Argo Rollouts — Istio traffic routing" }, { "title": "Istio VirtualService docs" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "deployment",
+      "topic": "AnalysisTemplate — patterns comunes",
+      "difficulty": "senior",
+      "scenario": "Escribiendo AnalysisTemplate reusable para todos los servicios web de tu company. Debe checar success rate y latency, con thresholds tunable per servicio.",
+      "question": "¿Cómo diseñar AnalysisTemplates reusables y parameterized?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts AnalysisTemplate soporta 'args' — parameters que se pasan al hacer referencia. Ejemplo: template define 'service-name' y 'threshold' como args, query uses {{args.service-name}} y successCondition uses {{args.threshold}}. Rollouts referencian template con args específicos.", "correct": true, "why": "Correcto. Templating permite un solo AnalysisTemplate central compartido por muchos Rollouts, cada uno con sus args. DRY principle." },
+        { "letter": "B", "text": "ClusterAnalysisTemplate: variant cluster-scoped (vs namespace-scoped). Usar para templates compartidos across namespaces. Platform team define central templates, product teams los referencian.", "correct": true, "why": "Correcto. ClusterAnalysisTemplate es namespace-independent. Governance pattern: platform team owns templates + best practices, product teams focus en business." },
+        { "letter": "C", "text": "Múltiples metrics en un template: array de metrics, cada uno con su query, successCondition, failureCondition, interval, count. Rollout falla si CUALQUIER metric fails.", "correct": true, "why": "Correcto. Composición AND: success rate > 95% AND p99 < 500ms AND CPU < 80% — todos deben pasar. Provee defense-in-depth analysis." },
+        { "letter": "D", "text": "Background analysis: paralelo al step progression. Continues durante todos los steps. Rollback inmediato si algo falla en cualquier momento, no solo al final del step.", "correct": true, "why": "Correcto. Rollout.spec.strategy.canary.analysis.templates ejecuta durante entire rollout. Fail = immediate abort. Vs. step-level analysis que solo evalúa entre steps." },
+        { "letter": "E", "text": "Un AnalysisTemplate por Rollout — no reuse.", "correct": false, "why": "Antipatrón. Duplication = maintenance nightmare. Standardize templates centrally con args." }
+      ],
+      "explanation": "AnalysisTemplate structure: metadata.name, spec.args (parameters), spec.metrics (list). Each metric: name, interval (e.g., 30s), count (e.g., 10 checks), successCondition (e.g., 'result[0] >= 0.95'), failureCondition, provider (prometheus/datadog/web/job/kubernetes). Provider prometheus: address + query. Provider web: URL, expects HTTP 200. Provider job: run K8s Job, expects success. Provider kubernetes: check resource state. Composability: Rollout con multiple analysis.templates aggregates results. Templates parametrizadas permite platform team ownership. ClusterAnalysisTemplate = cluster-scoped variant. Best practices: (a) short interval para fast detection; (b) count>1 para tolerate transient spikes; (c) failureLimit para tolerate few failures antes de abort.",
+      "realWorld": "Intuit tiene central AnalysisTemplate library. Argo docs incluyen many examples. Adobe uses ClusterAnalysisTemplate para governance. GitOps pattern: templates versioned en git repo, deployed via ArgoCD. Flagger equivalent: MetricTemplate CRD.",
+      "tags": ["AnalysisTemplate", "reusable", "args", "governance"],
+      "tech": ["Argo Rollouts", "Prometheus"],
+      "references": [{ "title": "Argo Rollouts — AnalysisTemplate" }, { "title": "Argo Rollouts — Best Practices" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "deployment",
+      "topic": "Blue/green con Argo Rollouts",
+      "difficulty": "senior",
+      "scenario": "Servicio con SLO estricto donde requieres INSTANT cutover (no gradual traffic split). Argo Rollouts soporta blue/green strategy además de canary.",
+      "question": "¿Cómo funciona blue/green en Argo Rollouts?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Rollout.spec.strategy.blueGreen: activeService (production service), previewService (opcional, para testing new version antes de cutover), autoPromotionEnabled (auto-switch después de analysis, o manual), scaleDownDelaySeconds (cuánto tiempo mantener old ReplicaSet running post-cutover para rollback rápido). Al deploy new version: crea nuevo ReplicaSet full-size (100% de replicas), waits ready, runs pre-promotion analysis (opcional), promotes cambiando el Service selector al new ReplicaSet.", "correct": true, "why": "Correcto. Blue/green en Argo Rollouts es más simple que canary — full new deployment ready primero, then instant service selector switch. scaleDownDelaySeconds crítico: mantiene old ReplicaSet durante horas post-cutover para rollback en <segundos (solo switch selector back)." },
+        { "letter": "B", "text": "Requiere DNS-based cutover.", "correct": false, "why": "Falso. Cutover via K8s Service selector switch — instantáneo, no DNS TTL issues." },
+        { "letter": "C", "text": "Doble el número de replicas siempre y forever.", "correct": false, "why": "Solo temporal — nueva version tiene 100% replicas mientras vieja aún running. Después de scaleDownDelay, vieja se destruye." },
+        { "letter": "D", "text": "No soporta rollback automatizado.", "correct": false, "why": "Falso. preservation del old ReplicaSet + prePromotionAnalysis permite auto-rollback si analysis falla." }
+      ],
+      "explanation": "Blue/green flow Argo Rollouts: (1) apply new Rollout spec (image change); (2) crea nuevo ReplicaSet (green) con full replica count; (3) waits ready + healthy; (4) prePromotionAnalysis runs (opcional): metrics de preview service; (5) si passes, auto-promote (o manual approval); (6) Service selector switches active → new ReplicaSet; (7) postPromotionAnalysis (opcional): confirms new version healthy post-cutover; (8) scaleDownDelay minutes wait; (9) old ReplicaSet scaled down. Ventajas vs canary: (a) simpler mental model; (b) instant cutover, no traffic splitting complexity; (c) trivial rollback (Service selector flip back). Desventajas: (a) doble infra temporal; (b) all-or-nothing (no gradual detection); (c) requires enough cluster capacity.",
+      "realWorld": "Blue/green common para high-SLO services. Airbnb uses para critical services. Adobe similar. IBM Cloud SDK examples. Trade-off: canary vs blue/green depends on capacity + risk tolerance. Muchas empresas usan ambos: blue/green para high-risk deploys, canary para standard.",
+      "tags": ["blue/green", "Argo Rollouts", "activeService", "preview"],
+      "tech": ["Argo Rollouts", "Kubernetes"],
+      "references": [{ "title": "Argo Rollouts — Blue/Green Strategy" }, { "title": "Argo Rollouts docs" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "deployment",
+      "topic": "Analysis providers — más allá de Prometheus",
+      "difficulty": "senior",
+      "scenario": "Tu company usa Datadog para APM, no Prometheus. Argo Rollouts docs mention 'metric providers'. ¿Puedes hacer analysis con Datadog?",
+      "question": "¿Qué metric providers soporta Argo Rollouts?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Prometheus (native, built-in): queries PromQL, common para Kubernetes ecosystems. Configurable con Prometheus address y query.", "correct": true, "why": "Correcto. Provider más usado. Prometheus + K8s = ecosystem estándar." },
+        { "letter": "B", "text": "Datadog (built-in): Datadog Query language, API key required. Popular en empresas ya con Datadog para APM.", "correct": true, "why": "Correcto. Argo Rollouts tiene provider Datadog nativo. Similarly Flagger. Muchas empresas usan Datadog para todo — este integration cierra el gap." },
+        { "letter": "C", "text": "New Relic, Wavefront, CloudWatch, Google Cloud Monitoring: providers built-in adicionales para observability platforms comunes.", "correct": true, "why": "Correcto. Argo Rollouts soporta ecosystem amplio. Cada uno con provider-specific config (address, credentials, query syntax)." },
+        { "letter": "D", "text": "Web provider: HTTP endpoint que retorna JSON. Muy flexible — cualquier system que expose HTTP puede ser metric source. Custom validators.", "correct": true, "why": "Correcto. Extension point para providers no-built-in. Endpoint retorna JSON, jsonPath extrae value, successCondition evalúa. Universal." },
+        { "letter": "E", "text": "Solo Prometheus está soportado.", "correct": false, "why": "Falso. Ecosystem amplio de providers, más web provider para extensibilidad." }
+      ],
+      "explanation": "Argo Rollouts metric providers: (1) Prometheus (address + query PromQL); (2) Datadog (query DD language + API key); (3) New Relic (query + account ID); (4) Wavefront; (5) CloudWatch (query + region + AWS credentials); (6) Graphite; (7) Kubernetes (query resource status); (8) Job (run K8s Job, exit code determines success); (9) Web (HTTP endpoint retorna JSON); (10) Influx. Cada provider en analysisTemplate: metrics[].provider.<providerName>: config. Composable: un template puede usar múltiples providers (Prometheus + CloudWatch + custom Web). Best practice: combinar tech metrics (Prometheus) con business metrics (Datadog o custom endpoint). Flagger soporta similar list.",
+      "realWorld": "Empresas con Datadog usan Datadog provider. AWS-heavy shops usan CloudWatch. Multi-cloud shops mezclan providers. Custom endpoints comunes para business-specific KPIs (Salesforce data, internal analytics). Adobe, Intuit, Airbnb published sus configurations.",
+      "tags": ["metric providers", "Datadog", "CloudWatch", "web"],
+      "tech": ["Argo Rollouts", "Datadog", "CloudWatch"],
+      "references": [{ "title": "Argo Rollouts — Analysis" }, { "title": "Flagger — Metrics providers" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "deployment",
+      "topic": "Debugging progressive delivery",
+      "difficulty": "senior",
+      "scenario": "Rollout stuck en 'Progressing' por 2 horas. Argo Rollouts UI muestra step de analysis fallando. Debug time.",
+      "question": "¿Cómo debuggear rollouts stuck o fallando?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "[kubectl argo rollouts get rollout <name>] muestra status detallado: current step, canary replicas, stable replicas, analysis runs status. UI (kubectl argo rollouts dashboard) provee visualización interactiva.", "correct": true, "why": "Correcto. CLI + UI del plugin son primary tools. Muestra step-by-step progression, analysis runs con individual metrics results." },
+        { "letter": "B", "text": "[kubectl describe analysisrun <name>]: muestra cada metric result, si passed/failed, failureLimit reached, latest measurement value. Central para entender por qué analysis fails.", "correct": true, "why": "Correcto. AnalysisRun es el CRD que representa un analysis instance. describe muestra measurements en detalle." },
+        { "letter": "C", "text": "Verify metric query in Prometheus UI directamente: si la query no retorna data, o retorna null, analysis falla porque no puede evaluar. Common issue: labels no match (canary label distinto de query filter).", "correct": true, "why": "Correcto. 80% de 'analysis failing' issues son queries malformadas o labels mismatched. Prueba directamente en Prometheus antes de debugging Argo." },
+        { "letter": "D", "text": "Check that traffic routing está funcionando: [kubectl get virtualservice <name> -o yaml] shows current weights. Si Istio no aplica weights correctamente, canary no recibe traffic → analysis no tiene data.", "correct": true, "why": "Correcto. Muchas veces canary metrics vacías porque canary no recibe traffic (Istio config wrong). Verify weights en VirtualService reflejan step actual." },
+        { "letter": "E", "text": "Restart Argo Rollouts controller para 'fix' the stuck rollout.", "correct": false, "why": "Antipatrón. Restart controller no fix underlying issue. Debug root cause primero. Restart puede clear stale state pero no fix problems." }
+      ],
+      "explanation": "Debugging checklist: (1) [kubectl argo rollouts status <name>]: current step, progress; (2) [kubectl argo rollouts get rollout <name>]: detailed status; (3) [kubectl get analysisrun -n <ns>]: recent analysis runs; (4) [kubectl describe analysisrun <name>]: metric-level results; (5) [kubectl get virtualservice <name> -o yaml]: current traffic weights; (6) Prometheus UI: test queries directly; (7) [kubectl logs -n argo-rollouts <controller-pod>]: controller logs; (8) [kubectl get events]: recent events. Common issues: (a) query malformed; (b) labels mismatch entre canary pods y query filter; (c) traffic no reaching canary (Istio config); (d) metrics no available yet (fresh deploy, no data); (e) failureLimit too strict (transient spikes causing false fail). Argo Rollouts community Slack activo.",
+      "realWorld": "Intuit, Adobe, Airbnb published debugging playbooks. Argo Rollouts UI (dashboard command) mejora debugging visual. Common story: canary 'failing' porque metric provider address wrong. Diagnostic: run query manual first, then integrate.",
+      "tags": ["debugging", "AnalysisRun", "Argo Rollouts CLI", "stuck rollout"],
+      "tech": ["Argo Rollouts", "kubectl"],
+      "references": [{ "title": "Argo Rollouts — CLI reference" }, { "title": "Argo Rollouts — Troubleshooting" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "deployment",
+      "topic": "Header-based canary (A/B testing)",
+      "difficulty": "senior",
+      "scenario": "Necesitas exponer nueva version SOLO a internal QA team (con header X-QA-Test: true) antes de rollout público. No weight-based routing.",
+      "question": "¿Cómo hacer header-based canary con Argo Rollouts o Flagger?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts: canary.trafficRouting.istio.virtualServices con multiple routes en el VirtualService. Route con match.headers.X-QA-Test: exact 'true' → canary subset (weight 100); otra route sin header match → stable (weight 100). Argo Rollouts orchestrates changes progressively. Flagger tiene A/B strategy nativa: canary.analysis.match: [{headers: {x-qa-test: {regex: '^true$'}}}] — orchestrates automatically.", "correct": true, "why": "Correcto. Header-based routing es built-in en Istio VirtualService (o cualquier service mesh). Ambas Argo Rollouts (via Istio integration) y Flagger (via A/B strategy) lo soportan. Uso: internal testing, geo-targeting (via User-Agent), gradual per-user cohort rollout." },
+        { "letter": "B", "text": "No es posible — Argo Rollouts solo soporta weight-based.", "correct": false, "why": "Falso. Vía Istio/Envoy features, header-based es supported. Requires Istio config en VirtualService." },
+        { "letter": "C", "text": "Requires custom Envoy filter escrito en Lua.", "correct": false, "why": "Overkill. Istio VirtualService match.headers es declarative sin Lua." },
+        { "letter": "D", "text": "Solo funciona con AWS ALB.", "correct": false, "why": "Falso. Feature de Istio/Envoy/NGINX/Linkerd. AWS ALB también soporta pero no es único." }
+      ],
+      "explanation": "Header-based canary use cases: (1) Internal testing (headers de VPN o QA tools); (2) Geo-targeting (X-Country header from CDN); (3) User cohorts (X-Cohort del auth service); (4) Feature preview (X-Beta-Users). Istio VirtualService: http[0].match: [{headers: {X-QA-Test: {exact: 'true'}}}], route: [{destination: {subset: canary}, weight: 100}]; http[1].route: [{destination: {subset: stable}, weight: 100}]. Order matters en Istio — first match wins. Flagger A/B strategy: canary.analysis.match declarative con headers. Progressive: puedes combinar header-based (internal test) con weight-based (public rollout) en secuencia. Best practice: dogfooding (empleados usan canary primero via header) es zero-risk validation antes de external exposure.",
+      "realWorld": "Google 'dogfooding' — empleados see internal versions via user headers. Facebook similar. GitHub uses header-based canary para preview features en https://github.com/*/next. Adobe internal QA con VPN-set headers. Weaveworks blog explica patterns.",
+      "tags": ["header-based routing", "A/B testing", "dogfooding", "Istio"],
+      "tech": ["Istio", "Flagger", "Argo Rollouts"],
+      "references": [{ "title": "Istio VirtualService" }, { "title": "Flagger A/B Testing" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "deployment",
+      "topic": "Experimentation vs canary",
+      "difficulty": "senior",
+      "scenario": "Argo Rollouts tiene Experiment CRD (separate from Rollout). Un compañero pregunta: '¿Experiment reemplaza canary? ¿Cuándo usar cada uno?'",
+      "question": "¿Qué es Experiment y cómo se diferencia de Canary?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Experiment CRD es para running EPHEMERAL analysis: temporarily deploy múltiples variants (v1, v2, v3, v4) side-by-side, mide métricas, decide winner. NO deploys a producción — solo comparative analysis. Termina destruyendo todos los variants (o just promoting winner separadamente). Use case: A/B/C testing arquitectura o algorithm variants antes de commit. Canary es progressive rollout que TERMINA en producción; Experiment es temporary evaluation.", "correct": true, "why": "Correcto. Experiment = 'let me run 3 variants at 5% traffic each for 24h, see which performs best'. Canary = 'gradually move all traffic to new version'. Complementarios. Experiment for R&D, Canary for delivery." },
+        { "letter": "B", "text": "Experiment es sinónimo de Canary.", "correct": false, "why": "Falso. Diferentes CRDs con diferentes purposes." },
+        { "letter": "C", "text": "Experiment reemplaza Rollout — es la nueva version.", "correct": false, "why": "Falso. Coexisten. Rollout para progressive delivery; Experiment para R&D testing." },
+        { "letter": "D", "text": "Experiment solo funciona con Google Optimize.", "correct": false, "why": "Falso. Argo Rollouts primitive nativo." }
+      ],
+      "explanation": "Experiment CRD spec: duration (e.g., 24h), templates (list of variants a deploy), analysis (metrics para evaluate). Al start: crea Deployments/ReplicaSets per template, envía traffic vía Service mesh, colects metrics durante duration, termina destruyendo variants. Use cases: (1) Algorithm comparison (recommendation v1 vs v2 vs v3); (2) Infra comparison (different node types, different framework versions); (3) Load test comparison. NO reemplaza production traffic — es evaluation temporal. Distinción: Rollout = deployment, Experiment = analysis. Diferencia con full A/B testing tools (Optimizely): Experiment es infra-level (compares versions of the app), A/B testing tools son business-level (compares user behavior con feature variants). Complementarios en stack maduro.",
+      "realWorld": "Argo Rollouts Experiment usado por Airbnb para infrastructure R&D. Netflix uses similar patterns internally con Spinnaker. Intuit publicó experiencias. Casos típicos: 'A vs B vs C algorithm before deploying winner'.",
+      "tags": ["Experiment", "R&D", "variants", "Argo Rollouts"],
+      "tech": ["Argo Rollouts", "Experiment CRD"],
+      "references": [{ "title": "Argo Rollouts — Experiment" }, { "title": "argoproj.github.io/argo-rollouts" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "deployment",
+      "topic": "GitOps + Progressive Delivery",
+      "difficulty": "senior",
+      "scenario": "Equipo usa Argo CD (GitOps). Quieren añadir progressive delivery. Argo Rollouts es el fit natural. Pero cómo interactúan?",
+      "question": "¿Cómo funciona GitOps con Argo Rollouts?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Rollout CRD vive en git como código (junto con otros manifests). Argo CD detecta cambios en git → aplica al cluster. Al cambiar image tag en git, Argo CD updates el Rollout, Argo Rollouts controller triggers el canary progression.", "correct": true, "why": "Correcto. Rollout es K8s resource declarative como cualquier otro. GitOps flow works cleanly." },
+        { "letter": "B", "text": "Analysis templates también en git — versionados como config. Central templates en shared repo, referenciados por individual apps. Changes vía PR.", "correct": true, "why": "Correcto. Templates as code. GitOps aplica a todos los CRDs. Best practice para governance." },
+        { "letter": "C", "text": "Argo CD apps configurables para 'sync only when Rollout is stable'. Argo CD respects Rollout progressing state — no re-syncs while rollout in-flight.", "correct": true, "why": "Correcto. Prevents race conditions donde Argo CD y Argo Rollouts se pelean por el state. Argo CD detects Rollout in progress y waits." },
+        { "letter": "D", "text": "Rollback via git: revert commit en git, Argo CD detects, applies revert, Argo Rollouts triggers new rollout (con new-old version). Audit trail complete en git.", "correct": true, "why": "Correcto. GitOps + Rollouts = full auditability. Rollback es git operation. Nada aplicado outside git." },
+        { "letter": "E", "text": "Argo Rollouts bypasses git — cambios se hacen directamente en cluster.", "correct": false, "why": "Antipatrón GitOps. Todo debe pasar por git. Direct cluster changes crean drift." }
+      ],
+      "explanation": "GitOps + Argo Rollouts flow: (1) developer merges PR con new image tag en Rollout manifest; (2) Argo CD detects git change; (3) Argo CD applies Rollout update to cluster; (4) Argo Rollouts controller detects Rollout spec change; (5) starts canary progression (steps + analysis); (6) durante progression, Argo Rollouts modifies live objects (VirtualService weights, ReplicaSets) — NO writes back to git; (7) if success, promotion completes; (8) if fail, rollback (Argo Rollouts state, no git change). Nota crítico: Argo CD debe ser configurado con syncPolicy que respect Rollout state — usually con 'ignoreDifferences' para status fields o annotations. Anti-patrón: Argo CD tries to sync while Rollout progressing → conflict → issues. Solution: configure Argo CD app con proper resource hooks.",
+      "realWorld": "Intuit (originators of Argo) uses este stack. Adobe similar. IBM Cloud. Many published GitOps + Progressive Delivery patterns. Argo Rollouts docs incluyen best practices para GitOps integration.",
+      "tags": ["GitOps", "Argo CD", "Argo Rollouts", "declarative"],
+      "tech": ["Argo CD", "Argo Rollouts"],
+      "references": [{ "title": "Argo CD + Argo Rollouts docs" }, { "title": "GitOps with Argo family" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "deployment",
+      "topic": "SLO-based progressive delivery",
+      "difficulty": "mid",
+      "scenario": "Team maduro con SLOs definidos (99.9% availability, p99 < 500ms). Quieren tie canary analysis a SLO burn rate — si canary burns budget muy rápido, abort.",
+      "question": "¿Cómo integrar SLO burn rate en canary analysis?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SLO burn rate query en Prometheus: multi-window multi-burn rate (Google SRE Workbook). Ejemplo: (1 - success_rate_5m) / (1 - SLO_target) — si canary burn rate > 14.4x en 1h window = fast burn = abort canary immediately.", "correct": true, "why": "Correcto. Google SRE Workbook Ch. 5 explica multi-window burn rate. Combinamos: fast burn (14.4x en 1h) + slow burn (6x en 6h) = comprehensive coverage. Applied to canary metrics." },
+        { "letter": "B", "text": "Custom Prometheus recording rules para SLO calculation. Preescritas queries para success rate por servicio con SLO metadata. Analysis template reference recording rules. Consistency across services.", "correct": true, "why": "Correcto. Recording rules pre-compute expensive queries. Servicios reference standard rules. Governance central." },
+        { "letter": "C", "text": "Google 'SLO Generator' tool o Sloth (OSS) generan Prometheus rules from SLO definitions. Declarative SLO config → auto-generated recording+alerting rules. Includes burn rate calculations.", "correct": true, "why": "Correcto. Sloth (OSS por Xabier Larrakoetxea) genera Prometheus rules from YAML SLO config. Integrable con Argo Rollouts analysisTemplate para consistent SLO-based analysis across services." },
+        { "letter": "D", "text": "Trade-off: canary de N minutos vs SLO measurement window. Canary too short = poor SLO signal. Ajustar canary steps + analysis intervals para have enough data. SLO measurement generalmente rolling 28-30 días, pero canary usa short windows (5-60min) que aproximan.", "correct": true, "why": "Correcto. Statistical significance issue. Canary de 10 min con 100 requests/min = 1000 data points — enough para 99.9% SLO analysis (needs to see if error rate is 0.1% approx). Low-traffic services need longer windows." },
+        { "letter": "E", "text": "SLO burn rate no aplica a canary — solo a alerting.", "correct": false, "why": "Falso. SLO burn rate se aplica a cualquier scenario donde quieres tie decisions to SLO impact. Canary abort si burn budget rápido = perfectly valid." }
+      ],
+      "explanation": "SLO-based canary analysis: (1) define SLO (99.9% availability); (2) define burn rate thresholds (fast: 14.4x in 1h, slow: 6x in 6h, per Google SRE); (3) Prometheus recording rules calculate current burn rate; (4) analysisTemplate query burn rate para canary window; (5) successCondition: burn_rate < threshold. Tools: Sloth (declarative SLO → Prometheus rules), Pyrra (similar), OpenSLO (spec + tooling), Nobl9 (SaaS). Argo Rollouts + Sloth pattern: define SLO en Sloth YAML, apply to cluster, referenceable in Rollout AnalysisTemplate. Ventajas SLO-based vs raw thresholds: (a) meaningful (aligned with user experience); (b) budget concept forces thinking about acceptable risk; (c) uniform across services (all use same framework). Gotchas: (a) low-traffic services no tienen enough data para tight SLOs; (b) canary window > SLO window can be confusing.",
+      "realWorld": "Google internal uses SLO-driven canary. Sloth (OSS) publicado 2020 por Xabier at Spotify. Many teams have adopted. Nobl9 SaaS. LinkedIn published extensively sobre SLO + progressive delivery. Blueprint pattern maduro pero requires solid SLO practice primero.",
+      "tags": ["SLO", "burn rate", "Sloth", "SRE"],
+      "tech": ["Sloth", "Prometheus", "Argo Rollouts"],
+      "references": [{ "title": "Google SRE Workbook Ch. 5" }, { "title": "Sloth — SLO Generator" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "deployment",
+      "topic": "Multi-cluster progressive delivery",
+      "difficulty": "staff",
+      "scenario": "Deployment a 20 clusters (múltiples regions, edge, dev/staging/prod). Coordinar progressive delivery across clusters es complejo.",
+      "question": "¿Cómo escalar progressive delivery multi-cluster?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Argo CD ApplicationSet: generate múltiples Applications from template (per-cluster). Central ApplicationSet controls what deploys where. Progressive por cluster: staging → dev → prod-region-1 → prod-region-2. Each cluster runs its own Argo Rollouts canary.", "correct": true, "why": "Correcto. ApplicationSet es el escalable pattern. Central declarative config, dispatched to N clusters. Each cluster independently progresses." },
+        { "letter": "B", "text": "Waves: Argo CD sync waves (order of application). Progressive delivery entre clusters (region 1 first, wait 24h, region 2, etc.) enforced by wave numbers.", "correct": true, "why": "Correcto. sync-wave annotations control order. Combined con analysis at each wave = multi-cluster progressive delivery." },
+        { "letter": "C", "text": "External orchestration (Spinnaker, custom): orquesta despliegues cross-cluster con analysis en cada cluster + global decisions. Spinnaker fue diseñado para multi-cloud/multi-region deployment orchestration.", "correct": true, "why": "Correcto. Spinnaker (Netflix originalmente) diseñado para multi-cluster/region orchestration. Más maduro que Argo para multi-cloud scenarios. Alternative: custom orchestration con GitHub Actions + kubectl." },
+        { "letter": "D", "text": "Regional canary: primero canary en region small (5% traffic), if OK, canary en region grande. Coordination via metrics (both regions monitored) o via successive git commits (approve region 1, then region 2).", "correct": true, "why": "Correcto. Regional deploy waves. Combine con per-region canary = nested gradualness. Amazon pattern." },
+        { "letter": "E", "text": "Deploy simultaneous a todos los clusters para consistency.", "correct": false, "why": "Antipatrón. Simultaneous = no blast radius contain. Waves preferido." }
+      ],
+      "explanation": "Multi-cluster progressive delivery patterns: (1) Argo CD ApplicationSet con progressive sync (dev → staging → prod-r1 → prod-r2); (2) Sync waves para intra-cluster ordering; (3) Argo Rollouts en cada cluster para intra-cluster canary; (4) External orchestrator (Spinnaker, custom) para complex flows. Coordination challenges: (a) different clusters may have different SLOs; (b) region-specific metrics (canary metrics must be regional); (c) rollback coordination (rollback en cluster N should abort clusters N+1, N+2); (d) feature flags para consistency user-facing. Spinnaker approach: pipelines declarative, per-region canaries, global rollback triggers. Argo approach: GitOps-native, PR-based rollout of git branches per environment. Tradeoffs: Argo = simpler, GitOps-native; Spinnaker = more complex, more powerful for multi-cluster.",
+      "realWorld": "Netflix Spinnaker deploys across AWS regions. Google Cloud Deploy multi-region. Argo team publishing multi-cluster patterns. IBM, Adobe uses ApplicationSet pattern. Cloudflare deploys across 300+ PoPs con custom orchestration.",
+      "tags": ["multi-cluster", "ApplicationSet", "waves", "regional"],
+      "tech": ["Argo CD", "ApplicationSet", "Spinnaker"],
+      "references": [{ "title": "Argo CD — ApplicationSet" }, { "title": "Spinnaker docs" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "deployment",
+      "topic": "Post-analysis y feedback loop",
+      "difficulty": "mid",
+      "scenario": "Rollouts pasan pero después de 6h en producción se descubre latency regression subtle. Analysis solo corrió durante canary steps (2h max). Cómo detectar issues post-promotion?",
+      "question": "¿Cómo implementar continuous analysis post-promotion?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts postPromotionAnalysis: analysis que corre AFTER promotion completes. Ejecuta durante ventana (hours-days) checking metrics vs pre-deploy baseline. Failure = manual investigation (no auto-rollback typically because promotion already done).", "correct": true, "why": "Correcto. postPromotionAnalysis extension del canary primitive. Runs analysis post-cutover para detect delayed regressions. Cannot auto-rollback (state committed) pero alerta para human intervention." },
+        { "letter": "B", "text": "SLO burn rate alerts continuous (24/7): if service consistently burning budget faster post-deploy, alert on-call. Not tied to Rollout — general observability. Detects delayed regressions independent of deployment tool.", "correct": true, "why": "Correcto. SLO alerts as continuous monitoring. Independent from Rollout state. Google SRE Workbook alerting on burn rate." },
+        { "letter": "C", "text": "Chaos engineering post-deploy: automated experiments post-promotion (kill pods, inject latency) to verify new version handles failure modes correctly. Chaos Toolkit, LitmusChaos.", "correct": true, "why": "Correcto. Chaos post-deploy validates resilience — algo que canary metrics (con normal traffic) no captures. LinkedIn Waterbear pattern." },
+        { "letter": "D", "text": "Automatic performance regression detection: baseline p99 pre-deploy vs post-deploy across días. Statistical significance test. Alert cuando new version's p99 consistently peor.", "correct": true, "why": "Correcto. Delayed regressions (memory leaks, DB connection exhaustion) manifest en días. Continuous comparison detects them." },
+        { "letter": "E", "text": "Analysis termina en promotion — no necesidad de más monitoring.", "correct": false, "why": "Antipatrón. Regressions happen post-deploy — continuous monitoring esencial." }
+      ],
+      "explanation": "Post-promotion analysis patterns: (1) postPromotionAnalysis en Argo Rollouts — declarative time-bound analysis; (2) SLO burn rate alerting (continuous, on-call notification); (3) Performance regression detection (statistical tests across días); (4) Chaos engineering (verify resilience of new version); (5) Business metrics monitoring (revenue, conversion). Framework: layered observability. Canary analysis catches immediate bugs; post-promotion catches delayed. Together = defense in depth. Herramientas: Argo Rollouts postPromotionAnalysis + Sloth/Nobl9 SLO alerts + LitmusChaos + custom performance dashboards. Cadence: canary analysis (minutes); postPromotionAnalysis (hours-days); continuous SLO monitoring (forever). Anti-patterns: 'canary passed, deploy successful' = incomplete. 'Successful deploy = successful production for the next month' = wrong framing.",
+      "realWorld": "Netflix combines canary + post-deploy analysis con Kayenta + Atlas metrics. Google internal similar patterns. Facebook post-launch monitoring. Airbnb SLO-driven observability. Adobe published patterns con Argo Rollouts + Datadog SLO tracking.",
+      "tags": ["postPromotionAnalysis", "continuous monitoring", "delayed regression"],
+      "tech": ["Argo Rollouts", "Sloth", "LitmusChaos"],
+      "references": [{ "title": "Argo Rollouts — Post-Promotion Analysis" }, { "title": "Google SRE Workbook" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "deployment",
+      "topic": "Comparison — Argo Rollouts vs Flagger vs Spinnaker",
+      "difficulty": "staff",
+      "scenario": "CTO pregunta '¿cuál progressive delivery tool adoptamos?' Necesitas comparar objetivamente Argo Rollouts, Flagger, y Spinnaker.",
+      "question": "¿Cuáles son los tradeoffs principales entre estos tools?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts: K8s-native (CRDs), lightweight, integra con Argo CD (GitOps), moderate learning curve, extensive metric providers, ampla community, active development. Best fit: K8s environments con Argo CD, teams que valoran declarativa/GitOps.", "correct": true, "why": "Correcto. Argo Rollouts es el más adoptado en pure K8s environments. Ownership Intuit-originated ahora CNCF Incubating." },
+        { "letter": "B", "text": "Flagger: K8s-native, más opinionated (simpler config), tight integration con Flux, extensive metric providers, mesh-native (Istio, Linkerd, App Mesh, NGINX, etc.). Best fit: Flux-based GitOps stacks, teams que quieren minimal config.", "correct": true, "why": "Correcto. Flagger's opinionated approach means less flexibility pero less complexity. Weaveworks + Flux + Flagger es coherent stack." },
+        { "letter": "C", "text": "Spinnaker: multi-cloud (not K8s-only), maduro (Netflix-originated 2015), complex to operate (JVM services), extensive multi-region orchestration, integrates con Kayenta para statistical analysis. Best fit: multi-cloud environments, complex deployment orchestration, teams con dedicated deployment infra ops.", "correct": true, "why": "Correcto. Spinnaker más maduro pero más costoso operacionalmente. Vale la pena para multi-cloud complex scenarios. K8s-only teams típicamente prefer Argo Rollouts o Flagger por simplicidad." },
+        { "letter": "D", "text": "Ninguno es 'mejor' universalmente — decision depends on: (1) K8s-only vs multi-cloud; (2) GitOps tool ya adoptado (Argo CD vs Flux); (3) team ownership del deployment infra; (4) complexity tolerance.", "correct": true, "why": "Correcto. Decision framework contextual. Same team con Flux + Weaveworks stack pick Flagger; team con Argo CD + K8s only pick Argo Rollouts; team con AWS + GCP + on-prem may need Spinnaker." },
+        { "letter": "E", "text": "Todos son idénticos — solo nombres distintos.", "correct": false, "why": "Falso. Real differences en architecture, integration, complexity, feature set." }
+      ],
+      "explanation": "Comparison matrix: | Feature | Argo Rollouts | Flagger | Spinnaker |. K8s-native: Yes/Yes/Uses K8s but broader. GitOps: Argo CD tight/Flux tight/Any (agnostic). Traffic split: mesh+ingress/mesh+ingress/mesh+LB. Analysis: templates+providers/metricTemplates+providers/Kayenta+providers. Multi-cloud: K8s-based/K8s-based/Native multi-cloud. Complexity: Moderate/Low/High. Community: Large (Argo family)/Moderate/Large (mature). Selection guide: (1) K8s + Argo CD → Argo Rollouts; (2) K8s + Flux → Flagger; (3) Multi-cloud, complex → Spinnaker; (4) Just K8s, simple, minimal deps → Flagger o Argo Rollouts. Migration paths: Spinnaker → Argo Rollouts common; rarely reverse.",
+      "realWorld": "Netflix runs Spinnaker (created it). Intuit runs Argo Rollouts (created it). Weaveworks runs Flagger (created it). Vendor bias natural. IBM Cloud + Adobe use Argo Rollouts. Trend Micro uses Flagger. Airbnb hybrid. Google Cloud Deploy has similar concepts.",
+      "tags": ["comparison", "Argo Rollouts", "Flagger", "Spinnaker"],
+      "tech": ["Argo Rollouts", "Flagger", "Spinnaker"],
+      "references": [{ "title": "Argo Rollouts docs" }, { "title": "Flagger docs" }, { "title": "Spinnaker docs" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "deployment",
+      "topic": "Failure modes de progressive delivery",
+      "difficulty": "staff",
+      "scenario": "Después de 6 meses con Argo Rollouts, tu team observa: canaries que 'siempre pasan' (thresholds tan loose que nada falla), rollouts stuck, incidents que canary no detectó.",
+      "question": "¿Cuáles son los failure modes comunes de progressive delivery?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Loose thresholds ('canary theater'): thresholds tan permisivos (success rate > 50%) que canary nunca fails. Falso sense of security. Fix: baseline-comparative (canary vs stable en tiempo real), no absolute thresholds. Kayenta approach.", "correct": true, "why": "Correcto. Common failure. Team pone thresholds loose para evitar false positives, pero pierde detection real. Kayenta baseline-comparative es antidote." },
+        { "letter": "B", "text": "Low-traffic services: no enough requests para statistical significance en canary window. Analysis fails or passes basado en noise. Fix: extended windows, sampling of real users a canary via feature flags, o skip canary para low-traffic (rely on rolling update).", "correct": true, "why": "Correcto. Real issue. Canary a 1% de 10 req/s = 0.1 req/s = 6 req/min. Not enough. Solutions: extend window, sample users, or acknowledge canary limitation." },
+        { "letter": "C", "text": "Metric provider outage: si Prometheus down, analysis can't run. Rollout stuck o fail-open (proceed) o fail-closed (rollback). Fix: fail-open with alerting typically (don't block deploys si observability fails), plus reliable metric provider.", "correct": true, "why": "Correcto. Fragility de dependency. Prometheus outage shouldn't block deployment. Argo Rollouts default is fail-closed; may want to configure fail-open." },
+        { "letter": "D", "text": "Long-tail bugs: canary de 30 min no detects issues que aparecen after hours (memory leaks, connection pool exhaustion). postPromotionAnalysis + continuous SLO monitoring catch these.", "correct": true, "why": "Correcto. Time window limitation. Solution: complementary continuous monitoring post-promotion." },
+        { "letter": "E", "text": "Progressive delivery elimina TODOS los failure modes.", "correct": false, "why": "Antipatrón overconfidence. PD reduces risk but doesn't eliminate. Complementary practices needed." }
+      ],
+      "explanation": "Common failure modes: (1) Canary theater (loose thresholds, no real detection); (2) Insufficient traffic (statistical power problem); (3) Metric provider dependency; (4) Long-tail bugs (short canary window misses); (5) Regional bugs (canary en region A pero bug specific region B); (6) User-specific bugs (canary users are internal, users are external); (7) State-dependent bugs (bug only reveals con production data patterns); (8) Timing bugs (bug appears only in specific hours). Mitigations: (a) baseline-comparative analysis (Kayenta); (b) SLO burn rate integration; (c) postPromotionAnalysis extended windows; (d) chaos engineering; (e) traffic sampling (real users a canary); (f) feature flags para instant rollback; (g) continuous observability posDeploy. Progressive delivery = powerful but not silver bullet. Combining con feature flags + observability + chaos + rollback drills = comprehensive safety net.",
+      "realWorld": "Etsy, Netflix, Google published post-mortems donde canary passed but production had issues. Common learning: canary is necessary not sufficient. Complementary layers needed. Argo Rollouts community shares failure patterns.",
+      "tags": ["failure modes", "canary theater", "long-tail bugs"],
+      "tech": ["Argo Rollouts", "Kayenta"],
+      "references": [{ "title": "Netflix Tech Blog — Kayenta" }, { "title": "Argo Rollouts — Best Practices" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "deployment",
+      "topic": "Adoption journey — de rolling a progressive delivery",
+      "difficulty": "staff",
+      "scenario": "Team con K8s + rolling updates. CTO quiere progressive delivery. ¿Cómo la adoption journey realistic?",
+      "question": "¿Cómo estructurar la adopción de progressive delivery?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Phase 1 (weeks): observability foundation. Deploy Prometheus + Grafana + alerts. Define SLIs per servicio. Sin observability, canary analysis no puede funcionar. Verify metrics correctly instrumented, dashboards understand.", "correct": true, "why": "Correcto. Observability es prerequisite. Puedes hacer canary sin Prometheus pero no analysis automatizado." },
+        { "letter": "B", "text": "Phase 2 (weeks): pilot service. Elige un service (ideally not critical, high enough traffic para statistical significance). Install Argo Rollouts o Flagger. Configure canary con manual approvals (no auto-promotion). Team learns primitives.", "correct": true, "why": "Correcto. Start small. Manual gates initially. Team learns Rollout, AnalysisTemplate, VirtualService, debugging." },
+        { "letter": "C", "text": "Phase 3 (months): analysis automation. Introduce automated analysis (Prometheus queries). Start conservative (loose thresholds). Iterate para tighten thresholds based on observed variability. Track false positive/negative rates.", "correct": true, "why": "Correcto. Analysis maturity is journey. Start loose, learn baselines, tighten. Requires patience." },
+        { "letter": "D", "text": "Phase 4 (months): expand + governance. Roll out a más servicios. Platform team owns Templates centralmente. Product teams reference templates + provide app-specific args. Governance via GitOps + PR review.", "correct": true, "why": "Correcto. Scaling requires governance. Central templates, decentralized adoption. Platform engineering pattern." },
+        { "letter": "E", "text": "Deploy Argo Rollouts en todos los services el primer día.", "correct": false, "why": "Antipatrón. Big bang = disaster. Team no entiende yet, incidents blame progressive delivery, adoption fails." }
+      ],
+      "explanation": "Adoption phases realistic: (1) Observability foundation (Prometheus + SLIs); (2) Pilot service con manual canary; (3) Automated analysis con conservative thresholds; (4) Expansion a más services con central Templates; (5) SLO integration (Sloth, burn rate); (6) postPromotionAnalysis y chaos. Timeline: 6-12 months para full adoption typical. Prerequisites: (a) K8s environment; (b) service mesh o Ingress with weighted routing; (c) metrics infrastructure (Prometheus most common); (d) team willing to learn; (e) leadership buy-in. Common pitfalls: (a) skipping observability foundation; (b) big bang adoption; (c) tight thresholds early (false positives); (d) no post-adoption learning (canary theater sets in). Success indicators: (a) deploy frequency increases; (b) change failure rate decreases; (c) MTTR decreases; (d) team confidence up.",
+      "realWorld": "Intuit, Adobe published adoption journeys. Intuit's Argo team documents the journey extensively. Adobe similar. Learning: progressive delivery is journey, not switch. Cultural + technical + operational. Best fit: teams already doing solid CI/CD, K8s, observability.",
+      "tags": ["adoption", "journey", "pilot", "governance"],
+      "tech": ["Argo Rollouts", "Prometheus"],
+      "references": [{ "title": "Intuit blog — Argo Rollouts journey" }, { "title": "Adobe engineering blog" }]
+    }
+  ]
+}

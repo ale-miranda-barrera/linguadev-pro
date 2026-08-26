@@ -1,0 +1,417 @@
+{
+  "id": "devops-sim-15-gitops-with-argocd-flux",
+  "trackId": "devops",
+  "order": 15,
+  "title": "Simulacro 15 — GitOps con ArgoCD y Flux",
+  "focus": "GitOps como paradigma: Git como fuente de verdad, reconciliación continua, drift detection. ArgoCD (Application, Project, sync policies, self-heal, prune, ApplicationSets, App of Apps). Flux v2 (source-controller, kustomize-controller, helm-controller). Secretos en GitOps (Sealed Secrets, SOPS, External Secrets Operator). Environments as branches vs folders. Multi-cluster. Progressive delivery con Argo Rollouts.",
+  "areaCoverage": ["iac", "deployment"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "deployment",
+      "topic": "¿Qué ES GitOps?",
+      "difficulty": "junior",
+      "scenario": "Un compañero dice: 'GitOps es solo poner los YAML de Kubernetes en un repo de Git'. Otro dice: 'GitOps es CI/CD tradicional pero con Git'. Un tercero dice: 'GitOps es simplemente usar ArgoCD'.",
+      "question": "¿Cuál es la definición correcta de GitOps según Weaveworks (creadores del término)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GitOps es un paradigma operativo con 4 principios: (1) DECLARATIVO — todo el estado deseado del sistema se describe declarativamente; (2) VERSIONADO E INMUTABLE — el estado se guarda en Git (audit log, rollback vía revert); (3) PULLED AUTOMÁTICAMENTE — agents en el cluster hacen pull del estado deseado (no push desde CI); (4) CONTINUAMENTE RECONCILIADO — software agents comparan estado real vs deseado y corrigen drift automáticamente.", "correct": true, "why": "Correcto. Weaveworks (Alexis Richardson) acuñó 'GitOps' en 2017. Los 4 principios están codificados en OpenGitOps (CNCF working group). La clave es 'pull + reconciliation continua' — no basta con tener YAML en Git; necesitas un agent que garantice que el cluster REFLEJA lo que Git dice, siempre." },
+        { "letter": "B", "text": "GitOps = YAML en Git + kubectl apply desde CI.", "correct": false, "why": "Este es 'CIOps' o 'push-based deployment'. Faltan los principios clave: reconciliación continua y drift detection. Si alguien hace 'kubectl edit' manual, el pipeline no lo revierte." },
+        { "letter": "C", "text": "GitOps = usar ArgoCD.", "correct": false, "why": "ArgoCD es una IMPLEMENTACIÓN de GitOps, no la definición. Puedes hacer GitOps con Flux, Rancher Fleet, incluso con scripts custom que respeten los 4 principios." },
+        { "letter": "D", "text": "GitOps = Infrastructure as Code.", "correct": false, "why": "IaC es un subconjunto/precursor. Terraform es IaC pero no necesariamente GitOps (Terraform normalmente es push desde CI, no pull con reconciliación continua). GitOps aplica principios IaC + reconciliación continua + agent-based pull." }
+      ],
+      "explanation": "GitOps nació en Weaveworks (2017) resolviendo un problema: kubectl apply desde CI no garantiza que el cluster mantenga el estado deseado — alguien puede editar recursos manualmente y el drift persiste. La solución: un agent DENTRO del cluster que hace PULL del repo Git y RECONCILIA continuamente (típicamente cada 3 minutos). Git se convierte en la única fuente de verdad; el cluster es un 'proyección' de Git. Rollback = git revert. Audit = git log. Los 4 principios están formalizados por OpenGitOps (CNCF) desde 2021. ArgoCD y Flux son las 2 implementaciones más populares (ambos CNCF graduated).",
+      "realWorld": "Weaveworks acuñó GitOps en 2017 (blog post de Alexis Richardson). ArgoCD (Intuit, 2018) y Flux (Weaveworks) son CNCF graduated projects desde 2022. Intuit migró TurboTax a GitOps con ArgoCD gestionando >200 clusters. KubeCon 2022 tuvo un track completo dedicado a GitOps.",
+      "tags": ["GitOps", "principios", "Weaveworks", "OpenGitOps", "CNCF"],
+      "tech": ["ArgoCD", "Flux"],
+      "references": [{ "title": "OpenGitOps — Principles v1.0" }, { "title": "Weaveworks — GuideTo GitOps" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "deployment",
+      "topic": "Push vs Pull deployment model",
+      "difficulty": "junior",
+      "scenario": "Tu equipo tiene CI/CD tradicional: al merge a main, Jenkins ejecuta 'kubectl apply -f k8s/' contra el cluster de producción usando credenciales guardadas en Jenkins. Tu arquitecto propone migrar a GitOps con ArgoCD.",
+      "question": "¿Cuál es la diferencia fundamental entre el modelo PUSH (CIOps) y PULL (GitOps)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PUSH: CI tiene credenciales del cluster y ejecuta kubectl/helm apply. Riesgos: credenciales del cluster salen a Jenkins (superficie de ataque), no hay reconciliación (drift persiste), CI necesita acceso de red al cluster. PULL: un agent (ArgoCD/Flux) vive DENTRO del cluster y hace pull del repo Git. Ventajas: (1) el cluster nunca expone credenciales al exterior; (2) reconciliación continua corrige drift; (3) firewall más simple (solo outbound Git); (4) mismo modelo funciona para clusters air-gapped o multi-cloud.", "correct": true, "why": "Correcto. Este es el argumento central de GitOps: invertir el flujo de credenciales. En PUSH, tu CI (que ejecuta código de terceros vía dependencies) tiene keys de admin al cluster de prod — compromiso del CI = compromiso del cluster. En PULL, el cluster hace outbound-only (más seguro, más simple con firewalls corporativos)." },
+        { "letter": "B", "text": "PUSH es más rápido y siempre mejor.", "correct": false, "why": "Simplificación. PUSH puede ser milisegundos más rápido en el 'happy path' pero: sin drift detection, sin audit inmutable, credentials en CI. Trade-off desfavorable para producción." },
+        { "letter": "C", "text": "PULL no funciona para deploys inmediatos.", "correct": false, "why": "ArgoCD y Flux soportan webhooks para trigger reconciliación inmediata (no hay que esperar el poll interval de 3min). Sync manual también es posible con un click/API call." },
+        { "letter": "D", "text": "PUSH y PULL son idénticos en la práctica.", "correct": false, "why": "Diferencia dramática en seguridad, drift management y modelo mental. Auditorías SOC2/ISO27001 tratan estos modelos muy diferente." }
+      ],
+      "explanation": "El modelo PULL es el diferenciador clave de GitOps vs CIOps. Beneficios de seguridad: (1) las credenciales del cluster no salen del cluster; (2) el CI solo necesita permisos para hacer commit a Git (superficie mucho menor); (3) firewall corporativo: solo outbound HTTPS a Git — mucho más simple que abrir kubeconfig ports para múltiples CIs. Beneficios operacionales: (1) drift detection automático; (2) auto-heal (si alguien borra un pod manualmente, ArgoCD lo recrea); (3) el pipeline de CI se simplifica: solo build + push image + commit YAML. Beneficios de reliability: reconciliación continua tolerante a fallos (si ArgoCD estaba down 10 minutos, al reanudar reconcilia todo).",
+      "realWorld": "Adobe migró de Jenkins push-based a Flux pull-based para reducir superficie de ataque en 40+ clusters. Intuit hizo lo mismo con ArgoCD tras un incident donde credentials de CI fueron leaked. State Bank of India adoptó ArgoCD por requerimientos regulatorios que exigían audit log inmutable.",
+      "tags": ["push", "pull", "CIOps", "GitOps", "security"],
+      "tech": ["ArgoCD", "Flux"],
+      "references": [{ "title": "Weaveworks — Pull-based vs Push-based deployment" }, { "title": "ArgoCD Docs — Security" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "deployment",
+      "topic": "ArgoCD Application CRD",
+      "difficulty": "mid",
+      "scenario": "Instalas ArgoCD y quieres deployar tu primer app. Un compañero te dice: 'crea un Application CR'. ¿Qué es y qué campos tiene?",
+      "question": "¿Qué representa una Application de ArgoCD y qué componentes clave define?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Es un CRD (Custom Resource Definition) que declara: SOURCE (repo Git + path + revision), DESTINATION (cluster + namespace), SYNC POLICY (manual o automated + prune + selfHeal).", "correct": true, "why": "Correcto. Application es la unidad básica de deployment en ArgoCD. Un Application mapea 'este path en Git → este namespace en este cluster'. Los 3 bloques (source, destination, syncPolicy) son obligatorios." },
+        { "letter": "B", "text": "Soporta múltiples tipos de manifests en source: raw Kubernetes YAML, Helm charts (con values.yaml), Kustomize, Jsonnet, o custom config management plugins.", "correct": true, "why": "Correcto. ArgoCD detecta el tipo automáticamente (Chart.yaml → Helm, kustomization.yaml → Kustomize). También soporta multi-source apps desde ArgoCD 2.6 (útil para separar chart de values)." },
+        { "letter": "C", "text": "La sync policy 'automated: { prune: true, selfHeal: true }' hace que ArgoCD borre recursos removidos de Git y revierta cambios manuales al cluster.", "correct": true, "why": "Correcto. Prune=true: si borras un manifest de Git, ArgoCD lo elimina del cluster (sin prune, quedan como 'orphaned'). SelfHeal=true: si alguien hace kubectl edit manual, ArgoCD lo revierte al estado de Git en el próximo sync. Ambos son opt-in por diseño (defaults conservadores)." },
+        { "letter": "D", "text": "Application soporta 'ignoreDifferences' para excluir campos que cambian dinámicamente (replicas gestionadas por HPA, annotations de service mesh).", "correct": true, "why": "Correcto. Sin esto, tendrías 'OutOfSync' permanente si HPA cambia replicas. IgnoreDifferences con jsonPointers o jqPathExpressions te permite decir 'este campo puede diferir'. Alternativa: usar Server-Side Apply con managed fields." },
+        { "letter": "E", "text": "Una Application solo puede deployar a un solo namespace y no soporta cluster-scoped resources.", "correct": false, "why": "Falso. Application soporta cluster-scoped resources (ClusterRole, CRDs). El campo 'destination.namespace' es el default para namespace-scoped, pero recursos con namespace explícito se respetan." }
+      ],
+      "explanation": "El Application CRD es el corazón de ArgoCD. Estructura típica: apiVersion: argoproj.io/v1alpha1, kind: Application, spec: { project, source: {repoURL, path, targetRevision}, destination: {server, namespace}, syncPolicy }. Un Application es reconciliado por el application-controller cada 3 minutos por default (configurable). Status del app: Synced/OutOfSync (Git vs cluster) y Healthy/Progressing/Degraded (estado runtime). Las 2 dimensiones son INDEPENDIENTES: puedes estar Synced pero Degraded (aplicaste el YAML pero el pod no arranca).",
+      "realWorld": "Intuit gestiona >10000 Applications con ArgoCD en producción. Adobe usa Applications con Kustomize overlays. Un patrón común: 1 Application = 1 microservicio por environment (así puedes syncear/rollback independientemente).",
+      "tags": ["ArgoCD", "Application", "CRD", "syncPolicy", "prune", "selfHeal"],
+      "tech": ["ArgoCD", "Kubernetes"],
+      "references": [{ "title": "ArgoCD Docs — Applications" }, { "title": "ArgoCD Docs — Sync Options" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "deployment",
+      "topic": "ArgoCD Projects y multi-tenancy",
+      "difficulty": "mid",
+      "scenario": "Tienes 30 equipos usando el mismo ArgoCD centralizado. Quieres que el equipo 'payments' solo pueda deployar a namespaces 'payments-*' desde el repo 'org/payments-manifests', y NO pueda tocar CRDs cluster-scoped.",
+      "question": "¿Qué es un AppProject en ArgoCD y cómo resuelve multi-tenancy?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AppProject es un CRD que agrupa Applications y define límites: (1) sourceRepos permitidos (lista de repos Git); (2) destinations permitidos (cluster + namespace patterns); (3) clusterResourceWhitelist/Blacklist (qué CRDs cluster-scoped se pueden gestionar); (4) namespaceResourceWhitelist/Blacklist; (5) roles con RBAC (quién puede sync/override en este project). Cada Application pertenece a UN Project (default = 'default' con todos los permisos).", "correct": true, "why": "Correcto. AppProject es la capa de tenancy en ArgoCD. Sin esto, cualquier Application podría deployar cualquier cosa a cualquier namespace — inseguro para instancias compartidas. Los teams se ven aislados: solo ven Applications de sus Projects." },
+        { "letter": "B", "text": "AppProject es solo un tag/label sin efecto real.", "correct": false, "why": "Falso. Los constraints se ENFORCERAN por el application-controller: si intentas sync una Application con destino fuera de los permitidos, falla con error." },
+        { "letter": "C", "text": "AppProject reemplaza a Kubernetes Namespaces.", "correct": false, "why": "Son ortogonales. Namespaces son constructo de K8s; AppProject es constructo de ArgoCD que controla QUÉ puede una Application deployar y DÓNDE." },
+        { "letter": "D", "text": "AppProject se usa solo para multi-cluster, no para multi-tenancy.", "correct": false, "why": "Se usa para AMBOS. Multi-cluster: destinations con múltiples servers. Multi-tenancy: separación por equipos en el mismo cluster/instance." }
+      ],
+      "explanation": "AppProject es CRÍTICO en instancias compartidas de ArgoCD. Ejemplo típico: project 'payments' con sourceRepos: ['https://github.com/org/payments-*'], destinations: [{namespace: 'payments-*', server: 'https://prod-cluster'}], clusterResourceBlacklist: [{group: '*', kind: 'ClusterRoleBinding'}]. Los roles del Project usan JWT tokens: puedes dar a un CI system 'sync' pero no 'override'. Sin AppProjects, un dev distraído podría sync una Application que sobrescribe recursos de otro equipo — desastre en producción compartida.",
+      "realWorld": "Intuit usa AppProjects para aislar >100 equipos en instancias de ArgoCD compartidas. Adobe define un Project por unidad de negocio. Un patrón enterprise: Project 'platform' con permisos elevados (para el equipo de plataforma que gestiona ingress, cert-manager, etc.) y Projects por producto con permisos limitados.",
+      "tags": ["ArgoCD", "AppProject", "multi-tenancy", "RBAC"],
+      "tech": ["ArgoCD"],
+      "references": [{ "title": "ArgoCD Docs — Projects" }, { "title": "ArgoCD Docs — RBAC" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "deployment",
+      "topic": "Drift detection y self-heal",
+      "difficulty": "mid",
+      "scenario": "Un SRE hace 'kubectl edit deployment api' en producción para cambiar replicas de 3 a 10 durante un incident. El incident se resuelve. Un día después, alguien pregunta: '¿por qué api tiene 10 replicas en Git figura 3?'. Con ArgoCD, ¿qué habría pasado?",
+      "question": "¿Cómo funciona drift detection y self-heal en ArgoCD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El application-controller compara continuamente el estado deseado (Git renderizado) vs el estado real (cluster) usando diff. Detecta drift → marca Application como OutOfSync. Si syncPolicy.automated.selfHeal=true: revierte automáticamente el cambio manual al estado de Git en el próximo reconcile (por default cada 3min, configurable). El SRE que hizo kubectl edit vería su cambio 'desaparecer' — la lección: siempre cambiar Git, no el cluster.", "correct": true, "why": "Correcto. SelfHeal es lo que convierte GitOps de 'nice-to-have' a 'enforced'. Sin selfHeal, drift persiste indefinidamente y Git deja de ser fuente de verdad. Con selfHeal, cualquier kubectl edit es efímero: cambia el cluster durante minutos, luego revierte. Esto FUERZA a los equipos a hacer PR-based changes." },
+        { "letter": "B", "text": "ArgoCD no detecta cambios manuales.", "correct": false, "why": "Falso. Detecta drift comparando live state vs desired state con normalización JSON. Es una función central." },
+        { "letter": "C", "text": "SelfHeal está siempre activado por default.", "correct": false, "why": "Falso. syncPolicy.automated es opt-in, y selfHeal dentro de automated también es opt-in. Defaults son conservadores para evitar sorpresas en migraciones." },
+        { "letter": "D", "text": "El drift detection requiere que instales una herramienta separada.", "correct": false, "why": "Falso. Es feature nativa del application-controller. Ninguna instalación adicional." }
+      ],
+      "explanation": "Drift detection es el mecanismo por el cual GitOps mantiene Git como fuente de verdad. Sin drift detection: alguien hace kubectl edit → cambio persiste → 6 meses después el cluster ya no refleja Git → catástrofe cuando necesites recrear en DR. Con drift detection sin selfHeal: al menos VES el drift (Applications OutOfSync) y puedes decidir. Con selfHeal: el cluster se auto-corrige. Excepciones (cuando el drift es esperado): usa ignoreDifferences para HPA-managed replicas, mutating admission webhooks (Istio sidecar injection), etc. Anti-patrón: apagar selfHeal 'temporalmente' — se olvida y drift acumula.",
+      "realWorld": "En Intuit, tras habilitar selfHeal, redujeron incidents de 'config drift' en 80%. Adobe reporta que selfHeal detecta y corrige cambios de operadores third-party que modifican specs inadvertidamente. Anti-patrón común en post-mortems Kubecon: 'apagamos selfHeal para un hotfix, olvidamos activarlo, 6 meses después el cluster estaba completamente drifted'.",
+      "tags": ["drift", "self-heal", "reconciliation", "ArgoCD"],
+      "tech": ["ArgoCD"],
+      "references": [{ "title": "ArgoCD Docs — Auto-Sync" }, { "title": "ArgoCD Docs — Diffing Customization" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "deployment",
+      "topic": "Environments as branches vs folders",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate cómo estructurar el repo GitOps para dev/staging/prod. Opción A: 3 branches (dev, staging, main=prod). Opción B: 1 branch, 3 folders (envs/dev, envs/staging, envs/prod). Un consultor recomienda B categóricamente.",
+      "question": "¿Por qué la comunidad GitOps prefiere 'environments as folders' sobre 'environments as branches'?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Con branches, promover cambios requiere merge entre branches — genera conflicts y drift entre envs (staging pudo haber recibido un hotfix que main no tiene). Con folders, promoción es un PR que copia/modifica el YAML del env destino — atómico y auditable.", "correct": true, "why": "Correcto. El problema de branches: divergencia. Cada branch acumula cambios env-specific, y merges se vuelven cirugía delicada. Con folders, cada env es explícito en main; promoción es 'edit prod/values.yaml → PR → merge'." },
+        { "letter": "B", "text": "Con folders + Kustomize/Helm overlays, la diferencia entre envs es EXPLÍCITA en el repo (puedes ver 'prod usa 10 replicas, staging usa 2' en un diff). Con branches, la diferencia está distribuida entre commits y no es obvia.", "correct": true, "why": "Correcto. Visibility es enorme. Un PR review de 'promoción a prod' con folders muestra exactamente qué cambia. Con branches, tienes que hacer 'git diff staging..main' y ver commits potencialmente entremezclados." },
+        { "letter": "C", "text": "ArgoCD ApplicationSet trabaja naturalmente con folders (Generator 'git files' o 'git directories'), permitiendo auto-generar Applications por env sin duplicación.", "correct": true, "why": "Correcto. ApplicationSet con git generator escanea folders y crea 1 Application por folder. Añadir un nuevo env = crear folder + PR; no requiere configurar Applications adicionales." },
+        { "letter": "D", "text": "Con branches, blast radius de un merge accidental a main es enorme (aplica cambios a prod directamente). Con folders, prod solo se toca via PR explícito al folder prod.", "correct": true, "why": "Correcto. Ergonomía de seguridad. Con branches, 'git push main' puede llevar a prod cambios que no querías. Con folders, tienes que explícitamente tocar envs/prod, y CODEOWNERS puede requerir approval del equipo de plataforma." },
+        { "letter": "E", "text": "Branches siempre son mejor por historial limpio.", "correct": false, "why": "Contra-evidencia. La comunidad GitOps (Weaveworks, ArgoCD project, Kostis Kapelonis blogs) recomienda folders universalmente. Branches se dejaron atrás como anti-patrón." }
+      ],
+      "explanation": "'Environments as folders' (a veces llamado 'trunk-based GitOps') es la práctica recomendada. Estructura típica: repo con base/ (comunes) + envs/{dev,staging,prod}/ (overlays). Promoción típica: change en dev → PR merge → automated PR abre para staging (bot) → after tests, PR merge → automated PR abre para prod → después de approval manual, merge. Herramientas como Kargo (Akuity) o Argo CD Image Updater automatizan esta cascada. Contra: si tienes 50 envs, el repo se llena de folders — mitigar con ApplicationSets + Kustomize components. Anti-patrón: 'trunk based con branches por env' (mezcla lo peor de ambos).",
+      "realWorld": "Kostis Kapelonis (Codefresh) escribió el artículo canónico 'How to Model Your GitOps Environments'. Intuit usa folders + ApplicationSets. Adobe usa Flux con Kustomize overlays por env. El proyecto ArgoCD mismo sigue este patrón en su ejemplo argocd-example-apps.",
+      "tags": ["environments", "branches", "folders", "promotion", "Kustomize"],
+      "tech": ["ArgoCD", "Kustomize"],
+      "references": [{ "title": "Codefresh — How to Model Your GitOps Environments" }, { "title": "argoproj/argocd-example-apps" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "deployment",
+      "topic": "PR-based promotion",
+      "difficulty": "mid",
+      "scenario": "Tu equipo quiere promocionar imágenes docker de dev → staging → prod. La idea: cuando build de CI sale, imagen v1.2.3 entra a dev automáticamente; después de tests OK, se promueve a staging; después de approval, a prod. Cada promoción debe estar auditada.",
+      "question": "¿Cómo funciona PR-based promotion en GitOps?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cada promoción es un COMMIT/PR al repo GitOps que modifica el image tag en el folder del env destino. Flujo: (1) CI build → push image v1.2.3 → commit a envs/dev/values.yaml con tag=v1.2.3 → ArgoCD sync dev; (2) tests OK en dev → bot abre PR modificando envs/staging/values.yaml a v1.2.3 → merge → ArgoCD sync staging; (3) approval humano → PR a envs/prod/values.yaml. Beneficios: audit trail completo en git log ('¿quién promovió v1.2.3 a prod y cuándo?'); rollback = git revert; approval via GitHub CODEOWNERS o merge protection rules.", "correct": true, "why": "Correcto. Este es el patrón canónico. El repo GitOps se convierte en el 'sistema de gestión de releases' — no necesitas herramienta separada. Herramientas como Argo CD Image Updater, Flux Image Automation, o Kargo automatizan los pasos 1-2 (write-back a Git tras build); el paso 3 (prod) suele mantenerse manual con approval humano en el PR." },
+        { "letter": "B", "text": "Se usa un webhook desde el CI que hace kubectl set image directamente al cluster.", "correct": false, "why": "Este es CIOps, no GitOps. Rompe el principio de Git como fuente de verdad (el cluster tendría una imagen que Git no refleja hasta que alguien sincronice manualmente el repo)." },
+        { "letter": "C", "text": "Se modifica el mismo YAML de deployment y ArgoCD detecta el cambio.", "correct": false, "why": "Vago y omite el mecanismo de promoción entre envs. Sin PRs entre envs no hay auditability ni gates de approval." },
+        { "letter": "D", "text": "Se usan branches por env y merges entre ellas.", "correct": false, "why": "Anti-patrón discutido en pregunta anterior. Genera divergencia y merges complejos." }
+      ],
+      "explanation": "PR-based promotion es la implementación práctica del principio 'versioned + immutable' de GitOps. Cada promoción deja un commit en git log con autor, timestamp, mensaje. Combinado con GitHub/GitLab: (1) branch protection rules requieren PR + reviews; (2) CODEOWNERS asigna aprobadores específicos por env (payments-team para envs/prod/payments/); (3) status checks bloquean merge si tests fallan. Rollback = git revert del PR de promoción. Ventaja vs herramientas de release management propietarias: usa infraestructura que ya conoces (Git + GitHub). Ecosistema de herramientas: Argo CD Image Updater (write-back automático), Flux Image Automation Controllers, Kargo (Akuity), Renovate Bot.",
+      "realWorld": "Intuit publica charla Kubecon sobre PR-based promotion con GitHub CODEOWNERS. Adobe usa Flux Image Automation + PR review flow. Un patrón que emerge en enterprise: bots crean PRs de promoción automáticamente, humanos solo aprueban prod (todo lo anterior es automated si tests pasan).",
+      "tags": ["promotion", "PR", "CODEOWNERS", "auditability", "Image Updater"],
+      "tech": ["ArgoCD", "Flux", "GitHub"],
+      "references": [{ "title": "ArgoCD Image Updater Docs" }, { "title": "Kargo — Continuous Promotion" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "deployment",
+      "topic": "Secretos en GitOps — Sealed Secrets",
+      "difficulty": "mid",
+      "scenario": "Vas a poner tus manifests en Git público (o al menos accesible a varios equipos). Un secret de K8s tiene passwords en base64 (NO cifrado). No puedes poner esto en Git plano.",
+      "question": "¿Cómo funciona Bitnami Sealed Secrets para resolver este problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sealed Secrets: (1) instalas un controller en el cluster que genera un par de claves asimétricas (privada nunca sale del cluster); (2) usas la CLI 'kubeseal' con la clave PÚBLICA para cifrar tu Secret en un SealedSecret CR (safe para Git); (3) cuando ArgoCD/Flux aplica el SealedSecret al cluster, el controller descifra con la privada y crea el Secret nativo. Beneficios: safe en Git público, cifrado por-cluster (mismo SealedSecret NO se puede aplicar a otro cluster), key rotation soportada.", "correct": true, "why": "Correcto. Sealed Secrets (Bitnami, ahora VMware Tanzu) es la solución más antigua y establecida para secretos en GitOps. Clave asimétrica = puedes cifrar en tu laptop con la clave pública (safe compartir), pero solo el cluster puede descifrar." },
+        { "letter": "B", "text": "Simplemente pon los Secrets en base64 — es seguro.", "correct": false, "why": "PELIGROSO. Base64 NO es cifrado, es encoding. Cualquiera con el YAML puede decodificar en segundos. Secretos en Git plano = leak. Nunca hacer esto." },
+        { "letter": "C", "text": "Sealed Secrets usa el mismo par de claves entre clusters.", "correct": false, "why": "Falso. Cada cluster tiene su propio keypair. Un SealedSecret cifrado para 'prod-cluster' NO se puede descifrar en 'dev-cluster' (feature, no bug — evita accidentes de cross-env leakage)." },
+        { "letter": "D", "text": "Sealed Secrets requiere HashiCorp Vault.", "correct": false, "why": "Falso. Sealed Secrets es autónomo (controller + kubeseal CLI). Vault es una alternativa completamente distinta." }
+      ],
+      "explanation": "Secretos en GitOps es un problema clásico: quieres Git como fuente de verdad, pero secretos en Git plano = compromiso. Sealed Secrets resuelve con criptografía asimétrica: kubeseal cifra localmente con clave pública, controller descifra en el cluster con clave privada. Trade-offs: (1) las claves privadas son crítica — hay que backup (si pierdes la clave, no puedes descifrar tus SealedSecrets); (2) key rotation requiere re-cifrado; (3) el owner del cluster tiene acceso a las claves privadas (no ideal si quieres separation entre platform y app team). Alternativas emergentes: SOPS + age (más flexible pero requiere key management externo), External Secrets Operator (delega a Vault/AWS Secrets Manager/GCP Secret Manager — recomendado para production seria).",
+      "realWorld": "Bitnami Sealed Secrets es CNCF sandbox project. Utilizado por miles de equipos en producción. Alibaba, IBM, muchas empresas medianas. Para enterprises grandes se prefiere External Secrets Operator con Vault (separation of concerns más limpia).",
+      "tags": ["secrets", "Sealed Secrets", "encryption", "Bitnami"],
+      "tech": ["Sealed Secrets", "Kubernetes"],
+      "references": [{ "title": "Bitnami Sealed Secrets" }, { "title": "CNCF Blog — GitOps Secrets Management" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "deployment",
+      "topic": "SOPS (Secrets OPerationS)",
+      "difficulty": "mid",
+      "scenario": "Tu equipo evalúa alternativas a Sealed Secrets. Escuchas de 'SOPS' de Mozilla. Un compañero dice: 'SOPS es diferente porque cifra estructuralmente los valores, no todo el archivo'.",
+      "question": "¿Cómo funciona SOPS y cuándo elegirlo sobre Sealed Secrets?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SOPS (Mozilla) cifra estructuralmente: los KEYS de un YAML/JSON permanecen en plano (para diff/review) pero los VALUES se cifran con KMS (AWS KMS, GCP KMS, Azure Key Vault) o age/PGP. Ventajas: (1) puedes revisar PRs sin descifrar (ves qué cambió estructuralmente); (2) key management delegado a KMS de cloud (menos operación manual); (3) funciona con cualquier archivo YAML/JSON (no solo Secrets), útil para configs sensibles. Flux tiene integración nativa (kustomize-controller decrypt con SOPS); ArgoCD usa plugins.", "correct": true, "why": "Correcto. SOPS es la elección típica cuando ya usas KMS en cloud y quieres key management managed. La cifra estructural es un game-changer para reviews: en un PR ves 'cambió el valor de database.password' sin ver el valor real — mucho mejor UX que Sealed Secrets (que cifra todo el bloque)." },
+        { "letter": "B", "text": "SOPS cifra todo el archivo como Sealed Secrets — son idénticos.", "correct": false, "why": "Falso. SOPS cifra estructuralmente (KEYS plain, VALUES encrypted). Es diferenciador clave vs Sealed Secrets." },
+        { "letter": "C", "text": "SOPS solo funciona con PGP.", "correct": false, "why": "Falso. Soporta AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, age (moderna Curve25519), y PGP legacy. Multi-key es común (misma cifra puede ser descifrada por múltiples backends)." },
+        { "letter": "D", "text": "SOPS es más inseguro que Sealed Secrets.", "correct": false, "why": "Falso. Ambos usan cifrado sólido (AES-256-GCM en SOPS). La diferencia es UX y key management, no seguridad criptográfica." }
+      ],
+      "explanation": "SOPS vs Sealed Secrets: (a) Sealed Secrets: keypair en el cluster, kubeseal offline, CR K8s-nativo, ideal si NO quieres depender de cloud KMS; (b) SOPS: KMS externo, estructural, funciona con cualquier archivo, ideal si ya usas AWS/GCP/Azure y quieres delegar key management. Trend en la industria: SOPS ganando terreno por: cifra estructural (mejor DX en PRs), KMS-managed (audit + rotation automáticos), multi-key (dev keys diferentes de prod keys). Flux tiene support nativo (spec.decryption.provider: sops). ArgoCD usa plugins (argocd-vault-plugin, ksops). El futuro emergente: External Secrets Operator delegando a Secrets Manager (más limpio aún para production).",
+      "realWorld": "Mozilla creó SOPS originalmente para Firefox configs. Adobe usa SOPS con Flux (kustomize-controller decrypt). Muchos equipos en AWS/GCP prefieren SOPS por integración KMS nativa. GitHub tiene guías oficiales para SOPS + age flow.",
+      "tags": ["SOPS", "encryption", "KMS", "age", "structural"],
+      "tech": ["SOPS", "Flux", "Kustomize"],
+      "references": [{ "title": "Mozilla SOPS" }, { "title": "Flux Docs — SOPS integration" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "deployment",
+      "topic": "External Secrets Operator",
+      "difficulty": "mid",
+      "scenario": "Tu empresa ya usa AWS Secrets Manager para gestionar secrets. Los equipos de seguridad exigen: rotation automático, audit log centralizado, RBAC granular. No quieren gestionar más keys de cifrado — quieren usar el sistema que YA existe.",
+      "question": "¿Qué es External Secrets Operator (ESO) y qué problema resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ESO es un operador K8s que sincroniza secrets desde external stores (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager, HashiCorp Vault, Doppler, 1Password) al cluster como Secrets K8s nativos. En Git solo pones el CR 'ExternalSecret' que dice 'traé el valor de path X del store Y y crea un Secret con nombre Z'. Los VALORES nunca están en Git — solo la REFERENCIA. ESO polling o event-based sincroniza cambios (rotation automático).", "correct": true, "why": "Correcto. ESO es la evolución natural: en vez de cifrar secretos en Git (Sealed Secrets, SOPS), NO PONER SECRETOS EN GIT en absoluto. Git tiene referencias; el store canónico es Vault/Secrets Manager/etc. Beneficios: separation of concerns limpia, rotation automático, sin claves de cifrado que gestionar." },
+        { "letter": "B", "text": "ESO reemplaza a HashiCorp Vault.", "correct": false, "why": "Falso. ESO es un CLIENTE de Vault (y otros stores). No los reemplaza — se integra con ellos." },
+        { "letter": "C", "text": "ESO requiere que los secretos se guarden en Git.", "correct": false, "why": "Falso. Es lo OPUESTO: los secretos viven en el store externo. En Git solo la referencia (CR ExternalSecret con path). Este es el gran diferenciador." },
+        { "letter": "D", "text": "ESO solo funciona con HashiCorp Vault.", "correct": false, "why": "Falso. Soporta 30+ providers: AWS/GCP/Azure Secret Managers, Vault, Doppler, 1Password, Akeyless, Conjur, etc." }
+      ],
+      "explanation": "External Secrets Operator es la best practice moderna para secrets en GitOps enterprise. Flujo: (1) tu app team define ExternalSecret CR que referencia 'prod/db/password' en AWS Secrets Manager; (2) ESO se autentica al cloud provider (IRSA en EKS, Workload Identity en GKE); (3) fetch el secreto; (4) crea/actualiza Secret K8s nativo; (5) refresh cada N minutos. Rotation: si roteas en Secrets Manager, ESO propaga al cluster automáticamente (con opción de recrear pods). RBAC: SecretStore/ClusterSecretStore CRs con permisos granulares. CNCF graduated project desde 2024. Cargo cognitivo: mayor setup inicial (IRSA/Workload Identity), pero paga off en escala. Sealed Secrets sigue relevante para equipos pequeños sin cloud KMS o para air-gapped.",
+      "realWorld": "External Secrets Operator es CNCF graduated (2024). Usado por SAP, T-Mobile, Salesforce en producción. Combinación típica: EKS + IRSA + AWS Secrets Manager + ESO + ArgoCD. Kubecon 2023 tuvo múltiples talks sobre patrones de ESO en enterprise.",
+      "tags": ["ExternalSecrets", "ESO", "Vault", "Secrets Manager", "rotation"],
+      "tech": ["External Secrets Operator", "AWS", "Vault"],
+      "references": [{ "title": "External Secrets Operator Docs" }, { "title": "CNCF — ESO Graduation" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "deployment",
+      "topic": "App of Apps pattern",
+      "difficulty": "senior",
+      "scenario": "Tu plataforma tiene 100+ Applications (microservicios + infra components). Configurar 100 Applications manualmente en ArgoCD UI es tedioso, y quieres que su config también esté en Git.",
+      "question": "¿Qué es el patrón 'App of Apps' en ArgoCD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Creas UNA Application 'root' cuyo source apunta a un folder de Git que contiene MANIFESTS DE OTRAS Applications (recursos kind: Application). Cuando root se sincroniza, crea/actualiza esas child Applications, que a su vez sincronizan sus propios workloads. Bootstrapping: 'kubectl apply' del root app una vez → todo lo demás fluye vía GitOps. Ventaja: config declarativa de Applications en Git (recursivo). Trade-off: acoplamiento (todas las child apps viven o mueren con el root si prune activo).", "correct": true, "why": "Correcto. App of Apps es el patrón original de bootstrapping en ArgoCD. Muy común en clusters nuevos: 'apply el root app y todo el platform se instala' (ingress-nginx, cert-manager, monitoring, tus apps). Evolucionado a ApplicationSets (más declarativo, menos boilerplate) pero App of Apps sigue común para casos simples." },
+        { "letter": "B", "text": "Es un tipo especial de deployment que empaqueta múltiples pods.", "correct": false, "why": "Confundido con concepto de K8s. App of Apps es puramente convención ArgoCD (una Application que genera Applications)." },
+        { "letter": "C", "text": "App of Apps requiere ArgoCD Enterprise.", "correct": false, "why": "Falso. ArgoCD es open source y App of Apps es solo un patrón (Application resources vanilla). No hay 'enterprise edition'." },
+        { "letter": "D", "text": "App of Apps y ApplicationSet son lo mismo.", "correct": false, "why": "Relacionados pero distintos. ApplicationSet es un CRD dedicado con generators (más potente); App of Apps es solo 'Application que apunta a un folder con más Applications' (más simple, más manual)." }
+      ],
+      "explanation": "App of Apps evolution: (1) primera versión, muy popular ~2019; (2) descubierto limitations (todas las child apps deben ser YAML raw, difícil parametrizar); (3) ApplicationSet nace (2021) para resolver con generators (list, cluster, git, matrix, merge). Muchos equipos usan HÍBRIDO: root App of Apps para bootstrapping platform (cert-manager, ingress) + ApplicationSets para apps de negocio (por env, por cluster). Anti-patrón: 'God App of Apps' con 500 child apps — difícil debuggear, blast radius alto. Mejor: modularizar (un App of Apps por 'stack' — monitoring stack, security stack, apps stack).",
+      "realWorld": "Patrón popularizado por Jesse Suen (co-creador de ArgoCD, Intuit). Documentado en argocd-example-apps repo. Muchos equipos empiezan con App of Apps y migran a ApplicationSets al crecer. Adobe, Intuit combinan ambos patterns por dominio.",
+      "tags": ["App of Apps", "ArgoCD", "bootstrap", "declarative"],
+      "tech": ["ArgoCD"],
+      "references": [{ "title": "ArgoCD Docs — Cluster Bootstrapping" }, { "title": "Jesse Suen — App of Apps talk" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "deployment",
+      "topic": "ApplicationSets y generators",
+      "difficulty": "senior",
+      "scenario": "Tienes 40 clusters (regionales) y 20 microservicios. Sin ApplicationSet, necesitarías 40*20 = 800 Applications configuradas manualmente. Cuando añades un cluster, hay que crear 20 Applications más.",
+      "question": "¿Cómo resuelve ApplicationSet este problema y qué generators tiene?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ApplicationSet es un CRD que genera Applications dinámicamente usando 'generators'. Cluster generator: para cada cluster registrado en ArgoCD, genera 1 Application. Definiéndolo una vez, 40 clusters = 40 Applications automáticas. Añadir un cluster = registrar en ArgoCD → nuevas Applications aparecen sin intervención.", "correct": true, "why": "Correcto. Cluster generator es el más usado para multi-cluster. Combina con label selectors: 'genera Application solo para clusters con label env=prod'. Escalabilidad enorme sin duplicación de YAML." },
+        { "letter": "B", "text": "Git generator: escanea directorios o archivos de un repo Git y genera Applications basadas en su contenido. Ideal para 'environments as folders' — crea 1 Application por folder de env automáticamente.", "correct": true, "why": "Correcto. Git directories generator lee la lista de folders en un path del repo y crea Application por cada uno. Añadir nuevo env = crear folder + PR; sin tocar ArgoCD config." },
+        { "letter": "C", "text": "Matrix generator: combina 2 generators (ej: clusters x apps) generando N*M Applications. Merge generator: intersecta 2 generators.", "correct": true, "why": "Correcto. Matrix es potente para multi-cluster * multi-app. Ejemplo: 40 clusters * 20 apps = 800 Applications auto-generadas. Merge útil para overlays condicionales." },
+        { "letter": "D", "text": "Pull request generator: genera Applications dinámicamente para cada PR abierto en un repo — perfect para 'preview environments' (cada PR obtiene su propio deployment).", "correct": true, "why": "Correcto. PR generator escanea PRs de GitHub/GitLab y crea Application por PR. Cuando el PR se cierra, la Application se elimina (con prune). Muy usado por SaaS para preview envs de features en desarrollo." },
+        { "letter": "E", "text": "ApplicationSet reemplaza a Application — ya no necesitas Applications individuales.", "correct": false, "why": "Falso. ApplicationSet GENERA Applications. Ambos coexisten (y ApplicationSet las gestiona)." }
+      ],
+      "explanation": "ApplicationSet nació en 2021 como respuesta a la fricción de gestionar muchas Applications. Generators disponibles: List (estática), Cluster, Git (files o directories), Matrix, Merge, SCM Provider (auto-discover repos en GitHub org), Pull Request, Cluster Decision Resource. Combinados con templates Go, permiten patterns declarativos avanzados. Trade-off: complejidad — un ApplicationSet mal escrito genera cientos de Applications broken. Mitigar con: dry-run (goTemplate en 2.12+), staging deployment (aplicar primero a subset de clusters con labels), progressive sync (envío gradual). ApplicationSet es CRD nativo en ArgoCD desde 2.0 (antes era plugin externo).",
+      "realWorld": "Intuit gestiona 200+ clusters con ApplicationSets + cluster generator + matrix. Adobe usa PR generator para preview envs (miles de PRs simultáneos). CoreWeave (GPU cloud) usa cluster generator para deployar workloads AI a clusters heterogéneos.",
+      "tags": ["ApplicationSet", "generators", "multi-cluster", "scaling"],
+      "tech": ["ArgoCD"],
+      "references": [{ "title": "ArgoCD Docs — ApplicationSet" }, { "title": "Kubecon EU 2022 — ApplicationSet Scale" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "deployment",
+      "topic": "Flux v2 architecture",
+      "difficulty": "senior",
+      "scenario": "Vas a evaluar Flux v2 como alternativa a ArgoCD. Un compañero dice: 'Flux es más modular — no es un binario monolítico'. ¿Qué significa esto?",
+      "question": "¿Cuál es la arquitectura de Flux v2 y sus componentes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Flux v2 es un conjunto de controladores especializados (GitOps Toolkit): (1) source-controller: fetch de repos Git/Helm/OCI, expone Artifacts (versionados); (2) kustomize-controller: renderiza Kustomize + aplica al cluster con reconciliación; (3) helm-controller: gestiona HelmReleases; (4) notification-controller: emite eventos (Slack, GitHub, PagerDuty); (5) image-reflector + image-automation controllers: escanean registries + write-back a Git de nuevas versions. Cada uno es un controller K8s independiente (crash de uno no afecta otros).", "correct": true, "why": "Correcto. Flux v2 fue reescrito completamente (2020) del monolítico Flux v1 al 'GitOps Toolkit' modular. Cada controller tiene un CRD dedicado (GitRepository, Kustomization, HelmRelease, ImagePolicy, etc.). Modularidad = puedes usar solo lo que necesites (ej: solo kustomize-controller sin helm-controller)." },
+        { "letter": "B", "text": "Flux v2 es un binario único con toda la funcionalidad.", "correct": false, "why": "Ese era Flux v1 (deprecated). V2 explícitamente rechaza ese modelo por modularidad y testabilidad." },
+        { "letter": "C", "text": "Flux v2 requiere ArgoCD.", "correct": false, "why": "Falso. Son alternativas competidoras (ambas CNCF graduated). Usar ambas juntas es raro pero técnicamente posible." },
+        { "letter": "D", "text": "Flux v2 no soporta Helm.", "correct": false, "why": "Falso. helm-controller es first-class citizen. HelmRelease CR es muy usado para gestionar Helm charts declarativamente." }
+      ],
+      "explanation": "Flux v2 (2020+) fue una reescritura completa liderada por Weaveworks + Microsoft. Filosofía: 'GitOps Toolkit' = piezas Lego. Cada controller es responsibility-focused. Comparación con ArgoCD: (a) Flux: sin UI oficial (Weave GitOps o Capacitor para UI), CLI-heavy, más 'Kubernetes-native' (todo son CRDs); (b) ArgoCD: UI muy pulido, gestión centralizada de múltiples clusters desde una UI. Ambos válidos; elección suele ser cultural (equipos CLI-first eligen Flux; equipos con UI eligen ArgoCD). Weaveworks descontinuada (2023) pasó proyecto a CNCF community; Flux sigue activo bajo Microsoft, Alibaba, otros. CNCF graduated 2022.",
+      "realWorld": "Flux es CNCF graduated (2022). Usado por Microsoft (Azure Arc GitOps native integration), Alibaba Cloud, SAP, VMware (Tanzu). D2iQ, State Farm. GitHub Actions tienen action oficial de Flux. Weaveworks (empresa creadora) cerró 2024, proyecto continua bajo Microsoft + CNCF community.",
+      "tags": ["Flux", "GitOps Toolkit", "modular", "controllers"],
+      "tech": ["Flux", "Kubernetes"],
+      "references": [{ "title": "Flux Docs — GitOps Toolkit" }, { "title": "CNCF — Flux Graduation Announcement" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "deployment",
+      "topic": "ArgoCD vs Flux comparison",
+      "difficulty": "senior",
+      "scenario": "Tu CTO pide una evaluación técnica: ArgoCD vs Flux. Quiere saber diferencias reales, no marketing.",
+      "question": "¿Cuáles son las diferencias TÉCNICAS clave entre ArgoCD y Flux v2?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "UI: ArgoCD tiene UI web-first con visualización de trees de recursos, drag-and-drop sync, health status en tiempo real. Flux no tiene UI oficial (Weave GitOps o Capacitor son opciones third-party).", "correct": true, "why": "Correcto. Es la diferencia visual más obvia. Equipos que valoran UX visual eligen ArgoCD (los devs no técnicos pueden ver estado). Equipos CLI-first eligen Flux (todo via kubectl + CRDs)." },
+        { "letter": "B", "text": "Multi-tenancy: ArgoCD tiene AppProjects (un modelo mature de RBAC). Flux se apoya en Kubernetes RBAC nativo + tenancy con Kustomizations por namespace (más 'K8s-native' pero más manual).", "correct": true, "why": "Correcto. ArgoCD es más 'batteries included' para multi-tenancy. Flux delega a K8s RBAC (filosofía: no reinventar). Ambos válidos; ArgoCD más fácil para SaaS multi-tenant, Flux más simple para 1-cluster." },
+        { "letter": "C", "text": "Model: ArgoCD tiene un application-controller centralizado (una instancia gestiona todas las Applications). Flux distribuye controllers (cada uno reconcilia su tipo de CRD independientemente).", "correct": true, "why": "Correcto. Impacto en scaling: ArgoCD requiere sharding manual del controller para muchos clusters (5000+ Applications). Flux escala mejor horizontalmente por diseño (controllers independientes). En instancias grandes, ArgoCD 2.6+ tiene sharding automático." },
+        { "letter": "D", "text": "OCI: Ambos soportan artifacts OCI (Helm charts en OCI registries, incluso raw YAML como OCI artifacts). Es la tendencia moderna vs repos Git puros.", "correct": true, "why": "Correcto. Flux fue pionero en OCI as source (2022). ArgoCD añadió support en 2.5+. OCI ofrece: versioning, immutability, misma infra que docker images. Se está volviendo estándar para production." },
+        { "letter": "E", "text": "ArgoCD es propietario; Flux es open source.", "correct": false, "why": "Ambos son open source, CNCF graduated, Apache 2.0. Akuity vende ArgoCD managed pero el proyecto es OSS." }
+      ],
+      "explanation": "Comparación técnica realista: (1) UI y UX — ArgoCD gana; (2) K8s-nativity — Flux gana (todo CRDs, sin state fuera de K8s); (3) multi-tenancy simple — ArgoCD (AppProjects); (4) scaling controllers — Flux; (5) ecosistema — ArgoCD (Rollouts, Notifications, Image Updater); (6) governance — Flux community-driven, ArgoCD también pero con Akuity como fuerza dominante. Elección típica: startups y SaaS eligen ArgoCD (UI vende); enterprises K8s-natives eligen Flux; ambos son excelentes elecciones. En 2024+ ambos convergen en features (los diferenciadores se reducen).",
+      "realWorld": "Ambos CNCF graduated. ArgoCD: Intuit (origen), Adobe (parte), Red Hat OpenShift GitOps (based on ArgoCD), Codefresh. Flux: Microsoft (Azure Arc), Alibaba, VMware Tanzu, SAP. Kubecon tiene tracks separados para ambos. No hay 'ganador' — competencia sana.",
+      "tags": ["ArgoCD", "Flux", "comparison", "CNCF"],
+      "tech": ["ArgoCD", "Flux"],
+      "references": [{ "title": "CNCF Blog — GitOps Landscape 2024" }, { "title": "Kubecon 2023 — ArgoCD vs Flux talk" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "deployment",
+      "topic": "Multi-cluster GitOps patterns",
+      "difficulty": "senior",
+      "scenario": "Tu empresa tiene 30 clusters (multi-region, multi-cloud, edge). Debes decidir topología: 1 ArgoCD central que gestiona todos, o 1 ArgoCD por cluster.",
+      "question": "¿Cuáles son las topologías de multi-cluster GitOps y sus trade-offs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dos topologías principales: (1) HUB-AND-SPOKE (ArgoCD central gestiona N clusters remotos). Pros: gestión centralizada, un pane of glass, RBAC consistente. Cons: hub es SPOF, network requirements (hub debe alcanzar cada cluster), scaling del controller central. (2) STANDALONE (ArgoCD por cluster, cada uno self-managed). Pros: aislamiento (crash de uno no afecta otros), zero SPOF, mejor para edge/air-gapped. Cons: gestión distribuida, sync de config entre instancias (¿quién gestiona los ArgoCDs?). Híbrido común: HUB para dev/staging + STANDALONE para prod critical.", "correct": true, "why": "Correcto. La elección depende de: número de clusters, criticidad, network topology, org structure. Hub-and-spoke es más simple para <50 clusters homogéneos; standalone es esencial para edge (10000s de clusters), air-gapped, o regulados por soberanía de datos." },
+        { "letter": "B", "text": "Hub-and-spoke es siempre mejor.", "correct": false, "why": "Falso. Para edge (retail stores, IoT gateways con miles de clusters), hub-and-spoke no escala. Para prod aislado por compliance (financial services regulados), standalone es requerido." },
+        { "letter": "C", "text": "GitOps no soporta multi-cluster.", "correct": false, "why": "Falso. Es un caso de uso primario. Ambos ArgoCD y Flux tienen features específicas (cluster generator, cluster credentials management)." },
+        { "letter": "D", "text": "Debes elegir uno u otro, nunca mezclar.", "correct": false, "why": "Falso. Híbridos son la norma en enterprises grandes. Ej: hub para dev/staging (agilidad) + standalone para prod (aislamiento)." }
+      ],
+      "explanation": "Multi-cluster GitOps patterns: (1) Hub-and-Spoke (ArgoCD/Flux central con credenciales para clusters remotos vía kubeconfigs almacenadas como secrets); (2) Standalone (una instancia por cluster, self-managed via 'app of app' que gestiona su propio ArgoCD); (3) Fleet-Manager (Rancher Fleet, KubeStellar) — pattern emergente donde un manager cluster gestiona 'workspaces' que despliegan a fleets. Trade-offs adicionales: cross-cluster networking (hub necesita alcanzar clusters), credential rotation (kubeconfigs expiran), disaster recovery (si el hub muere, ¿cómo recuperas?). Elección típica: <10 clusters = hub-and-spoke; 10-1000 = hub con sharding + ApplicationSets; 1000+ = standalone o Fleet-Manager patterns.",
+      "realWorld": "Intuit gestiona 200+ clusters con ArgoCD hub-and-spoke con sharding. Chick-fil-A gestiona 2000+ edge clusters (uno por restaurante) con standalone Flux. Microsoft Azure Arc conecta clusters on-prem/edge a Azure con Flux nativo. State Bank of India: standalone ArgoCD por región por compliance regulatorio.",
+      "tags": ["multi-cluster", "hub-and-spoke", "standalone", "edge"],
+      "tech": ["ArgoCD", "Flux"],
+      "references": [{ "title": "Kubecon 2023 — Chick-fil-A Edge GitOps" }, { "title": "Azure Arc Docs — GitOps at scale" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "deployment",
+      "topic": "Progressive delivery con Argo Rollouts",
+      "difficulty": "senior",
+      "scenario": "Con GitOps + ArgoCD deployeas a producción de golpe. Un cambio malo llega a 100% del tráfico al instante. Quieres canary deployments (10%, 30%, 100%) o blue/green con automated rollback.",
+      "question": "¿Cómo se integra Argo Rollouts con ArgoCD para progressive delivery?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Argo Rollouts reemplaza el Deployment de K8s con un CRD 'Rollout' que soporta strategies: (1) canary con steps (10% → pause 5min → 30% → pause → 100%) y análisis automático (AnalysisTemplate contra Prometheus/Datadog/NewRelic); (2) blue/green con preview service y promotion manual/automated. Integración con service mesh (Istio, Linkerd) o ingress (NGINX, ALB) para traffic shifting granular. ArgoCD gestiona el CR Rollout desde Git; Rollouts controller ejecuta la progresión y hace rollback automático si AnalysisRun falla.", "correct": true, "why": "Correcto. Este es el patrón moderno: Git tiene el 'estado deseado final', pero cómo llegamos ahí (canary, blue/green) es responsabilidad del Rollouts controller. Combina la trazabilidad de GitOps con la seguridad de progressive delivery. Rollback automático basado en métricas es game-changer vs deploys 'todo o nada'." },
+        { "letter": "B", "text": "ArgoCD tiene canary deployments nativos.", "correct": false, "why": "Falso. ArgoCD hace sync 'todo o nada' de manifests. Progressive delivery requiere componente adicional (Argo Rollouts, Flagger para Flux)." },
+        { "letter": "C", "text": "Argo Rollouts es incompatible con GitOps.", "correct": false, "why": "Falso. Está diseñado específicamente para GitOps. El CR Rollout se declara en Git como cualquier otro recurso." },
+        { "letter": "D", "text": "Solo funciona con Istio.", "correct": false, "why": "Falso. Soporta Istio, Linkerd, AWS ALB, NGINX, SMI, Traefik, Ambassador. Traffic shifting es pluggable." }
+      ],
+      "explanation": "Progressive delivery flow con GitOps: (1) commits el nuevo image tag en Git; (2) ArgoCD sync actualiza el Rollout CR con nueva version; (3) Rollouts controller detecta cambio, inicia canary progression; (4) en cada step, ejecuta AnalysisRun (query Prometheus: '¿error rate <1%? latency p99 <500ms?'); (5) si análisis OK, avanza al siguiente step; si falla, rollback automático (revierte al replicaset anterior). Ventajas: (a) safety (bug malos NUNCA llegan a 100% del tráfico); (b) confidence (deployeas más frecuentemente porque cada deploy es 'safer'); (c) declarativo (steps en Git = auditable). Alternativa para Flux: Flagger (misma filosofía, integrado con Flux). Ambos son CNCF sandbox/incubating.",
+      "realWorld": "Intuit combina ArgoCD + Rollouts para TurboTax (peak season no puede fallar). Adobe usa Rollouts con Prometheus analysis. Cyberark, Nvidia usan Rollouts en prod. Flagger es usado por Weaveworks (creadores), New York Times, muchas empresas europeas.",
+      "tags": ["Argo Rollouts", "canary", "blue/green", "progressive delivery", "AnalysisRun"],
+      "tech": ["ArgoCD", "Argo Rollouts", "Prometheus"],
+      "references": [{ "title": "Argo Rollouts Docs" }, { "title": "Kubecon 2022 — Progressive Delivery at Intuit" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "deployment",
+      "topic": "Sync waves y hooks",
+      "difficulty": "senior",
+      "scenario": "Tu app tiene: (1) un Job de db migration que debe correr ANTES; (2) CRDs que deben instalarse ANTES de sus CRs; (3) un DaemonSet de logging que debe estar UP antes de tus apps. Sync 'todo a la vez' con ArgoCD causa race conditions.",
+      "question": "¿Cómo funcionan sync waves y sync hooks en ArgoCD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sync waves: anotación 'argocd.argoproj.io/sync-wave: N' en cada recurso define orden (menor N = antes). ArgoCD aplica ola 0, espera health, aplica ola 1, etc. Ideal para orden: CRDs (wave -1) → ConfigMaps (wave 0) → Deployments (wave 1) → Ingress (wave 2). Sync hooks: anotación 'argocd.argoproj.io/hook: PreSync' ejecuta Job/Pod ANTES del sync (ej: db migration); PostSync después; SyncFail on failure. Combinables con hook-delete-policy para cleanup.", "correct": true, "why": "Correcto. Waves y hooks resuelven ordering — sin ellos, ArgoCD aplica todo en paralelo y confía en el K8s controller para converger. Para casos con dependencias reales (migrations, CRDs), waves son esenciales." },
+        { "letter": "B", "text": "ArgoCD aplica recursos en orden alfabético siempre.", "correct": false, "why": "Falso. Por default ArgoCD tiene ordering interno (namespaces primero, CRDs antes de CRs, etc.) pero recursos genéricos van en paralelo. Waves permiten control explícito." },
+        { "letter": "C", "text": "Los hooks reemplazan a las Jobs de K8s.", "correct": false, "why": "Falso. Los hooks USAN Jobs (o Pods). Simplemente les añaden lifecycle en el flow de sync (ArgoCD gestiona su creación, monitoreo, cleanup)." },
+        { "letter": "D", "text": "Waves solo funcionan con Kustomize.", "correct": false, "why": "Falso. Waves son anotaciones estándar de recursos K8s — funcionan con Helm, Kustomize, raw YAML, cualquier fuente." }
+      ],
+      "explanation": "Sync waves y hooks son ArgoCD-specific pero muy poderosos: (1) waves: ordenamiento fase-by-fase, cada ola espera health check antes de siguiente; (2) hooks: PreSync (db migration antes de nuevo deploy), PostSync (smoke test tras deploy), SyncFail (notificación de fallo), Skip (skip resource en este sync). Hook policies: HookSucceeded (borrar hook Job tras éxito), HookFailed (borrar tras fallo), BeforeHookCreation (borrar hook antiguo antes de crear nuevo). Anti-patrones: (a) abusar de waves (creates artificial sequential deployment lento); (b) migrations no-idempotent en hooks (si falla y reintentas, corrupts DB). Alternative para Flux: Kustomization dependsOn field (más simple, menos granular).",
+      "realWorld": "Intuit usa waves para stack completo (CRDs → operators → apps). Adobe usa PreSync hooks para migrations de miles de servicios. Anti-patrón conocido: usar waves como control de order 'porque sí' — hace deploys lentos innecesariamente.",
+      "tags": ["sync waves", "hooks", "PreSync", "migrations", "ArgoCD"],
+      "tech": ["ArgoCD"],
+      "references": [{ "title": "ArgoCD Docs — Sync Waves" }, { "title": "ArgoCD Docs — Resource Hooks" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "deployment",
+      "topic": "Anti-patterns en GitOps",
+      "difficulty": "senior",
+      "scenario": "Tu equipo lleva 6 meses con ArgoCD. Auditando el estado: 30% de Applications están OutOfSync permanentemente, hay 'silent overrides' (equipos hacen kubectl edit y esperan que nadie note), el repo tiene branches por env, y hay secretos plain en Git 'temporalmente'.",
+      "question": "¿Cuáles son los anti-patterns más comunes en implementaciones GitOps?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "'GitOps + kubectl edit' — permitir cambios manuales al cluster sin actualizarlos en Git. Resultado: drift persistente, Git deja de ser fuente de verdad. Fix: habilitar selfHeal en Applications críticas; policy 'no kubectl edit en prod' con RBAC.", "correct": true, "why": "Correcto. Es el anti-patrón #1. Sin selfHeal, GitOps es opcional; con selfHeal, es enforced. Muchos equipos apagan selfHeal 'temporalmente' para hotfixes y nunca lo reactivan." },
+        { "letter": "B", "text": "'Environments as branches' — usar branches (dev, staging, main) para envs. Resultado: divergencia entre envs, merges dolorosos, hard to promote. Fix: migrar a folders (envs/dev, envs/staging, envs/prod) con Kustomize overlays.", "correct": true, "why": "Correcto. Cubierto anteriormente. La comunidad GitOps rechaza branches como anti-patrón; folders son el estándar." },
+        { "letter": "C", "text": "'Secretos plain en Git' — commitear Secret K8s con base64 (que no es cifrado). Resultado: leak inmediato si repo se expone. Fix: Sealed Secrets, SOPS, o External Secrets Operator.", "correct": true, "why": "Correcto. Base64 NO es cifrado. Sorprendentemente común en equipos empezando — a veces por desconocimiento, a veces 'temporalmente' que se vuelve permanente." },
+        { "letter": "D", "text": "'God repo' — un solo repo Git con TODAS las apps y clusters. Resultado: cualquier cambio invalida cache de sync para todo, PR reviews imposibles (miles de archivos), RBAC de Git no puede segregar equipos. Fix: repo por equipo/dominio, con app-of-apps o ApplicationSets referenciando.", "correct": true, "why": "Correcto. Multi-repo (o mono-repo con path-based RBAC muy afinado) es preferido a scale. God repo escala hasta ~50 apps; después colapsa." },
+        { "letter": "E", "text": "'Muchos Applications' es siempre un anti-patrón.", "correct": false, "why": "Falso. Miles de Applications con ApplicationSets es la norma en enterprises (Intuit 10000+). No es anti-patrón per se — el anti-patrón es GESTIONARLAS MANUALMENTE (usar ApplicationSets)." }
+      ],
+      "explanation": "Anti-patterns adicionales: (a) 'ArgoCD como CI' — usar ArgoCD para build de imágenes (fuera de su scope; build en CI, deploy con GitOps); (b) 'sync manual siempre' — todas las Applications con syncPolicy manual defeats purpose de GitOps (fine para prod critical, pero no para dev/staging); (c) 'no monitoring de ArgoCD' — si ArgoCD muere, deploys silenciosamente paran; monitorear metrics de application-controller es crítico; (d) 'ignore differences everything' — usar ignoreDifferences en tantos campos que el drift detection es inútil. Cada anti-patrón usualmente aparece por presión (hotfix urgente, migration incompleta) — la clave es DETECTARLOS en post-mortems y refactorizar.",
+      "realWorld": "Kostis Kapelonis publica anualmente 'Top GitOps anti-patterns'. Adobe post-mortem público sobre 'temporary selfHeal disable that lasted 8 months'. Intuit charla Kubecon sobre 'god repo migration' (de 1 repo con 5000 apps a repo per BU).",
+      "tags": ["anti-patterns", "drift", "selfHeal", "monorepo", "secrets"],
+      "tech": ["ArgoCD", "Flux"],
+      "references": [{ "title": "Codefresh — GitOps Anti-patterns" }, { "title": "OpenGitOps — Common Mistakes" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "deployment",
+      "topic": "GitOps para infraestructura (Terraform + Crossplane)",
+      "difficulty": "senior",
+      "scenario": "GitOps gestiona bien recursos K8s, pero ¿qué pasa con infraestructura cloud (RDS databases, S3 buckets, IAM roles)? Terraform es push-based (terraform apply desde CI).",
+      "question": "¿Cómo se extiende GitOps a infraestructura cloud?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dos aproximaciones principales: (1) TERRAFORM + WRAPPER GitOps — Atlantis, Terraform Cloud, o custom operators (tf-controller de Flux) ejecutan terraform apply cuando merge a Git; sigue siendo push conceptualmente pero con Git como trigger. (2) CROSSPLANE — provee CRDs K8s para recursos cloud (kind: RDSInstance, kind: S3Bucket); ArgoCD/Flux gestiona esos CRs como cualquier otro K8s resource; Crossplane controllers hacen el reconcile con las cloud APIs. GitOps 'puro' pull-based para infra. Config Connector (GCP) y AWS Controllers for Kubernetes (ACK) son alternativas similares.", "correct": true, "why": "Correcto. Crossplane es el approach 'K8s-native' que hace GitOps directamente aplicable a infra (sin herramienta externa). Terraform + wrapper es más 'traditional' pero funciona. La tendencia a 2024+ es Crossplane creciendo, pero Terraform sigue dominante por ecosistema (miles de providers). Elección típica: Terraform for legacy/complex infra, Crossplane for K8s-native new projects." },
+        { "letter": "B", "text": "GitOps solo aplica a recursos K8s — para cloud, usar solo Terraform tradicional.", "correct": false, "why": "Falso. GitOps es un paradigma extensible. Crossplane, Config Connector, ACK son evidence que aplica a cloud infra." },
+        { "letter": "C", "text": "Terraform y GitOps son incompatibles.", "correct": false, "why": "Falso. Herramientas como Atlantis y tf-controller integran Terraform en GitOps flows. Muchos equipos usan ambos (Terraform para infra base, GitOps para apps y config K8s)." },
+        { "letter": "D", "text": "GitOps requiere que TODO sea CRD K8s.", "correct": false, "why": "Preferible pero no obligatorio. Los principios (declarative, versioned, pulled, reconciled) son aplicables a cualquier substrate — K8s es solo el más común." }
+      ],
+      "explanation": "GitOps extendido a infra: (1) Crossplane (2019, Upbound): CRDs K8s para AWS, GCP, Azure, muchos SaaS. Ventaja: unified experience (todo en K8s). Desventaja: menos maduro que Terraform en cobertura de features. (2) Config Connector (GCP): CRDs específicos GCP. (3) AWS Controllers for Kubernetes (ACK): CRDs AWS oficiales. (4) tf-controller (Flux): ejecuta Terraform en cluster reconciliation loop. (5) Atlantis: PR-based Terraform workflow. Trade-offs: Crossplane requiere K8s cluster para gestionar infra (chicken-and-egg para el primer cluster); Terraform es más neutral. Patrón enterprise 2024: Terraform para infra base/networking, Crossplane para databases/queues consumidos por apps K8s, GitOps controla ambos flows.",
+      "realWorld": "Upbound (creadores de Crossplane) tiene charlas Kubecon sobre gestionar toda infra AWS con Crossplane + ArgoCD. Adobe usa tf-controller de Flux para Terraform. State Bank of India migró Terraform push-based a Atlantis GitOps por auditability regulatoria.",
+      "tags": ["Crossplane", "Terraform", "infrastructure", "tf-controller", "Atlantis"],
+      "tech": ["Crossplane", "Terraform", "ArgoCD", "Flux"],
+      "references": [{ "title": "Crossplane Docs" }, { "title": "Flux tf-controller" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "deployment",
+      "topic": "Disaster Recovery con GitOps",
+      "difficulty": "senior",
+      "scenario": "Un ransomware ataca tu cluster de prod. TODO se pierde (nodes, workloads, ConfigMaps, Secrets). Sin embargo, tu equipo dice: 'no problem, tenemos GitOps'. ¿Cómo reconstruyes?",
+      "question": "¿Cómo se aprovecha GitOps para disaster recovery?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GitOps convierte DR en un proceso repetible: (1) provision nuevo cluster (Terraform/Crossplane); (2) instala ArgoCD/Flux (bootstrap); (3) apply root Application (App of Apps) apuntando al repo GitOps; (4) reconciliation despliega TODO (namespaces, ConfigMaps, Deployments, Ingress, cert-manager, monitoring) automáticamente. Restauración completa en horas, no días. LIMITACIÓN CRÍTICA: DATOS (databases, PVCs, object storage) NO están en Git — necesitan backup separado (Velero para K8s state, RDS snapshots, S3 replication). GitOps recupera CONFIG e INFRA; los datos requieren estrategia adicional.", "correct": true, "why": "Correcto. Este es un caso de uso subestimado de GitOps: cluster DR es dramáticamente más simple. Pre-GitOps: 'runbook de 200 pasos, ejecuciones manuales, 2 semanas'. Con GitOps: 'apply root app, take a coffee, cluster está de vuelta en 2h'. Pero DEBES tener backup separado de datos — GitOps NO backupea PVCs ni state." },
+        { "letter": "B", "text": "GitOps restaura todo, incluidos datos y PVCs.", "correct": false, "why": "PELIGROSO si crees esto. Git NO contiene los datos de tus DBs. Necesitas Velero, restic, o snapshots nativos del cloud para PVCs/DBs." },
+        { "letter": "C", "text": "GitOps es irrelevante para DR.", "correct": false, "why": "Falso. Es una de las ventajas underrated: reproducibilidad completa de config e infra." },
+        { "letter": "D", "text": "Necesitas herramientas comerciales para DR con GitOps.", "correct": false, "why": "Falso. Los OSS (ArgoCD/Flux + Velero + Terraform) cubren el 99% de necesidades DR." }
+      ],
+      "explanation": "GitOps + DR strategy completa: (1) INFRA: Terraform state en S3 con versioning → recrear infra; (2) K8S CONFIG: repos GitOps → reconstruir clusters; (3) K8S STATE (etcd, secrets, PVCs): Velero backup a object storage (frecuencia según RPO); (4) APP DATA: DB snapshots (RDS automated backups), object storage replication cross-region; (5) SECRETS canónicos: en Vault/Secrets Manager con backup separado (no en cluster). RTO típico con GitOps: 2-4 horas (infra provisioning + config sync + data restore). Sin GitOps: días. Key insight: GitOps NO es 'silver bullet' de DR pero acelera dramáticamente el eje 'restaurar config e infra'. Combínalo con Velero + snapshots para cobertura completa. Ejercicios regulares de DR (Chaos Engineering para DR) son críticos.",
+      "realWorld": "State Bank of India requiere pruebas de DR trimestrales para compliance; GitOps redujo tiempo de ejercicio de 48h a 4h. Adobe post-mortem público sobre DR test tras región AWS outage — clusters reconstruidos en 3h con Flux. Chick-fil-A: cada restaurante puede reconstruir su cluster edge desde cero en <1h con GitOps.",
+      "tags": ["disaster recovery", "DR", "Velero", "backup", "reproducibility"],
+      "tech": ["ArgoCD", "Flux", "Velero", "Terraform"],
+      "references": [{ "title": "Velero Docs — K8s Backup" }, { "title": "Kubecon 2023 — DR patterns with GitOps" }]
+    }
+  ]
+}

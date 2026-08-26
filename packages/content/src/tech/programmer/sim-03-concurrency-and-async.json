@@ -1,0 +1,415 @@
+{
+  "id": "programmer-sim-03-concurrency-and-async",
+  "trackId": "programmer",
+  "order": 3,
+  "title": "Simulacro 03 — Concurrencia, async y race conditions",
+  "focus": "Race conditions, deadlocks, async/await vs threads, idempotencia, atomicidad, uso correcto de estructuras concurrentes.",
+  "areaCoverage": ["concurrency", "fundamentals"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "concurrency",
+      "topic": "Diferencia entre concurrencia y paralelismo",
+      "difficulty": "junior",
+      "scenario": "En una entrevista te preguntan la diferencia entre CONCURRENCIA y PARALELISMO. Muchos candidatos confunden los términos.",
+      "question": "¿Cuál es la definición MÁS CORRECTA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son sinónimos.", "correct": false, "why": "Falso. Son conceptos DISTINTOS aunque relacionados. Confusión común pero costosa: paralelismo requiere concurrencia, pero no al revés." },
+        { "letter": "B", "text": "Concurrencia = ESTRUCTURA para manejar múltiples tareas potencialmente simultáneas (cambio de contexto, interleaving). Paralelismo = EJECUCIÓN simultánea real (múltiples cores/máquinas). En una CPU de 1 core puedes tener concurrencia (task switching) pero NO paralelismo. Rob Pike: 'concurrency is about dealing with lots of things; parallelism is about doing lots of things'.", "correct": true, "why": "Correcto. La distinción de Rob Pike es la más citada. Un servidor async en 1 core es concurrente pero no paralelo. Un compute-heavy job con 4 threads en 4 cores es paralelo. Un web server con 100 threads en 4 cores es ambos: concurrente (100 tareas) y paralelo (4 en cualquier instante)." },
+        { "letter": "C", "text": "Paralelismo = concurrencia en un lenguaje funcional.", "correct": false, "why": "Falso. Lenguaje no determina la distinción." },
+        { "letter": "D", "text": "Concurrencia es solo async, paralelismo solo threads.", "correct": false, "why": "Falso. Ambos pueden lograrse con threads, procesos, async, actors, etc. La distinción es sobre estructura vs ejecución." }
+      ],
+      "explanation": "Modelo mental: concurrencia es un DISEÑO (¿mi sistema puede lidiar con múltiples cosas simultaneas?). Paralelismo es una IMPLEMENTACIÓN física (¿realmente están ejecutando al mismo tiempo?). Consecuencias: (1) programas concurrentes bien diseñados escalan cuando les das paralelismo; (2) paralelismo sin concurrencia bien pensada da race conditions; (3) I/O-bound gana con concurrencia; CPU-bound necesita paralelismo. Python (GIL) tiene concurrencia (threads) pero limita paralelismo — para CPU usa multiprocessing.",
+      "realWorld": "Rob Pike (co-creador de Go) dio la charla canónica 'Concurrency is not Parallelism' (2012) en Heroku Waza. Es la razón conceptual detrás del diseño de Go con goroutines. Erlang lo aplicó décadas antes con actores. Node.js es el caso perfecto de concurrencia sin paralelismo (event loop 1 thread).",
+      "tags": ["concurrencia", "paralelismo", "fundamentos"],
+      "tech": ["Go", "Erlang", "Node.js"],
+      "references": [{ "title": "Rob Pike — 'Concurrency is not Parallelism' (2012)" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "concurrency",
+      "topic": "GIL de Python — malentendidos",
+      "difficulty": "junior",
+      "scenario": "Un compañero afirma: 'Python es lento porque solo puede usar 1 core — el GIL lo bloquea todo. Nunca uses threads en Python'.",
+      "question": "¿Qué es CIERTO sobre el GIL?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El GIL impide que múltiples threads Python ejecuten BYTECODE simultáneamente. Pero threads Python SÍ son útiles para I/O-bound (mientras un thread espera red/disco, el GIL se libera y otro thread ejecuta). Para CPU-bound usa multiprocessing o C extensions (NumPy libera GIL en ops nativas).", "correct": true, "why": "Correcto y matizado. GIL solo afecta ejecución de bytecode Python — no paralelismo real de I/O. Threads en Python son perfectamente válidos para: (1) I/O paralelo (requests, DB, files); (2) esperar procesos externos. Para CPU pesado (image processing, ML): multiprocessing (procesos separados, cada uno con su GIL), o librerías que liberan GIL (NumPy, PyTorch, Numba)." },
+        { "letter": "B", "text": "El GIL es un bug de Python que van a arreglar en 3.14.", "correct": false, "why": "Aunque desde PEP 703 hay trabajo experimental en 'no-GIL Python' (Sam Gross, disponible como opcional en 3.13), el GIL sigue siendo default. NO es un bug — es una decisión de diseño (simplifica el runtime y la extensión C API)." },
+        { "letter": "C", "text": "El GIL solo se libera para NumPy y funciones matemáticas.", "correct": false, "why": "Falso. Cualquier syscall bloqueante (open, read, socket) libera el GIL. Cualquier extensión C bien diseñada lo libera cuando hace trabajo pesado. NumPy es un ejemplo, no la única excepción." },
+        { "letter": "D", "text": "Otros lenguajes también tienen GIL (Ruby, JavaScript, C#).", "correct": false, "why": "Parcial: Ruby MRI sí tiene GIL similar. Node.js es single-threaded por diseño (no GIL, es literal). C#/.NET NO tiene GIL — threads verdaderos. Mezclar términos confunde." }
+      ],
+      "explanation": "El GIL protege el intérprete CPython y su reference counting de race conditions. Trade-off: simplicidad de implementación y compatibilidad C-API por costo de paralelismo puro. Alternativas: (1) multiprocessing — procesos separados, cada uno con GIL, comunican por queue/pipe/shared mem; (2) async (asyncio) — 1 thread + event loop; (3) C extensions que liberan GIL para trabajo bruto; (4) PyPy o Jython (sin GIL); (5) desde 3.13, no-GIL build opcional. Regla: I/O-bound → threads o async; CPU-bound → multiprocessing.",
+      "realWorld": "Instagram (Django, Python) escaló a millones de usuarios usando threads (I/O-bound), luego migró parte a Cython/C. Dropbox usó multiprocessing para CPU-heavy. Sam Gross demostró en 2021 un fork de CPython sin GIL con overhead aceptable — llevó a PEP 703 y trabajo actual.",
+      "tags": ["GIL", "Python", "threads", "multiprocessing"],
+      "tech": ["Python", "CPython", "PyPy"],
+      "references": [{ "title": "PEP 703 — Making the Global Interpreter Lock Optional in CPython" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "concurrency",
+      "topic": "Race condition en 'check-then-act'",
+      "difficulty": "mid",
+      "scenario": "Endpoint que decide si un usuario puede reservar una plaza en un evento con capacidad limitada:\n\n```java\nif (event.getReservationCount() < event.getCapacity()) {\n    event.incrementReservations();\n    return Reserved;\n}\nreturn Full;\n```\n\nBajo carga de miles de reservas concurrentes, a veces se venden más plazas que la capacidad. En dev nunca pasa.",
+      "question": "¿Cuál es la solución correcta y por qué las otras fallan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Envolver el bloque en `synchronized(event)`. Serializa las reservas.", "correct": false, "why": "Funciona para UN servidor pero no escala: (1) cuello de botella — todas las reservas del mismo evento se serializan; (2) si tienes 2+ pods de la app, cada pod tiene su propio lock — los pods no se coordinan. El bug persiste en producción distribuida." },
+        { "letter": "B", "text": "Hacerlo atómico en la DB: `UPDATE events SET reservation_count = reservation_count + 1 WHERE id = ? AND reservation_count < capacity` y verificar filas afectadas.", "correct": true, "why": "Correcto. La DB serializa dentro de una sola sentencia atómica: el check y el increment ocurren juntos, la DB decide quién gana. Si filas afectadas = 0, evento lleno. Funciona con N réplicas de app y sin locks explícitos. Postgres, MySQL, Aurora lo soportan." },
+        { "letter": "C", "text": "Usar `AtomicInteger` en el campo `reservationCount`.", "correct": false, "why": "Resuelve el increment atómico pero NO el 'check-then-act': puedes leer valor < capacity, otro thread pasa la barrera, y ambos incrementan. AtomicInteger tiene compareAndSet, PERO en un servicio con múltiples pods sigue sin coordinar entre nodos." },
+        { "letter": "D", "text": "Usar transaction ACID normal (BEGIN; SELECT; UPDATE; COMMIT).", "correct": false, "why": "En isolation level default (READ COMMITTED), otro tx puede leer el mismo valor entre tu SELECT y UPDATE — race persiste. Necesitarías SERIALIZABLE o SELECT ... FOR UPDATE (row-level lock), que funciona pero es más lento que el UPDATE condicional atómico de B." },
+        { "letter": "E", "text": "Usar Redis con INCR y comparar contra un cap.", "correct": false, "why": "Cerca pero problemático: el 'check' y el INCR son 2 comandos, otro cliente puede INCR entre medio y sobrepasar el cap. Necesitarías script Lua (atómico en Redis). Válido, pero más complejo y añade dependencia — la solución más simple es la DB con UPDATE condicional." }
+      ],
+      "explanation": "'Check-then-act' es la CLASE de race condition más común. La regla: si tienes que leer un valor y actuar en función de él, esas dos operaciones deben ser atómicas EN EL MISMO PUNTO donde vive el estado (la DB, un contador atómico, un lock distribuido). Serializar en la capa de aplicación (synchronized) no basta cuando hay múltiples réplicas. En dev funciona porque hay un solo pod y baja concurrencia — la race window es infinitesimal.",
+      "realWorld": "Ticketmaster ha tenido bugs históricos de sobre-venta por esto. Airbnb documenta este patrón en su ingeniería. La regla '1 sentencia UPDATE atómica' es lo que salvó a estos sistemas.",
+      "tags": ["race condition", "check-then-act", "atomicidad", "distributed"],
+      "tech": ["Postgres", "MySQL", "AtomicInteger", "Redis"],
+      "references": [{ "title": "Kleppmann — 'Designing Data-Intensive Applications', Ch. 7" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "concurrency",
+      "topic": "Async/await vs threads — modelo mental",
+      "difficulty": "mid",
+      "scenario": "Discusión de equipo: '¿Por qué Node.js con async/await maneja mejor 10.000 conexiones simultáneas que un servidor Java con thread-per-request?'",
+      "question": "¿Cuál es la explicación técnica MÁS CORRECTA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Async es más rápido por CPU. JavaScript ejecuta más rápido que la JVM.", "correct": false, "why": "Falso. La JVM es MÁS rápida que V8 en cargas CPU-bound. La ganancia de Node no viene de velocidad de ejecución sino del modelo de I/O." },
+        { "letter": "B", "text": "Cada thread OS consume ~1MB de stack y su cambio de contexto es costoso (~1-5μs). Con 10.000 threads = 10GB de RAM en stacks + trashing de scheduler. Async usa 1 thread + event loop: al esperar I/O suelta el hilo, permitiendo miles de operaciones concurrentes con memoria mínima.", "correct": true, "why": "Correcto y granular. El modelo async no es más rápido — es más eficiente EN MEMORIA e I/O. Un thread bloqueado en I/O 'desperdicia' su stack. Async multiplexa I/O sobre pocos hilos usando epoll/kqueue. El costo: código más difícil (callback hell, race conditions distintas), y NO ayuda si tu carga es CPU-bound." },
+        { "letter": "C", "text": "La JVM no soporta async. Solo Node/Python/Go pueden hacerlo.", "correct": false, "why": "Falso. Java tiene CompletableFuture, Reactor (Netty), y desde Java 21 Virtual Threads (Project Loom) que ofrecen threading masivo con memoria mínima — cerrando la brecha con async." },
+        { "letter": "D", "text": "Node.js usa Cluster automáticamente para paralelizar 10.000 conexiones.", "correct": false, "why": "Cluster está disponible pero no es automático, y de todas formas no es la razón. La razón es el event loop + libuv." }
+      ],
+      "explanation": "El modelo async (event loop) gana cuando el trabajo es I/O-bound: esperar DB, HTTP, disco. Mientras uno espera, el thread hace otra cosa. Threading tradicional 1 request = 1 thread es ineficiente porque el thread duerme durmiendo memoria. Virtual Threads (Loom, Go goroutines) intentan combinar lo mejor: código secuencial + eficiencia async. Regla: usa async/futures cuando I/O-bound, threads cuando CPU-bound (cada thread ocupa un core).",
+      "realWorld": "Migración famosa de LinkedIn en 2011: de Rails (thread-per-request) a Node.js — redujeron servidores de 30 a 3 para el mismo tráfico móvil. Contra-ejemplo: cuando Discord migró parte de su código async de Go a Rust — problemas eran CPU-bound (compression), no I/O.",
+      "tags": ["async", "event loop", "threads", "I/O-bound", "virtual threads"],
+      "tech": ["Node.js", "Java", "libuv", "Project Loom"],
+      "references": [{ "title": "Nick Craver — 'Stack Overflow Architecture 2016'" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "concurrency",
+      "topic": "Volatile vs synchronized en Java",
+      "difficulty": "mid",
+      "scenario": "Un desarrollador tiene un flag `boolean running` que un thread principal lee en un loop y otro thread lo setea a false para detenerlo. Sin ningún modificador, el loop nunca ve el cambio y corre para siempre.",
+      "question": "¿Cuál es la solución correcta y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Marcar `volatile boolean running`. Garantiza visibilidad: escrituras se propagan al main memory y lecturas la traen (evita el caché per-thread).", "correct": true, "why": "Correcto. Sin volatile, la JVM puede cachear el valor en registros/thread-local cache — el thread lector nunca ve el cambio. Volatile fuerza memoria compartida coherente para reads/writes. Es SUFICIENTE para flag booleano (una escritura atómica; ninguna dependencia con otras variables)." },
+        { "letter": "B", "text": "Usar `synchronized` alrededor de cada lectura/escritura.", "correct": false, "why": "Funciona (synchronized también garantiza visibilidad) pero es OVERKILL para un flag simple. Añade contención de lock innecesaria. Volatile es más ligero para variables 'observables'." },
+        { "letter": "C", "text": "Usar AtomicBoolean.", "correct": false, "why": "Funciona pero también overkill. AtomicBoolean es útil cuando necesitas compareAndSet (test-and-set atómico). Para simple 'set + read', volatile basta." },
+        { "letter": "D", "text": "Ninguna. El código debería funcionar por defecto.", "correct": false, "why": "Falso. Java Memory Model (JMM) NO garantiza visibilidad entre threads sin sincronización explícita. Los caches de CPU + optimizaciones del compilador/JIT pueden causar que un thread nunca vea cambios de otro." }
+      ],
+      "explanation": "JMM y otros modelos de memoria (C++, Go) permiten reordenamiento y caching para performance. Sin sincronización explícita, no hay 'happens-before' garantizado. Modificadores:\n(1) volatile: visibilidad + orden de escritura/lectura para esa variable; NO atomicidad de operaciones compuestas.\n(2) synchronized: lock + visibilidad + orden completo.\n(3) atomic types: read-modify-write atómico con CAS.\nRegla mental: para SEÑALES simples (flag booleano) → volatile. Para operaciones compuestas → atomic o synchronized. Para bloques enteros → synchronized o Lock.",
+      "realWorld": "El bug clásico 'double-checked locking' antes de Java 5 fallaba por falta de volatile en el reference chequeado — el lector podía ver el objeto parcialmente construido. Se documentó en 'Double-checked locking is broken' de Brian Goetz. Java 5 arregló con volatile semantics más estrictos.",
+      "tags": ["volatile", "synchronized", "JMM", "visibilidad"],
+      "tech": ["Java", "JMM"],
+      "references": [{ "title": "Brian Goetz — 'Java Concurrency in Practice'" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "concurrency",
+      "topic": "Deadlock — diagnóstico",
+      "difficulty": "senior",
+      "scenario": "Un servicio de banking hace transferencias:\n\n```\ntransfer(A → B):\n    lock(A)\n    lock(B)\n    A.balance -= amount\n    B.balance += amount\n    unlock(B); unlock(A)\n```\n\nBajo carga, el sistema se congela y hay que reiniciar. Los logs muestran timeouts en múltiples threads a la vez.",
+      "question": "¿Cuál es la causa y la solución CANÓNICA (no un parche)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Deadlock. Fix: usar un solo lock global para todas las cuentas.", "correct": false, "why": "Elimina el deadlock pero convierte todo el banking en serial — bottleneck absoluto. Un solo cliente lento congela todo el banco. Es un fix que no escala." },
+        { "letter": "B", "text": "Deadlock por hold-and-wait circular. Fix canónico: ADQUIRIR LOCKS EN ORDEN CONSISTENTE (ej. lock siempre la cuenta con menor id primero). Elimina el ciclo.", "correct": true, "why": "Correcto. Deadlock requiere 4 condiciones (Coffman): mutual exclusion, hold-and-wait, no preemption, y CIRCULAR wait. Romper la circular ordering hace imposible el ciclo. Es la solución textbook y la que usan bases de datos internamente." },
+        { "letter": "C", "text": "Deadlock. Fix: usar tryLock con timeout y retry con backoff exponencial.", "correct": false, "why": "Válido como defensa (livelock, deadlock detection en runtime) pero desperdicia trabajo y añade complejidad. Ordering es preferible porque PREVIENE en lugar de detectar-y-recuperar." },
+        { "letter": "D", "text": "No es deadlock: es un tema de lock leak (locks que nunca se liberan por excepción).", "correct": false, "why": "Otro problema real y distinto (fix: try-finally con unlock, o synchronized/using). Pero el síntoma 'timeouts simultáneos en muchos threads' es signatura de deadlock, no de lock leak (que caería 1 thread a la vez)." }
+      ],
+      "explanation": "Deadlock canónico: T1 tiene lock(A) y espera B; T2 tiene lock(B) y espera A. Ciclo perpetuo. Solución preferida es PREVENCIÓN: romper una de las 4 condiciones Coffman. La más práctica es 'no circular wait' = ordering consistente. Alternativas: lock striping (múltiples locks pero con orden), lock-free (compare-and-swap), o mover la lógica a un solo actor (Erlang, Actor Model). En DBs, motores usan deadlock detection + víctima rollback.",
+      "realWorld": "MySQL detecta deadlocks en InnoDB (SHOW ENGINE INNODB STATUS) y aborta la transacción 'víctima'. Postgres tiene deadlock_timeout. En bancos reales, este bug de transfer entre dos cuentas es CANÓNICO — se enseña en todos los cursos de sistemas concurrentes.",
+      "tags": ["deadlock", "Coffman", "lock ordering", "concurrencia"],
+      "tech": ["Java", "Postgres", "MySQL"],
+      "references": [{ "title": "Tanenbaum — 'Modern Operating Systems', §6.4 Deadlocks" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "concurrency",
+      "topic": "Livelock — el hermano olvidado del deadlock",
+      "difficulty": "senior",
+      "scenario": "Un ingeniero afirma haber 'arreglado un deadlock' con `tryLock` + retry con random backoff. Los threads ya no se cuelgan pero el CPU está al 100% sin progreso real.",
+      "question": "¿Qué está pasando?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Livelock: los threads están 'vivos' (ejecutando) pero no progresan porque continuamente ceden y reintentan sin lograr adquirir todos los locks. Es como dos personas educadas en un pasillo cediéndose el paso indefinidamente. Fix: aleatorizar backoff (jitter) o volver a lock ordering.", "correct": true, "why": "Correcto. Livelock es un patrón menos conocido: no hay bloqueo (los threads no están dormidos), pero tampoco progreso. Ocurre cuando el mecanismo de 'evitar deadlock' se convierte en un baile perpetuo. La solución es introducir aleatoriedad (evitar sincronización de reintentos) o volver a prevención estructural (lock ordering)." },
+        { "letter": "B", "text": "Deadlock persistente.", "correct": false, "why": "Deadlock: threads bloqueados (durmiendo, no consumen CPU). Aquí el CPU está al 100% — hay actividad. Es livelock." },
+        { "letter": "C", "text": "Memory leak.", "correct": false, "why": "Memory leak: RAM crece; CPU no necesariamente. Distinto síntoma." },
+        { "letter": "D", "text": "Starvation.", "correct": false, "why": "Starvation: un thread específico nunca progresa porque otros siempre le ganan. Similar pero no idéntico — livelock es simétrico (nadie progresa). Concepto relacionado, pero el diagnóstico exacto es livelock." }
+      ],
+      "explanation": "Familia de problemas de concurrencia: (1) Deadlock — bloqueo mutuo permanente; (2) Livelock — actividad sin progreso; (3) Starvation — un thread no obtiene recursos; (4) Race condition — resultado depende del timing. Prevención de livelock: (1) exponential backoff con JITTER (aleatoriedad); (2) prioridades para romper simetría; (3) diseño lock-free con CAS + progress guarantees. Ethernet resuelve un livelock similar (CSMA/CD) con exponential backoff aleatorio tras colisión.",
+      "realWorld": "TCP retransmission usa exponential backoff con jitter por esto. AWS SDK, GRPC, kafka clients — todos usan backoff+jitter. Un incidente famoso de AWS 2019: thundering herd durante recovery, todos los clientes reintentaron simultáneamente, sobrecargando el sistema. Fix: jitter.",
+      "tags": ["livelock", "starvation", "backoff", "jitter"],
+      "tech": ["TCP", "AWS SDK"],
+      "references": [{ "title": "AWS Architecture Blog — 'Exponential Backoff and Jitter'" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "concurrency",
+      "topic": "Producer-Consumer y BlockingQueue",
+      "difficulty": "mid",
+      "scenario": "Un servicio recibe eventos rápido y los procesa lento. Un jr implementa: un thread recibe → guarda en `ArrayList<Event> queue`; otro thread lee de la lista. Bajo carga hay ConcurrentModificationException y eventos perdidos.",
+      "question": "¿Cuál es la solución CANÓNICA para producer-consumer?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "BlockingQueue (ArrayBlockingQueue, LinkedBlockingQueue). put() bloquea si está llena, take() bloquea si vacía. Thread-safe internamente. Diseñada exactamente para este patrón.", "correct": true, "why": "Correcto. BlockingQueue es la estructura estándar para producer-consumer en Java. Ofrece: (1) thread-safety sin lock explícito; (2) back-pressure — si el consumer no puede seguir, el producer se bloquea (evita OOM); (3) semántica clara (bounded queue con capacidad). Alternativas: LinkedBlockingQueue (unbounded, cuidado con OOM), SynchronousQueue (hand-off directo)." },
+        { "letter": "B", "text": "ArrayList sincronizado con Collections.synchronizedList().", "correct": false, "why": "Añade thread safety a operaciones individuales, pero iterar o hacer 'wait until non-empty' NO está resuelto — necesitas notify/wait manual → complejo y frágil. BlockingQueue lo encapsula." },
+        { "letter": "C", "text": "ConcurrentHashMap con claves incrementales.", "correct": false, "why": "Confusión de estructuras. ConcurrentHashMap es para lookup por key, no orden FIFO ni block on empty." },
+        { "letter": "D", "text": "Duplicar el thread consumer para procesar más rápido.", "correct": false, "why": "Sin cambiar la queue, sigue habiendo bug de concurrencia. Y añadir consumers no resuelve el bug estructural." }
+      ],
+      "explanation": "Producer-Consumer es un patrón fundamental para desacoplar velocidades entre producers y consumers. BlockingQueue resuelve todos los issues (thread safety, back-pressure, coordinación) sin código propio. Extensiones: (1) múltiples producers/consumers — BlockingQueue soporta; (2) prioridad — PriorityBlockingQueue; (3) hand-off directo (sin buffer) — SynchronousQueue; (4) distribuido — Kafka, RabbitMQ, SQS son BlockingQueue distribuido. Regla: cuando veas 'un thread mete, otro saca', pregunta '¿es BlockingQueue?'.",
+      "realWorld": "Java ExecutorService usa BlockingQueue internamente para el pool de tareas. Log frameworks (Log4j 2 AsyncAppender) usan BlockingQueue/RingBuffer para logging asíncrono. Netflix RxJava, Reactor — abstracciones sobre este patrón. En sistemas distribuidos, Kafka es el 'BlockingQueue' canónico.",
+      "tags": ["producer consumer", "BlockingQueue", "back-pressure"],
+      "tech": ["Java", "Kafka"],
+      "references": [{ "title": "Brian Goetz — 'Java Concurrency in Practice' Ch. 5" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "concurrency",
+      "topic": "Immutability como estrategia de concurrencia",
+      "difficulty": "senior",
+      "scenario": "Un compañero pregunta: '¿Por qué los lenguajes funcionales (Haskell, Clojure, Scala) manejan concurrencia con menos bugs?'",
+      "question": "¿Cuál es la razón MÁS ESTRUCTURAL?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Inmutabilidad por default. Si los datos no se pueden modificar, no hay race conditions posibles. La concurrencia solo requiere sincronización cuando hay ESTADO MUTABLE compartido. Sin mutación, threads pueden compartir libremente.", "correct": true, "why": "Correcto y profundo. Race conditions requieren: (1) estado compartido; (2) mutación. Si eliminas la mutación (immutability), race conditions imposibles. Cambios de estado se hacen por CREAR nuevo estado y reemplazar la referencia con operación atómica (persistent data structures, structural sharing). Clojure lo hace explícito con atoms, refs (STM), agents." },
+        { "letter": "B", "text": "Tienen GC más rápido.", "correct": false, "why": "Superficial. GC no es la razón; de hecho, immutable structures generan MÁS garbage." },
+        { "letter": "C", "text": "No tienen threads.", "correct": false, "why": "Falso. Haskell tiene forkIO (green threads), Scala tiene Akka (actors), Clojure tiene threads JVM. Sí usan concurrencia — el punto es que su MODELO la hace más segura." },
+        { "letter": "D", "text": "Son más lentos y por eso hay menos bugs.", "correct": false, "why": "Racionalización sin sustento." }
+      ],
+      "explanation": "Immutability es la estrategia MÁS PODEROSA contra bugs de concurrencia — elimina la clase entera de race conditions. Cómo modelar cambios: (1) crear nuevo objeto con cambios; (2) reemplazar referencia atomicamente (CAS, atom); (3) persistent data structures (structural sharing) para no copiar todo. Alternativas relacionadas: (a) actor model (Erlang, Akka) — cada actor tiene estado privado, comunica por mensajes inmutables; (b) STM (Software Transactional Memory) — transacciones sobre memoria compartida; (c) message passing sin estado compartido. En Java: records de Java 14+, ImmutableList de Guava, val en Kotlin, final fields.",
+      "realWorld": "WhatsApp escaló a mil millones de usuarios con ~50 ingenieros en Erlang (actors + inmutabilidad). React usa immutability para state (setState reemplaza, no muta) — permite optimizaciones y evita bugs. Redux es enteramente inmutable. Discord migró servicios críticos a Rust — ownership system garantiza no data races.",
+      "tags": ["immutability", "concurrencia", "functional", "actor model"],
+      "tech": ["Clojure", "Haskell", "Erlang", "Rust"],
+      "references": [{ "title": "Rich Hickey — 'Simple Made Easy' (2011)" }, { "title": "Joe Armstrong — 'Programming Erlang'" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "concurrency",
+      "topic": "Thread pool sizing",
+      "difficulty": "senior",
+      "scenario": "Configuras un ExecutorService para un servicio Java. ¿Cuántos threads pones? El equipo tiene: (1) endpoint CPU-heavy (image resize); (2) endpoint I/O-heavy (DB + external API). Los pods tienen 4 CPUs.",
+      "question": "¿Cuáles principios son CORRECTOS para dimensionar thread pools?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Para CPU-bound: ~N cores (o N+1). Más threads que cores solo añade overhead de context switching sin ganancia.", "correct": true, "why": "Correcto. Regla clásica de Brian Goetz. Si cada thread está CPU-bound, poner 100 threads en 4 cores solo trashea el scheduler." },
+        { "letter": "B", "text": "Para I/O-bound: N × (1 + waitTime/serviceTime). Si esperas 90ms y computes 10ms, ratio 10 → 40 threads por 4 cores razonable.", "correct": true, "why": "Correcto. Fórmula de Goetz (Java Concurrency in Practice §8.2). El thread está durmiendo la mayor parte del tiempo — puedes tener muchos más threads que cores porque no compiten por CPU." },
+        { "letter": "C", "text": "SEPARAR pools por tipo de workload. Mezclar CPU-heavy con I/O-heavy en el mismo pool causa que una imagen procesándose bloquee capacity de I/O.", "correct": true, "why": "Correcto y a menudo olvidado. Es 'bulkhead pattern' (Michael Nygard, 'Release It!'). Aísla recursos por workload para prevenir cascading failures. Netflix Hystrix formalizó bulkheads en microservicios." },
+        { "letter": "D", "text": "Usar `Executors.newCachedThreadPool()` — crea threads sin límite bajo demanda.", "correct": false, "why": "Peligroso en producción. Bajo carga puedes explotar en miles de threads → OOM o exhausto de threads OS. Solo aceptable en tools breves. Producción: usar pool bounded." },
+        { "letter": "E", "text": "Un solo thread pool gigante escala mejor.", "correct": false, "why": "Falso. Sin bulkheading, un workload puede monopolizar todo el pool." }
+      ],
+      "explanation": "Thread pool sizing es de las decisiones que más impactan estabilidad y latency. Fórmulas: (1) CPU-bound: N_cores + 1 (extra para cuando uno bloquea en page fault, GC); (2) I/O-bound: N_cores × (1 + wait/service ratio); (3) Mixed: mejor SEPARAR pools. Reglas prácticas: (a) siempre BOUNDED (evita OOM); (b) siempre con nombre para debugging (thread dumps); (c) medir con métricas (queue length, active threads). Alternativa moderna: Virtual Threads (Loom, Java 21) elimina la necesidad de dimensionar — millones de virtual threads baratos.",
+      "realWorld": "Netflix Hystrix (2011-2019) formalizó bulkhead pattern para microservicios. LinkedIn documentó incidentes por thread pool exhaustion cuando un servicio downstream se degradaba. Log4j 2.x separó thread pool de I/O de logging del principal por esto exacto.",
+      "tags": ["thread pool", "bulkhead", "sizing", "CPU-bound", "I/O-bound"],
+      "tech": ["Java ExecutorService", "Netflix Hystrix"],
+      "references": [{ "title": "Brian Goetz — 'Java Concurrency in Practice' Ch. 8" }, { "title": "Michael Nygard — 'Release It!'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "concurrency",
+      "topic": "ConcurrentHashMap vs HashMap synchronized",
+      "difficulty": "senior",
+      "scenario": "Necesitas un Map thread-safe para un cache en memoria de alta frecuencia. Opciones: (a) `Collections.synchronizedMap(new HashMap<>())`, (b) `ConcurrentHashMap`.",
+      "question": "¿Cuál es la diferencia clave y cuándo cada una?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son equivalentes en performance.", "correct": false, "why": "Falso. Difieren dramaticamente en escala." },
+        { "letter": "B", "text": "synchronizedMap wrappea cada método en un solo lock GLOBAL — solo un thread puede acceder al Map a la vez. ConcurrentHashMap usa lock striping (Java 7) o CAS + finer-grained locks (Java 8+) — múltiples threads pueden acceder en paralelo. Para alta concurrencia: ConcurrentHashMap.", "correct": true, "why": "Correcto. synchronizedMap es 'thread-safe pero un lock' — bajo alta contención se serializa. ConcurrentHashMap escala: en Java 8+ usa CAS para reads, y locks por bucket para writes. Miles de threads pueden operar simultáneamente si no colisionan. Trade-off: iteración de ConcurrentHashMap es 'weakly consistent' (puede ver cambios durante iteración)." },
+        { "letter": "C", "text": "synchronizedMap es más nuevo y preferido.", "correct": false, "why": "Falso. ConcurrentHashMap está desde Java 5 (2004), synchronizedMap desde 1.2 (1998). Y ConcurrentHashMap es preferido." },
+        { "letter": "D", "text": "ConcurrentHashMap no permite iteración segura.", "correct": false, "why": "Es weakly consistent, pero SÍ permite iteración. Iterar synchronizedMap requiere synchronized externo del bloque — más código y más riesgo." }
+      ],
+      "explanation": "Estructuras concurrentes en Java: (1) synchronizedX — legacy, un lock global, no escala; (2) ConcurrentX — diseñados para concurrencia real, escalan; (3) atomic (AtomicInteger, AtomicReference) — CAS para casos simples; (4) immutable (Guava ImmutableMap) — sin thread safety necesaria, se comparten libremente. Casos de uso: cache in-memory de alta frecuencia → ConcurrentHashMap; construir un Map y no cambiarlo → immutable; contadores → AtomicLong (o LongAdder para menos contención).",
+      "realWorld": "Caffeine cache (librería Java líder de caché) usa ConcurrentHashMap internamente. Kafka client, Spring, Netty — todos ConcurrentHashMap. Un incidente clásico: swagger-ui pre-2016 usaba HashMap synchronized — bajo alta carga concurrente en un endpoint de metrics, se convertía en el bottleneck de la app.",
+      "tags": ["ConcurrentHashMap", "synchronized", "lock striping", "CAS"],
+      "tech": ["Java", "Caffeine"],
+      "references": [{ "title": "Java Concurrency in Practice (Goetz) Ch. 5" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "concurrency",
+      "topic": "CompletableFuture — composición async",
+      "difficulty": "senior",
+      "scenario": "Necesitas: (1) llamar a userService async; (2) con el resultado, llamar en paralelo a preferences y history; (3) combinar los tres en un DTO. Un desarrollador escribe callbacks anidados.",
+      "question": "¿Cuál es la solución idiomática en Java con CompletableFuture?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`getUser().thenCompose(user -> getPreferences(user).thenCombine(getHistory(user), (p, h) -> new Dto(user, p, h)))`. Compone futures encadenados y en paralelo sin callback hell.", "correct": true, "why": "Correcto. CompletableFuture ofrece operadores composicionales: (1) thenApply (map: transform sync); (2) thenCompose (flatMap: chain async); (3) thenCombine (zip: combinar 2 en paralelo); (4) allOf/anyOf (join N). thenCombine ejecuta ambas futures en PARALELO — la 2 y 3 se disparan a la vez tras terminar userService." },
+        { "letter": "B", "text": "Usar `get()` bloqueante después de cada async call.", "correct": false, "why": "Convierte async en sync — bloqueas el thread esperando. Pierdes el beneficio de async. Y bloquear en un thread de ExecutorService reduce capacity." },
+        { "letter": "C", "text": "Callback anidado: `getUser(cb1 -> getPrefs(cb2 -> getHistory(cb3 -> combine)))`.", "correct": false, "why": "Es exactamente 'callback hell'. Difícil de leer, imposible de mantener, error handling disperso. Es lo que CompletableFuture y async/await vinieron a resolver." },
+        { "letter": "D", "text": "Threads plain con join().", "correct": false, "why": "Boilerplate excesivo. Threads manuales son bajo nivel — CompletableFuture / Reactor / Rx son las abstracciones modernas." }
+      ],
+      "explanation": "Composición async es un lenguaje propio. En Java: CompletableFuture (Java 8+). En Scala/Kotlin: for-comprehension, suspend functions. En JavaScript/Python: async/await. En C#: Task + await. Todas resuelven el mismo problema: encadenar operaciones async sin callback hell. Ideas clave: (1) map/apply (transform sync); (2) flatMap/compose (chain async); (3) zip/combine (paralelo); (4) join/all (agrupar). Error handling composicional (exceptionally, catch) evita try/catch anidados. Debugging: async stack traces son más difíciles — buenas librerías reconstruyen la traza lógica.",
+      "realWorld": "Twitter Finagle (Scala) fue pionero en composición async. RxJava en Netflix para todo tipo de streams async. Rust futures + tokio son el equivalente moderno. Node.js pasó de callbacks (2010) a promises a async/await (2017) — misma progresión.",
+      "tags": ["CompletableFuture", "async composition", "callback hell", "futures"],
+      "tech": ["Java", "CompletableFuture", "RxJava"],
+      "references": [{ "title": "Modern Java in Action — Ch. Async and Reactive Programming" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "concurrency",
+      "topic": "Idempotencia y at-least-once delivery",
+      "difficulty": "senior",
+      "scenario": "Sistema distribuido con Kafka. Cada mensaje procesado incrementa un contador. Bajo failure, algunos mensajes se procesan 2 veces por retry. El contador queda con valores inflados.",
+      "question": "¿Cuál es la estrategia CORRECTA para manejar at-least-once delivery?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Hacer el processing IDEMPOTENTE. Guardar messageId procesados en una tabla de dedup; si ya procesado, ignorar. Alternativamente, usar operaciones atómicas idempotentes (por ej. counter con setNX en Redis).", "correct": true, "why": "Correcto. Regla de sistemas distribuidos: at-least-once + idempotent processing = exactly-once effect (semanticamente). Implementaciones: (1) dedup con messageId (tabla o Redis SET NX); (2) operaciones idempotentes por diseño (upsert, replace, set); (3) versioning + compare-and-set (optimistic locking). Kafka Streams y Flink ofrecen 'exactly-once semantics' construyendo sobre esto." },
+        { "letter": "B", "text": "Configurar Kafka para exactly-once delivery.", "correct": false, "why": "Kafka soporta exactly-once semantics DENTRO de Kafka (produce-consume), pero el CONSUMER puede seguir procesando el mismo mensaje 2 veces si hay retry en app. La idempotencia debe estar en el processing lógico." },
+        { "letter": "C", "text": "Deshabilitar retries.", "correct": false, "why": "Peor: mensajes perdidos en failure. At-most-once es peor que at-least-once. La solución es idempotencia, no reducir garantías." },
+        { "letter": "D", "text": "Usar transactions ACID que abarquen todo.", "correct": false, "why": "En sistemas distribuidos, ACID cross-service es prohibitivamente caro (2PC, XA transactions). La solución práctica es idempotencia + at-least-once." }
+      ],
+      "explanation": "Sistemas distribuidos: las garantías vienen en spectrum: (1) at-most-once — 0 o 1 vez; (2) at-least-once — 1+ vez; (3) exactly-once — exactamente 1 vez (raramente logrado nativo, se emula). Diseñar para AT-LEAST-ONCE + IDEMPOTENT es la práctica industrial. Formas de idempotencia: (1) natural (upsert, set); (2) dedup con id (guardar procesados); (3) optimistic locking (versión debe coincidir); (4) semántica de negocio (payment_id con constraint unique). En APIs, Idempotency-Key header (Stripe, Square).",
+      "realWorld": "Stripe usa Idempotency-Key en toda su API. AWS SQS y Kafka son at-least-once — la app maneja dedup. Uber, Netflix, LinkedIn manejan esto explícitamente en sus pipelines. Un incidente famoso: 2016 Amazon S3 outage — retries masivos generaron thundering herd; idempotencia + backoff mitigó.",
+      "tags": ["idempotencia", "at-least-once", "exactly-once", "distributed"],
+      "tech": ["Kafka", "Redis", "Stripe"],
+      "references": [{ "title": "Kleppmann — 'Designing Data-Intensive Applications' Ch. 8-9" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "concurrency",
+      "topic": "Optimistic locking vs Pessimistic locking",
+      "difficulty": "senior",
+      "scenario": "Diseño de un editor colaborativo tipo Google Docs (multiples usuarios editan el mismo doc). ¿Cuál estrategia de locking?",
+      "question": "¿Cuál es la elección apropiada y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Pessimistic locking — un usuario edita, el resto espera.", "correct": false, "why": "Terrible UX para editor colaborativo. Bloquea colaboración real. Pessimistic funciona para operaciones cortas de alta contención en el mismo recurso." },
+        { "letter": "B", "text": "Optimistic locking / concurrency: asumir que conflictos son RAROS. Cada usuario edita libremente, al guardar se detecta conflicto (version mismatch, OT/CRDT compara operaciones), y se resuelve (merge, transform, o rechazo). Google Docs usa Operational Transformation + CRDT ideas.", "correct": true, "why": "Correcto. Optimistic: no bloqueas, dejas todos trabajar, resuelves conflictos al final. Para editores colaborativos hay 2 técnicas específicas: (1) OT (Operational Transformation) — Google Docs original; (2) CRDT (Conflict-Free Replicated Data Types) — Figma, Notion, Linear. Ambos permiten merge automático de ediciones concurrentes." },
+        { "letter": "C", "text": "Bloqueo global con Redis Redlock.", "correct": false, "why": "Es pessimistic distribuido — mismo problema para el caso de uso, plus latencia extra." },
+        { "letter": "D", "text": "No hay solución: es imposible edición colaborativa concurrente sin conflictos.", "correct": false, "why": "Falso. Google Docs, Figma, Miro, Notion han demostrado que es posible con las técnicas correctas." }
+      ],
+      "explanation": "Locking strategies: (1) Pessimistic — bloquear antes de leer/escribir; usar cuando la contención es ALTA y el bloqueo es CORTO. Ej: transferencia bancaria. (2) Optimistic — leer, modificar, en commit verificar que no cambió (version, ETag); reintentar si conflicto. Usar cuando conflictos son RAROS. Ej: DB updates típicos, edición colaborativa. Implementación: version column, ETag HTTP, compare-and-swap. Escalada: OT (transformar operaciones para preservar intención) y CRDT (estructuras que mergean automáticamente por diseño matemático).",
+      "realWorld": "Google Docs original: OT. Figma: CRDT (paper 'How Figma's multiplayer technology works'). Redis, DynamoDB, JPA/Hibernate ofrecen optimistic locking nativo (@Version en JPA). Automerge (JavaScript CRDT library) popularizó CRDTs. La elección arquitectural profunda es sobre contención esperada.",
+      "tags": ["optimistic", "pessimistic", "locking", "CRDT", "collaborative"],
+      "tech": ["Google Docs", "Figma", "CRDT"],
+      "references": [{ "title": "Martin Kleppmann — 'Local-first software'" }, { "title": "Figma Engineering — 'How Figma's multiplayer technology works'" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "concurrency",
+      "topic": "Cancelación cooperativa en Java",
+      "difficulty": "senior",
+      "scenario": "Un endpoint tarda 30 segundos en cómputo. El cliente cancela el request. El thread sigue trabajando y consumiendo CPU inútilmente. Un desarrollador propone `thread.stop()`.",
+      "question": "¿Cuál es la solución correcta y por qué NO Thread.stop()?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Thread.stop() está DEPRECATED desde Java 1.1 — es inseguro, puede dejar el estado corrupto (locks no liberados, invariantes rotos). Solución: cancelación COOPERATIVA — el thread chequea `Thread.interrupted()` en puntos apropiados y sale limpiamente. Frameworks (Future.cancel, CompletableFuture cancel) manejan esto.", "correct": true, "why": "Correcto. Thread.stop() abort en medio de cualquier operación — locks aún tomados, invariantes rotos, datos corruptos. Java Cooperative cancellation: el thread interrumpible chequea `Thread.currentThread().isInterrupted()` o captura InterruptedException en operaciones bloqueantes (sleep, wait, IO). El código propio necesita chequear en loops largos. Es COLABORATIVO — el hilo elige cuándo parar limpiamente." },
+        { "letter": "B", "text": "Thread.stop() es la forma correcta en Java 21.", "correct": false, "why": "Falso. Sigue deprecated en Java 21. Es el ejemplo canónico de API mal diseñada que Java conservó por compatibility." },
+        { "letter": "C", "text": "Aumentar el timeout del cliente.", "correct": false, "why": "No resuelve el problema (thread sigue consumiendo). Y esconde el issue estructural." },
+        { "letter": "D", "text": "System.exit() para matar el proceso entero.", "correct": false, "why": "Extremo — mata el proceso entero, todos los threads y requests. Como analogía: usar mata-moscas para una hormiga." }
+      ],
+      "explanation": "Cancelación cooperativa es el paradigma correcto en la mayoría de lenguajes modernos: (1) Java — interrupt + isInterrupted; (2) Kotlin coroutines — cancellation con checkpoints; (3) Go — context.Context con Done() channel; (4) Rust — abort handles con checks. La idea común: el código debe ser 'cancelable' — chequear si le pidieron parar en puntos seguros. Alternativa preemptive (thread.stop, kill -9) es peligrosa porque no da chance de cleanup. Regla: en loops largos, cheque cancellation cada N iteraciones; en operaciones bloqueantes, propaga InterruptedException.",
+      "realWorld": "Kotlin coroutines cancelation es un ejemplo model (structured concurrency). Go context cancellation es idiomático en toda la stdlib. En Java, el famoso 'stopping threads' es tema recurrente en interviews. Un incidente clásico: Elasticsearch antes de 6.x tenía issues cancelando queries largas — a partir de esa versión usa cooperative task cancellation.",
+      "tags": ["cancellation", "Thread.stop", "cooperative", "InterruptedException"],
+      "tech": ["Java", "Kotlin coroutines", "Go context"],
+      "references": [{ "title": "Java Concurrency in Practice Ch. 7 — Cancellation and Shutdown" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "concurrency",
+      "topic": "Backpressure en streams reactivos",
+      "difficulty": "staff",
+      "scenario": "Un servicio consume eventos de Kafka y los publica a un downstream lento. Bajo carga, el servicio se queda sin memoria: buffer interno crece indefinidamente porque el downstream no puede seguir.",
+      "question": "¿Qué concepto/estrategia resuelve esto arquitecturalmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Backpressure: mecanismo para que el consumer indique al producer 've más lento'. Estrategias: (1) bounded buffer que bloquea al producer; (2) drop policy (descartar); (3) sampling; (4) request-N (Reactive Streams: consumer pide N mensajes explícitamente). Sin backpressure, siempre hay riesgo de OOM.", "correct": true, "why": "Correcto. Backpressure es la CLAVE de streaming systems. Reactive Streams (spec 2015, ahora en JDK Flow) formalizó: publisher solo emite tantos elementos como el subscriber ha REQUEST. Sin backpressure, un producer rápido saturará memory de un consumer lento. RxJava, Reactor, Akka Streams implementan Reactive Streams. Kafka tiene backpressure natural (poll model — consumer pide)." },
+        { "letter": "B", "text": "Aumentar la memoria del pod.", "correct": false, "why": "Parche temporal. Si el downstream sigue siendo más lento que el producer, tarde o temprano OOM. La velocidad, no la memoria, es el problema." },
+        { "letter": "C", "text": "Usar más threads para procesar en paralelo.", "correct": false, "why": "Ayuda si el bottleneck era CPU, no si el downstream tiene throughput limitado. Añadir workers a un servicio downstream saturado empeora. Backpressure es lo que necesitas." },
+        { "letter": "D", "text": "Deshabilitar el buffer.", "correct": false, "why": "Perderías mensajes. Solución sin buffer requiere synchronous handoff — pero eso ES backpressure implícita (SynchronousQueue)." }
+      ],
+      "explanation": "Backpressure es un concepto fundamental de streaming: 'flow control' para que velocidades desiguales no rompan el sistema. En redes: TCP tiene backpressure via sliding window. En HTTP/2, control por streams. En Reactive Streams, request(n) explícito. En Kafka, el consumer poll model es backpressure implícita (consumer decide cuánto consume). Sin backpressure formal, sistemas suelen usar: (1) bounded queue + block (BlockingQueue); (2) drop oldest/newest (LRU cache, ring buffer); (3) sample rate limiting. Diseño: SIEMPRE plantea 'qué pasa si downstream es lento'.",
+      "realWorld": "Netflix migró de callback-based a Reactive Streams (RxJava, Zuul 2) explícitamente para backpressure. Kafka arquitectura entera está basada en poll → backpressure natural. AWS Kinesis, Google Pub/Sub — ambos con controles de rate. Un incidente famoso: Discord 2020 tuvo cascading failure cuando un servicio de moderation se ralentizó — el upstream sin backpressure explotó en memory.",
+      "tags": ["backpressure", "reactive streams", "streaming", "flow control"],
+      "tech": ["Reactive Streams", "RxJava", "Kafka", "Reactor"],
+      "references": [{ "title": "Reactive Streams Specification" }, { "title": "Netflix Tech Blog — 'Zuul 2: The Netflix Journey to Asynchronous, Non-Blocking Systems'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "concurrency",
+      "topic": "Actor Model — cuándo aplicarlo",
+      "difficulty": "staff",
+      "scenario": "Diseño de un sistema de gaming online con miles de jugadores concurrentes. Cada jugador tiene estado (posición, inventario) que cambia constantemente. Un equipo propone 'Actor Model con Akka/Erlang'.",
+      "question": "¿Cuáles son las CARACTERÍSTICAS y ventajas del Actor Model?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cada actor tiene ESTADO PRIVADO no compartido. Se comunica por MENSAJES ASÍNCRONOS. Elimina locking porque no hay estado compartido.", "correct": true, "why": "Correcto. Modelo de Carl Hewitt (1973), popularizado por Erlang (1986) y Akka (2010). Actor = unidad de concurrencia con: (1) estado privado; (2) mailbox de mensajes; (3) comportamiento (cómo procesa mensajes). Como no hay memoria compartida, no hay data races. Concurrencia sin locking. Naturalmente distribuible (mensajes pueden ir cross-machine)." },
+        { "letter": "B", "text": "Los mensajes se procesan SECUENCIALMENTE dentro de cada actor. Cada actor es 'single-threaded' internamente.", "correct": true, "why": "Correcto y crítico. Cada actor procesa un mensaje a la vez de su mailbox. Esto elimina bugs de concurrencia internos. La concurrencia surge entre MÚLTIPLES actores procesando en paralelo. Modelo mental: cada jugador es un actor procesando eventos (move, chat, attack) en orden." },
+        { "letter": "C", "text": "Fault tolerance mediante supervisión: si un actor falla, un padre supervisor decide qué hacer (restart, escalate, stop). Enseña 'let it crash' — no defenderse contra todo error, dejar caer y reiniciar limpio.", "correct": true, "why": "Correcto. Erlang OTP introdujo 'let it crash' + supervision trees. En Akka: SupervisorStrategy. Al fallar un actor, el supervisor lo reinicia limpio (posiblemente con nuevo estado). Habilita 9-nines uptime en sistemas Erlang (ericsson AXD301 switch: 99.9999999% uptime)." },
+        { "letter": "D", "text": "Adecuado para dominios con muchas entidades independientes que evolucionan concurrentemente: gaming, telecoms, chat, IoT.", "correct": true, "why": "Correcto. Dominios naturalmente 'poblados' por entidades semi-independientes son ideales. WhatsApp (Erlang), WeChat (Erlang), Discord (originalmente Elixir), muchos games." },
+        { "letter": "E", "text": "Reemplaza completamente todos los otros modelos de concurrencia.", "correct": false, "why": "No. Actor Model tiene overhead (mailbox, message copy, scheduling) y no encaja bien en workloads donde el estado ES compartido intencionalmente (analytics, batch processing). Elige el modelo según problema." }
+      ],
+      "explanation": "Actor Model es una alternativa radical al 'shared memory + locks'. Ventajas: (1) sin locks, sin deadlocks; (2) distribuido natural (mensajes cross-node); (3) fault tolerance por supervisión; (4) escala horizontalmente. Desventajas: (1) overhead de mensajes; (2) razonamiento distinto (no puedes 'llamar métodos' — envías mensajes); (3) latencia por copia de mensajes. Implementaciones: Erlang/OTP (nativo, BEAM VM), Akka (Scala/Java), Elixir (nativo Erlang), Orleans (.NET), Actix (Rust). En gaming multiplayer: cada jugador es un actor; el mundo puede ser una jerarquía de actores por región.",
+      "realWorld": "WhatsApp escaló a mil millones de usuarios con ~50 ingenieros en Erlang. Ericsson usó Erlang para telecom switches con 99.9999999% uptime (~30ms downtime/año). Discord usa Elixir para presence service (millones de conexiones). Halo (Xbox Live) usa Orleans (.NET Actor framework).",
+      "tags": ["actor model", "Akka", "Erlang", "supervision", "let it crash"],
+      "tech": ["Erlang", "Akka", "Elixir", "Orleans"],
+      "references": [{ "title": "Carl Hewitt — 'A Universal Modular Actor Formalism for AI', 1973" }, { "title": "Joe Armstrong — 'Making reliable distributed systems in the presence of software errors', 2003" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "concurrency",
+      "topic": "Memory model — reordering y happens-before",
+      "difficulty": "staff",
+      "scenario": "Bug producción: dos threads. Thread 1: `data = 42; ready = true;`. Thread 2: `if (ready) print(data);`. Ocasionalmente Thread 2 imprime 0 (valor inicial) en vez de 42.",
+      "question": "¿Cómo es posible este bug y qué garantiza que no ocurra?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "No es posible. Si `ready` es true, `data` DEBE ser 42 porque fue seteado antes.", "correct": false, "why": "Falso — en la práctica sí ocurre. El compilador Y la CPU pueden REORDENAR escrituras (por optimización) si no hay dependencia data. Thread 1 puede escribir ready=true ANTES que data=42 desde la perspectiva de Thread 2 (o cachear en distintos cores)." },
+        { "letter": "B", "text": "Es memory model reordering. La CPU y el compilador reordenan operaciones para optimizar. Sin sincronización explícita (volatile, synchronized, memory barrier), no hay 'happens-before'. Fix: declarar `ready` como volatile — establece barrier que garantiza que TODAS las escrituras previas son visibles antes de la escritura de ready.", "correct": true, "why": "Correcto y sutil. Java Memory Model define 'happens-before' relations. volatile en la escritura de 'ready' establece un release barrier: data=42 debe completar y ser visible ANTES que ready=true. Y el read de ready por Thread 2 establece un acquire barrier: si ve ready=true, ve todas las escrituras previas. Sin volatile, no hay garantía." },
+        { "letter": "C", "text": "Bug de CPU. Cambiar a otra arquitectura.", "correct": false, "why": "No es bug — es diseño de arquitecturas modernas por performance. Weak memory models (ARM, PowerPC) reordenan más agresivamente que x86, pero el problema existe en todos." },
+        { "letter": "D", "text": "Añadir sleep(1) en Thread 1 entre las dos escrituras.", "correct": false, "why": "Reduce PROBABILIDAD del bug pero no la elimina. Sleep no es sincronización — no establece barrera de memoria." }
+      ],
+      "explanation": "Memory Model define qué orderings son legales entre threads. Weak MM (ARM, PowerPC): CPU y compilador libre para reordenar salvo dependencias data. Strong MM (x86-TSO): más restricciones, pero aún reorderings posibles. Java Memory Model (JSR 133, 2004): estándar de la JVM sobre cualquier hardware. Herramientas para forzar orden: (1) volatile — barriers en lectura/escritura de esa variable; (2) synchronized — barriers en enter/exit; (3) atomic — CAS incluye barriers; (4) final fields — publicación segura. Regla mental: 'sin sincronización explícita, no asumas orden entre threads'.",
+      "realWorld": "El bug de 'double-checked locking' pre-Java 5 vino exactamente de esto — un thread veía el objeto no completamente construido. JSR 133 formalizó JMM (2004). En C++11, memory_order_relaxed / acquire / release / seq_cst — API explícita. Bugs de memory model son casi imposibles de reproducir en tests casuales; herramientas como jcstress (Java Concurrency Stress) buscan estos bugs explícitamente.",
+      "tags": ["memory model", "happens-before", "reordering", "JMM"],
+      "tech": ["Java JMM", "C++11 atomics"],
+      "references": [{ "title": "JSR 133 — Java Memory Model" }, { "title": "Doug Lea — 'The JSR-133 Cookbook for Compiler Writers'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "concurrency",
+      "topic": "False sharing — bug de cache line",
+      "difficulty": "staff",
+      "scenario": "Un benchmark muestra que dos contadores actualizados por threads distintos (uno por thread, sin compartir) son 10x más lentos que si están en objetos SEPARADOS. Los dos contadores son campos consecutivos en la misma clase.",
+      "question": "¿Cuál es el diagnóstico y cómo se resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "False sharing: dos variables 'lógicamente separadas' caen en la misma cache line (típicamente 64 bytes en x86). Cada write invalida la cache line en el otro core → ping-pong de coherencia. Fix: separar variables con padding (@Contended en Java desde 8, con -XX:-RestrictContended) o distribuir en objetos separados con espacio.", "correct": true, "why": "Correcto. Cache coherence en multi-core: si core A escribe una variable en cache line X, todos los cores con X en cache la invalidan. Si core B tiene OTRA variable en la MISMA línea (aunque no la esté leyendo), su cache line también se invalida — coste innecesario. Se llama 'false sharing' porque los datos no se comparten lógicamente pero comparten cache line. Fix: @sun.misc.Contended o padding manual (7 longs entre variables)." },
+        { "letter": "B", "text": "Contención de lock.", "correct": false, "why": "Los contadores son distintos, cada thread accede al suyo — sin locks compartidos. No es contención de lock." },
+        { "letter": "C", "text": "GC pressure.", "correct": false, "why": "Actualizar longs no genera GC pressure." },
+        { "letter": "D", "text": "JIT no está optimizando.", "correct": false, "why": "Diagnóstico vago. El JIT optimiza; el problema es de hardware/cache, no de compilación." }
+      ],
+      "explanation": "False sharing es el bug de performance más sutil de multithreading. Ocurre porque cache coherence trabaja a nivel de cache LINE (típicamente 64 bytes en x86, 128 en ARM), no de variable. Herramientas: (1) Java @Contended (necesita flag JVM); (2) padding manual (7 longs entre variables); (3) usar Thread-Local storage; (4) reducir frecuencia de writes. Detección: PMU counters, Intel VTune, Linux perf. Es común en: contadores por thread, ring buffers, disruptor pattern. LMAX Disruptor (framework de trading de alta frecuencia) es famoso por evitar false sharing con padding explícito.",
+      "realWorld": "LMAX Disruptor (2010) es el caso didáctico — lograron millones de ops/segundo por evitar false sharing y cache misses. Java Striped64 (base de LongAdder, ConcurrentHashMap counter) usa padding. Postgres, Kafka, RocksDB — todos consideran false sharing en hot paths. Es un bug que solo aparece con benchmarks — code review no lo detecta.",
+      "tags": ["false sharing", "cache line", "@Contended", "performance"],
+      "tech": ["Java", "LMAX Disruptor"],
+      "references": [{ "title": "Ulrich Drepper — 'What Every Programmer Should Know About Memory', 2007" }, { "title": "Martin Thompson — 'Mechanical Sympathy'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "concurrency",
+      "topic": "Distributed locks — Redlock y sus críticas",
+      "difficulty": "staff",
+      "scenario": "Necesitas un lock DISTRIBUIDO para asegurar que solo UN worker procesa una tarea. Un desarrollador propone 'usar Redis con SET NX'. Otro dice 'usa Redlock (redis con quorum)'. Un tercero cita 'el paper de Kleppmann que dice que Redlock no es correcto'.",
+      "question": "¿Cuál es la afirmación MÁS RIGUROSA sobre locks distribuidos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SET NX en Redis simple es correcto y suficiente.", "correct": false, "why": "Frágil: si Redis se cae, el lock desaparece. Si tu worker es lento y el TTL expira, otro worker puede tomar el lock — dos workers activos = bug. SET NX solo funciona bajo ciertas asunciones ideales." },
+        { "letter": "B", "text": "Redlock es la única forma correcta.", "correct": false, "why": "Kleppmann publicó 'How to do distributed locking' (2016) criticando Redlock — depende de asunciones fuertes sobre clocks (GC pauses, network delays, clock drift pueden hacerlo fallar). Antirez (creador de Redis) respondió, debate continúa." },
+        { "letter": "C", "text": "Para CORRECTNESS estricto (dinero, exclusividad garantizada): usar sistema con consenso (etcd, Zookeeper, Consul) que ofrece 'linearizable' semantics + fencing tokens. Para EFFICIENCY (evitar trabajo duplicado, no correctness crítica): SET NX o Redlock puede bastar. Distinguir los dos casos es clave.", "correct": true, "why": "Correcto y matizado. Kleppmann distingue 'lock por efficiency' (nice-to-have; si falla, solo hay trabajo duplicado) y 'lock por correctness' (must-have; si falla, hay bug de negocio). Para correctness: usar sistema con consenso (Raft, Paxos) — etcd, Zookeeper, Consul. Y usar FENCING TOKENS: cada lock acquirer obtiene un token monotónicamente creciente; storage rechaza operaciones con token viejo." },
+        { "letter": "D", "text": "Locks distribuidos son imposibles: solo pueden simularse.", "correct": false, "why": "Posibles con las técnicas correctas (consensus + fencing tokens). Difíciles y requieren cuidado, pero no imposibles." }
+      ],
+      "explanation": "Locks distribuidos son un problema fundamentalmente difícil por: (1) clocks no sincronizados perfectamente; (2) network delays impredecibles; (3) GC pauses que congelan procesos; (4) partitions. Sin FENCING TOKENS, un proceso podría pensar que aún tiene el lock (por clock skew o GC pause) mientras otro lo tomó — dos procesos escribiendo al storage simultáneamente. Fencing token: cada lock trae un número creciente; storage solo acepta writes con token >= último visto. Sistemas con consenso (Raft, Paxos) garantizan orden global. Redis Redlock: útil en muchos casos, pero no ofrece las garantías de un sistema con consenso.",
+      "realWorld": "Kubernetes usa etcd (Raft) para todo el state global — locks incluidos. Google Chubby (Paxos) — servicio de lock que inspiró Zookeeper. Redis Redlock — usado en muchos startups por simplicidad, pero controversia sobre correctness. Debate Kleppmann vs Antirez es lectura obligada. En 2015, Salesforce publicó incidente por lock distribuido mal implementado.",
+      "tags": ["distributed lock", "Redlock", "fencing tokens", "consensus"],
+      "tech": ["Redis", "etcd", "Zookeeper", "Consul"],
+      "references": [{ "title": "Martin Kleppmann — 'How to do distributed locking' (2016)" }, { "title": "Kleppmann — 'Designing Data-Intensive Applications' Ch. 8-9" }]
+    }
+  ]
+}

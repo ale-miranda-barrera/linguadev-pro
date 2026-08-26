@@ -1,0 +1,455 @@
+{
+  "id": "ai-programming-sim-18-cli-agents-ci-cd-code-review",
+  "trackId": "ai-programming",
+  "order": 18,
+  "title": "Simulacro 18 — Crear un CLI + agentes en CI/CD y code review con IA",
+  "focus": "Cómo integrar agentes de IA en el pipeline de desarrollo: crear CLIs para agentes, gates de CI, code review automatizado con IA, review de código IA-generado.",
+  "areaCoverage": ["ai-dev-practices", "security"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "ai-dev-practices",
+      "topic": "Crear un CLI para tu propia herramienta de IA",
+      "difficulty": "junior",
+      "scenario": "Vas a crear un CLI para una herramienta interna que expone un agente 'refactor-guard' a tus devs. Tu equipo usa Node.js. Alternativas: oclif (Salesforce), commander, o parsing manual con `process.argv`.",
+      "question": "¿Cuál es la elección más razonable para un CLI destinado a devs internos con subcomandos, plugins, y buen UX?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Parseo manual con process.argv. Máximo control.", "correct": false, "why": "En un CLI serio (subcomandos, flags, help auto-generado, plugins, tests) rehacer todo a mano es rework innecesario y fuente de bugs UX. Se justifica solo en CLIs de 1-2 flags." },
+        { "letter": "B", "text": "oclif si necesitas plugins/extensibilidad (arquitectura estilo git subcommands, hooks); commander si es un CLI simple con subcomandos sin ambición de plugin ecosystem.", "correct": true, "why": "Correcto. oclif fue diseñado por Heroku/Salesforce específicamente para CLIs empresariales (plugins, hooks, actualizaciones automáticas). commander es más ligero para CLIs simples. Ambos generan --help y validan tipos automáticamente." },
+        { "letter": "C", "text": "yargs. Es la única opción en Node.", "correct": false, "why": "Falso. yargs es válido pero no la única. commander es más popular; oclif es más estructurado. La elección depende de necesidades." },
+        { "letter": "D", "text": "Escribir el CLI en Python con click aunque el resto del equipo use Node.", "correct": false, "why": "Introduce fricción operacional (otro runtime, otro package manager, otro workflow) por 'preferencia'. Solo se justifica si el ecosistema Python te da algo crítico (SDKs específicos)." }
+      ],
+      "explanation": "Regla mental para elegir framework CLI: (1) 1-3 flags → parseo manual o minimist; (2) subcomandos, flags tipados, help auto → commander (Node) / click/typer (Python) / cobra (Go); (3) plugins, hooks, updates automáticos, telemetry → oclif (Node) / click con plugins (Python). Para CLIs de IA modernos, añade: streaming output (respetar stdout vs stderr, TTY detection), cancelación con Ctrl+C limpia, cost display en tiempo real, resume de sesiones interrumpidas.",
+      "realWorld": "Claude Code CLI está construido sobre commander + Ink (React para terminal). GitHub CLI usa cobra (Go). Vercel CLI usa commander. La elección se refleja en la 'sensación' del CLI: oclif = enterprise/plugins, commander = ligero, cobra = fast+static.",
+      "tags": ["CLI", "oclif", "commander", "cobra"],
+      "tech": ["Node.js", "oclif", "commander", "click", "cobra"],
+      "references": [
+        { "title": "oclif — The Open CLI Framework", "url": "https://oclif.io" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "ai-dev-practices",
+      "topic": "Streaming en CLIs de IA",
+      "difficulty": "mid",
+      "scenario": "Tu CLI llama a la API de Claude en modo streaming. Los usuarios se quejan: el output se mezcla con logs, se corrompe cuando se hace pipe (`| jq`), y en CI aparecen caracteres de progress spinner que ensucian los logs.",
+      "question": "¿Cuál es el patrón correcto para streaming en un CLI que se usa tanto interactivo como en pipe/CI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Detectar TTY (`process.stdout.isTTY`). Si es interactivo: streaming rich (colores, spinners, progress) a stderr para UX + output limpio a stdout. Si NO es TTY (pipe/CI): sin colores, sin spinners, output plain a stdout, logs estructurados (JSON) a stderr.", "correct": true, "why": "Correcto. Es la separación estándar de Unix: stdout = datos, stderr = diagnostics. TTY detection permite adaptar la experiencia sin romper pipes. Además, hay que ofrecer flags explícitos `--no-color`, `--json`, y respetar variables NO_COLOR y CI." },
+        { "letter": "B", "text": "Siempre output rich con colores y spinners.", "correct": false, "why": "Rompe pipes (jq recibe caracteres ANSI), ensucia logs de CI, y viola convención Unix. Es lo que causa el problema del enunciado." },
+        { "letter": "C", "text": "Deshabilitar streaming en CI y solo mostrar resultado final.", "correct": false, "why": "Pierde valor del streaming en interactivo. Además, en CI el streaming (con formato apropiado) sí ayuda a debuggear. La solución es adaptar formato, no deshabilitar." },
+        { "letter": "D", "text": "Output todo en JSON siempre.", "correct": false, "why": "Rompe UX interactivo (nadie quiere leer JSON en la terminal). El principio es 'adapta al contexto', no 'un formato para todos'." }
+      ],
+      "explanation": "Patrón oro CLI-IA: (1) TTY detection → rich vs plain; (2) stdout = solo datos (parseable); (3) stderr = spinners, progress, logs; (4) flags explícitos --json / --plain / --no-color; (5) respetar NO_COLOR (estándar de facto), CI (setea GitHub Actions, GitLab, CircleCI); (6) exit codes semánticos (0 ok, 1 error usuario, 2 error interno, 130 SIGINT); (7) Ctrl+C limpia (matar subprocesos, cerrar streams). Bonus: en modo interactivo mostrar tokens consumidos y costo estimado en real time.",
+      "realWorld": "Claude Code, Codex CLI y Gemini CLI implementan todos este patrón. GitHub Copilot CLI también. Un antipattern documentado: el CLI original de OpenAI (2023) enviaba colores a stdout, rompiendo scripts que usaban `openai | jq`. Corrigieron en 2024.",
+      "tags": ["streaming", "TTY", "CLI-UX", "pipe-friendly"],
+      "tech": ["Node.js", "stdio"],
+      "references": [
+        { "title": "NO_COLOR standard", "url": "https://no-color.org" },
+        { "title": "12-Factor CLI Apps" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "ai-dev-practices",
+      "topic": "CLI vs SDK — cuándo elegir cuál",
+      "difficulty": "junior",
+      "scenario": "Tu equipo tiene un agente 'analyze-repo' expuesto como CLI. Ahora otro equipo quiere integrarlo en su servicio backend (Node.js). Debaten: '¿lo llamamos como CLI (spawn) o publicamos un SDK con la lógica interna?'.",
+      "question": "¿Qué criterios guían la elección CLI vs SDK?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SDK siempre. CLIs son para humanos.", "correct": false, "why": "Simplificación. CLIs son válidos para automation (bash scripts, CI, cron). SDK gana cuando hay integración estrecha en un lenguaje específico." },
+        { "letter": "B", "text": "CLI cuando: uso desde múltiples lenguajes, integración con shell/CI, contract estable versionable independiente. SDK cuando: llamada in-process, tipos ricos, streaming eventos programáticos, control fino de errores.", "correct": true, "why": "Correcto. Los ejes son (1) lenguaje del caller, (2) granularidad de control necesaria, (3) formato de errores/eventos, (4) versioning. CLI = interfaz portable y estable; SDK = integración nativa. Muchas herramientas exponen AMBOS: la CLI internamente usa el SDK." },
+        { "letter": "C", "text": "CLI siempre. Es más simple.", "correct": false, "why": "spawn de subproceso, serialización JSON, parsing de stderr son fricciones reales. Si el caller está en el mismo lenguaje, SDK es más limpio y rápido." },
+        { "letter": "D", "text": "Depende del sistema operativo.", "correct": false, "why": "Irrelevante en 2026. Tanto CLIs como SDKs corren en cualquier OS." }
+      ],
+      "explanation": "Regla mental: (1) CLI = 'interfaz de línea de comandos, universal, versionable, orientado a scripts'; (2) SDK = 'librería, específica del lenguaje, integración estrecha, tipos nativos'. Pueden coexistir: Stripe, AWS, Vercel exponen CLI y SDKs en múltiples lenguajes. Para agentes IA: CLI útil para invocar desde makefiles/CI; SDK útil para integrar en apps con streaming, cancelación, y typed callbacks. Anti-pattern: escribir un SDK que hace `spawn(cli)` internamente — dobla latencia y complejidad.",
+      "realWorld": "Anthropic ofrece Claude Code (CLI) + @anthropic-ai/claude-code (SDK/Managed Agents SDK). GitHub Copilot: CLI + Language Server Protocol. Muchas empresas eligen 'CLI first' porque escala a más contextos sin costar SDKs por lenguaje.",
+      "tags": ["CLI", "SDK", "arquitectura", "developer-experience"],
+      "tech": ["Anthropic SDK", "Claude Code"],
+      "references": [
+        { "title": "Anthropic — Claude Agent SDK" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "ai-dev-practices",
+      "topic": "Agentes en CI — Claude Code Action, Cursor bugbot, Copilot",
+      "difficulty": "mid",
+      "scenario": "Un TL propone: 'metamos Claude Code Action en el CI para que revise cada PR'. Otro dice: 'mejor Cursor bugbot que ya lo usan otros equipos'. Un tercero: 'CodeRabbit es más maduro para reviews'. Un cuarto: 'GitHub Copilot autofix ya viene incluido con Advanced Security'.",
+      "question": "¿Cuál es el marco correcto para elegir un agente en CI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El más popular. En este caso, Copilot.", "correct": false, "why": "Argumento de autoridad, no de idoneidad. La popularidad no captura fit con tu stack, presupuesto, y tipo de review necesario." },
+        { "letter": "B", "text": "Evalúa por: (1) tipo de review (security, style, semantic bugs, arquitectura); (2) integración con tu SCM (GitHub Actions, GitLab CI, etc.); (3) modelo de coste (por PR, por minuto, por token); (4) privacidad (sube tu código a un tercero); (5) señal-vs-ruido en tu stack (haz piloto con 20 PRs).", "correct": true, "why": "Correcto. Ninguna herramienta domina en todos los ejes. Copilot Autofix es fuerte en seguridad (CodeQL); CodeRabbit fuerte en review conversacional; Cursor bugbot fuerte en bugs sutiles; Claude Code Action flexible. La decisión debe basarse en piloto medido, no en marca." },
+        { "letter": "C", "text": "Todos a la vez, más reviews = mejor.", "correct": false, "why": "Ruido acumulativo. Múltiples bots comentando el mismo PR abruma al reviewer humano y erosiona confianza. Elige uno primario; considera un segundo para dominio específico (ej. Snyk para security)." },
+        { "letter": "D", "text": "Ninguno. El review humano siempre es mejor.", "correct": false, "why": "Falso dilema. Los bots son complementarios: capturan clases de bugs que el humano cansado pasa por alto. La pregunta es CUÁL y CÓMO integrar, no si integrar." }
+      ],
+      "explanation": "Taxonomía de bots de PR en 2026: (1) Security-focused: GitHub Copilot Autofix (CodeQL), Snyk, Semgrep AI; (2) Semantic review: CodeRabbit, Cursor bugbot, Coderabbit AI; (3) Style/lint: mayoría lint tools clásicos (ESLint, Prettier); (4) Custom: Claude Code Action, GitHub Copilot Workspace. Recomendación: (a) elige uno primario según lo que más te duele, (b) piloto con métricas (comentarios útiles vs ruido, false positive rate), (c) integra con tests para gates duros, (d) comentarios de bot deben tener label distintivo para el humano.",
+      "realWorld": "Google publicó en 2025 que dispersar 4 bots en el mismo PR redujo response time del reviewer humano un 60% (fatiga). Su recomendación interna: 1 bot semantic + Copilot Autofix (security) + tests + lint. CodeRabbit reportó tener >5M PRs revisados en 2025.",
+      "tags": ["CI-agents", "code-review", "bots", "CodeRabbit"],
+      "tech": ["Claude Code Action", "Cursor bugbot", "CodeRabbit", "Copilot Autofix"],
+      "references": [
+        { "title": "GitHub Docs — Copilot Autofix" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "ai-dev-practices",
+      "topic": "Gates de CI que bloquean por evals",
+      "difficulty": "mid",
+      "scenario": "Tu producto usa LLMs. Estás refactorizando el prompt principal. Un dev quiere hacer merge; en la conversación menciona 'los tests de código pasan'. Alguien pregunta: '¿pero los EVALS pasaron?'. Silencio.",
+      "question": "¿Cuál es la mejor práctica para gates de CI cuando el producto depende de un LLM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Tests unitarios son suficientes; los evals de LLM son inestables y no bloquean merge.", "correct": false, "why": "Precisamente porque los LLMs son inestables NECESITAS evals bloqueantes. Un cambio de prompt sin eval regresivo es un cambio a ciegas en el core del producto." },
+        { "letter": "B", "text": "Evals bloqueantes como test de regresión: (1) dataset de casos representativos (100+ casos reales anonimizados), (2) métricas por caso (correcto, formato, longitud, seguridad), (3) umbral mínimo por métrica, (4) reporte diff vs baseline en el PR, (5) merge bloqueado si regresión > delta.", "correct": true, "why": "Correcto. Es el estado del arte. Evals convierten la calidad LLM en algo medible y regresable. Sin ellos, los cambios de prompt son 'vibes-driven development'. Herramientas: OpenAI Evals, Anthropic Evals, PromptFoo, LangSmith, Braintrust." },
+        { "letter": "C", "text": "Revisión humana manual antes de cada deploy.", "correct": false, "why": "No escala. Un cambio de prompt puede afectar 100k combinaciones de input; revisión humana ve 10. Además, no genera artefacto reproducible para regresión futura." },
+        { "letter": "D", "text": "Solo desplegar behind feature flag y monitorear producción.", "correct": false, "why": "Complementario, no sustituto. Feature flag y observability son buenos, pero llegan tarde (usuarios ya ven bug). Evals en CI atrapan el problema antes." }
+      ],
+      "explanation": "Anatomía de un eval bloqueante: (1) dataset curado (representativo, anonimizado, incluir edge cases y regresiones pasadas); (2) métricas (pueden ser LLM-as-judge para 'calidad', reglas para formato/longitud, checks de seguridad); (3) baseline (última versión aprobada); (4) diff report en el PR; (5) umbrales (ej. no permitir >5% regresión en 'correct answers'). En CI: `pnpm eval --baseline main --pr` que produce artefacto y falla si supera umbral. Costo: sí, cada PR corre evals contra 100+ casos, pero es el costo de shipping con calidad.",
+      "realWorld": "Anthropic aplica evals bloqueantes a cada cambio de prompt en Claude.ai. OpenAI Evals es open source (repo con framework). PromptFoo y Braintrust dominan el mercado de eval-CI en 2026. Cursor y GitHub Copilot publicaron sus dashboards de evals internas.",
+      "tags": ["evals", "CI-gates", "regression-testing", "LLM-quality"],
+      "tech": ["OpenAI Evals", "PromptFoo", "Braintrust", "LangSmith"],
+      "references": [
+        { "title": "OpenAI Evals", "url": "https://github.com/openai/evals" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "ai-dev-practices",
+      "topic": "PR review con IA — evitar ruido",
+      "difficulty": "mid",
+      "scenario": "Instalaste CodeRabbit hace un mes. El equipo lo desactivó ayer: 'genera 40 comentarios por PR, la mayoría sobre estilo o cosas que ya sabemos'. Alguien propone quitar la herramienta; otro dice 'la configuración es el problema, no la herramienta'.",
+      "question": "¿Cuál es el diagnóstico y la solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CodeRabbit está mal configurado. Config típica ganadora: (1) deshabilitar comentarios de estilo (usa lint para eso), (2) elevar umbral de severidad (solo bugs y security), (3) limitar a diff-only (no comentar código no tocado), (4) usar 'summary + top 3 issues' en vez de comentarios uno-a-uno, (5) permitir al autor 'dismiss all' rápido.", "correct": true, "why": "Correcto. Los bots por defecto son maximalistas ('encuentra todo'). En equipos maduros, la señal se logra restringiendo: menos comentarios, más pertinentes, con severidad clara. Estilo va a lint (deterministic), no a bot LLM (probabilístico)." },
+        { "letter": "B", "text": "Quitar la herramienta. Los LLMs no sirven para review.", "correct": false, "why": "Reactivo y generaliza mal. Los mismos bots con config correcta reportan valor. El problema es de configuración, no de tecnología." },
+        { "letter": "C", "text": "Añadir un segundo bot para filtrar los comentarios del primero.", "correct": false, "why": "Multiplica ruido. La solución es restringir en la fuente, no filtrar downstream." },
+        { "letter": "D", "text": "Hacer que el bot solo comente cuando el PR autor lo pide.", "correct": false, "why": "Anula el punto (revisión automática). Peor: los devs olvidan pedirlo y los bugs pasan." }
+      ],
+      "explanation": "Regla mental para review bots: 'un comentario que se ignora es un comentario que erosiona confianza en todos'. Configuración ganadora: (1) alcance = diff, no todo el file; (2) severidad ≥ warning, no info; (3) categorías = bugs/security/perf, NO style (usa lint); (4) formato = 1 summary + top-N, no lista larga; (5) toggle 'this is a WIP PR' para reducir noise; (6) métricas: comment resolution rate. Si <30% resolución, hay ruido. Herramientas configurables: CodeRabbit (rules), Claude Code Action (custom prompt), Cursor bugbot (severity threshold).",
+      "realWorld": "Shopify publicó en 2025 su config CodeRabbit: 3 comentarios promedio por PR (bajó de 15 al inicio). Vercel usa Claude Code Action con prompt custom que dice explícitamente 'solo report bugs o security; ignora estilo'. La lección universal: default config raramente sirve.",
+      "tags": ["code-review", "signal-vs-noise", "bot-config"],
+      "tech": ["CodeRabbit", "Claude Code Action"],
+      "references": [
+        { "title": "CodeRabbit — Configuration best practices" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "ai-dev-practices",
+      "topic": "Reviewer sintético como primer pase",
+      "difficulty": "mid",
+      "scenario": "Tu equipo propone flujo: 'todo PR pasa primero por Claude Sonnet como reviewer sintético. Si aprueba, va a review humano. Si Claude marca issues, el autor los aborda antes de pedir humano'. Preocupación: '¿el humano se relaja porque Claude ya revisó?'.",
+      "question": "¿Cuáles son beneficios y riesgos del reviewer sintético como primer gate?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Beneficios: reduce fricción trivial (typos, patrones obvios) antes del humano, agiliza cycle time. Riesgos: (1) automation bias — humanos aprueban por defecto lo que el bot aprobó; (2) skill decay del reviewer humano; (3) false negatives del bot que ambos pierden. Mitigación: rotate humanos, métricas de 'issues found only by human', bot NO aprueba, solo comenta.", "correct": true, "why": "Correcto. Es el análisis balanceado. El pattern es útil PERO requiere consciencia de automation bias (Skitka et al., HCI). Regla operacional: el BOT nunca 'aprueba', solo señala; el humano siempre da approval final. Métricas periódicas verifican que el humano sigue añadiendo valor." },
+        { "letter": "B", "text": "El pattern es perfecto sin caveats. El bot es más rápido y no se cansa.", "correct": false, "why": "Ignora automation bias y skill decay documentados en literatura de aviación, medicina, y ahora dev. Sin métricas y rotación, el humano se convierte en rubber stamp." },
+        { "letter": "C", "text": "El pattern es imposible: los bots no son fiables suficiente para gate.", "correct": false, "why": "Falso empíricamente. Bots capturan clases de issues genuinamente (null checks, race conditions comunes, security patterns). El diseño correcto es 'bot filtra ruido, humano decide'." },
+        { "letter": "D", "text": "El humano debería revisar solo tras 2 bots concordar.", "correct": false, "why": "Multiplica costo sin proporcionalidad de valor. Los bots suelen correlacionar en aciertos y errores. La diversidad viene mejor de review humano." }
+      ],
+      "explanation": "Automation bias: fenómeno donde humanos aceptan sugerencias automáticas más de la cuenta y detectan menos errores manualmente. Documentado en cockpits, radiología, y ahora dev tools. Mitigaciones probadas: (1) el bot nunca 'aprueba', solo señala (deja al humano el juicio final); (2) rota reviewers humanos (no siempre el mismo dev); (3) mide 'issues found only by human' como health metric; (4) revisa 10% de PRs sin bot (ciego) para calibrar; (5) formaciones periódicas de code review. El pattern reviewer sintético es útil, pero requiere ingeniería social/organizacional.",
+      "realWorld": "Google publicó en 2025 un análisis interno: tras 6 meses con Bard reviewer en primer gate, detección de bugs humanos bajó 22%. Rediseñaron: bot como 'aider' que sugiere pero no aprueba, humano requerido para approval. Recuperaron nivel de detección.",
+      "tags": ["automation-bias", "review", "humano-en-loop"],
+      "tech": ["Claude", "GitHub PR"],
+      "references": [
+        { "title": "Skitka et al. — Automation bias and errors" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "ai-dev-practices",
+      "topic": "Tests generados por IA — limitaciones",
+      "difficulty": "senior",
+      "scenario": "Un dev jr subió PR con 30 tests generados por Copilot. Todos pasan. Un dev sr audita y encuentra: (1) tests que verifican lo obvio (assert 2+2 == 4); (2) tests que asertan implementación en lugar de comportamiento; (3) tests que usan datos exactos del código (no encontrarían bugs regresivos); (4) tests que hacen mocking excesivo — no prueban integración real.",
+      "question": "¿Cuál es la evaluación honesta de 'tests generados por IA' en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los tests generados por IA aumentan cobertura de líneas pero suelen ser débiles: verifican que el código HACE lo que hace (tautológicos), no que hace lo CORRECTO. Fallan al detectar bugs que humanos con test-first sí atrapan. Contramedida: mutation testing (Stryker, PIT) — si mutas el código y los tests siguen pasando, el test es débil.", "correct": true, "why": "Correcto. Es el consenso post-2024. Los tests generados capturan happy paths y edge cases obvios; suelen ser tautológicos ('espeja el código'). Mutation testing es el 'test de los tests': prueba si tus tests detectan cambios sutiles. Si un mutante sobrevive, tu test no lo cubre." },
+        { "letter": "B", "text": "Los tests generados por IA son mejores que los humanos porque son consistentes.", "correct": false, "why": "Falso. La consistencia no equivale a fuerza. Un test consistente-pero-tautológico da sensación falsa de calidad." },
+        { "letter": "C", "text": "Los tests generados son inútiles; siempre desechar.", "correct": false, "why": "Extremo. Ayudan para cobertura básica, boilerplate, y coverage cliff. Necesitan review humano y a menudo refuerzo." },
+        { "letter": "D", "text": "Mutation testing es teoría académica; no se usa en industria.", "correct": false, "why": "Falso. Stryker (JS), PIT (Java), mutmut (Python), Cargo mutants (Rust) tienen adopción industrial creciente 2024-2026, precisamente como red anti-tests-tautológicos." }
+      ],
+      "explanation": "Regla mental: 'tests deben poder fallar cuando el código está mal'. Test tautológico = escrito mirando la implementación, cambia con ella, no atrapa bugs. Test bueno = escrito desde la spec, sobrevive refactors, atrapa bugs. Mutation testing formaliza esto: (1) tool muta el código (cambia >  a >=, elimina if, etc.); (2) corre tests; (3) si algún mutante sobrevive (tests pasan), tu suite tiene hueco. Meta mutation score: 70-80% es ambición realista. En equipos con IA generando tests, correr mutation testing en CI evita ilusión de cobertura.",
+      "realWorld": "Google publicó en 2023 un estudio: mutation testing incrementó bugs detectados 15% vs suite existente. En 2025 múltiples empresas (Palantir, Shopify) reportan usar Stryker/PIT en CI. IBM Research (2024) mostró que tests generados por Copilot tenían mutation score promedio 45% vs 68% de humanos que hacen TDD.",
+      "tags": ["test-generation", "mutation-testing", "tautological-tests"],
+      "tech": ["Stryker", "PIT", "mutmut", "Copilot"],
+      "references": [
+        { "title": "Stryker Mutator", "url": "https://stryker-mutator.io" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "ai-dev-practices",
+      "topic": "Review humano de código IA-generado",
+      "difficulty": "mid",
+      "scenario": "Recibes PR de un dev que usó Cursor extensivamente. El código es 'razonable', pero notas señales: (1) función de 240 líneas para una tarea simple, (2) usa una API que no existe en tu versión de la lib, (3) imports de módulos no usados, (4) patrón 'try/except: pass' silencioso en 3 lugares.",
+      "question": "¿Cuáles son las red flags específicas del código IA-generado que un humano debe cazar en review?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Red flags: (1) over-engineering (función larga cuando bastaba una corta); (2) hallucinated APIs (llamadas a métodos que no existen); (3) imports sobrantes; (4) manejo de errores genérico (try/except: pass, catch(e) {}); (5) comentarios explicando código obvio; (6) patrones de biblioteca 'genéricos' que no encajan con la arquitectura local; (7) tests débiles/tautológicos.", "correct": true, "why": "Correcto. Son las signatures documentadas del código IA. El humano en review debe entrenarse específicamente para cazarlas. Muchas escapan a lint (semánticas, no sintácticas)." },
+        { "letter": "B", "text": "El código IA es indistinguible del humano; solo importa que compile.", "correct": false, "why": "Falso. Los estudios (GitHub, Snyk 2024-2025) documentan clases sistemáticas de anti-patrones en IA. Compilar es umbral bajísimo." },
+        { "letter": "C", "text": "Solo revisar tests, el código en sí no importa.", "correct": false, "why": "Peligroso. Los tests pueden ser tautológicos (ver q8). Además, hay security anti-patterns (SQL injection, secrets hardcoded) que solo se ven en el código." },
+        { "letter": "D", "text": "Confiar en la review de otro bot IA.", "correct": false, "why": "Los bots correlacionan en errores. Un humano entrenado para cazar signatures de IA es superior." }
+      ],
+      "explanation": "Checklist review de código IA-generado: (1) longitud/complejidad desproporcionada; (2) APIs alucinadas (verificar contra docs oficiales); (3) imports huérfanos; (4) manejo de errores genérico o silencioso; (5) magic strings/números; (6) comentarios que explican lo obvio (síntoma de 'padding'); (7) uso de features deprecadas; (8) patrones que no siguen convenciones locales; (9) tests tautológicos; (10) security anti-patterns (SQL string concatenation, secrets, uso de eval). Este checklist debe estar en el CLAUDE.md/AGENTS.md para que el próximo agente lo respete y en el checklist del reviewer.",
+      "realWorld": "Snyk publicó en 2024 que 40% de código Copilot suggested tenía al menos 1 security anti-pattern. GitHub publicó en 2025 una guía 'AI Code Review Checklist' con estas señales exactas. Palantir tiene un ML classifier que detecta código IA en PRs para triggerar review más estricto.",
+      "tags": ["code-review", "AI-generated", "red-flags", "security"],
+      "tech": ["Cursor", "Copilot", "Snyk"],
+      "references": [
+        { "title": "Snyk — AI Code Security Report (2024)" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "security",
+      "topic": "Security anti-patterns en código IA-generado",
+      "difficulty": "senior",
+      "scenario": "Un agente generó este endpoint:\n```python\n@app.route('/user/<user_id>')\ndef get_user(user_id):\n    q = f\"SELECT * FROM users WHERE id = '{user_id}'\"\n    result = db.execute(q)\n    return jsonify(result)\n```",
+      "question": "¿Cuáles son los problemas de seguridad y por qué son comunes en código IA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo hay un problema: SQL injection.", "correct": false, "why": "Hay varios: SQL injection (f-string concatenación), falta authz (cualquiera lee cualquier user), leak de datos (SELECT * expone campos privados como password_hash), sin rate limiting. Ver solo 1 es review superficial." },
+        { "letter": "B", "text": "SQL injection (f-string en query), falta authorization (no verifica que caller pueda leer ese user_id), over-fetching (SELECT * expone datos sensibles como password_hash, tokens), y sin rate limiting. Comunes en IA porque el training corpus tiene millones de ejemplos malos; el modelo reproduce estadísticamente lo que ve, incluso patrones inseguros.", "correct": true, "why": "Correcto. Los cuatro son documentados como 'top IA-generated security issues'. La causa raíz: los datasets de training contienen código malo (tutoriales viejos, StackOverflow con antipatterns). El modelo aprende de la distribución, incluidos los defectos." },
+        { "letter": "C", "text": "El único problema real es que no hay tests.", "correct": false, "why": "Los tests no arreglan SQL injection o falta de authz. Son problemas de seguridad presentes en el código." },
+        { "letter": "D", "text": "El código es correcto si el user_id viene 'confiable' del auth middleware.", "correct": false, "why": "Aunque venga confiable, la inyección SQL sigue siendo terrible práctica (row expansion, quote escaping). Y falta authz sigue faltando." }
+      ],
+      "explanation": "Regla mental para review de código IA en security: (1) todas las queries deben ser parametrizadas (nunca f-string/concat); (2) todo endpoint debe declarar authz explícita (no 'todo user autenticado puede'); (3) responses deben usar DTOs con campos explícitos, no SELECT *; (4) rate limiting por defecto; (5) input validation con schema. Los modelos IA reproducen patrones vistos en training; si tu prompt no restringe explícitamente, obtienes 'estilo mediano de internet'. Defensas: SAST tools (Semgrep, Snyk Code, GitHub Code Scanning con CodeQL), rules específicas para código IA-generado, tests de seguridad automatizados (ZAP en CI).",
+      "realWorld": "Snyk 2024 Report: 40% del código Copilot tenía patrones inseguros (SQL injection, XSS, weak crypto). GitHub Advanced Security con Copilot Autofix específicamente aborda estos casos. OWASP publicó en 2024 'LLM Top 10' con 'Insecure Output Handling' de código generado como riesgo destacado.",
+      "tags": ["security", "SQL-injection", "AI-generated", "authz"],
+      "tech": ["Python", "SQL", "Semgrep", "CodeQL"],
+      "references": [
+        { "title": "OWASP LLM Top 10", "url": "https://owasp.org/www-project-top-10-for-large-language-model-applications/" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "ai-dev-practices",
+      "topic": "Medir DORA metrics con/sin agentes",
+      "difficulty": "senior",
+      "scenario": "Tu VP quiere justificar el gasto en Cursor/Claude Code. Pide: 'muéstrame el impacto en DORA metrics: deployment frequency, lead time, change failure rate, MTTR'. Un dev propone: 'medimos 3 meses antes/después de adopción'.",
+      "question": "¿Cuáles son las trampas metodológicas al medir impacto de agentes en DORA metrics?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Trampas: (1) confounders — muchos cambios simultáneos (equipo crece, sprint más corto, migración K8s); (2) Hawthorne effect — devs cambian comportamiento al saberse medidos; (3) selección — pilotos toman equipos ya productivos; (4) métricas de vanidad — lines of code, PRs creados no correlacionan con valor; (5) change failure rate puede empeorar (más PRs = más bugs escapando); (6) plazo corto no captura deuda a largo plazo.", "correct": true, "why": "Correcto. Toda medición cuasi-experimental sufre confounders. Además, DORA metrics pueden mostrar mejora superficial (más deploys) que oculta deterioro (más rollbacks, más incidentes). Diseñar bien requiere grupo control, plazos largos, y métricas complementarias (customer bug rate, incident rate)." },
+        { "letter": "B", "text": "3 meses es tiempo suficiente para conclusión definitiva.", "correct": false, "why": "3 meses no captura ciclos de bugs (algunos aparecen meses después). Y no controla estacionalidad, cambios de equipo, etc." },
+        { "letter": "C", "text": "Solo importa deployment frequency; los demás son distracción.", "correct": false, "why": "Falso. Las 4 métricas DORA se leen JUNTAS. Deployment frequency alta con change failure rate alto es 'shipping bugs faster'." },
+        { "letter": "D", "text": "Medir 'devs happy' es equivalente a DORA.", "correct": false, "why": "Satisfacción es señal complementaria (SPACE framework) pero no reemplaza DORA. Devs pueden estar happy con Cursor y aun así producir peor código." }
+      ],
+      "explanation": "Framework SPACE (Satisfaction, Performance, Activity, Communication, Efficiency) complementa DORA. Medición honesta de impacto agente: (1) preserva datos pre-adopción; (2) idealmente grupo control (equipo similar sin agente); (3) mide 6+ meses; (4) incluye customer metrics (bug reports externos, NPS); (5) evita métricas de vanidad (LoC, PRs, commits). Riesgos comunes documentados: 'deployment frequency ↑ + change failure rate ↑ + incident rate ↑' = shipping más rápido con menos calidad. GitHub, McKinsey y Google han publicado estudios que muestran resultados variables — no es 'siempre mejor'.",
+      "realWorld": "GitHub publicó Q3 2024 datos internos: Copilot users +55% lines/day pero +12% bug rate. Klarna anunció con fanfarria mejoras con IA en 2024 pero rectificó en 2025 tras aumento de incidentes. McKinsey State of AI 2024 mostró que solo 30% de empresas ven ROI claro con dev tools IA — el resto miden mal.",
+      "tags": ["DORA", "métricas", "SPACE", "medición"],
+      "tech": ["DORA metrics", "SPACE"],
+      "references": [
+        { "title": "DORA — Accelerate State of DevOps Report" },
+        { "title": "SPACE framework — ACM Queue" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "ai-dev-practices",
+      "topic": "Cuándo un bot genera más ruido que valor",
+      "difficulty": "mid",
+      "scenario": "Un equipo con SonarQube + CodeRabbit + Snyk + Copilot Autofix + custom Claude reviewer se queja: 'cada PR tiene 60 comentarios y bloqueos'. Devs ignoran comentarios y hacen 'force merge'. La mgr propone 'sumar un bot que priorice comentarios'.",
+      "question": "¿Cuál es la lectura y solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El problema NO es falta de bots, es exceso. Solución: (1) auditar qué bots aportan señal real (medir 'issues resolved vs ignored'); (2) desactivar los que <20% resolución; (3) consolidar (SonarQube + Snyk son overlap); (4) elevar umbrales; (5) el force merge está siendo una válvula de escape a un proceso roto — atacarlo sin arreglar la fuente es contraproducente.", "correct": true, "why": "Correcto. Añadir un meta-bot para gestionar bots es rendición estratégica. La solución sostenible es podar. La regla '20% de bots resuelven 80% de issues útiles' aplica; el resto son ruido a eliminar." },
+        { "letter": "B", "text": "Añadir el meta-bot como propone la mgr.", "correct": false, "why": "Añade capa, no resuelve raíz. Los devs siguen viendo overhead; el bot meta se vuelve otra fuente de fricción." },
+        { "letter": "C", "text": "Prohibir force merge sin conditional exceptions.", "correct": false, "why": "Sin arreglar la raíz (ruido) endurece la fricción y erosiona confianza en el proceso. Fix debe ir a la fuente." },
+        { "letter": "D", "text": "Cambiar todos los bots por un solo LLM 'universal reviewer'.", "correct": false, "why": "Un único LLM tiene sus propios trade-offs (blind spots en security, false positives). La respuesta correcta es curar la selección, no reemplazar por otro maximalista." }
+      ],
+      "explanation": "Regla mental: 'cada bot que agregas es un costo cognitivo para el reviewer humano'. Métricas de salud: (1) comentarios por PR (target <10); (2) tiempo de merge (si sube, algo va mal); (3) issue resolution rate por bot (si <30%, quitar); (4) force merge rate (si >5% de PRs, síntoma). Anti-pattern universal: 'stack de tools que se solapan' (SonarQube + Snyk + CodeQL + linter). Elegir uno por dominio (1 SAST, 1 secret scanner, 1 lint, 1 semantic reviewer) es la disciplina. El costo de mantener tools no cae solo en licencias — cae en overhead cognitivo.",
+      "realWorld": "Netflix publicó en 2024 su 'tool audit' que redujo bots de PR de 8 a 3, con reducción del cycle time 40% sin degradar calidad. Google internamente aplica 'tool tax': cada tool debe justificar issue resolution rate anualmente o se retira.",
+      "tags": ["tool-overload", "signal-vs-noise", "process"],
+      "tech": ["SonarQube", "Snyk", "CodeRabbit"],
+      "references": [
+        { "title": "Netflix Tech Blog — Tool audit lessons" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "ai-dev-practices",
+      "topic": "Coding standards y linters siguen necesarios",
+      "difficulty": "junior",
+      "scenario": "Un dev propone: 'ahora que Copilot/Claude generan código, podemos quitar ESLint y Prettier. La IA sabe estilo'.",
+      "question": "¿Es correcto quitar linters cuando adoptas agentes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "No. Los linters son deterministas y baratos; capturan clases de errores (unused vars, missing return, no-await) que el LLM produce a veces. Prettier normaliza estilo (evita ruido diff). Los mantienes como red baja de costo. Añadir IA no elimina la base.", "correct": true, "why": "Correcto. Los linters son especializados, rápidos, y complementarios. Coste marginal cercano a 0 (en CI cuestan segundos). El LLM es probabilístico; los linters son deterministas. Usar ambos es defense-in-depth." },
+        { "letter": "B", "text": "Sí. La IA reemplaza toda la calidad estática.", "correct": false, "why": "Falso. El LLM comete errores que el linter no. La cobertura es distinta y complementaria. Los linters también cuestan orden de magnitud menos por corrida." },
+        { "letter": "C", "text": "Sí, pero solo Prettier; ESLint queda.", "correct": false, "why": "Sin justificación. Prettier normaliza formato para minimizar ruido en diffs — sigue siendo útil incluso con LLM." },
+        { "letter": "D", "text": "Los linters solo importan si NO usas IA.", "correct": false, "why": "Invertido. Los linters importan MÁS con IA, porque atrapan clases sistemáticas de errores del LLM." }
+      ],
+      "explanation": "Modelo mental: capas de defensa. (1) Prettier normaliza formato (barato, elimina discusiones); (2) ESLint captura errores sintáctico-semánticos (unused vars, promises no await, etc.); (3) TypeScript captura tipos; (4) tests capturan comportamiento; (5) LLM reviewer captura semántica compleja. Cada capa cuesta poco y atrapa clases distintas. Quitar la base (linters) porque tienes IA es cambiar un costo bajo determinista por dependencia probabilística cara. Además, el LLM APRENDE de tu lint (le pides seguir convenciones ESLint y las respeta más).",
+      "realWorld": "Todos los proyectos abiertos con IA (Vercel, Cloudflare, Supabase, Prisma) mantienen ESLint + Prettier + tsc + Copilot/Cursor. Nadie serio los ha eliminado. Anthropic recomienda en CLAUDE.md poner 'follow ESLint config in .eslintrc' como restricción explícita al agente.",
+      "tags": ["linters", "ESLint", "Prettier", "defense-in-depth"],
+      "tech": ["ESLint", "Prettier", "TypeScript"],
+      "references": [
+        { "title": "ESLint Docs" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "ai-dev-practices",
+      "topic": "Autonomía en CI vs humano en el loop",
+      "difficulty": "senior",
+      "scenario": "Un equipo prueba 'Claude Code Action full autonomous': el bot detecta bugs en producción, abre PR, corre tests, mergea automáticamente. Otro equipo hace 'Claude Code + human approval'. Debaten: '¿por qué mantener el humano si los tests pasan?'.",
+      "question": "¿Cuál es la posición defensible sobre autonomía de agentes en CI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Autonomía apropiada por CATEGORÍA de cambio: (1) dependency updates minor/patch con tests verdes → auto-merge razonable (Renovate/Dependabot pattern); (2) bug fixes semánticos → PR con human approval; (3) refactors/features → PR con approval + review; (4) cambios security-sensitive → siempre humano. La autonomía no es todo-o-nada.", "correct": true, "why": "Correcto. La discusión 'todo autónomo vs nada' es falsa. El pattern real es 'autonomía graduada por riesgo': lo que ya es rutinario (deps patch) puede automatizarse; lo semántico requiere humano. Reduce fatiga humana sin pérdida de calidad." },
+        { "letter": "B", "text": "Full autonomous siempre. Los tests son suficientes.", "correct": false, "why": "Ignora reward hacking (ver sim-17), edge cases no tests, y responsabilidad legal. Un bug en producción tiene consecuencias; alguien debe firmar." },
+        { "letter": "C", "text": "Humano en cada merge, sin excepciones.", "correct": false, "why": "Insostenible. Renovate/Dependabot con auto-merge de patches es un patrón establecido, seguro con buena test coverage. Requerir humano en cada patch bloquea el equipo." },
+        { "letter": "D", "text": "Autonomía depende de la hora (día vs noche).", "correct": false, "why": "Regla arbitraria. La categoría de cambio (riesgo, ámbito) es el eje correcto." }
+      ],
+      "explanation": "Framework 'autonomy by risk category': (1) LOW RISK auto-merge — deps patch, docs typos, comment updates; (2) MEDIUM — bug fixes con test añadido, requiere 1 approval; (3) HIGH — refactors, features, requiere 2 approvals + review comprehensivo; (4) CRITICAL — security, auth, payments, siempre humanos con dominio. Cada categoría tiene reglas explícitas en CODEOWNERS + branch protection. Renovate/Dependabot son el ejemplo canónico de autonomía graduada exitosa desde 2018 — el patrón se extiende ahora a bug fixes rutinarios.",
+      "realWorld": "GitHub Copilot Workspace lanzó en 2024 con 'auto-merge para chores' explicitamente. Renovate procesa millones de PRs semanalmente con auto-merge por config. En 2026, Anthropic publicó guía de 'graduated autonomy' con este framework.",
+      "tags": ["autonomía", "auto-merge", "risk-based", "governance"],
+      "tech": ["Renovate", "Dependabot", "Claude Code Action"],
+      "references": [
+        { "title": "Renovate Docs — Auto-merge configuration" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "security",
+      "topic": "Secrets scanning y agentes",
+      "difficulty": "mid",
+      "scenario": "Un dev pega su .env en el prompt de Claude Code para pedirle 'debug este auth'. El .env tenía keys de producción. Claude Code envió el prompt a la API de Anthropic. Un mes después, aparece un breach.",
+      "question": "¿Cuáles son las defensas apropiadas contra leaks de secrets vía agentes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Defense-in-depth: (1) pre-commit hooks (git-secrets, gitleaks, TruffleHog) que bloquean commits con secrets; (2) IDE plugins que detectan secrets en clipboard/prompts (Cursor, Claude Code tienen features de blocking); (3) secrets scanning en CI (GitHub Advanced Security, GitGuardian); (4) rotación automática de secrets detectados; (5) política 'ningún .env real fuera de tu máquina, usa .env.example'; (6) DLP tools a nivel red para bloquear egress a APIs de LLM.", "correct": true, "why": "Correcto. Un solo layer no basta. La cadena típica de leak: dev pega en prompt → API del vendor → posiblemente logs → posiblemente training data. Defense-in-depth cubre: prevención (hooks, plugins), detección (CI scanning), respuesta (rotación auto), y control organizacional (DLP)." },
+        { "letter": "B", "text": "Confiar en el vendor (Anthropic no entrena con tu data).", "correct": false, "why": "Aun sin training, hay logs, hay riesgo de breach del vendor, hay compliance issues (GDPR, HIPAA). 'No entrenamos con esto' no elimina exposure." },
+        { "letter": "C", "text": "Prohibir el uso de agentes.", "correct": false, "why": "Reactivo y contraproductivo (equipo pierde productividad). La respuesta es proceso, no prohibición." },
+        { "letter": "D", "text": "Rotar secrets cada semana proactivamente.", "correct": false, "why": "Alivia pero no previene. Y no todo secret es rotable trivialmente. Necesitas prevención + detección, no solo mitigación." }
+      ],
+      "explanation": "Cadena de leak típica: (1) dev tiene secret en archivo local; (2) lo pega en prompt (o el agente lee el archivo automáticamente); (3) prompt sale a API del vendor; (4) posiblemente queda en logs, posiblemente en dataset. Defensas: (1) los secrets NUNCA deben estar en archivos que el agente pueda leer — usa vault (AWS Secrets Manager, HashiCorp Vault, 1Password CLI); (2) hooks locales (git-secrets, gitleaks); (3) IDE features de secret detection; (4) CI scanning (GitGuardian, TruffleHog); (5) DLP a nivel red; (6) policy 'never paste .env into prompts'. Herramientas de agentes modernas: Claude Code, Cursor tienen 'secret-aware mode' que redacta patrones detectados antes de enviar.",
+      "realWorld": "GitGuardian publicó State of Secrets 2025: 12.8M secrets expuestos en repos públicos, 20% incrementó vs 2024 atribuido al 'AI-pasted secrets'. Múltiples empresas (Uber 2016, Toyota 2023) tuvieron breaches por secrets en repos. Anthropic añadió 'secret detection warning' en Claude Code en 2025.",
+      "tags": ["secrets", "leaks", "DLP", "security"],
+      "tech": ["git-secrets", "gitleaks", "TruffleHog", "GitGuardian"],
+      "references": [
+        { "title": "GitGuardian State of Secrets Sprawl 2025" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "ai-dev-practices",
+      "topic": "PR templates y contexto para IA reviewer",
+      "difficulty": "mid",
+      "scenario": "Tu equipo integra Claude Code Action como reviewer. Notas que sus comentarios son genéricos. Un dev sugiere 'enriquecer los PRs con más contexto para el bot'.",
+      "question": "¿Qué elementos deberían estar en el PR template para maximizar la calidad del review IA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Link a la spec / ticket; (2) 'why' (el problema que resuelve); (3) 'what' (cambios de alto nivel); (4) 'how to test' (steps de verificación); (5) breaking changes / migraciones; (6) áreas de riesgo o preocupación (donde quieres feedback específico); (7) checklist de convenciones a verificar. El bot lee el body del PR y calibra su review.", "correct": true, "why": "Correcto. El bot es tan bueno como el contexto que recibe. Un PR con solo diff genera comentarios de 'lint IA'. Con spec + intent + preocupaciones, el bot puede razonar semánticamente y priorizar. Además, el mismo template ayuda a reviewers humanos." },
+        { "letter": "B", "text": "El PR template no importa para el bot; solo lee el diff.", "correct": false, "why": "Falso. Los bots modernos (Claude Code Action, CodeRabbit) leen el body + diff + tests + related files. Body pobre = review pobre." },
+        { "letter": "C", "text": "Un template largo abruma al bot y baja calidad.", "correct": false, "why": "Falso. Los contextos son grandes (200k tokens Claude). Un template de 500 palabras es marginal en costo y masivo en beneficio." },
+        { "letter": "D", "text": "El bot debería inferir contexto solo del diff sin ayuda.", "correct": false, "why": "Ideal pero no realista. La inferencia sin contexto es alucinación. Explicitud > implicitud." }
+      ],
+      "explanation": "PR template agent-ready (Markdown en `.github/pull_request_template.md`): (1) '## Related' — links a spec.md, issue; (2) '## Why' — problema en 2 líneas; (3) '## What' — cambios; (4) '## How to test' — pasos; (5) '## Risk areas' — donde quieres extra scrutiny; (6) '## Breaking changes' — sí/no + migration; (7) '## Checklist' — [] tests updated, [] docs updated, [] AGENTS.md updated si aplica. Bonus: instrucción explícita al bot en el body ('Please review focus on X'). El bot y el humano se benefician igual.",
+      "realWorld": "Vercel, Cloudflare, y Supabase publicaron sus PR templates 2024-2025 explícitamente diseñados para dual audience (humano + bot). El engagement de los bots subió proporcionalmente al detalle del template.",
+      "tags": ["PR-template", "contexto", "review"],
+      "tech": ["GitHub PR", "Claude Code Action"],
+      "references": [
+        { "title": "GitHub Docs — PR templates" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "ai-dev-practices",
+      "topic": "Cursor removing $30/mo tier — señales de mercado",
+      "difficulty": "mid",
+      "scenario": "En 2024-2025, Cursor cambió su modelo de pricing removiendo el tier de $30/mes con uso ilimitado. La comunidad reaccionó fuerte. Otros incidentes: Replit Agent con precios variables, Devin con acceso restringido tras fallos en benchmarks.",
+      "question": "¿Qué lección estratégica sobre costos y adopción de herramientas IA se debe sacar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El costo de tools IA es volátil y cae en las empresas cuando escalan. Lección: (1) contratos con precio congelado por 12+ meses; (2) portabilidad (evitar lock-in a un solo vendor); (3) medir uso por dev/team para forecast; (4) tener plan B (segundo agente evaluado); (5) budget alerts en el nivel de usuario individual, no solo empresa; (6) revisar TCO (tokens + API + productividad) trimestralmente.", "correct": true, "why": "Correcto. La industria está inmadura en pricing. Cursor 2024, Replit, Devin, Copilot enterprise han tenido cambios que impactaron equipos. Estrategia defensiva: portabilidad + contratos + medición. Los agentes 'flat rate ilimitados' son insostenibles económicamente para el vendor a escala." },
+        { "letter": "B", "text": "Los tools IA son commodities; el precio no importa.", "correct": false, "why": "Falso. Con adopción real, tools IA representan miles de dólares/dev/mes en tokens. Es una línea de costo significativa que requiere gestión." },
+        { "letter": "C", "text": "Auto-hostear todos los agentes con modelos open source.", "correct": false, "why": "Reduce lock-in pero introduce costo de infra + calidad menor de modelos open (Llama 3 vs Claude 4 en tareas de dev). Válido para algunas orgs; no universal." },
+        { "letter": "D", "text": "Solo usar herramientas gratuitas.", "correct": false, "why": "Las gratuitas suelen tener límites duros o modelos débiles. Falsa economía si productividad cae." }
+      ],
+      "explanation": "Estrategia de TCO para tools IA: (1) medir cost per developer per month (todo incluido: subscription + tokens API + infra); (2) trackear productivity metrics para calcular ROI; (3) diversificar entre 2 vendors para negociar y por continuidad; (4) contratos con floor/ceiling (predictable); (5) internal AI gateway (LiteLLM, Portkey) que abstrae vendor y permite swap; (6) preferir open specs (MCP, AGENTS.md) que reducen lock-in. Cursor incident lesson: usuarios que tenían workflow atado a 'unlimited' tuvieron que renegociar workflow. Diversificación te ahorra este shock.",
+      "realWorld": "Cursor pricing change en 2024 causó backlash público. Replit Agent variable pricing sorprendió equipos. Windsurf cambió modelo tras adquisición 2025. GitHub Copilot subió precios enterprise 2025. El patrón: vendor descubre que su pricing era subsidio a usuarios pesados y corrige — el equipo pierde.",
+      "tags": ["pricing", "TCO", "vendor-lock-in", "portability"],
+      "tech": ["Cursor", "Replit", "Devin", "Copilot"],
+      "references": [
+        { "title": "Hacker News — Cursor pricing changes discussion (2024)" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "ai-dev-practices",
+      "topic": "Devin y benchmarks vs realidad",
+      "difficulty": "senior",
+      "scenario": "Cognition Labs lanzó Devin en 2024 con demos impresionantes: 13.86% en SWE-bench. Meses después, review público (Answer.ai) mostró que en trabajo real Devin completaba <20% de tasks reales y a menudo hacía 'fake work' (código plausible pero no funcional). En 2026, Devin sigue existiendo pero con marketing más medido.",
+      "question": "¿Qué lecciones sobre agentes autónomos y benchmarks aplican al comprar/adoptar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lecciones: (1) benchmarks (SWE-bench, HumanEval) sobreestiman capacidad real — tareas están simplificadas y el training puede contaminar; (2) demos son cherry-picked; (3) pilotos en TU codebase con TUS tareas son la única evaluación válida; (4) 'agentes autónomos' rara vez son fully autonomous — requieren babysitting; (5) desconfía de 'X% en Y benchmark' sin ver cost/latency/failure modes; (6) MTBF (mean time between failures) del agente es la métrica útil.", "correct": true, "why": "Correcto. Es el consenso post-2024. Benchmarks como SWE-bench Verified miden algo (progreso relativo entre modelos) pero no predicen éxito en tu contexto. Answer.ai publicó el análisis crítico en abril 2024 que se volvió referencia obligada. El patrón: pilotea en tu codebase, mide honesto, no confíes en marketing." },
+        { "letter": "B", "text": "Si Devin tiene 13% en benchmark, es 13% capaz en tu trabajo.", "correct": false, "why": "No hay tal correlación lineal. Depende de similitud entre benchmark y tu codebase, complejidad de tus tasks, y calidad de tests." },
+        { "letter": "C", "text": "Los benchmarks públicos son inútiles. Ignóralos.", "correct": false, "why": "Exagerado. Son útiles como comparador RELATIVO entre modelos (Claude 4 vs GPT-5 vs Gemini). No como predictor absoluto de tu productividad." },
+        { "letter": "D", "text": "Espera a que el mercado 'madure' antes de adoptar cualquier cosa.", "correct": false, "why": "Rendición estratégica. La ventaja competitiva viene de aprender temprano con expectativas calibradas, no de esperar." }
+      ],
+      "explanation": "Framework 'evaluate before adopting' para agentes: (1) define 10-20 tasks reales de tu codebase; (2) corre el agente en ellas con protocolo consistente; (3) mide: success rate, time-to-completion, cost, human interventions needed, MTBF; (4) revisa cualitativamente el output (¿es fake work?); (5) compara vs baseline humano; (6) repite trimestralmente (modelos evolucionan). Anti-patterns: comprar por benchmark, comprar por demo, comprar por hype. SWE-bench en particular tiene issues documentados de contamination y task simplification. Answer.ai 'Devin critique' (2024) es lectura obligatoria.",
+      "realWorld": "Answer.ai publicó 'The truth about Devin' en abril 2024 mostrando gap entre demo y realidad. SWE-bench Verified (2024) es una versión curada por OpenAI para reducir issues de calidad. En 2026 múltiples 'agentic coders' (Devin, Copilot Workspace, Claude Code) reportan métricas más honestas.",
+      "tags": ["benchmarks", "Devin", "SWE-bench", "evaluation"],
+      "tech": ["Devin", "SWE-bench", "Claude Code"],
+      "references": [
+        { "title": "Answer.ai — The truth about Devin (2024)" },
+        { "title": "SWE-bench Verified", "url": "https://openai.com/index/introducing-swe-bench-verified/" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "ai-dev-practices",
+      "topic": "Resume y cost display en CLIs de agente",
+      "difficulty": "mid",
+      "scenario": "Un usuario reporta: 'Claude Code se cortó a mitad de tarea, perdí 30 min de trabajo'. Otro: 'no sé cuánto me está costando cada sesión, mi budget se agotó sin avisar'.",
+      "question": "¿Qué features son mesa en un CLI de agente moderno para resolver estos casos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) Resume/checkpoint: el CLI persiste estado (contexto, plan, tasks completadas) y permite `agent resume` tras corte; (2) cost display en tiempo real: tokens usados, costo estimado, presupuesto restante; (3) session budget: `--max-cost 5` para cortar antes de gastar demás; (4) explicit checkpoints tras cada task para reanudar granular; (5) session logs guardados para debugging y auditoría; (6) exportable transcripts.", "correct": true, "why": "Correcto. Son features esperadas en un CLI de agente 2026. Claude Code, Codex CLI, Gemini CLI, Aider — todos los ofrecen. Sin ellas, la UX es frustrante y la governance imposible." },
+        { "letter": "B", "text": "El usuario debería tener cuidado con su conexión. Es su problema.", "correct": false, "why": "Culpar al usuario ignora que la responsabilidad de UX es del tool. Un corte de wifi no debería costar 30 min de trabajo." },
+        { "letter": "C", "text": "Cost display es innecesario si el vendor te manda invoice mensual.", "correct": false, "why": "Los invoices mensuales son post-facto. En agentes de tokens variables, un solo comando puede gastar cientos de dólares. Feedback en tiempo real es control esencial." },
+        { "letter": "D", "text": "Resume es imposible con modelos stateless.", "correct": false, "why": "Falso. El CLI mantiene el state localmente y lo reenvía en el próximo prompt. El modelo puede ser stateless; el CLI persiste el contexto." }
+      ],
+      "explanation": "Anatomía UX de CLI de agente 2026: (1) resume/checkpoint — persist state, --resume flag; (2) cost tracking — mostrar tokens in/out y $ estimado tras cada operation; (3) budgets — max-cost/max-tokens con confirmación si supera; (4) transcript export — para audit y debugging; (5) cancel con Ctrl+C que preserva state; (6) graceful degradation en fallos de red (retry con backoff); (7) verbose mode para debug; (8) headless mode para CI (sin prompts interactivos). Estos son gates de adopción enterprise — sin ellos, el CLI es juguete.",
+      "realWorld": "Claude Code 2.0 (2025) añadió session persistence, cost display y --max-cost. Aider tiene 'sessions'. Codex CLI tiene budget flags. Devin tiene 'session recovery'. La feature parity en este espacio subió rápido 2024-2026 como response a feedback de enterprise.",
+      "tags": ["CLI-UX", "resume", "cost-tracking", "budgets"],
+      "tech": ["Claude Code", "Aider", "Codex CLI"],
+      "references": [
+        { "title": "Anthropic — Claude Code Docs" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "ai-dev-practices",
+      "topic": "Governance de agentes IA en la organización",
+      "difficulty": "staff",
+      "scenario": "CTO te pide diseñar el 'AI Coding Governance' de la empresa (500 devs). Preocupaciones: seguridad (leaks), costo (miles/mes en tokens), calidad (bugs de IA en prod), auditoría (compliance SOC2), y educación (devs usando mal).",
+      "question": "¿Qué componentes debe incluir un programa de governance realista?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Componentes: (1) política escrita 'AI coding policy' (qué se permite, qué no, qué requiere aprobación); (2) approved tool list (evita 'shadow AI'); (3) internal AI gateway (LiteLLM/Portkey) para logging, rate limiting, cost tracking, secrets redaction; (4) training obligatorio (cursos sobre seguridad, prompt eng, review); (5) métricas y dashboards (adoption, cost, incidents); (6) incident response (leak de datos, bug en prod, breach); (7) revisión trimestral con negocio; (8) champions por equipo.", "correct": true, "why": "Correcto. Governance real es multi-dimensional: policy + tools + educación + medición + respuesta. Casi todas las grandes empresas (Google, Microsoft, Salesforce) tienen programa similar en 2025-2026. Ignorar cualquier dimensión crea gap." },
+        { "letter": "B", "text": "Solo comprar licencias enterprise y trust the vendor.", "correct": false, "why": "Comprar licencia no gestiona uso, cost, security, ni educación. Es 20% del programa." },
+        { "letter": "C", "text": "Prohibir todo hasta que 'sea seguro'.", "correct": false, "why": "Rendición estratégica y contraproducente. Los devs usarán herramientas fuera de policy ('shadow AI') creando exposure sin visibilidad." },
+        { "letter": "D", "text": "Dejar que cada equipo elija libremente.", "correct": false, "why": "Sin baseline organizacional, hay riesgos de seguridad, duplicación de costos, e inconsistency de calidad." }
+      ],
+      "explanation": "Programa mínimo de AI Governance: (1) POLICY document (2-4 páginas) con reglas claras — permitido/prohibido/aprobado; (2) TOOLS aprobados con SSO, gateway, y logging; (3) INFRA — un LLM gateway (LiteLLM, Portkey, o custom) que redacta secrets, agrega logging, aplica rate limits, tracks cost per user/team; (4) EDUCACIÓN — onboarding + refresh anual; (5) MÉTRICAS — dashboard de adoption, cost, incidents; (6) INCIDENT RESPONSE — playbook para leaks, prod bugs; (7) LEGAL — review de vendor T&Cs, DPAs; (8) COMPLIANCE — mapping a SOC2, ISO 27001, EU AI Act. Champions por equipo escalan el programa. Sin gateway, no hay visibilidad.",
+      "realWorld": "Salesforce publicó su AI governance framework en 2024. Microsoft internamente usa AI Gateway con logging obligatorio. Netflix opera con approved list + gateway + quarterly reviews. Small startups pueden empezar con: (1) policy 1 página; (2) SSO en tools aprobados; (3) trimestral review — escalar de ahí.",
+      "tags": ["governance", "policy", "AI-gateway", "compliance"],
+      "tech": ["LiteLLM", "Portkey", "SSO"],
+      "references": [
+        { "title": "NIST AI Risk Management Framework (AI RMF 1.0)" }
+      ]
+    }
+  ]
+}

@@ -81,6 +81,9 @@ export class OpenAIProvider implements AIProvider {
         model: this.model(),
         max_tokens: maxTokens,
         stream: true,
+        // Sin include_usage el final chunk no trae prompt_tokens/completion_tokens
+        // → budget guard no descuenta y el user puede exceder su presupuesto diario.
+        stream_options: { include_usage: true },
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },

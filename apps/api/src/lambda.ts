@@ -1,9 +1,18 @@
 // Adaptador Lambda para Function URL. Rutas normales: handler estándar.
-// Ruta /api/ai/tutor: usa awslambda.streamifyResponse (SSE) para streaming real.
+// Rutas SSE (streaming real via awslambda.streamifyResponse): declaradas explícitamente
+// abajo en SSE_PATHS. Si añades un endpoint nuevo que devuelva text/event-stream, añádelo
+// también a esa lista o sus tokens se bufferizarán y el streaming se romperá en producción.
 
 import { buildApp } from './app.js';
 
 const app = buildApp();
+
+// Match exacto de path. NO uses startsWith porque /api/ai/chat/title devuelve JSON,
+// no SSE, y no debe pasar por streamifyResponse.
+const SSE_PATHS = new Set(['/api/ai/tutor', '/api/ai/chat']);
+export function isSsePath(rawPath: string | undefined): boolean {
+  return SSE_PATHS.has(rawPath ?? '');
+}
 
 // Tipos mínimos para no depender de @types en el bundle.
 type FnUrlEvent = {
@@ -77,10 +86,10 @@ async function handleStream(event: FnUrlEvent, responseStream: NodeJS.WritableSt
   streamWithHeaders.end();
 }
 
-// Handler unificado: si la ruta es del tutor, streamifica; si no, respuesta normal.
+// Handler unificado: rutas SSE usan streamifyResponse; el resto responden buffered.
 export const handler = streamifyResponse
   ? streamifyResponse(async (event: FnUrlEvent, responseStream: NodeJS.WritableStream) => {
-      if ((event.rawPath ?? '').includes('/api/ai/tutor')) {
+      if (isSsePath(event.rawPath)) {
         await handleStream(event, responseStream);
         return;
       }

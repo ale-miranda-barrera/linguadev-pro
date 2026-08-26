@@ -1,0 +1,421 @@
+{
+  "id": "devops-sim-24-supply-chain-security",
+  "trackId": "devops",
+  "order": 24,
+  "title": "Simulacro 24 — Supply Chain Security (SLSA, Sigstore, SBOM)",
+  "focus": "Seguridad de supply chain de software: SLSA levels 1-4, Sigstore (cosign/rekor/fulcio) y keyless signing, SBOM (Syft, CycloneDX, SPDX), dependency confusion, typosquatting, provenance attestations, EO 14028, firma de paquetes (npm/PyPI/Maven), reproducible builds, in-toto, GitHub Actions attestations. Casos reales: SolarWinds, Log4Shell, event-stream, colors.js, XZ Utils, Codecov.",
+  "areaCoverage": ["security"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "security",
+      "topic": "¿Qué es un ataque de supply chain?",
+      "difficulty": "junior",
+      "scenario": "Un dev pregunta: 'Si mi código pasa SAST/DAST y no tiene vulns conocidas, ¿por qué preocuparme por supply chain?'. Le mencionas que en 2020 SolarWinds fue comprometido y afectó a 18,000 clientes incluyendo agencias US federales.",
+      "question": "¿Qué es un ataque de supply chain de software?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un ataque donde el atacante compromete un COMPONENTE UPSTREAM (dependencia, build tool, CI/CD, actualizador) para inyectar código malicioso que luego se distribuye AUTOMÁTICAMENTE a los consumidores downstream. El código de la víctima final puede ser 100% limpio — el malware entra por una dependencia, un build server, o un mecanismo de update firmado. Vector: transitividad + confianza automática.", "correct": true, "why": "Correcto. La clave es la CONFIANZA TRANSITIVA: si confías en tu compilador, en tu package manager, en tu CI/CD y en tus dependencias, un atacante que compromete cualquiera de esos gana acceso a TODOS los consumidores downstream. NIST SP 800-161 y CISA definen supply chain attack exactamente así." },
+        { "letter": "B", "text": "Un ataque de phishing a devs.", "correct": false, "why": "Phishing es un VECTOR posible (así comprometieron a devs de PyTorch nightly y a mantenedores de npm), pero supply chain attack es más amplio — cualquier compromiso upstream que se propague vía builds/updates." },
+        { "letter": "C", "text": "Un ataque DDoS al registry de paquetes.", "correct": false, "why": "DDoS a npm/PyPI afecta disponibilidad, no es 'supply chain attack'. Supply chain implica INYECCIÓN de código malicioso vía la cadena de distribución." },
+        { "letter": "D", "text": "Explotar una vuln conocida (CVE) en una librería.", "correct": false, "why": "Eso es exploitation de vuln pública, no supply chain attack. Log4Shell (CVE-2021-44228) es un CVE — un atacante EXPLOTÁNDOLO no está haciendo supply chain attack, está haciendo exploitation. Supply chain sería si alguien hubiera INYECTADO malware en log4j-core-2.14.1.jar publicado." }
+      ],
+      "explanation": "Supply chain attacks explotan la CADENA DE CONFIANZA de software: el consumidor final confía en dependencias que confían en otras dependencias que confían en un compilador que corre en un CI que descarga de un registry. Comprometer CUALQUIER eslabón propaga malware a millones. Categorías: (1) dependency injection (event-stream, colors.js); (2) build system compromise (SolarWinds, Codecov); (3) registry compromise (typosquatting, dependency confusion); (4) update mechanism hijack; (5) source repo compromise (XZ Utils). Defensa requiere pensar en TODA la cadena, no solo tu código.",
+      "realWorld": "SolarWinds 2020 (SUNBURST): APT29 comprometió el build system de SolarWinds Orion, inyectó backdoor en el .DLL firmado con cert legítimo de SolarWinds. Los updates fueron firmados y distribuidos a 18,000 clientes incluyendo Treasury, DHS, DoJ, Microsoft. Coste estimado global: $100B+. Fue el wake-up call que llevó a Executive Order 14028 (Biden, May 2021).",
+      "tags": ["supply chain", "definición", "SolarWinds", "NIST"],
+      "tech": [],
+      "references": [{ "title": "NIST SP 800-161r1 — C-SCRM" }, { "title": "CISA — Software Supply Chain Attacks" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "security",
+      "topic": "SBOM — qué es y por qué",
+      "difficulty": "junior",
+      "scenario": "Después de Log4Shell (dic 2021), empresas tardaron SEMANAS en responder a la pregunta '¿usamos log4j vulnerable, dónde, en qué versión?'. Muchas ni siquiera sabían inventariar sus dependencias transitivas. Executive Order 14028 hace SBOM obligatorio para vendors del gobierno US.",
+      "question": "¿Qué es un SBOM y qué problema resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SBOM (Software Bill of Materials) = inventario formal, legible por máquina, de TODOS los componentes de software incluidos en un producto: dependencias directas y transitivas, versiones exactas, licencias, hashes, proveedores. Resuelve el problema de '¿qué llevo dentro?' — cuando aparece una vuln (Log4Shell), en segundos puedes buscar el SBOM y saber qué productos/servicios están afectados. Formatos estándar: SPDX (Linux Foundation, ISO/IEC 5962) y CycloneDX (OWASP).", "correct": true, "why": "Correcto. SBOM = 'lista de ingredientes' del software. Sin SBOM, cada CVE nuevo dispara semanas de arqueología manual. Con SBOM, es una query. NTIA (US) publicó los 'minimum elements' en 2021 tras EO 14028." },
+        { "letter": "B", "text": "SBOM es un antivirus para paquetes.", "correct": false, "why": "SBOM es un INVENTARIO estático, no un scanner. La detección de vulns se hace CRUZANDO el SBOM contra bases como NVD/GHSA (herramientas: Grype, Trivy, Dependabot). Sin SBOM, no puedes hacer ese cruce." },
+        { "letter": "C", "text": "SBOM es un contrato legal con vendors.", "correct": false, "why": "Confusión. SBOM es un artefacto técnico. Sí es requerido por regulación (EO 14028) pero en sí mismo es un documento estructurado (JSON/XML/tag-value), no un acuerdo legal." },
+        { "letter": "D", "text": "SBOM es sinónimo de package-lock.json.", "correct": false, "why": "package-lock.json es un lockfile específico de npm (versiones + hashes de deps JS). SBOM es un formato ESTANDARIZADO y neutro (SPDX/CycloneDX) que cubre TODO el producto: OS, runtime, libs, containers, no solo JS. Muchos SBOMs se GENERAN a partir de lockfiles." }
+      ],
+      "explanation": "SBOM responde 3 preguntas críticas post-Log4Shell: (1) '¿Contiene mi producto la lib X versión Y?'; (2) '¿En qué versión?'; (3) '¿De qué proveedor viene?'. Los NTIA Minimum Elements exigen: supplier, component name, version, unique identifier, dependency relationship, author, timestamp. Formatos: SPDX (más maduro, tag-value o JSON, ISO estándar) y CycloneDX (más moderno, JSON/XML, incluye VEX para exploitability). Generadores: Syft (Anchore), cdxgen (CycloneDX), sbom-tool (Microsoft), Trivy. La cadena típica: [syft-cmd] tu-imagen:tag → sbom.spdx.json → [grype-cmd] sbom.spdx.json → lista de CVEs.",
+      "realWorld": "Log4Shell (CVE-2021-44228, dic 2021): log4j-core es dependencia transitiva de MILES de productos Java. Empresas sin SBOM tardaron semanas en identificar exposición; con SBOM la búsqueda fue minutos. EO 14028 (May 2021, antes de Log4Shell) ya anticipaba esto: NIST publicó 'Minimum Elements For an SBOM' julio 2021.",
+      "tags": ["SBOM", "SPDX", "CycloneDX", "Log4Shell", "EO 14028"],
+      "tech": [],
+      "references": [{ "title": "NTIA — The Minimum Elements For a Software Bill of Materials" }, { "title": "CISA — SBOM" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "security",
+      "topic": "SLSA framework — qué es",
+      "difficulty": "mid",
+      "scenario": "Tu CISO menciona 'necesitamos alcanzar SLSA nivel 3 en nuestros builds de producción'. Es una iniciativa de Google que se convirtió en OpenSSF standard tras SolarWinds.",
+      "question": "¿Qué es SLSA y qué garantías provee cada nivel?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SLSA (Supply-chain Levels for Software Artifacts, pronunciado 'salsa') es un framework de OpenSSF con 4 niveles progresivos de garantías sobre CÓMO se construyó un artefacto. Foco: build integrity + provenance, no vulns del código.", "correct": true, "why": "Correcto. SLSA nace en Google (Binary Authorization for Borg) y se dona a OpenSSF en 2021 post-SolarWinds. Es checklist de MADUREZ de tu pipeline de builds, no de tu código. Complementa (no reemplaza) SAST/DAST/SCA." },
+        { "letter": "B", "text": "SLSA 1: documentar el proceso de build + generar provenance básica. SLSA 2: build service confiable + provenance firmada + source version controlled.", "correct": true, "why": "Correcto (SLSA v1.0). L1 = provenance existe pero no verificada; L2 = provenance firmada por build service, resistente a manipulación básica. L2 es asequible con GitHub Actions + attestations." },
+        { "letter": "C", "text": "SLSA 3: build platform hardened (ephemeral, isolated); provenance no-falsificable por tenants; source y build platforms resistentes a specific threats. SLSA 4 (deprecated/consolidado en v1.0): two-person review + hermetic builds + reproducible builds.", "correct": true, "why": "Correcto. SLSA 3 es el objetivo típico para producción: builds ephemeral (nueva VM por build), aislamiento entre builds del mismo tenant, provenance criptográficamente ligada al build. SLSA v1.0 (2023) simplificó y L4 se movió a track separado." },
+        { "letter": "D", "text": "SLSA reemplaza SBOM.", "correct": false, "why": "NO. SBOM = 'qué hay dentro' (inventario). SLSA = 'cómo se hizo' (integridad del proceso). Son COMPLEMENTARIOS: SLSA da confianza en que el SBOM fue generado por un build confiable; SBOM da confianza en los ingredientes. Ambos son requeridos por EO 14028." },
+        { "letter": "E", "text": "SLSA nivel 4 requiere que el código sea open source.", "correct": false, "why": "Falso. SLSA es agnóstico de licencia. L4/hermetic tiene que ver con builds reproducibles y two-person review, no con licencia. Empresas privadas pueden alcanzar SLSA 4 sin abrir código." }
+      ],
+      "explanation": "SLSA responde: '¿Puedo confiar en que este binario/imagen se hizo desde ESE source, con esos MISMOS pasos, sin manipulación?'. La respuesta se materializa en un artefacto de PROVENANCE (JSON firmado) que dice 'este SHA256 vino de [repo git] commit [sha], compilado por [builder] el [timestamp], con estos inputs'. Herramientas: SLSA GitHub generator (slsa-framework/slsa-github-generator) produce provenance L3 automáticamente; verifier valida contra política. SLSA v1.0 (abril 2023) reorganizó de 4 niveles a 3 build-focused levels (L1/L2/L3) + tracks futuros (source, build, deploy).",
+      "realWorld": "SolarWinds 2020 fue TEXT-BOOK caso de por qué SLSA importa: build system comprometido, sin provenance verificable, artefactos firmados pero contenido manipulado. Google adoptó SLSA 3+ internamente para todo binary público (kubernetes, tensorflow). CNCF requiere SLSA 3 para graduated projects. npm launched 'Trusted Publishing' con provenance (2023).",
+      "tags": ["SLSA", "provenance", "OpenSSF", "build integrity"],
+      "tech": [],
+      "references": [{ "title": "SLSA specification v1.0 — slsa.dev" }, { "title": "Google — Binary Authorization for Borg" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "security",
+      "topic": "Sigstore — arquitectura",
+      "difficulty": "mid",
+      "scenario": "Firmar paquetes con GPG ha sido tradicionalmente engorroso: cada dev necesita generar clave, protegerla, distribuir pública, revocar si compromete. Sigstore (Linux Foundation, 2021) resuelve esto con 'keyless signing' basado en OIDC.",
+      "question": "¿Cuáles son los 3 componentes principales de Sigstore y qué hace cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cosign: CLI para firmar/verificar artefactos (containers, blobs, SBOMs, attestations). Es la 'user interface' de Sigstore.", "correct": true, "why": "Correcto. Comando típico: [cosign-cmd] sign --key cosign.key ghcr.io/org/img:tag O keyless: [cosign-cmd] sign ghcr.io/org/img:tag (usa OIDC automáticamente si detecta CI/CD). Cosign firma con blobs OCI y guarda la firma en el propio registry." },
+        { "letter": "B", "text": "Fulcio: Certificate Authority que emite certs X.509 de CORTA DURACIÓN (10 minutos) tras autenticación OIDC del firmante (GitHub OIDC, Google, email link). No hay 'llave permanente' que gestionar.", "correct": true, "why": "Correcto. Fulcio es la innovación clave: el cert está ligado a una IDENTIDAD OIDC (ej: 'repo:org/repo:ref:refs/heads/main' del GitHub Actions token) en vez de a una llave privada persistente. El cert dura 10 min — suficiente para firmar, no útil si se filtra." },
+        { "letter": "C", "text": "Rekor: transparency log inmutable (append-only, Merkle tree) que registra TODAS las firmas hechas con Sigstore. Provee verificabilidad pública — cualquiera puede auditar 'quién firmó qué cuándo' y detectar firmas no autorizadas.", "correct": true, "why": "Correcto. Rekor es tipo Certificate Transparency pero para software. Sin él, un atacante que roba OIDC podría firmar 5 min y borrar rastro. Con Rekor, la firma queda registrada públicamente y detectable. Query: [rekor-cmd] search --artifact <hash>." },
+        { "letter": "D", "text": "Keyless signing significa que no hay criptografía involucrada.", "correct": false, "why": "MITO peligroso. 'Keyless' significa que no hay LLAVE PERMANENTE que el usuario gestione — la criptografía sigue siendo estándar (ECDSA P-256, X.509). Fulcio emite un keypair efímero por sesión, firma, publica en Rekor, y descarta la privada." },
+        { "letter": "E", "text": "Sigstore requiere que compres una CA comercial.", "correct": false, "why": "Falso. Sigstore es GRATUITO, open source, y la instancia pública de Fulcio/Rekor está operada por Linux Foundation. Empresas pueden self-host (private Sigstore) si necesitan aislamiento." }
+      ],
+      "explanation": "Sigstore resuelve el 'problema del PGP' (llaves difíciles de gestionar, revocar, distribuir) haciendo firma criptográfica tan fácil como 'git commit'. Flow keyless típico en GitHub Actions: (1) job pide OIDC token a GitHub; (2) [cosign-cmd] sign lo envía a Fulcio; (3) Fulcio valida OIDC y emite cert efímero ligado a 'workflow_id + repo + ref'; (4) cosign firma con la privada efímera; (5) firma + cert se publican en Rekor + en el registry OCI; (6) privada se descarta. Verificación: [cosign-cmd] verify --certificate-identity='...' --certificate-oidc-issuer='https://token.actions.githubusercontent.com' img:tag. La política asegura que solo firmas HECHAS por ese workflow específico son válidas.",
+      "realWorld": "Kubernetes migró a Sigstore para todos los releases (v1.24+). npm lanzó 'trusted publishing' con Sigstore para provenance (2023). Python PyPI adoptó Sigstore para signed releases (PEP 740, 2024). Google/Distroless imágenes son firmadas con Cosign. Chainguard's entire distro (Wolfi) firma todo con Sigstore.",
+      "tags": ["Sigstore", "cosign", "fulcio", "rekor", "keyless"],
+      "tech": [],
+      "references": [{ "title": "Sigstore — sigstore.dev" }, { "title": "Cosign GitHub — sigstore/cosign" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "security",
+      "topic": "Dependency confusion attack",
+      "difficulty": "mid",
+      "scenario": "En 2021, Alex Birsan publicó investigación mostrando cómo comprometió Apple, Microsoft, PayPal, Uber, Shopify, Netflix, Yelp y ~35 empresas más. Ganó $130,000+ en bug bounties. La técnica no explotaba ningún CVE — abusaba de cómo package managers resuelven nombres.",
+      "question": "¿Qué es un ataque de dependency confusion y cómo se defiende?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El atacante identifica nombres de paquetes INTERNOS de una empresa (ej: 'acme-corp-utils' que la empresa hosts en su registry privado). Publica un paquete con el MISMO nombre en el registry PÚBLICO (npm/PyPI) con versión SUPERIOR (99.9.9). Cuando el package manager resuelve, si busca en AMBOS registries sin filtro, el paquete público con versión mayor GANA — y ejecuta código del atacante durante 'npm install' (postinstall hook). Defensa: (1) scope your packages (@acme/utils); (2) configure registry priority explícita; (3) reserve nombres en public registries; (4) use lockfiles con integrity hashes.", "correct": true, "why": "Correcto. El bug fundamental: package managers tratan 'internal' y 'public' como el mismo namespace por defecto. Birsan encontró nombres internos scrappeando package.json commiteados por accidente en GitHub, en Docker layers públicos, o en JS de frontend. Defensa moderna: scoped packages + registry pinning + verdaccio/artifactory con NO-PROXY para nombres internos." },
+        { "letter": "B", "text": "Ataque donde el atacante inyecta código en una vuln 0-day de npm.", "correct": false, "why": "Dependency confusion NO explota vuln del package manager — explota su comportamiento POR DISEÑO (resolver desde múltiples registries). No es CVE, es misconfiguration." },
+        { "letter": "C", "text": "Es sinónimo de typosquatting.", "correct": false, "why": "Distintos. Typosquatting = registrar 'lodahs' esperando que alguien mistype 'lodash'. Dependency confusion = registrar el nombre EXACTO de un paquete interno con versión mayor. Confusion es más peligrosa porque no requiere typo del usuario — el resolver escoge automáticamente." },
+        { "letter": "D", "text": "Solo afecta a npm.", "correct": false, "why": "Afecta a CUALQUIER package manager que resuelva contra múltiples registries sin filtro: npm, pip, gem, Maven, NuGet, composer, cargo. Birsan probó en npm/pip/gem exitosamente. Maven tiene el 'settings.xml mirror' que ayuda pero mal configurado también es vulnerable." }
+      ],
+      "explanation": "Dependency confusion es un ataque de CONFIGURACIÓN, no de código. Los package managers modernos tienen 'highest version wins' + 'try all registries' por default. Vector: (1) atacante descubre 'internal-billing-lib' via GitHub search, Dockerfile leak, o webpack bundle en frontend; (2) publica 'internal-billing-lib' en npm público con version 99.99.99 + malicious postinstall; (3) próximo CI build de la víctima resuelve, npm ve versión mayor en public registry, la baja; (4) postinstall ejecuta código atacante DENTRO del CI (acceso a secrets, source). Defensas: (a) SIEMPRE usa scoped packages para internos (@yourcompany/*); (b) configure .npmrc con 'always-auth' y '@yourcompany:registry=https://internal.npm'; (c) reserva nombres internos en npm público como 'namespace squat' defensivo; (d) usa 'npm ci' con lockfile con integrity hashes SHA512.",
+      "realWorld": "Alex Birsan 2021 (Medium post 'Dependency Confusion'): ganó $130k+ bounties, exploit ejecutó en Apple, MS, PayPal, Netflix, Uber, Shopify, Yelp, Tesla. Microsoft publicó whitepaper post-mortem. Amazon publicó guías post-hoc. Continúa siendo vector activo: en 2023-2024 detectaron variantes en PyPI (packagenames como 'openai-python-internal').",
+      "tags": ["dependency confusion", "npm", "PyPI", "Birsan", "typosquatting"],
+      "tech": [],
+      "references": [{ "title": "Alex Birsan — Dependency Confusion (Medium 2021)" }, { "title": "Microsoft — 3 Ways to Mitigate Risk When Using Private Package Feeds" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "security",
+      "topic": "Typosquatting en package registries",
+      "difficulty": "mid",
+      "scenario": "Un dev copy-paste de Stack Overflow un comando '[npm-cmd] install colorama' (típico paquete Python) pero está trabajando en Node. npm no falla — instala un paquete llamado 'colorama' que existe en npm pero NO es el legítimo. Su código nunca lo importa, pero durante install se ejecuta postinstall que exfiltra .env.",
+      "question": "¿Qué es typosquatting y qué defensas existen?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Registrar paquetes con nombres muy similares a paquetes populares (typos: 'lodahs' vs 'lodash', 'requestts' vs 'request') o nombres de otros ecosistemas ('colorama' de Python en npm) esperando install accidental. El malware suele estar en postinstall/preinstall scripts para ejecución automática.", "correct": true, "why": "Correcto. Vector muy efectivo porque explota ERROR HUMANO típico (typos, copy-paste cross-ecosystem, autocomplete). Estimaciones: >200 paquetes típosquatters detectados en npm por MES. Muchos usan reverse shells o crypto miners." },
+        { "letter": "B", "text": "Defensas: (1) usar lockfile con integrity hashes; (2) enable [npm-cmd] audit + ignore-scripts en CI; (3) tools como Socket.dev, Snyk, Phylum que detectan comportamiento sospechoso en install scripts; (4) --ignore-scripts para deshabilitar hooks post/preinstall; (5) proxies internos (Artifactory) con curación.", "correct": true, "why": "Correcto. [npm-cmd] config set ignore-scripts true es la defensa más efectiva y underused — la mayoría del malware npm depende de postinstall hooks. Sin scripts, muchos ataques fallan. Trade-off: rompe algunas libs que sí necesitan build steps." },
+        { "letter": "C", "text": "Registries populares (npm, PyPI) YA hacen validación semántica de nombres similares y bloquean typosquatters automáticamente.", "correct": false, "why": "Falso. npm y PyPI NO validan similitud automáticamente. Han empezado (2023+) a bloquear NOMBRES obviamente maliciosos y reactive-remove cuando se reporta, pero PROACTIVE detection es muy limitado. La responsabilidad primaria recae en consumidores." },
+        { "letter": "D", "text": "Herramientas como Socket.dev y Phylum analizan CADA versión publicada del registry buscando indicadores: obfuscated code, network calls en install, crypto mining, filesystem access. Alertan en tiempo real.", "correct": true, "why": "Correcto. Este es el ecosistema moderno post-2022: análisis conductual continuo del registry (no solo scan de tu deps). Socket detecta ~100 malicious packages/semana en npm que aún no están reportados." },
+        { "letter": "E", "text": "Typosquatting solo funciona con paquetes muy oscuros.", "correct": false, "why": "Al contrario — targets son paquetes MUY populares (lodash, react, requests) porque hay más probabilidad de typo. En 2022 se detectó 'pyhton-dateutil' (typo de 'python-dateutil', 40M downloads/mes) exfiltrando AWS keys." }
+      ],
+      "explanation": "Typosquatting es un problema de escala: registries permiten publicar cualquier nombre no-registrado, sin validación de similitud. Combinado con ejecución automática de install scripts, cada typo puede ser un compromise. Defensas por capas: (1) proceso: code reviews estrictos en package.json changes; (2) tooling: dependency-review action de GitHub, Snyk, Dependabot, Socket; (3) config: --ignore-scripts, npm config set registry con proxy interno; (4) runtime: sandbox/seccomp del CI runner; (5) principle of least privilege en runners (no acceso a secrets excepto lo estrictamente necesario, uso de OIDC en vez de long-lived tokens).",
+      "realWorld": "npm 'ua-parser-js' hijack (oct 2021): mantenedor comprometido publicó versiones con crypto miner + credential stealer, afectó 7M weekly downloads. 'noblox.js-proxy' (2021) exfiltraba passwords de Roblox users. PyTorch nightly (dic 2022): dependency confusion vía 'torchtriton' typosquat en PyPI. 'colors.js' y 'faker.js' (ene 2022): mantenedor Marak Squires saboteó SUS PROPIOS paquetes con infinite loop, afectó millones (no typosquat pero relacionado a maintainer trust).",
+      "tags": ["typosquatting", "npm", "PyPI", "postinstall", "Socket"],
+      "tech": [],
+      "references": [{ "title": "Socket.dev — Registry Analysis" }, { "title": "npm — Best practices for dependency management" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "security",
+      "topic": "SLSA levels 1-4 detallados",
+      "difficulty": "mid",
+      "scenario": "Tu manager quiere entender qué se requiere específicamente para cada nivel SLSA para planificar la roadmap del pipeline.",
+      "question": "¿Qué requerimientos específicos exige cada nivel SLSA (v1.0)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "L1: build usa un proceso consistente y GENERA provenance (aunque sea manual/no verificada). L2: build corre en BUILD PLATFORM alojada (no laptop de dev) y provenance está FIRMADA por la platform (attesta que 'yo, Github Actions, corrí este build'). L3: build platform es HARDENED — builds ephemeral e isolated, provenance NO-FALSIFICABLE por tenants del mismo builder (aunque compromise otro proyecto en el mismo GH Actions, no puede falsificar provenance para tu proyecto).", "correct": true, "why": "Correcto para SLSA v1.0 (2023). L1 = 'tienes un pipeline y sabes qué hizo'; L2 = 'el pipeline es de servicio (no dev machine), firmado'; L3 = 'el pipeline resiste ataques de tenants adyacentes + hardening'. L3 típicamente requiere builder específicamente diseñado (SLSA GitHub generator, Google Cloud Build)." },
+        { "letter": "B", "text": "L1: builds automatizados. L2: firma con GPG. L3: multi-region. L4: sin humanos.", "correct": false, "why": "Descripción inventada. SLSA no menciona multi-region ni 'sin humanos'. Sí menciona automated builds (L1+) y hardened builders (L3)." },
+        { "letter": "C", "text": "SLSA solo tiene 3 niveles (v1.0), no 4.", "correct": false, "why": "Parcialmente cierto pero engañoso. SLSA v0.1 tenía 4 niveles (L4 = hermetic + reproducible + two-person review). SLSA v1.0 (abril 2023) reorganizó: 'Build track' tiene L1/L2/L3 activos; L4 se movió a tracks futuros (source, hermetic). Muchas fuentes aún referencian los 4 niveles originales." },
+        { "letter": "D", "text": "L1 requiere hermetic builds.", "correct": false, "why": "Falso. Hermetic builds (build sin acceso a red durante compilation, deps pre-cached) era requerimiento de L4 en v0.1. L1 es el nivel de entrada — solo pide provenance existente." }
+      ],
+      "explanation": "SLSA v1.0 se centra en el 'Build track' con 3 niveles. Detalles: L1 requiere Producer con 'consistent build process' + provenance generada; L2 añade 'hosted build platform' (GitHub Actions, GitLab CI, Google Cloud Build) que firma la provenance en nombre del builder; L3 añade 'strengthened build platform' con isolation entre builds y provenance criptográficamente ligada al build id (imposible que otro tenant genere provenance falsa para tu artefacto). Verificación L3 típicamente requiere: (a) provenance ligada a workflow_id específico via OIDC; (b) validación de identidad del builder (subject alt name del cert); (c) que el builder use ephemeral runners. Tools: slsa-verifier CLI + policy engines (Kyverno, OPA) que aplican al deployment.",
+      "realWorld": "SLSA GitHub Generator (slsa-framework/slsa-github-generator) es el project que hace L3 asequible para cualquier proyecto en GitHub — usa reusable workflows + OIDC + Sigstore para generar provenance no-falsificable. Kubernetes releases usan SLSA 3. Google internally requires SLSA 4-equivalent para production. npm 'provenance' (2023) implementa SLSA L3 para packages publicados desde GitHub Actions.",
+      "tags": ["SLSA", "levels", "provenance", "build platform"],
+      "tech": [],
+      "references": [{ "title": "SLSA specification v1.0 — Build track" }, { "title": "SLSA GitHub Generator" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "security",
+      "topic": "SBOM formats — SPDX vs CycloneDX",
+      "difficulty": "mid",
+      "scenario": "Necesitas escoger un formato de SBOM para tus productos. Los estándares principales son SPDX (Linux Foundation, ISO/IEC 5962:2021) y CycloneDX (OWASP).",
+      "question": "¿Cuáles son las diferencias clave entre SPDX y CycloneDX?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SPDX: iniciado 2010 por Linux Foundation, foco original en LICENSE COMPLIANCE (SPDX license list es el estándar de facto: 'MIT', 'Apache-2.0'), formatos tag-value/RDF/JSON/YAML, ISO/IEC 5962:2021 estándar internacional, muy usado en gobierno US y open source foundations.", "correct": true, "why": "Correcto. SPDX 3.0 (2024) modernizó a JSON-LD y añadió soporte para AI/dataset SBOMs. Su license list (spdx.org/licenses) es la referencia usada por GitHub, npm, npm audit para expresar licencias." },
+        { "letter": "B", "text": "CycloneDX: iniciado 2017 por OWASP, foco original en SECURITY USE CASES (vuln correlation, exploitability), JSON/XML/Protocol Buffers, incluye VEX (Vulnerability Exploitability eXchange) para expresar '¿esta vuln es EXPLOTABLE en mi contexto?', muy usado en ecosistemas modernos (Java, .NET) y CI/CD scanning.", "correct": true, "why": "Correcto. CycloneDX 1.5 (2023) tiene primer-class support para SaaSBOM (SaaS components), ML-BOM (models), y OBOM (operations). VEX permite decir 'sí, tengo log4j 2.14 pero no es exploitable porque no habilito JNDI lookups' — reduce noise post-CVE." },
+        { "letter": "C", "text": "Ambos son válidos para EO 14028 compliance. NTIA Minimum Elements pueden expresarse en cualquiera de los dos. Herramientas como Syft (Anchore) generan AMBOS del mismo scan.", "correct": true, "why": "Correcto. NTIA/CISA no favorecen un formato — la política es 'usa uno de los estándares'. Syft: [syft-cmd] alpine:latest -o spdx-json vs -o cyclonedx-json. También sbom-tool (Microsoft), Trivy, Grype." },
+        { "letter": "D", "text": "SPDX es solo para código propietario y CycloneDX solo para open source.", "correct": false, "why": "Falso. Ambos son agnósticos de licencia. SPDX de hecho se USA MUCHO en propietary (Linux distributions incluyendo RHEL). CycloneDX se usa en enterprise (Sonatype, Snyk enterprise reports)." },
+        { "letter": "E", "text": "SPDX y CycloneDX son incompatibles — no puedes convertir entre ellos.", "correct": false, "why": "Falso. Existen conversores (sbom-tool convert, cyclonedx-cli convert). La información core (componentes, versiones, hashes, dependencies) mapea entre ambos. Diferencias son en features avanzadas (VEX en CycloneDX, license expressions detalladas en SPDX)." }
+      ],
+      "explanation": "Elección práctica: (1) si tu foco es LICENSE COMPLIANCE o vendes a gobierno US con requirements de SPDX ISO → SPDX; (2) si tu foco es SECURITY OPERATIONS (vuln correlation, VEX, exploitability) → CycloneDX; (3) muchas empresas generan AMBOS del mismo build para cubrir stakeholders. Herramientas: Syft genera ambos; Trivy prefer CycloneDX; Grype consume ambos para vuln scan. Formato interior: SPDX 2.x tag-value es texto plano (fácil git-diff); SPDX 3 JSON-LD es máquina-first. CycloneDX 1.5 JSON es cleaner para APIs. Signing: ambos pueden ser firmados con Sigstore/cosign (attestation con predicate SBOM).",
+      "realWorld": "Post EO 14028, NTIA Minimum Elements (2021) especifica 3 formatos aceptados: SPDX, CycloneDX, SWID. GitHub Advanced Security genera SBOMs en SPDX. Anchore Grype scan container: [grype-cmd] alpine:latest --scope all-layers cross-referencia SBOM con vuln db. Chainguard's apko builds generan SBOM en SPDX + attest con Cosign para cada imagen.",
+      "tags": ["SBOM", "SPDX", "CycloneDX", "VEX", "formats"],
+      "tech": [],
+      "references": [{ "title": "SPDX Specification" }, { "title": "CycloneDX Specification" }, { "title": "NTIA Minimum Elements" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "security",
+      "topic": "In-toto framework",
+      "difficulty": "mid",
+      "scenario": "SLSA no aparece del vacío — se basa en frameworks previos. In-toto (NYU, 2016) es el framework criptográfico que underlies muchas ideas de SLSA.",
+      "question": "¿Qué es in-toto y qué relación tiene con SLSA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "In-toto es un FRAMEWORK genérico para asegurar CADENAS DE ARTEFACTOS a través de MULTIPLE STEPS del supply chain. Define: (1) 'Layout' — política firmada por owner que declara los pasos permitidos y quién puede ejecutarlos; (2) 'Link metadata' — attestations firmadas por cada step que dicen 'inputs=X, materials=Y, products=Z'; (3) 'Verification' — un verifier valida que los link metadata concuerdan con el layout y son firmados por identidades autorizadas. SLSA v1.0 usa el FORMATO in-toto (attestations v1.0) como estándar para expresar provenance. La provenance de SLSA ES un in-toto attestation con predicate 'slsa-provenance'.", "correct": true, "why": "Correcto. In-toto (NYU + PL) es el 'lenguaje' criptográfico que SLSA usa. El attestation format in-toto v1.0 (https://in-toto.io/Statement/v1) es la envoltura JSON firmada con subject (a qué artefacto se refiere) + predicateType (qué tipo de attestation) + predicate (payload). SLSA provenance es un predicate específico ('https://slsa.dev/provenance/v1'). VSA (Verification Summary), SBOM attestations, y policy attestations también usan in-toto." },
+        { "letter": "B", "text": "In-toto es la implementación oficial de SLSA.", "correct": false, "why": "Al revés — in-toto es MÁS VIEJO (2016) que SLSA (2021). SLSA REUTILIZA in-toto attestations como formato base. Son proyectos independientes que se complementan." },
+        { "letter": "C", "text": "In-toto es un package manager.", "correct": false, "why": "No. In-toto es un framework de attestations/signing agnóstico de package manager. Se usa CON npm, PyPI, Maven, Debian, etc." },
+        { "letter": "D", "text": "In-toto solo funciona con Docker.", "correct": false, "why": "Agnóstico de tecnología. Se aplica a cualquier artefacto: binaries, containers, deb/rpm packages, source archives. Docker Content Trust y Notary v2 usan conceptos similares pero son proyectos distintos." }
+      ],
+      "explanation": "In-toto separa RESPONSABILIDADES en el supply chain: proyecto owner define layout (política); cada step del pipeline firma link metadata declarando lo que hizo; verifier al final valida toda la cadena. Un 'Statement' in-toto tiene: subject (SHA256 del artefacto), predicateType (URI que declara el tipo), predicate (JSON con el contenido). Envelope: DSSE (Dead Simple Signing Envelope) — payload base64 + signature. SLSA v1.0 provenance predicate contiene: buildDefinition (buildType, externalParameters, resolvedDependencies) + runDetails (builder, metadata, byproducts). Herramientas: in-toto-golang, in-toto-attestation library, witness (Testify Sec), slsa-github-generator (produce in-toto attestations).",
+      "realWorld": "Reproducible Builds project usa in-toto para verificar builds independientes. Debian/Reproducible incluye link metadata. Tekton Chains (Kubernetes) genera in-toto attestations automáticamente para cada TaskRun. Docker/OCI Reference Types (Notary v2) usa DSSE format compatible.",
+      "tags": ["in-toto", "SLSA", "attestation", "DSSE", "provenance"],
+      "tech": [],
+      "references": [{ "title": "in-toto specification — in-toto.io" }, { "title": "SLSA v1.0 provenance schema" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "security",
+      "topic": "Executive Order 14028",
+      "difficulty": "mid",
+      "scenario": "El 12 de mayo de 2021, tras el ataque SolarWinds y el Colonial Pipeline ransomware, la administración Biden emite Executive Order 14028 sobre 'Improving the Nation's Cybersecurity'. Establece requerimientos para software vendido al gobierno US.",
+      "question": "¿Qué exige EO 14028 respecto a supply chain security?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SBOM obligatorio para software vendido al gobierno federal US (Section 4). Vendors deben proveer machine-readable SBOM en formato estándar. NTIA definió los 'Minimum Elements' en julio 2021.", "correct": true, "why": "Correcto. Section 4(f) mandata SBOM. NTIA (bajo Dept of Commerce) publicó 'The Minimum Elements For a Software Bill of Materials' (2021-07-12). Formatos aceptados: SPDX, CycloneDX, SWID." },
+        { "letter": "B", "text": "Attestation firmada por el vendor confirmando que sigue NIST Secure Software Development Framework (SSDF, NIST SP 800-218). Los vendors deben ATESTAR (bajo posible perjury) que sus prácticas cumplen SSDF.", "correct": true, "why": "Correcto. SSDF (SP 800-218, feb 2022) define prácticas de secure dev (PO=Prepare Org, PS=Protect Software, PW=Produce Well-secured software, RV=Respond to Vulnerabilities). CISA publicó el 'Secure Software Development Attestation Form' — vendors firman que cumplen o pierden capacidad de vender al gobierno." },
+        { "letter": "C", "text": "Estándares para zero-trust architecture en agencias federales (Section 3). CISA publicó Zero Trust Maturity Model.", "correct": true, "why": "Correcto. Section 3 mandata que agencies migren a zero-trust dentro de plazos definidos. CISA publicó Zero Trust Maturity Model v2.0 (2023). Aunque no es 'supply chain' directamente, se aplica a cómo agencies consumen software." },
+        { "letter": "D", "text": "Endpoint Detection and Response (EDR) obligatorio para agencies (Section 7).", "correct": true, "why": "Correcto. Section 7 mandata EDR en federal agencies con logging estandarizado y sharing con CISA. Complementa supply chain visibility." },
+        { "letter": "E", "text": "EO 14028 solo aplica a agencias del gobierno US, no impacta al sector privado.", "correct": false, "why": "Técnicamente el EO obliga solo al gobierno federal — PERO el mercado de software gubernamental es enorme ($100B+/año), así que cualquier vendor que quiera vender al gobierno debe cumplir. En la práctica, esto DE FACTO empuja al ecosistema entero (Microsoft, Oracle, Cisco, etc.) a implementar SBOM/SSDF. Efecto downstream masivo." }
+      ],
+      "explanation": "EO 14028 es el catalyst regulatorio más importante para supply chain security. Cronología: (1) SolarWinds diciembre 2020 wake-up; (2) EO 14028 mayo 2021; (3) NTIA SBOM Minimum Elements julio 2021; (4) NIST SSDF SP 800-218 febrero 2022; (5) OMB M-22-18 septiembre 2022 (implementación); (6) CISA Secure Software Development Attestation Form 2023 (form real que vendors firman). Consecuencia: empresas como Microsoft, Google, Oracle publicaron sus prácticas SSDF, SBOMs de sus productos, provenance de builds. Efecto downstream: cualquier open source usado por productos vendidos al US gov ahora tiene presión para SBOM/SLSA — indirectamente presiona a mantenedores open source. OpenSSF y Alpha-Omega recibieron funding específico post EO 14028.",
+      "realWorld": "SolarWinds 2020 fue el catalyst directo. Colonial Pipeline (mayo 2021, semana antes del EO) añadió urgencia. Microsoft testified ante Congress sobre Nobelium/SolarWinds. Log4Shell (dic 2021, 6 meses después del EO) demostró la necesidad de SBOM — algunas agencies pudieron responder en horas, otras en semanas.",
+      "tags": ["EO 14028", "SSDF", "NIST", "CISA", "regulación"],
+      "tech": [],
+      "references": [{ "title": "Executive Order 14028 — whitehouse.gov" }, { "title": "NIST SP 800-218 SSDF" }, { "title": "OMB M-22-18" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "security",
+      "topic": "npm package signing y provenance",
+      "difficulty": "senior",
+      "scenario": "npm (GitHub-owned) lanza en abril 2023 'npm provenance' — un sistema para atestar la ORIGEN de paquetes npm publicados desde CI/CD. Antes de esto, npm signing era casi inexistente en la práctica.",
+      "question": "¿Cómo funciona npm provenance y qué garantiza?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cuando publicas desde GitHub Actions con [npm-cmd] publish --provenance, npm genera una attestation SLSA-compatible que dice: 'este .tgz fue publicado desde repo=X commit=Y workflow=Z build_id=W'. La attestation se firma con Sigstore keyless usando el OIDC token del workflow, se registra en Rekor transparency log, y aparece con badge verde 'Verified' en npmjs.com. Los consumidores pueden verificar con [npm-cmd] audit signatures que sus dependencias tienen provenance válida y viene del repo esperado. NO garantiza que el código sea SEGURO — garantiza que viene del repo/workflow declarado (no de un mantenedor comprometido publicando desde su laptop).", "correct": true, "why": "Correcto. La ventaja clave: mueve la 'unidad de confianza' de 'la laptop del mantenedor' (que puede ser hackeada, keys robadas) a 'un workflow público auditable en un repo público' (mucho más difícil de comprometer sin detección). SLSA L3 se alcanza con este flujo si usas el reusable workflow oficial." },
+        { "letter": "B", "text": "npm provenance encripta el paquete para que solo usuarios verificados puedan descargar.", "correct": false, "why": "Falso. Provenance NO afecta el acceso — cualquiera puede descargar el paquete. Provenance solo firma metadata sobre CÓMO se hizo. Es transparencia, no access control." },
+        { "letter": "C", "text": "npm provenance requiere pagar por npm Enterprise.", "correct": false, "why": "Falso. Provenance es GRATUITO para todos los paquetes públicos npm. Requiere solo publicar desde CI compatible (GitHub Actions, GitLab CI recientemente añadido)." },
+        { "letter": "D", "text": "Provenance reemplaza la necesidad de firmar con GPG.", "correct": false, "why": "Cierto en parte pero engañoso. Provenance USA firma criptográfica (Sigstore) — no elimina firma, la MEJORA. GPG signatures nunca fueron widely adopted en npm; provenance las reemplaza en la práctica." }
+      ],
+      "explanation": "npm provenance implementa SLSA L3 para el registry npm. Flujo: (1) publish job en GH Actions con permissions: id-token: write; (2) [npm-cmd] publish --provenance detecta OIDC token disponible; (3) obtiene cert de Fulcio con subject alt name = workflow identity; (4) firma attestation (in-toto DSSE); (5) sube a Rekor + registra en npm registry metadata; (6) badge aparece en npmjs.com. Verification: [npm-cmd] audit signatures compara identity contra política. Adopción rápida: en un año, ~5% de weekly downloads de npm ya venían con provenance (bumped por librerías populares como sigstore-js, @sindresorhus/is, etc.). Similar approach: PyPI PEP 740 (Sigstore attestations for Python, adopted 2024), Homebrew (bottle attestations), GitHub Container Registry (attestations action).",
+      "realWorld": "colors.js sabotage (ene 2022): Marak Squires, mantenedor, publicó DESDE SU LAPTOP una versión con infinite loop que rompió builds de miles de proyectos (incluyendo AWS SDK). Con npm provenance, la publicación desde laptop hubiera fallado la verificación de 'from expected workflow'. event-stream (2018): mantenedor Dominic Tarr transfirió ownership a 'right9ctrl' quien inyectó código para robar wallets de bitpay/copay — provenance mostraría el cambio de mantenedor pero no lo previene. Bootstrapping trust es el problema fundamental.",
+      "tags": ["npm", "provenance", "Sigstore", "SLSA L3"],
+      "tech": [],
+      "references": [{ "title": "GitHub Blog — npm provenance" }, { "title": "npm docs — Generating provenance statements" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "security",
+      "topic": "Reproducible builds",
+      "difficulty": "senior",
+      "scenario": "Un investigador de seguridad afirma: 'Tener el source code no basta — necesito verificar que EL BINARIO que descargo del vendor corresponde EXACTAMENTE a compilar el source públicamente disponible'. Este es el problema que 'reproducible builds' resuelve.",
+      "question": "¿Qué son reproducible builds y por qué son fundamentales para trust?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reproducible builds = dado el mismo source code, mismos build tools y mismo build environment, cualquier persona puede compilar y obtener BIT-EXACT el mismo binario (mismo SHA256). Esto permite verificación independiente: si el vendor publica binary_A con hash H1, y tú compilas source_A y obtienes hash H1, entonces confirmas que binary_A viene de source_A (no fue tampered en build). Es la defensa contra 'Ken Thompson attack' (compilador comprometido) y SolarWinds-style build server compromise. Requiere ELIMINAR non-determinism: timestamps embedded, random ids, ordering de archivos en tar/zip, paths absolutos, threads en compiler.", "correct": true, "why": "Correcto. Sin reproducible builds, la firma del vendor solo dice 'yo publiqué esto' — no dice 'esto corresponde al source'. SolarWinds fue firmado válidamente por SolarWinds. Reproducibility permite que auditores TERCEROS (no solo el vendor) confirmen la correspondencia source→binary." },
+        { "letter": "B", "text": "Reproducible builds significa que el build es rápido.", "correct": false, "why": "Confusión. 'Reproducible' NO tiene que ver con velocidad. Se refiere a determinismo del OUTPUT del build. Un build lento puede ser reproducible; un build rápido puede ser no-reproducible." },
+        { "letter": "C", "text": "Reproducible builds requiere que el source sea open source.", "correct": false, "why": "Falso. El concepto es agnóstico de licencia. Empresas privadas pueden hacer reproducible builds internamente (varios equipos independientes verifican). Sin embargo, la VERIFICACIÓN PÚBLICA (por auditores externos) requiere source accesible — por eso open source es donde más impacta." },
+        { "letter": "D", "text": "SLSA L4 no requiere reproducible builds.", "correct": false, "why": "En SLSA v0.1, L4 SÍ requería reproducible builds. En SLSA v1.0 se movió a 'Build track' futuro y no está en L1-L3 actuales. Pero es reconocido como el nivel más alto de confianza." }
+      ],
+      "explanation": "Reproducible builds son la solución al 'Ken Thompson attack' descrito en su Turing Award lecture 'Reflections on Trusting Trust' (1984): si un compilador está comprometido y auto-propaga backdoor, no puedes detectarlo mirando solo el source. Solución: usa MULTIPLE compilers independientes (Diverse Double-Compiling, DDC, David A. Wheeler 2005) y verifica reproducibility. Requerimientos técnicos: (1) SOURCE_DATE_EPOCH env var (estándar) para timestamps; (2) sorted file listings en archives; (3) locale-independent output; (4) no embedded absolute paths; (5) deterministic hash functions. Project Reproducible Builds (reproducible-builds.org) rastrea qué distros y proyectos son reproducibles. Debian: >95% de packages reproducibles. NixOS: reproducible por diseño (hash-based).",
+      "realWorld": "SolarWinds 2020: si el binario Orion fuera reproducible desde source público, cualquier auditor podría haber detectado que el binary firmado NO correspondía al source — el backdoor SUNBURST no estaba en el source, fue inyectado en build. Bitcoin Core es reproducible desde 2011 — múltiples devs compilan independientemente y firman coincidencia antes de release. Tor Browser también. XZ Utils backdoor 2024: el backdoor estaba en el TARBALL de release pero NO en el git repo — reproducible builds hubieran detectado la discrepancia inmediatamente.",
+      "tags": ["reproducible builds", "determinism", "Ken Thompson", "verification"],
+      "tech": [],
+      "references": [{ "title": "reproducible-builds.org" }, { "title": "Ken Thompson — Reflections on Trusting Trust (1984)" }, { "title": "David A. Wheeler — Diverse Double-Compiling" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "security",
+      "topic": "GitHub Actions attestations",
+      "difficulty": "senior",
+      "scenario": "GitHub GA (mayo 2024) para 'artifact attestations' — un feature nativo que permite generar y verificar attestations SLSA-compatible para cualquier artefacto de build (binarios, containers, archives) sin configurar Sigstore manualmente.",
+      "question": "¿Cómo funciona GitHub Actions Attestations y qué garantiza?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "action/attest-build-provenance: acción oficial de GitHub que en un workflow genera una attestation SLSA L3 usando OIDC token del workflow + Sigstore keyless. La attestation se almacena en el propio repo (via GitHub API) y en Rekor. La generación es una línea: - uses: actions/attest-build-provenance@v1 with: subject-path: 'dist/*.tar.gz'.", "correct": true, "why": "Correcto. Es la manera más FÁCIL de agregar SLSA L3 a un pipeline. Sin gestionar keys, sin config compleja. GitHub actúa como builder confiable + Sigstore como CA + Rekor como transparency." },
+        { "letter": "B", "text": "gh attestation verify: CLI de GitHub para VERIFICAR attestations en consumo. Ej: [gh-cmd] attestation verify ./my-binary.tar.gz --owner myorg valida que el binary tiene attestation firmada por un workflow en myorg. Puede specificar --repo y --predicate-type para políticas más estrictas.", "correct": true, "why": "Correcto. La CLI [gh-cmd] attestation verify permite a consumidores validar antes de deploy. Puede integrarse en admission controllers (Kyverno) para bloquear deploy de imágenes sin attestation válida." },
+        { "letter": "C", "text": "Se pueden generar attestations de SBOM también: attest-sbom action toma un SBOM (SPDX/CycloneDX) y crea attestation firmando 'este binary tiene este SBOM'. Consumidores obtienen SBOM + firma que valida su origen.", "correct": true, "why": "Correcto. actions/attest-sbom es hermano de attest-build-provenance. Permite verificar SBOM: (1) el SBOM viene del workflow declarado; (2) el SBOM corresponde al artefacto con hash específico. Combinado provee: provenance (cómo) + inventory (qué) firmados." },
+        { "letter": "D", "text": "GitHub attestations requiere GitHub Enterprise (paid tier).", "correct": false, "why": "Falso. Es feature disponible para todos los repos públicos gratis. Enterprise agrega policies avanzadas y admin visibility, pero la generación básica es free." },
+        { "letter": "E", "text": "Las attestations son PRIVADAS del repo — solo el owner puede verlas.", "correct": false, "why": "Falso. Las attestations son públicas en Rekor (transparency log público) y accesibles vía GitHub API. Esto es INTENCIONAL — la transparencia es lo que da valor a la verificación." }
+      ],
+      "explanation": "GitHub Actions Attestations democratiza SLSA L3. Flujo completo: (1) build job produce dist/*.tar.gz; (2) - uses: actions/attest-build-provenance@v1 with: subject-path: 'dist/*.tar.gz'; (3) action pide OIDC token, obtiene cert de Fulcio (subject=workflow_ref), firma attestation in-toto con predicate slsa-provenance/v1, sube a Rekor + GitHub API; (4) release publica binaries + gh attestation download los descarga; (5) consumer: [gh-cmd] attestation verify binary.tar.gz --owner org --repo project. Casos de uso: (a) Kubernetes admission controller que bloquea pods sin imagen con attestation válida (Kyverno + cosign verify-attestation); (b) [npm-cmd] audit signatures para JS deps; (c) SLSA verifier en release download scripts. Todo esto sin gestionar keys ni infraestructura de PKI.",
+      "realWorld": "GitHub Actions Attestations GA en mayo 2024. Adoption: HashiCorp Terraform provider releases, Homebrew casks, kubectl binaries. Chainguard's Wolfi packages usan flujo similar. Combinado con npm provenance (que usa la misma infra Sigstore por debajo) permite verificar cadena end-to-end: 'este container tiene esta imagen base con esta lib npm que fue publicada desde este workflow desde este commit'.",
+      "tags": ["GitHub Actions", "attestations", "Sigstore", "SLSA L3"],
+      "tech": [],
+      "references": [{ "title": "GitHub Docs — Using artifact attestations" }, { "title": "actions/attest-build-provenance" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "security",
+      "topic": "Verificación de attestations en CI/CD",
+      "difficulty": "senior",
+      "scenario": "Generar attestations es solo la mitad — la VERIFICACIÓN en deploy es crítica. Sin verificación forzada, attestations son metadata inerte.",
+      "question": "¿Dónde y cómo se debe verificar attestations en un pipeline seguro?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En MÚLTIPLES capas: (1) en el consumer del artefacto (dev que corre [npm-cmd] install, o CI que descarga base image) — [npm-cmd] audit signatures, [cosign-cmd] verify; (2) en el admission controller del cluster K8s (Kyverno, OPA Gatekeeper, Sigstore policy-controller) que rechaza pods de imágenes sin attestation válida ANTES del deploy; (3) opcionalmente en runtime con OPA policies. La política verifica: (a) firma criptográfica válida contra Rekor; (b) identity del signer coincide con expectativa (repo:myorg/myrepo:ref:refs/heads/main); (c) predicate cumple mínimos (SLSA level ≥ 3, no vulnerabilities críticas en SBOM asociado).", "correct": true, "why": "Correcto. Defense in depth. La verificación en admission controller es CRÍTICA porque bloquea deploy incluso si el pipeline de build fue bypasseado. Sin admission verification, un atacante que crackea kubectl access puede deploy imágenes arbitrarias." },
+        { "letter": "B", "text": "Solo en el registry — si el registry acepta la imagen, es válida.", "correct": false, "why": "El registry es storage, no policy engine. Muchos registries no verifican attestations automáticamente. Confiar solo en el registry es 'security theater'." },
+        { "letter": "C", "text": "No es necesario verificar — la mera existencia de attestation es suficiente.", "correct": false, "why": "Muy peligroso. Attestations sin verificación son metadata inerte. Un atacante puede DEPLOYAR una imagen sin attestation, o con attestation malformada, y sin verificación en admission controller, entra a producción." },
+        { "letter": "D", "text": "Solo en dev machines antes de commit.", "correct": false, "why": "Insuficiente. Dev machines pueden ser bypasseadas. La verificación debe estar en pipelines de deploy y admission controllers — puntos que NO pueden ser bypasseados por commit style checks." }
+      ],
+      "explanation": "Cadena de verificación end-to-end en un pipeline maduro: (1) BUILD: pipeline genera provenance attestation (SLSA L3); SBOM attestation (SPDX o CycloneDX); vuln scan attestation (Grype output). (2) STORAGE: attestations en Sigstore/Rekor + guardadas en registry OCI como referrer artifacts. (3) DEPLOY: admission controller (Kyverno + cosign) verifica al momento de crear pod: — image firmada por workflow autorizado; — SBOM attestation existe; — no CVEs critical según attestation reciente; — SLSA level ≥ 3. (4) POLICY: expresado en Kyverno ClusterPolicy o Sigstore policy-controller. Ejemplo de política: verifyImages.attestations.predicateType=='https://slsa.dev/provenance/v1' && predicate.buildDefinition.externalParameters.workflow=='...'. Herramientas: cosign verify-attestation, slsa-verifier, Kyverno, Sigstore policy-controller, OPA Gatekeeper con Rego.",
+      "realWorld": "Adobe usa Kyverno para verificar Sigstore attestations en clusters producción. Chainguard vende 'zero-CVE images' cuya cadena end-to-end es verificada. Kubernetes 1.24+ recommends admission controllers para signature verification. Un caso famoso donde ESTO hubiera ayudado: Codecov 2021 — atacantes modificaron bash uploader script del CI de Codecov y a través de él robaron secrets de miles de clientes. Con attestation obligatorio del script, el modified script hubiera fallado verificación en el runtime del CI.",
+      "tags": ["verification", "admission controller", "Kyverno", "policy"],
+      "tech": [],
+      "references": [{ "title": "Sigstore policy-controller" }, { "title": "Kyverno — verify images" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "security",
+      "topic": "XZ Utils backdoor 2024",
+      "difficulty": "senior",
+      "scenario": "En marzo 2024, Andres Freund (Microsoft PostgreSQL dev) descubrió por casualidad un backdoor sofisticado en XZ Utils (liblzma), utility de compresión usado por virtualmente todas las distros Linux. Casi comprometió sshd en Debian testing/unstable, Fedora rawhide, openSUSE tumbleweed.",
+      "question": "¿Qué reveló el XZ Utils backdoor sobre supply chain security y qué defensas hubieran ayudado?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Vector fue INGENIERÍA SOCIAL DE LARGO PLAZO (2+ años): 'Jia Tan' se ganó trust del mantenedor original Lasse Collin via emails de 'Jigar Kumar' y 'Dennis Ens' presionando por más mantenedores; Lasse cedió co-maintainership a Jia Tan; Jia Tan hizo commits legítimos durante 2 años; en release 5.6.0/5.6.1 introdujo el backdoor OFUSCADO EN BINARIOS DE TEST (no en source), activado durante build.", "correct": true, "why": "Correcto. El vector muestra la vulnerabilidad de proyectos OSS mantenidos por 1 persona quemada. El attack fue COORDINADO por presuntamente un actor estatal (paciencia de años, sofisticación técnica alta) — no un script kiddie. Wake-up call sobre 'quién mantiene tu supply chain'." },
+        { "letter": "B", "text": "El backdoor se activaba solo cuando el build detectaba TARGET x86_64 Linux con systemd + integraba en sshd via liblzma linkeada por libsystemd. Modificaba RSA_public_decrypt de OpenSSH permitiendo authentication con clave privada específica del atacante. Extremadamente sofisticado y ESPECÍFICAMENTE targeted a servers Linux con systemd.", "correct": true, "why": "Correcto. Sofisticación técnica alta: código malicioso en binary blobs de test, hooked via IFUNC resolver + audit hook de glibc, indirect llamado durante sshd startup. Casi imposible detectar por code review — funcionaba solo en runtime de sistemas reales." },
+        { "letter": "C", "text": "Reproducible builds hubieran ayudado MUCHO: el backdoor estaba en el TARBALL de release descargado por distros, NO en el git repo. Un build reproducible desde git hubiera producido un binario DIFERENTE al tarball firmado — detección inmediata.", "correct": true, "why": "Correcto. Esta es LA lección técnica principal. La discrepancia source vs tarball es exactamente lo que reproducible builds detectan. Debian post-XZ está acelerando reproducibility en su distro." },
+        { "letter": "D", "text": "SBOM hubiera prevenido el ataque.", "correct": false, "why": "Falso. SBOM identifica 'uso xz 5.6.0' — pero xz 5.6.0 es el paquete OFICIAL, con firma oficial de la mantenedor (Jia Tan tenía credenciales legítimas). SBOM ayudó DESPUÉS del descubrimiento a identificar sistemas afectados, pero no hubiera prevenido el compromise inicial." },
+        { "letter": "E", "text": "El backdoor fue detectado por scanner automático de vulnerabilidades.", "correct": false, "why": "Falso. Fue detectado por CASUALIDAD por Andres Freund haciendo micro-benchmarking de PostgreSQL: notó que sshd tomaba 500ms extra por login en su sistema Debian sid. Investigó y descubrió el hook. Ningún SAST/DAST/dependency scanner lo detectó. Solo alguien mirando profiles low-level lo notó." }
+      ],
+      "explanation": "XZ Utils backdoor (CVE-2024-3094) es el caso MÁS SOFISTICADO de supply chain attack documentado. Timeline: 2021 Jia Tan aparece; 2022 se gana trust; 2023 se convierte en co-maintainer; feb 2024 release 5.6.0 con backdoor; 29 marzo 2024 Andres Freund reporta. Lecciones: (1) MAINTAINER BURNOUT es vector — Lasse Collin sole-mantenía XZ desde 2000 con mental health issues públicos, presión social atacked lo hizo ceder control; (2) BINARIOS EN REPO son peligrosos (test files ofuscados escondieron el payload); (3) REPRODUCIBLE BUILDS son crítico (tarball ≠ git); (4) FEW-EYES problem: proyectos foundational mantenidos por 1 persona son puntos de fallo; (5) SLSA L3+ hubiera dificultado (aunque no impedido) — provenance del build tarball vs git hubiera sido detectable. Post-XZ, OpenSSF Alpha-Omega expandió funding a mantenedores critical de infraestructura, Rust/Go foundations aumentaron support, y muchas distros aceleraron reproducibility.",
+      "realWorld": "XZ Utils backdoor CVE-2024-3094, marzo 2024. Descubridor: Andres Freund (Microsoft, PostgreSQL). Distros afectadas: Debian sid/testing, Fedora Rawhide, openSUSE Tumbleweed — NO stable releases porque el patch alcanzó testing pero no producción antes del descubrimiento. Estimados: si hubiera llegado a Debian stable/RHEL/Ubuntu LTS, hubiera sido comparable a SolarWinds en scope. Jia Tan account (github.com/JiaT75) fue suspendido inmediatamente por GitHub. FBI + agencies gubernamentales continúan investigación sobre identidad real y possible state actor.",
+      "tags": ["XZ Utils", "backdoor", "OSS maintenance", "reproducible builds", "CVE-2024-3094"],
+      "tech": [],
+      "references": [{ "title": "Andres Freund — oss-security disclosure" }, { "title": "CISA Advisory — XZ Utils" }, { "title": "Russ Cox — XZ backdoor timeline analysis" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "security",
+      "topic": "Codecov bash uploader 2021",
+      "difficulty": "senior",
+      "scenario": "Abril 2021: Codecov (herramienta popular de code coverage) reveló que su bash uploader script (codecov-bash) había sido modificado por atacantes entre enero y abril 2021 vía una credencial expuesta accidentalmente en una Docker image de Codecov. El script modificado exfiltraba ENVIRONMENT VARIABLES del CI (donde vive todo: AWS keys, GitHub tokens, DB passwords) de miles de clientes.",
+      "question": "¿Qué defensas hubieran prevenido/mitigado el ataque Codecov?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SUBRESOURCE INTEGRITY / HASH PINNING del bash uploader: en vez de curl -s https://codecov.io/bash | bash, hacer curl -s https://codecov.io/bash | sha256sum -c expected_hash.txt && bash. Si Codecov modifica el script (autorizado o no), el hash cambia y falla la ejecución. Requiere ROTAR el hash con cada update legítimo — trade-off inconveniencia vs seguridad.", "correct": true, "why": "Correcto. 'Pipe curl to bash' es un anti-patrón conocido desde hace años pero widespread. Hash pinning + version pinning + verificación local es la defensa básica. Muchos setups después de Codecov añadieron cosign verification al script." },
+        { "letter": "B", "text": "SIGNED SCRIPTS: si Codecov hubiera firmado el uploader script con Sigstore/GPG y los usuarios verificaran la firma antes de ejecutar, el script modificado hubiera fallado verificación. Post-Codecov, muchos vendors (Codecov mismo) firman uploaders y proveen instrucciones de verify.", "correct": true, "why": "Correcto. Sigstore no existía en formato usable en 2021; ahora es standard. cosign verify-blob es exactamente el mecanismo apropiado." },
+        { "letter": "C", "text": "SECRETS SCOPING en CI: usar OIDC tokens (short-lived, scope específico) en vez de long-lived credentials (AWS keys, GitHub PATs con full scope) en env vars. Con OIDC, aunque el atacante robara el token, expira en minutos y solo permite acceso limitado. También: usar deploy roles con least privilege, no admin roles.", "correct": true, "why": "Correcto. La razón por la que Codecov fue tan dañino: env vars de CI típicamente contienen 'god mode' credentials. Con OIDC + short-lived tokens, el blast radius se limita dramáticamente. GitHub Actions OIDC + AWS AssumeRoleWithWebIdentity es best practice moderna." },
+        { "letter": "D", "text": "NO ejecutar tools de terceros con acceso a secrets. Ejecutar en jobs separados sin secrets, o en sandboxes.", "correct": true, "why": "Correcto. Principio de least privilege. El job que sube coverage NO necesita acceso a AWS deploy keys. Separar jobs con permisos mínimos limita blast radius si CUALQUIER tool es comprometido. GitHub Actions permissions granulares (secrets: none) ayudan." },
+        { "letter": "E", "text": "Codecov ataque fue prevenido por SAST scanning.", "correct": false, "why": "Falso. SAST escanea TU código, no tools externas que descargas y ejecutas. El código de Codecov modificado exfiltraba env vars via curl a IP atacante — SAST no lo hubiera visto porque no era tu código. Los detectores fueron logs de red y análisis forense post-hoc." }
+      ],
+      "explanation": "Codecov es caso paradigmático de por qué DEPENDER DE HERRAMIENTAS DE TERCEROS en CI/CD es riesgo alto. Chain: Codecov Docker image tenía credencial expuesta → atacante accedió al server que hosteaba el uploader → modificó el script → clientes que hacían curl | bash ejecutaron script modificado → env vars exfiltradas → atacante ganó acceso a miles de proyectos. Blast radius: HashiCorp, Rapid7, Twilio, Monday.com y muchos más reportaron secretos rotados post-incident. Defensas modernas post-Codecov: (1) pin bash scripts by hash; (2) prefer signed CLI tools (cosign verify-blob); (3) OIDC federated auth en vez de long-lived secrets; (4) separación de jobs por privilegio; (5) egress filtering en runners (allowlist de destinations); (6) auditoría de qué tools de terceros ejecutan con acceso a secrets; (7) preferir GitHub Actions oficiales verificadas sobre acciones de terceros; (8) Renovate/Dependabot para pin versiones de actions con SHA.",
+      "realWorld": "Codecov Bash Uploader incident, abril 2021. Reportado 15 abril 2021 por Codecov; modificación estuvo activa desde 31 enero. Miles de proyectos afectados. HashiCorp rotó todo GPG signing keys. Rapid7 confirmó unauthorized access a source code. Lecciones influyeron en SLSA design y en GitHub Actions OIDC support (mayo 2021 timing coincidente con EO 14028).",
+      "tags": ["Codecov", "curl to bash", "secrets", "OIDC"],
+      "tech": [],
+      "references": [{ "title": "Codecov Security Update — April 2021" }, { "title": "HashiCorp Response to Codecov" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "security",
+      "topic": "PyPI package signing (PEP 740)",
+      "difficulty": "senior",
+      "scenario": "Python packaging tuvo un camino tortuoso hacia signing: GPG signatures fueron soportadas pero casi nadie las usaba (2%), y fueron REMOVIDAS de PyPI en 2023 por ser inútiles. PEP 740 (aprobado 2024) implementa Sigstore attestations como el nuevo standard.",
+      "question": "¿Qué es PEP 740 y cómo cambia el signing en PyPI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PEP 740 introduce SIGSTORE-BASED ATTESTATIONS para paquetes PyPI. Similar a npm provenance: publicar desde CI (GitHub Actions, GitLab CI) con Trusted Publishing (OIDC), pypi-publish action genera attestation firmada con Fulcio cert ligado al workflow, se registra en Rekor, se sirve vía PyPI API. Consumidores pueden verificar con [pip-cmd] verify-attestation (planned) o herramientas como pypi-attestation-models. Es COMPLEMENTARIO a Trusted Publishing (PEP 691) que ya elimina API tokens de mantenedores. La combinación: cero API tokens + provenance verificable end-to-end.", "correct": true, "why": "Correcto. PEP 740 (Warner et al., abril 2024 aceptado) es el equivalente de npm provenance para Python. Backed by GitHub + Google + Trail of Bits. Se basa en attestations in-toto v1.0 wrapping SLSA provenance predicate." },
+        { "letter": "B", "text": "PEP 740 re-introduce GPG signatures que fueron removidas.", "correct": false, "why": "Falso. Explicítamente rechaza GPG por sus problemas de UX (key management doloroso, revocation issues, adoption <2%). Sigstore keyless es preferido por eliminar key management." },
+        { "letter": "C", "text": "PEP 740 requiere que todos los paquetes PyPI implementen attestations.", "correct": false, "why": "Falso. Opt-in por ahora. Requerimiento hard vendrá gradualmente cuando adoption alcance masa crítica, similar a npm provenance." },
+        { "letter": "D", "text": "PEP 740 es incompatible con [pip-cmd].", "correct": false, "why": "Falso. [pip-cmd] tiene planes de verify support. Actualmente la verificación se hace con herramientas separadas pero el diseño de PEP 740 asegura compatibility future con [pip-cmd] verify." }
+      ],
+      "explanation": "PyPI evolution timeline: (1) GPG sigs desde 2003 pero <2% adoption; (2) 2018 Warehouse (nuevo backend PyPI) preserva GPG; (3) 2022-23 PSF anuncia deprecation de GPG; (4) mayo 2023 GPG removido oficialmente; (5) 2022 Trusted Publishing (PEP 691, OIDC-based, elimina API tokens); (6) 2024 PEP 740 Sigstore attestations. Trusted Publishing + PEP 740 juntos dan a Python el equivalente moderno de npm provenance + npm publish OIDC. Beneficios: (a) mantenedor no gestiona secrets ni keys; (b) attestation ligada a workflow público auditable; (c) verificación crypto con Rekor transparency. Migración desde npm approach: PSF y GitHub coordinaron closely — Trail of Bits (contratados por PSF) implementó pypi-attestation-models. Rollout gradual: paquetes populares (setuptools, cryptography, requests) primeros en habilitarlo.",
+      "realWorld": "PyTorch nightly compromise (dic 2022): dependency confusion vía 'torchtriton' typosquat en PyPI. Con Trusted Publishing hubiera sido más difícil (aunque no imposible — typosquat NO es el paquete real). Con attestations, consumidores hubieran podido detectar que el paquete atacante NO tenía provenance de repo esperado. ctx package hijack (mayo 2022): mantenedor abandonó, atacante registró la cuenta expirada, publicó versión maliciosa. Trusted Publishing hubiera prevenido reemplazo con nueva identity.",
+      "tags": ["PyPI", "PEP 740", "Sigstore", "Trusted Publishing", "Python"],
+      "tech": [],
+      "references": [{ "title": "PEP 740 — Index support for digital attestations" }, { "title": "PyPI Blog — Removing PGP" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "security",
+      "topic": "Container image signing con cosign",
+      "difficulty": "senior",
+      "scenario": "Tu equipo builds container images en GitHub Actions y las publica a GHCR (GitHub Container Registry). Quieres implementar signing + attestations end-to-end.",
+      "question": "¿Cuál es un flujo cosign+GitHub Actions completo para signing + SBOM attestation?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Flujo típico: (1) job builds image y push a ghcr.io/org/img@sha256:xxx; (2) [cosign-cmd] sign ghcr.io/org/img@sha256:xxx firma keyless (usa OIDC token de GH Actions, cert de Fulcio, escribe firma como blob OCI adjunto en registry + registra en Rekor); (3) [syft-cmd] ghcr.io/org/img@sha256:xxx -o spdx-json > sbom.json genera SBOM; (4) [cosign-cmd] attest --predicate sbom.json --type spdx ghcr.io/org/img@sha256:xxx crea attestation firmada con predicate=SBOM; (5) opcional: [grype-cmd] sbom:./sbom.json -o json > vuln.json + cosign attest para vuln scan; (6) admission controller en producción verifica: cosign verify --certificate-identity 'https://github.com/org/repo/.github/workflows/build.yml@refs/heads/main' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' ghcr.io/org/img@sha256:xxx.", "correct": true, "why": "Correcto. Flujo estándar Sigstore/cosign moderno. IMPORTANTE: firmar por DIGEST (@sha256:xxx) no por tag (:latest) — tags son mutables, digests son inmutables. Firmar por digest asegura que la firma vale para EL BINARIO específico, no un futuro contenido mutable." },
+        { "letter": "B", "text": "cosign sign :latest (por tag). Es más conveniente.", "correct": false, "why": "Anti-pattern grave. Tags son mutables — si otro push actualiza :latest, tu firma ya no corresponde al content. Digests (sha256) son la única forma segura de referenciar contenido inmutable." },
+        { "letter": "C", "text": "Solo necesitas firmar, SBOM attestation no es útil.", "correct": false, "why": "Falso. SBOM attestation permite a consumidores: (a) obtener SBOM verificado del builder oficial; (b) correlacionar CVEs sin escanear la imagen ellos mismos; (c) probar compliance con EO 14028. Es complementario, no redundante." },
+        { "letter": "D", "text": "cosign requiere que setup Fulcio server privado.", "correct": false, "why": "Falso. Fulcio público (fulcio.sigstore.dev) es gratis y usado por default. Setup privado es opcional para org que necesitan aislamiento." }
+      ],
+      "explanation": "Cosign end-to-end flow es la implementación de referencia de supply chain moderna. Componentes: (1) SIGNING: cosign sign firma imagen (referenciada por digest inmutable) usando OIDC → Fulcio → cert efímero → Rekor; (2) SBOM ATTESTATION: syft genera SBOM, cosign attest firma predicate SBOM ligado al digest; (3) VULN ATTESTATION: grype genera vuln report, cosign attest firma; (4) VERIFICATION: cosign verify checa firma + Rekor entry + identity match; cosign verify-attestation checa predicate específico. Storage: cosign usa 'OCI Referrers API' (spec OCI 1.1) para almacenar signatures como blobs OCI adjuntos al manifest. Consumidor puede: cosign download attestation ghcr.io/org/img@sha256:xxx --predicate-type spdx > sbom.json. Kyverno policy example: verifyImages.imageReferences=['ghcr.io/myorg/*'], attestations.predicateType=='...spdx', attestations.attestors.entries[0].keyless.subject=='https://github.com/myorg/*'.",
+      "realWorld": "Distroless (Google) firma todas sus imágenes con Cosign — puedes verificar 'cosign verify --certificate-identity-regexp '.*' --certificate-oidc-issuer 'https://accounts.google.com' gcr.io/distroless/base'. Chainguard's Wolfi distro firma cada package Y cada container. Kubernetes releases firman todas las imágenes desde v1.24. Homebrew casks empiezan a incluir attestations desde 2024.",
+      "tags": ["cosign", "container signing", "SBOM attestation", "OCI"],
+      "tech": [],
+      "references": [{ "title": "Sigstore Cosign docs" }, { "title": "OCI Referrers API spec" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "security",
+      "topic": "Maven Central signing",
+      "difficulty": "staff",
+      "scenario": "El ecosistema Java/Maven ha requerido GPG signing de artefactos publicados a Maven Central desde hace años — a diferencia de npm/PyPI donde signing era opcional/no-adoptado. Sin embargo, esto NO previno Log4Shell, y no previene compromises modernos.",
+      "question": "¿Cómo funciona el signing en Maven Central y cuáles son sus limitaciones?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Maven Central (Sonatype/OSSRH) REQUIERE que todos los artefactos publicados vengan firmados con GPG, con la public key registrada en un keyserver público. Sonatype valida la firma antes de aceptar el upload. Esto asegura AUTENTICIDAD del publicador — sabes que el .jar viene del owner de esa GPG key.", "correct": true, "why": "Correcto. Ha sido requerimiento desde ~2010. Es más estricto que npm/PyPI históricamente. Sin embargo, la garantía es débil: (a) key management responsibility del developer (puede ser robada); (b) firma valida quién publicó, no qué código contiene; (c) no hay build provenance (dev firma desde su laptop, no build server)." },
+        { "letter": "B", "text": "Limitación clave: la firma solo dice 'this was uploaded by owner of this GPG key' — no dice 'this was built from THIS source commit by THIS build server'. Un dev con GPG key comprometida (o coerced) puede publicar backdoored jars firmados válidamente. SLSA L2+ hubiera añadido esta garantía; Maven Central históricamente no la exige.", "correct": true, "why": "Correcto. Es la misma limitación fundamental de GPG en cualquier ecosistema. Sonatype ha explorado support para Sigstore + provenance pero rollout ha sido lento. Ejemplo: si un mantenedor de una lib crítica es coerced (state actor, o compromised laptop), puede firmar backdoor version válidamente." },
+        { "letter": "C", "text": "Sonatype adoptando Sigstore: en 2024 anunció support experimental para Sigstore attestations en Maven Central. Combina el mandatory GPG legacy con moderno keyless + provenance. Meta a mediano plazo: SLSA L3 available para publishers Maven.", "correct": true, "why": "Correcto. Sonatype ha anunciado colaboración con Sigstore. El aproach es aditivo: GPG sigue requerido, pero Sigstore attestations son opcionales por ahora, se planea que sean populares → default → required. Similar path a npm provenance." },
+        { "letter": "D", "text": "El signing de Maven Central hubiera prevenido Log4Shell.", "correct": false, "why": "Falso. Log4Shell (CVE-2021-44228) es una VULN DE DISEÑO (JNDI injection) en log4j-core legítimo, publicado y firmado LEGÍTIMAMENTE por Apache Software Foundation. Signing autentica la fuente pero NO valida seguridad del código. Log4Shell demuestra la limitación de signing como defensa contra vulns." },
+        { "letter": "E", "text": "Maven Central rechaza automáticamente jars con CVEs conocidos.", "correct": false, "why": "Falso. Maven Central es registry — no hace vuln scanning en publish time. La responsabilidad de checkear CVEs es del consumidor (via Dependabot, Renovate, Snyk, etc.). Sonatype's Nexus Repository Pro y Nexus IQ son productos SEPARADOS (paid) que hacen esto para instancias privadas." }
+      ],
+      "explanation": "Maven Central es interesante caso: signing MANDATORIO desde hace 15 años pero limitaciones fundamentales de GPG signing (key management, no build provenance) mantienen problemas. La lección: signing como pilar de trust requiere pensar en QUÉ garantiza y qué NO. Signing con GPG garantiza 'this artifact was published by owner of key X' — nada más. Para 'this artifact was built from source Y at commit Z by build server W' necesitas provenance attestations (SLSA). Para 'this artifact has no known vulns' necesitas vuln scanning + SBOM. Para 'this artifact is bit-exact reproducible from source' necesitas reproducible builds. Cada capa es ortogonal. Java ecosystem está adoptando estas capas gradualmente: Reproducible Builds for Central initiative, Sigstore integration announcements (2024), OSSF Scorecard checks para libs populares.",
+      "realWorld": "Log4Shell (CVE-2021-44228, dic 2021): log4j-core 2.14.1 firmado válidamente por ASF, con vuln de diseño. Impacto: casi todo software Java del planeta afectado. Signing no ayudó. Post-Log4Shell, ASF y Eclipse Foundation aceleraron initiatives de SBOM + Sigstore. Otro caso: dependency-confusion prevention en Java — Sonatype's 'Namespace Reservation' permite reservar namespaces (com.mycompany.*) para prevenir squatting.",
+      "tags": ["Maven Central", "GPG", "Java", "Log4Shell", "Sigstore"],
+      "tech": [],
+      "references": [{ "title": "Sonatype OSSRH Requirements" }, { "title": "Log4Shell CVE-2021-44228" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "security",
+      "topic": "Estrategia integral de supply chain security",
+      "difficulty": "staff",
+      "scenario": "Eres CISO/staff engineer y debes diseñar la estrategia completa de supply chain security para una empresa que produce software B2B. Tienes budget limitado — no puedes implementar TODO. ¿Cómo priorizas?",
+      "question": "¿Cuál es una priorización pragmática y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fase 1 (quick wins, 0-3 meses): (1) SBOM generation en pipelines existentes (Syft/CycloneDX — 1 semana); (2) dependency scanning con Dependabot/Renovate + Grype (auto-PRs para bumps críticos); (3) pin dependencies con lockfiles + integrity hashes; (4) --ignore-scripts default en CI de Node projects; (5) OIDC federated auth para cloud (eliminar long-lived AWS keys); (6) 2FA obligatorio en cuentas de registries (npm, PyPI, DockerHub). Fase 2 (3-9 meses): (7) container signing con cosign keyless + Sigstore; (8) build provenance attestations (SLSA L2 con GitHub Actions o self-hosted); (9) admission controller (Kyverno) verificando firmas en producción; (10) internal registry proxy (Artifactory) con curación de deps aprobadas. Fase 3 (9-18 meses): (11) SLSA L3 con hardened runners; (12) reproducible builds para binarios críticos; (13) VEX statements para reducir noise en vuln reports; (14) attestations de compliance para EO 14028 si aplicable.", "correct": true, "why": "Correcto. Priorización por RATIO IMPACTO/ESFUERZO. Fase 1 son quick wins con enormous ROI: SBOM gen es 1 semana + libera búsquedas post-CVE de semanas a segundos; OIDC + 2FA elimina vectores comunes (credential theft) con esfuerzo bajo. Fase 2 requiere más ingeniería pero es tractable. Fase 3 es investment estratégico para dominios high-security." },
+        { "letter": "B", "text": "Empezar por SLSA L4 y reproducible builds — es lo más difícil, mejor hacerlo primero.", "correct": false, "why": "Anti-patrón organizacional. SLSA L4 requiere infraestructura de builds hermetic + two-person review — meses de trabajo con retorno tardío. Empezar por SBOM (que se implementa en días con Syft) tiene 10x mejor ROI inmediato. Fases progresivas siempre baten 'big bang'." },
+        { "letter": "C", "text": "Comprar una plataforma comercial (Snyk/Sonatype/JFrog) resuelve todo — no necesitas estrategia interna.", "correct": false, "why": "Falso. Comercial helps con vuln scanning y policy pero no reemplaza cambios ARQUITECTÓNICOS (OIDC federation, signing, admission controllers). Muchas empresas compran Snyk y siguen con AWS keys long-lived + sin signing — la herramienta no arregla lo fundamental." },
+        { "letter": "D", "text": "Solo enfocarse en CVE scanning es suficiente.", "correct": false, "why": "Muy insuficiente. CVE scanning es reactivo (solo vulns YA reportadas) y no cubre supply chain attacks (backdoors, dep confusion, typosquat). SolarWinds NO era un CVE — un scanner no lo hubiera detectado. XZ Utils tampoco. Necesitas prevention + detection + response, no solo detection de known-vulns." }
+      ],
+      "explanation": "Estrategia madura de supply chain security tiene 4 pilares: (1) INVENTARIO — sabes qué usas (SBOM); (2) INTEGRIDAD — sabes que lo que usas viene de fuente confiable (signing, provenance, SLSA); (3) VULNERABILIDAD — sabes si hay problemas (scanning, VEX); (4) RESPUESTA — puedes actuar rápido cuando algo sale mal (patching, rollback, comms). Cada pilar requiere práctica separada. Errores comunes: (a) solo scanning sin inventory → no puedes responder a Log4Shell rápido; (b) solo signing sin scanning → firmas malware con GPG; (c) solo inventory sin acción → SBOM es documento inerte. Cadena end-to-end: build reproducible + provenance attestation + SBOM attestation + admission verification + observability. Requiere buy-in cross-team: security, platform, devs. Culturalmente: 'shift left' pero también 'shift EVERYWHERE' — supply chain toca dev, build, deploy, runtime.",
+      "realWorld": "Post SolarWinds (2020) + Log4Shell (2021) + Codecov (2021) + colors.js (2022) + PyTorch (2022) + XZ (2024), industria converged en: OpenSSF (Open Source Security Foundation, Linux Foundation) como coordinating body; Sigstore como signing standard; SLSA como maturity framework; SBOM (SPDX/CycloneDX) como inventory standard; Scorecard para OSS project health metrics. Empresas líderes (Google, Microsoft, Chainguard, Datadog) publican prácticas y contribuyen upstream. Investment en OSS maintainers (Alpha-Omega) mitigates 'single-maintainer critical infra' risk destacado por XZ.",
+      "tags": ["strategy", "prioritization", "SBOM", "SLSA", "signing", "roadmap"],
+      "tech": [],
+      "references": [{ "title": "OpenSSF Best Practices" }, { "title": "CISA Software Supply Chain Guidance" }, { "title": "Google SLSA + Sigstore playbook" }]
+    }
+  ]
+}

@@ -1,0 +1,426 @@
+{
+  "id": "devops-sim-35-database-migrations-zero-downtime",
+  "trackId": "devops",
+  "order": 35,
+  "title": "Simulacro 35 — Database migrations con zero downtime",
+  "focus": "Expand-contract pattern, backfill strategies, online schema changes (pt-online-schema-change, gh-ost), Flyway vs Liquibase, forward-only migrations, testing migrations, dark reads/writes, rollback strategies para migrations.",
+  "areaCoverage": ["deployment", "reliability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "reliability",
+      "topic": "Downtime en DB migrations — el problema",
+      "difficulty": "junior",
+      "scenario": "Tu app en producción tiene tabla 'users' con 50M rows. Quieres añadir columna 'phone_number' con DEFAULT NULL. Un compañero ejecuta [ALTER TABLE users ADD COLUMN phone_number VARCHAR(20) DEFAULT NULL] en producción. La app se congela por 20 minutos.",
+      "question": "¿Por qué muchas DB migrations causan downtime y qué debes considerar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "En MySQL/PostgreSQL, ALTER TABLE en tablas grandes puede: (1) locquear la tabla (MySQL versions viejas locquean por toda la migration); (2) copiar toda la tabla (rebuild internal); (3) tomar horas para tablas de millones de rows. Durante ese tiempo, queries wait o timeout. En una app active, cualquier operation en 'users' = frozen. Modern DBs mejoraron (Postgres 11+ tiene fast ALTER para add column con default, MySQL 8+ instant DDL para columns), pero migrations MAL diseñadas siempre pueden causar downtime.", "correct": true, "why": "Correcto. Locking + copying es problema clásico. Antes de zero-downtime tools (pt-online-schema-change, gh-ost), migrations grandes = maintenance windows. Modern DBs mejoraron pero no todas las operations son 'instant' — depende del DB engine, version, operation type, tabla size." },
+        { "letter": "B", "text": "Las migrations siempre son instantáneas.", "correct": false, "why": "Falso. Depende del DB, version, operation, size. Some DDL es instantaneous, muchas no." },
+        { "letter": "C", "text": "Solo migrations que borran datos causan downtime.", "correct": false, "why": "Falso. ADD COLUMN, CREATE INDEX, ALTER COLUMN TYPE — all pueden causar downtime en tables grandes." },
+        { "letter": "D", "text": "Downtime siempre requiere reboot del server.", "correct": false, "why": "Falso. La app queda 'frozen' waiting on DB, no requiere reboot. Un lock de tabla suficiente." }
+      ],
+      "explanation": "Common downtime-causing operations: (1) ADD COLUMN with NOT NULL DEFAULT — MySQL <8, Postgres <11 required table rewrite; (2) CREATE INDEX (blocking); (3) ALTER COLUMN TYPE (data conversion); (4) DROP COLUMN (in some engines, rebuilds table); (5) Adding foreign keys (locks); (6) Large UPDATE statements (row locks). Modern improvements: MySQL 8 'instant DDL' para many ADD COLUMN operations; Postgres 11+ ADD COLUMN with default is instant if constant. Estilo defensivo: assume migrations can cause downtime, design accordingly. Herramientas: pt-online-schema-change (Percona), gh-ost (GitHub), pg_repack (Postgres). Estrategias: (a) expand-contract; (b) online schema changes; (c) migration during low-traffic window (last resort). Key mindset: 'every migration is a mini-deployment que puede fallar'.",
+      "realWorld": "GitHub famous gh-ost tool creado to solve MySQL online DDL limitations. Postgres pg_repack para maintenance without locks. Notion re-sharded Postgres con extensive migration planning. Stripe famous discipline: every migration reviewed, tested, planned. Facebook internal tools para MySQL migrations at scale. Instagram migrated Cassandra columns con special care.",
+      "tags": ["migrations", "downtime", "ALTER TABLE", "locking"],
+      "tech": ["MySQL", "PostgreSQL", "pt-online-schema-change"],
+      "references": [{ "title": "GitHub Engineering — gh-ost" }, { "title": "Percona — pt-online-schema-change" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "reliability",
+      "topic": "Expand-contract pattern",
+      "difficulty": "junior",
+      "scenario": "Necesitas renombrar columna 'email_address' a 'email'. Simple rename? Un compañero senior dice: 'no puedes simplemente rename — necesitas expand-contract'.",
+      "question": "¿Qué es el patrón expand-contract?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-step approach: (1) EXPAND — añadir la nueva columna 'email' sin remover 'email_address', app writes to both durante transición; (2) BACKFILL — copiar valores existentes de 'email_address' a 'email'; (3) MIGRATE READS — app updated para leer de 'email'; (4) STOP WRITES to old — app stop writing to 'email_address'; (5) CONTRACT — drop columna vieja después de verificar todo funciona. Cada paso es independientemente reversible. Ningún paso rompe la app. Es la técnica estándar para schema changes zero-downtime.", "correct": true, "why": "Correcto. Es la técnica canónica (Martin Fowler 'ParallelChange'). Cada step backward-compatible. Migration total = múltiples deploys en secuencia — más lento pero SEGURO. Alternativa (rename directo) = downtime + rollback complex." },
+        { "letter": "B", "text": "Renombrar directamente con ALTER TABLE.", "correct": false, "why": "Requires app deploy simultaneously — coordination nightmare, potential downtime. Expand-contract preferido." },
+        { "letter": "C", "text": "Solo funciona en NoSQL.", "correct": false, "why": "Aplica a cualquier storage — SQL, NoSQL, event sourcing. Concept universal." },
+        { "letter": "D", "text": "Es lento — mejor hacer maintenance window.", "correct": false, "why": "Antipatrón. Expand-contract puede tomar días pero cero downtime. Maintenance window puede ser horas pero visible a users." }
+      ],
+      "explanation": "Expand-contract in detail: (1) EXPAND — deploy migration adding new column; app v1 unchanged uses old column; (2) DUAL WRITE — deploy app v2 que writes to BOTH columns (old and new); (3) BACKFILL — background job copies old→new for existing rows; (4) DUAL READ — deploy app v3 que reads new, writes to both; (5) STOP OLD WRITE — deploy app v4 que reads/writes only new; (6) CONTRACT — deploy migration dropping old column. Simple rename = 6 deploys over days/weeks. Each step is backward-compatible with previous. Rollback at any step = trivial. Ejemplo email→user_email: 3 semanas planning + execution en Stripe/GitHub scale, worth it para zero downtime. Anti-patrones: (a) skipping backfill (data inconsistency); (b) skipping dual-write (data loss durante transition); (c) rushing contract (removing old before all readers migrated).",
+      "realWorld": "Stripe uses expand-contract discipline religiously — every schema change 3+ PRs semanas antes. GitHub gh-ost tool automates parts. Notion during Postgres re-sharding used expand-contract for weeks. Amazon publica pattern en their engineering culture. Anti-example: some startups rush migrations = downtime + data corruption.",
+      "tags": ["expand-contract", "parallel change", "zero downtime"],
+      "tech": ["expand-contract", "Flyway", "Liquibase"],
+      "references": [{ "title": "Martin Fowler — ParallelChange" }, { "title": "GitHub Engineering — gh-ost" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "reliability",
+      "topic": "Backfill strategies",
+      "difficulty": "mid",
+      "scenario": "Añadiste columna 'user_full_name'. Ahora necesitas populate con concatenación de first_name + last_name para 50M rows existentes. Single UPDATE = table lock horas.",
+      "question": "¿Cómo se hace backfill de grandes datasets?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Batch processing: UPDATE in chunks (e.g., 1000 rows at a time). Loop: UPDATE users SET user_full_name = CONCAT(first_name, ' ', last_name) WHERE id BETWEEN X AND X+1000 AND user_full_name IS NULL. Small transactions, no long locks.", "correct": true, "why": "Correcto. Standard pattern. Small batches = short transactions = no long-running locks. Adjustable batch size (larger = faster but more lock impact)." },
+        { "letter": "B", "text": "Rate limiting: pause entre batches para no overwhelm DB. Ejemplo: 100ms sleep between batches. Allow production queries breathing room. Better throttling: dynamically adjust based on replica lag or CPU.", "correct": true, "why": "Correcto. Sin throttling, backfill puede overwhelm DB, cause replication lag, impact user queries. Adaptive throttling smarter." },
+        { "letter": "C", "text": "Background worker (not synchronous with API): dedicated job process (Sidekiq, Celery, Rails ActiveJob) runs backfill. Doesn't block application. Restartable if interrupted.", "correct": true, "why": "Correcto. Background jobs para long-running work. Progress tracking, error recovery. Standard pattern." },
+        { "letter": "D", "text": "Idempotent + resumable: track progress ('last processed ID = X'), can resume after crash o restart. UPDATE only rows without value yet ('WHERE user_full_name IS NULL'). Multiple runs safe.", "correct": true, "why": "Correcto. Long-running backfills WILL be interrupted (deploys, incidents). Design for restartability." },
+        { "letter": "E", "text": "Single big UPDATE query es más eficiente.", "correct": false, "why": "Antipatrón para tablas grandes. Locks + long transactions = production impact + potential rollback of massive changes." }
+      ],
+      "explanation": "Backfill best practices: (1) Batch sizes 100-10000 rows depending on row size + traffic; (2) Rate limiting entre batches; (3) Adaptive throttling (adjust based on replica lag > 1 sec, pause); (4) Idempotent (WHERE new_column IS NULL); (5) Resumable (track progress, safe restart); (6) Monitored (progress metric, ETA, errors); (7) Verified (spot-check after completion). Tools: pt-archiver (Percona) for MySQL, custom scripts. Rails ActiveRecord.find_each; Django QuerySet.iterator. Considerations: (a) replication lag — replicas can fall behind if backfill too aggressive; (b) locking — even small batches take locks; (c) index usage — WHERE clause should use index; (d) foreign keys — updates cascade complexity. Timing: off-peak hours preferred but not required with good throttling. Modern approach: continuous backfill during business hours con throttling.",
+      "realWorld": "Instagram backfill notification IDs after schema change — took days con throttling. Stripe systematic backfill infrastructure. GitHub gh-ost includes backfill logic para online schema changes. Discord backfill migrations extensively. Netflix internal tools para background data operations.",
+      "tags": ["backfill", "batch processing", "throttling"],
+      "tech": ["Sidekiq", "background jobs", "pt-archiver"],
+      "references": [{ "title": "Backfill patterns" }, { "title": "Instagram Engineering — Backfill" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "deployment",
+      "topic": "Flyway vs Liquibase",
+      "difficulty": "mid",
+      "scenario": "Team elige migration tool. Comparación Flyway vs Liquibase. Ambos son SQL migration tools populares.",
+      "question": "¿Cuál es la diferencia entre Flyway y Liquibase?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Flyway: SQL-first — migrations son .sql files versionados (V1__init.sql, V2__add_column.sql). Simple, code-first. Forward-only por default (raro reversar). Best fit: teams que prefer raw SQL, straightforward migration flow.", "correct": true, "why": "Correcto. Flyway's simplicity is its strength. SQL is the DSL. Best para teams comfortable escribiendo SQL directamente. Redgate owns Flyway." },
+        { "letter": "B", "text": "Liquibase: XML/YAML/JSON changelog OR SQL. More flexibility en representation. Rollback support más maduro (define reversal explicit). Best fit: teams needing rollback capability, database vendor-independence, more sophisticated features.", "correct": true, "why": "Correcto. Liquibase's changelog abstracts DB-specific SQL. Same YAML migration works on Postgres + MySQL + Oracle. Rollback supported explicitly. Datical owns Liquibase." },
+        { "letter": "C", "text": "Ambos support: (1) schema versioning (know current version); (2) forward migrations; (3) common DBs (Postgres, MySQL, Oracle, MSSQL); (4) CI/CD integration; (5) enterprise editions con additional features.", "correct": true, "why": "Correcto. Overlap significant. Both popular, mature, widely adopted. Choice often based on team preference than technical need." },
+        { "letter": "D", "text": "Flyway free community edition sufficient para most teams. Liquibase similar. Enterprise editions add: additional DB support, security features, deployment automation, drift detection.", "correct": true, "why": "Correcto. Both have generous free tiers. Enterprise features nice-to-have para large orgs. Community edition suficiente para most cases." },
+        { "letter": "E", "text": "Uno es obviamente superior al otro.", "correct": false, "why": "Falso. Both mature, widely used. Selection based on team preference." }
+      ],
+      "explanation": "Comparison detailed: | Feature | Flyway | Liquibase | | Language | SQL | XML/YAML/JSON/SQL | | Rollback | Manual | Explicit support | | DB agnostic | No (SQL is DB-specific) | Yes (changelog abstracts) | | Versioning | Numeric versions (V1__) | Author + IDs | | Popularity | Very popular | Very popular | | Learning curve | Low (just SQL) | Moderate (learn XML/YAML DSL) |. Flyway usage: [flyway migrate] applies pending .sql files. Ordering by version number. Table 'flyway_schema_history' tracks applied. Liquibase usage: [liquibase update] applies changesets. Each changeset in changelog file. Tracks 'DATABASECHANGELOG' table. Selection framework: (1) SQL comfort → Flyway; (2) Multi-DB support → Liquibase; (3) Rollback importance → Liquibase; (4) Team preference; (5) Existing tooling. Alternative tools: Alembic (Python), Prisma Migrate (Node), Rails Migrations (Ruby), Django Migrations (Python), Diesel (Rust), Atlas (Go).",
+      "realWorld": "Flyway used by Spotify, Netflix (some services), TeamCity, JetBrains. Liquibase used by Datadog, Splunk, Reddit. Language ecosystem preferences drive choice — Java shops often Flyway, some shops Liquibase. Emerging: Atlas (Go-based, declarative). Prisma Migrate (Node/TS). Different niches.",
+      "tags": ["Flyway", "Liquibase", "migration tools"],
+      "tech": ["Flyway", "Liquibase"],
+      "references": [{ "title": "Flyway docs" }, { "title": "Liquibase docs" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "deployment",
+      "topic": "Forward-only migrations",
+      "difficulty": "mid",
+      "scenario": "Team debate: '¿debemos soportar rollback en migrations (down migrations)?'. Un compañero dice sí, otro dice no.",
+      "question": "¿Qué son forward-only migrations y por qué muchas empresas los adoptan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Forward-only: nunca rollback de una migration aplicada. Si migration causa problema, fix con NUEVA migration forward (v3 fixes lo que v2 rompió). No 'down' migrations. Razones: (1) rollback is dangerous — data escrito post-migration puede ser lost si down migration ejecuta; (2) rollback rarely tested (down migrations exist en teoría, no en práctica); (3) forward mindset alinea con production reality (you can't 'unpush' data); (4) mucho más simple mentalmente. Trade-off: bugs en migrations requiere thoughtful forward fix, not undo.", "correct": true, "why": "Correcto. Es la práctica moderna a scale. GitHub, Stripe, Facebook usan forward-only. Reversible migrations sound good pero raramente funcionan en producción realistic. Data changes son forward-only por naturaleza." },
+        { "letter": "B", "text": "Rollback migrations siempre necesarios.", "correct": false, "why": "Falso. Reversal complejo. Data corruption risk. Forward-only más seguro." },
+        { "letter": "C", "text": "Forward-only significa no puedes desplegar código anterior.", "correct": false, "why": "No. Code rollback still possible (revert to previous binary). Solo DB schema no rolls back. Code + schema decoupled." },
+        { "letter": "D", "text": "Forward-only requires never make mistakes.", "correct": false, "why": "Falso. Assumes mistakes will happen — solution is fix forward con new migration, no revert." }
+      ],
+      "explanation": "Forward-only philosophy: (1) migrations son additive/changing but not reversible; (2) bugs fixed via new migration (v3 undoes what v2 did); (3) data changes forward-only conceptualmente; (4) simpler mental model. Backward-compat requirements: (a) migration must not break app v1 (add new column safely); (b) app v2 uses new column; (c) if v2 has bug, deploy v3 that either uses old column again or fixes v2's usage — schema stays. Comparison: (a) reversible (down migrations) — sounds safe, rarely works in production, data loss risk; (b) forward-only — pragmatic, aligned con reality, requires expand-contract discipline. Herramientas: Flyway forward-only default. Liquibase supports rollback but discouraged en production. Rails migrations have down but often skipped. Django similar. Emerging: pure forward-only tools (Atlas, gh-ost, pt-online-schema-change).",
+      "realWorld": "GitHub uses forward-only (all migrations via gh-ost). Stripe forward-only discipline. Facebook forward-only. Postgres community increasingly forward-only. Reversible migrations often 'exist but never tested' = not actually reversible en emergencies. Real story: team relied on rollback migration, tried en incident, corrupted data, worse than original problem.",
+      "tags": ["forward-only", "rollback", "reversibility"],
+      "tech": ["Flyway", "GitHub gh-ost"],
+      "references": [{ "title": "GitHub Engineering — Migrations at scale" }, { "title": "Forward-only migrations" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "reliability",
+      "topic": "Online schema changes — gh-ost",
+      "difficulty": "senior",
+      "scenario": "MySQL tabla 'orders' 100M rows. Necesitas añadir index sin downtime. ALTER TABLE ADD INDEX locquea la tabla. gh-ost es la solución.",
+      "question": "¿Qué es gh-ost y cómo hace zero-downtime schema changes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "gh-ost (GitHub Online Schema Transmogrifier): tool para MySQL zero-downtime schema changes. Approach: (1) crea 'ghost table' con nueva schema (empty copy); (2) start streaming binlog changes from master replicándolos a ghost table; (3) copia rows en batches from original to ghost (paced, no locking); (4) monitorea binlog lag, throttles si replicas behind; (5) al terminar copy + binlog caught up, swap: rename original → old, ghost → original. Atomic cutover con brief metadata lock (<1s). Sin triggers (unlike pt-online-schema-change).", "correct": true, "why": "Correcto. gh-ost architecture triggerless via binlog streaming. Advantage over pt-osc (que usa triggers): less DB impact, better observability, easier to pause/resume. GitHub creado gh-ost 2016 para their MySQL fleet. Now standard tool para large-scale MySQL." },
+        { "letter": "B", "text": "gh-ost solo funciona para tablas pequeñas.", "correct": false, "why": "Falso. Diseñado específicamente para tablas grandes (millones/billones de rows). Su propósito." },
+        { "letter": "C", "text": "gh-ost requires replica (no master directamente).", "correct": false, "why": "gh-ost puede correr contra master directamente, aunque preferible correr desde replica para menor impact." },
+        { "letter": "D", "text": "gh-ost causes downtime.", "correct": false, "why": "Falso. Diseñado específicamente para zero-downtime. Solo brief metadata lock (<1 sec) en cutover." }
+      ],
+      "explanation": "gh-ost workflow detallado: (1) create ghost table (empty, new schema); (2) hook binlog stream para start replicating from a specific position; (3) begin copying rows (batches, resumable, throttled); (4) apply binlog changes to ghost concurrently; (5) monitor replication lag, pause si replicas fall behind; (6) verify sync — ghost caught up + copy complete; (7) atomic swap via RENAME TABLE (blocks briefly, no data lost); (8) old table renamed for later drop. Advantages vs pt-online-schema-change: (a) no triggers on original table (less overhead); (b) binlog-based (accurate, observable); (c) pause/resume (checkpoint-based); (d) throttle via configuration (max lag, load); (e) dry run mode. Config: [--host] [--user] [--database] [--table] [--alter='ADD COLUMN x INT'] [--execute]. Testing: [--dry-run] validates without changes.",
+      "realWorld": "GitHub created gh-ost 2016 for their MySQL fleet. Shopify uses gh-ost. Cash App, Slack, Zendesk. Alternative pt-online-schema-change (Percona) more mature but trigger-based. Both open source, actively used. Real story: GitHub reduced schema change complexity dramatically con gh-ost — enabled many previously-scary migrations.",
+      "tags": ["gh-ost", "GitHub", "MySQL", "online schema"],
+      "tech": ["gh-ost", "MySQL", "binlog"],
+      "references": [{ "title": "GitHub Engineering — gh-ost" }, { "title": "github.com/github/gh-ost" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "reliability",
+      "topic": "pt-online-schema-change",
+      "difficulty": "senior",
+      "scenario": "Team usa Percona Toolkit. pt-online-schema-change es alternativa a gh-ost para MySQL online schema changes.",
+      "question": "¿Cómo funciona pt-online-schema-change y cómo se diferencia de gh-ost?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "pt-online-schema-change (Percona): approach based on TRIGGERS. (1) crea shadow table con nueva schema; (2) crea triggers en original table (INSERT/UPDATE/DELETE) que replican cambios a shadow; (3) copia rows in batches from original to shadow; (4) mientras copia, triggers keep shadow in sync con new writes; (5) atomic swap via RENAME. Diferencia con gh-ost: pt-osc usa triggers (overhead en writes, harder to pause); gh-ost usa binlog (less write overhead, better observability, pausable).", "correct": true, "why": "Correcto. pt-osc más antigua (pre-gh-ost), más madura, más adoptada históricamente. Triggers añaden overhead pero funcionan con read replicas simply. Estimated shadow table row size. Percona Toolkit veterans command." },
+        { "letter": "B", "text": "Idéntico a gh-ost.", "correct": false, "why": "Falso. Different architecture. Triggers vs binlog fundamental difference." },
+        { "letter": "C", "text": "Solo funciona con Percona Server.", "correct": false, "why": "Falso. Works con MySQL, MariaDB, Percona. Percona Toolkit es standard suite." },
+        { "letter": "D", "text": "Requires app downtime.", "correct": false, "why": "Falso. Zero-downtime tool. Similar semantics a gh-ost." }
+      ],
+      "explanation": "pt-online-schema-change vs gh-ost trade-offs: | Feature | pt-osc | gh-ost | | Sync mechanism | Triggers | Binlog | | Write overhead | Higher (triggers on original) | Lower | | Pause capability | Limited | Full | | Observability | Moderate | Excellent | | Complexity | Complex triggers | Cleaner | | Age | 2011+ (mature) | 2016+ (mature) | | Adoption | Widely used | GitHub-scale adopted |. Command: [pt-online-schema-change --alter='ADD COLUMN x INT' D=mydb,t=users --execute]. Options: --dry-run, --chunk-size, --max-lag, --check-slave-lag. Triggers implication: original table INSERT causes trigger to insert en shadow → double write briefly. Removed after cutover. Handling: (a) FK constraints require special options; (b) triggers already on table = complications. Historical significance: was standard tool before gh-ost. Still widely used. Choice: gh-ost preferred if binlog available and less trigger overhead desired.",
+      "realWorld": "Percona Toolkit adopted widely. Twitter, Etsy, older MySQL shops. Facebook MySQL infrastructure. Both pt-osc and gh-ost mainstream tools. Some teams migrate pt-osc → gh-ost. Some prefer pt-osc for simplicity or triggers-based reliability.",
+      "tags": ["pt-online-schema-change", "Percona", "triggers", "MySQL"],
+      "tech": ["Percona Toolkit", "pt-osc"],
+      "references": [{ "title": "Percona — pt-online-schema-change" }, { "title": "Percona Toolkit docs" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "reliability",
+      "topic": "PostgreSQL online migrations",
+      "difficulty": "senior",
+      "scenario": "Team en PostgreSQL. gh-ost es MySQL-specific. ¿Qué opciones para online schema changes en Postgres?",
+      "question": "¿Cuáles son las herramientas y patterns para online migrations en Postgres?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "pg_repack: OSS tool para online table reorganization, index creation. Approach: creates temporary shadow table + triggers para sync, similar en concepto a pt-osc pero Postgres-native. Widely used for VACUUM FULL replacement + online CREATE INDEX.", "correct": true, "why": "Correcto. pg_repack estándar para Postgres reorganization. Replaces expensive VACUUM FULL sin locks. Also creates indexes online (similar to CREATE INDEX CONCURRENTLY but more control)." },
+        { "letter": "B", "text": "CREATE INDEX CONCURRENTLY: Postgres native syntax para create index without locking table. Slower que blocking version pero online. Standard para production índex creation.", "correct": true, "why": "Correcto. Postgres has CONCURRENTLY option for CREATE/DROP INDEX. Native, no external tools needed. Slower (2-3x) pero unblocking." },
+        { "letter": "C", "text": "ALTER TABLE ADD COLUMN with default: Postgres 11+ made this instantaneous for constant defaults (no table rewrite). Older versions rewrite entire table. Version awareness crucial.", "correct": true, "why": "Correcto. Postgres 11 (2018) added optimization for ADD COLUMN with constant default. Previously required table rewrite. Version dependency importa." },
+        { "letter": "D", "text": "Reshape (2021+): newer OSS tool para complex Postgres schema changes. Similar conceptualmente a gh-ost pero para Postgres. Uses logical replication.", "correct": true, "why": "Correcto. Reshape emerging tool for complex Postgres schema evolution. Logical replication based. Newer but promising." },
+        { "letter": "E", "text": "Postgres no requiere online schema tools.", "correct": false, "why": "Falso. Some operations still locks. pg_repack, reshape, CONCURRENTLY are all necessary tools." }
+      ],
+      "explanation": "Postgres online migration toolset: (1) CREATE INDEX CONCURRENTLY — native; (2) ALTER TABLE ADD COLUMN (constant default, Postgres 11+) — native instant; (3) pg_repack — reorganize tables, indexes online; (4) reshape — complex schema evolution (newer); (5) Logical replication — build new table via publication/subscription, cutover. Postgres advantages vs MySQL: (a) more DDL options natively lock-free; (b) row-level locking finer than MySQL historical; (c) MVCC better handling of concurrent DDL. Postgres limitations: (a) ALTER TYPE still often requires table rewrite; (b) FK adds require full validation (lock); (c) CHECK constraint adds validation on existing rows. Workarounds: NOT VALID CHECK, then VALIDATE separately. Emerging: pgroll, atlas, other tools con Postgres focus.",
+      "realWorld": "Instagram, Reddit, Discord all use Postgres extensively con migration tooling. Notion re-sharded Postgres using expand-contract + custom tooling. Heroku Postgres uses standard patterns. pg_repack widely deployed. reshape gaining adoption. GitLab uses similar patterns.",
+      "tags": ["PostgreSQL", "pg_repack", "CONCURRENTLY", "reshape"],
+      "tech": ["PostgreSQL", "pg_repack"],
+      "references": [{ "title": "Postgres docs — CREATE INDEX" }, { "title": "pg_repack" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "deployment",
+      "topic": "Testing migrations",
+      "difficulty": "mid",
+      "scenario": "Team escribió migration. Cómo testearla ANTES de aplicar en producción?",
+      "question": "¿Cómo se testea una DB migration adequately?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Migration en dev env: aplicar en local DB, verificar app funciona con nuevo schema. Basic smoke test.", "correct": true, "why": "Correcto. Basic gate. Sin verify en dev, waste tiempo en staging/prod. Docker Compose con DB local hace esto fácil." },
+        { "letter": "B", "text": "Staging con production-like data: restore prod DB snapshot to staging (sanitized), apply migration, run integration tests. Verifies migration works con real data patterns + volume.", "correct": true, "why": "Correcto. Prod-like data reveals issues not seen en dev (data patterns, size, edge cases). Sanitize PII first (compliance)." },
+        { "letter": "C", "text": "Migration performance testing: measure how long migration takes en staging con production-sized data. If ALTER on 100M rows takes 6h in staging, aplicará same in prod. Plan accordingly.", "correct": true, "why": "Correcto. Time estimation crítico. Migrations may need to fit in maintenance window o require online schema tool. Discover in staging, not prod." },
+        { "letter": "D", "text": "Rollback (or forward-fix) testing: test the response plan if migration causes issues. If forward-only, test forward-fix. If reversible, test rollback works. Prevent 'we don't know if rollback works until incident'.", "correct": true, "why": "Correcto. Untested rollback = fake rollback. Test rollback scenarios explicitly. Similar concept a fire drill. Forward-fix scenarios similar." },
+        { "letter": "E", "text": "Solo aplicar en producción y ver qué pasa.", "correct": false, "why": "Antipatrón. Never migrate to production without testing first. Data loss risk." }
+      ],
+      "explanation": "Testing migration steps: (1) Dev — quick smoke test; (2) Staging con prod-like data — realistic validation; (3) Performance measurement — estimate prod time; (4) App compatibility — verify old code y new code work with intermediate schema state; (5) Rollback/forward-fix testing — verify recovery plan; (6) Load test — migration should not degrade app performance excessively. Herramientas: dbt tests para DBT projects, pgTAP para Postgres testing, unit tests para migration code (Django tests, Rails ActiveRecord tests). Prod-like data: (a) Postgres pg_dump + pg_restore + sanitize (remove PII, aggregate/randomize sensitive fields); (b) MySQL mysqldump similar; (c) Faker libraries para synthetic data. Migration testing pipeline: PR opens with migration → CI runs migration en test DB → integration tests → performance test in staging → manual review → merge → apply in prod. Anti-patrones: (a) test only forward, never test rollback; (b) test on empty DB (misses data-dependent issues); (c) rush to prod without staging validation.",
+      "realWorld": "Stripe migration culture — extensive testing before production. GitHub gh-ost has dry-run mode explicitly for testing. Netflix migration testing infrastructure. Real bug prevented: 'staging test revealed migration took 12h instead of expected 30min — replanned with gh-ost'.",
+      "tags": ["testing migrations", "staging", "performance", "rollback testing"],
+      "tech": ["gh-ost dry-run", "pg_dump", "Django tests"],
+      "references": [{ "title": "Stripe Engineering — Migration Culture" }, { "title": "gh-ost dry-run" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "deployment",
+      "topic": "Dark reads y dark writes",
+      "difficulty": "senior",
+      "scenario": "Migrating from old schema to new schema. Cómo verificar que new schema produces same results as old before switching?",
+      "question": "¿Qué son dark reads/writes y cuándo usarlos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Dark write: app writes to BOTH old and new schema (or old and new system) durante transition. Both stay in sync. If new has bug, correction possible from old.", "correct": true, "why": "Correcto. Dual write pattern. Standard durante expand-contract. Both writes must succeed (transactional) or handled carefully (eventually consistent)." },
+        { "letter": "B", "text": "Dark read: app reads from both old and new, compare results, log discrepancies. User sees old result (safe). Team observes discrepancies to identify bugs in new. Validation antes de cutover.", "correct": true, "why": "Correcto. Verification technique. Facebook used extensively durante Chat migration. Detects new implementation bugs sin exposing users." },
+        { "letter": "C", "text": "Progressive cutover: gradually shift reads from old to new. Start 1% reads to new, monitor errors, 10%, 50%, 100%. Combined con dark reads for validation.", "correct": true, "why": "Correcto. Gradual traffic shift para reads. Reduces blast radius. Combined con dark reads gives validation + progressive migration." },
+        { "letter": "D", "text": "Feature flags controlan dark read/write behavior. Enable dual write via flag, dual read via flag, primary read source via flag. Configurable transition.", "correct": true, "why": "Correcto. Flags para orchestrate migration steps. Fine-grained control." },
+        { "letter": "E", "text": "Dark reads solo aplican a databases.", "correct": false, "why": "Falso. Applies a any system migration: databases, caches, external services, ML models." }
+      ],
+      "explanation": "Dark write mechanics: [async write to new; await write to old; return old result]. Or transactional: [write to old + new atomically]. Considerations: (1) failure of new should not fail write to old; (2) eventual consistency ok si tolerated; (3) discrepancies logged for investigation. Dark read mechanics: [start = timestamp; oldResult = readOld(); newResult = readNew(); compare(oldResult, newResult); log if diff; return oldResult;]. Considerations: (1) latency doubles (both reads); (2) log volume high; (3) sampling ok para reduce load. Sampling: dark read 1% of requests, log discrepancies. Full comparison for critical operations. Cutover steps: (1) enable dual write; (2) backfill new from old; (3) enable dark read + comparison; (4) monitor discrepancies until < threshold; (5) switch primary read to new; (6) disable dark read; (7) disable dual write; (8) drop old.",
+      "realWorld": "Facebook Chat migration used dark reads/writes extensively — months of validation. GitHub search migration similar. Instagram feed algorithm migration. Netflix recommendation engine changes. Uber payment system migrations. Twitter Timeline algorithm changes. Standard pattern para high-risk migrations. Anti-example: rush migration sin dark validation = discover bugs in production after cutover.",
+      "tags": ["dark reads", "dark writes", "dual write", "verification"],
+      "tech": ["feature flags", "shadow writes"],
+      "references": [{ "title": "Facebook Chat launch story" }, { "title": "Migration patterns" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "reliability",
+      "topic": "Migration rollback strategies",
+      "difficulty": "senior",
+      "scenario": "Migration deployed. 2 hours later, discover it caused subtle data corruption. Rollback options?",
+      "question": "¿Qué opciones de rollback existen para migrations que ya se ejecutaron?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Forward-fix: nueva migration corrige el problema. Ejemplo: v2 introduced bug in data conversion → v3 fixes affected rows (re-run correct conversion). Preferred approach porque data escrito post-v2 preservado.", "correct": true, "why": "Correcto. Forward-fix es typical response. New migration undoes bad effects while preserving good data. Requires careful diagnosis y fix design." },
+        { "letter": "B", "text": "Point-in-time recovery: restore DB from backup a moment before migration. Data written post-migration LOST. Only viable si downtime acceptable + data loss acceptable. Rarely acceptable.", "correct": true, "why": "Correcto. Nuclear option. Loses all data written post-migration. Acceptable solo en catastrophic scenarios. Requires proper backup infrastructure + tested recovery." },
+        { "letter": "C", "text": "Reverse migration: apply down migration (if exists and tested). Reverses schema change. Data may be lost si columns dropped had data. Untested reverse migrations dangerous.", "correct": true, "why": "Correcto. Explicit reverse. Only works si down migration exists + tested. Data considerations critical (which data lost?)." },
+        { "letter": "D", "text": "Application-level workaround: deploy code que uses old code path via feature flag while data quality issue investigated + fixed. Buys time.", "correct": true, "why": "Correcto. Feature flag kill switch para app-level rollback. Doesn't fix data but stops damage. Buys investigation time." },
+        { "letter": "E", "text": "Ignore the problem — data corruption is fine.", "correct": false, "why": "Antipatrón grave. Data integrity crítico. Never accept as-is." }
+      ],
+      "explanation": "Migration rollback framework: (1) Severity assessment — data loss, corruption extent, user impact; (2) Diagnosis — root cause of issue; (3) Options evaluation — forward-fix, restore, reverse, workaround; (4) Communication — stakeholders informed; (5) Execution — chosen strategy; (6) Verification — confirm resolution; (7) Post-mortem — how to prevent similar. Forward-fix design: (a) identify affected rows/data; (b) design corrective migration; (c) test in staging with prod-like data; (d) apply carefully; (e) verify. Backup restore considerations: (a) RPO (recovery point objective) — how much data can we lose?; (b) RTO (recovery time objective) — how long to restore?; (c) Testing — is backup restore tested regularly? (chaos monkey for backups). Testing rollbacks: many teams have 'rollback drill' quarterly. Real failures often reveal 'we can't actually restore that backup' — untested.",
+      "realWorld": "GitLab 2017 famous incident — accidental DB deletion, backups didn't work properly, 6h data loss. Lesson: test restores. Stripe extensive rollback testing. Netflix chaos engineering para backup verification. Real story: many teams have never tested restore = false sense of security.",
+      "tags": ["rollback", "forward-fix", "point-in-time recovery"],
+      "tech": ["backups", "pg_restore", "mysqldump"],
+      "references": [{ "title": "GitLab 2017 postmortem" }, { "title": "Migration rollback patterns" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "deployment",
+      "topic": "Coordinating app + DB deploys",
+      "difficulty": "mid",
+      "scenario": "App v2 uses new column 'phone'. Migration adds column. En deploy: cual va primero? Migration antes de app? App antes de migration? Simultáneo?",
+      "question": "¿Cuál es el orden correcto para deploy app + migration?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Migration FIRST, then app. Migration adds new column (backward-compatible with old app — old app ignores new column). Verify migration successful. Then deploy app v2 that uses new column. If migration fails, don't deploy app. If app fails, migration already applied is harmless. Golden rule: schema changes precede code changes que use them.", "correct": true, "why": "Correcto. Migration first porque additive migration is backward-compat with old app. Old app doesn't know about new column, ignores. Once schema ready, deploy app that uses it. Reverse order (app first) = crashes because column doesn't exist yet." },
+        { "letter": "B", "text": "App FIRST, then migration.", "correct": false, "why": "Falso. App would crash querying non-existent column. Antipatrón." },
+        { "letter": "C", "text": "Simultáneo con transaction.", "correct": false, "why": "Cross-system transactions (DB + deploy) very complex, rarely feasible. Sequence with verification more practical." },
+        { "letter": "D", "text": "Migration during app maintenance window.", "correct": false, "why": "Anti-pattern for zero-downtime. Modern approach: apply migration to live system, verify, deploy app." }
+      ],
+      "explanation": "Deploy sequencing for different migration types: (1) ADD COLUMN (additive): migration first, then app that uses it; (2) DROP COLUMN (removes): app first that stops using column, then migration to drop; (3) RENAME COLUMN: use expand-contract (migration add new, app dual-write, backfill, app switch to new, migration drop old); (4) CHANGE COLUMN TYPE: use expand-contract; (5) INDEXES: migration adds index anytime (transparent to app). General principle: 'code and schema move together with backward-compat between them'. Migration should always leave DB in state that BOTH old and new code work. Then transition code progressively. Multi-service considerations: coordination across services — service A depends on service B's DB — sequenced deploys required. Anti-patterns: (a) app tries to use column that doesn't exist yet (deploy order wrong); (b) migration removes column that app still uses; (c) DB deploys unrelated to app deploys (drift).",
+      "realWorld": "Stripe follows this discipline religiously. GitHub gh-ost + deployment automation. Amazon internal 'blue/green deployments' handle schema + app together. Rails migrations traditionally coupled tightly con code (bad practice for zero-downtime). Modern approach separates them.",
+      "tags": ["deploy order", "app + DB", "coordination"],
+      "tech": ["expand-contract", "backward-compat"],
+      "references": [{ "title": "Deploying migrations" }, { "title": "Stripe Engineering — Migrations" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "reliability",
+      "topic": "Long-running migrations en producción",
+      "difficulty": "senior",
+      "scenario": "Migration en prod takes 8 hours (large table). Deploy pipeline timeout 30min. Can't just run [flyway migrate].",
+      "question": "¿Cómo manejar migrations que tardan horas en producción?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Async migration jobs: deploy code + trigger async migration job (Kubernetes Job, EC2 instance, custom runner) que corre independientemente del CI/CD. Progress tracked, restartable, monitored. CI/CD pipeline solo triggers, doesn't wait.", "correct": true, "why": "Correcto. Long-running work async necessary. CI/CD pipelines short-lived, backfills long. Decouple." },
+        { "letter": "B", "text": "Online schema tools con progress: gh-ost, pt-osc runnable como long jobs con checkpoints. Monitor progress, throttle, pause si needed. Not integrated with CI/CD trivially.", "correct": true, "why": "Correcto. Standard online tools. Run separately from CI. Monitor con dashboards." },
+        { "letter": "C", "text": "Chunked migrations: split large migration into small chunks, each in own deploy. v100 processes rows 0-1M, v101 processes 1M-2M, etc. Each chunk fits CI window. Requires careful coordination + progress tracking.", "correct": true, "why": "Correcto. Chunk into multiple migrations. Slower overall but each step small. Discord uses similar patterns." },
+        { "letter": "D", "text": "Runbook + human execution: DBA runs migration manually con proper safeguards + monitoring. Suitable para one-time large migrations donde automation overhead not worth it.", "correct": true, "why": "Correcto. Manual con runbook acceptable for one-off large migrations. Common at scale." },
+        { "letter": "E", "text": "Force CI pipeline timeout to 8 hours.", "correct": false, "why": "Antipatrón. Long-running CI = brittleness, resource waste, poor observability. Async approach better." }
+      ],
+      "explanation": "Long migration patterns: (1) Async job execution — dedicated worker, monitored; (2) Online schema tools — gh-ost, pt-osc con custom orchestration; (3) Chunked migrations — split into deploys; (4) Manual with runbook — DBA-led para one-offs; (5) Feature flag gated activation — deploy code that uses new schema, but only activate feature after backfill completes. Monitoring long migrations: (a) progress percentage; (b) ETA; (c) errors/failures; (d) DB performance impact; (e) replication lag. Alerting: if migration paused, error, taking longer than expected. Concurrency: multiple migrations running simultaneously = potential contention. Sequential recommended. Coordination: teams may need to hold other deploys while large migration in progress. Communication crítico.",
+      "realWorld": "Notion re-sharded Postgres — migration took weeks with custom orchestration. GitHub gh-ost jobs run for days on largest tables. Discord backfill data over weeks para migrations. Twitter timeline algorithm updates. Instagram similar. Real story: 'attempted large migration in CI pipeline, timed out at 30min, left DB in weird state, took hours to recover'.",
+      "tags": ["long migrations", "async jobs", "chunked"],
+      "tech": ["gh-ost", "background jobs"],
+      "references": [{ "title": "Notion — Re-sharding Postgres" }, { "title": "Long-running migrations" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "reliability",
+      "topic": "NoSQL migrations",
+      "difficulty": "senior",
+      "scenario": "Team en DynamoDB. Necesita renombrar attribute 'userName' a 'username' across all items. Different from SQL migrations.",
+      "question": "¿Cómo son migrations en NoSQL databases (DynamoDB, MongoDB, Cassandra)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "NoSQL typically SCHEMA-LESS at DB level — no ALTER TABLE. Schema changes son APPLICATION-LEVEL (code interprets fields). Migration = code updates + optional data backfill to normalize.", "correct": true, "why": "Correcto. NoSQL fluid schema. DB accepts any structure. 'Migration' concept differs from SQL. Code handles field mapping." },
+        { "letter": "B", "text": "Dual read pattern: app reads new field, falls back to old field if new not present. Migration gradual — new writes use new field, reads work with old + new formatted data.", "correct": true, "why": "Correcto. Common pattern. [user.username ?? user.userName]. Gradually all reads use new. Then backfill old items. Then remove fallback." },
+        { "letter": "C", "text": "Backfill: script iterates through all items, updates format (write new field, optionally remove old). Batched, throttled, resumable — same principles as SQL backfills but at API level (no bulk UPDATE typically).", "correct": true, "why": "Correcto. NoSQL backfill via API. DynamoDB Scan + UpdateItem. MongoDB updateMany with pagination. Cassandra similar." },
+        { "letter": "D", "text": "Version field per item: each item stores schemaVersion. App handles multiple versions in code. Backfill converts old versions to new incrementally. Effectively expand-contract at item level.", "correct": true, "why": "Correcto. Version-per-item pattern. App handles multiple schema versions gracefully. Slow migration ok. Instagram, others use this." },
+        { "letter": "E", "text": "NoSQL doesn't need migration considerations.", "correct": false, "why": "Falso. Data migrations still needed (rename fields, restructure, denormalize/normalize). Just different mechanics than SQL." }
+      ],
+      "explanation": "NoSQL migration patterns: (1) Dual-read + gradual write update — app tolerates old + new format; (2) Backfill — script updates existing items; (3) Version-per-item — schemaVersion field, code multi-version; (4) On-read migration — update format when item read; (5) Batch backfill jobs — async, throttled, resumable. Considerations: (a) rate limiting (DynamoDB WCU/RCU); (b) throughput impact; (c) no atomic 'ALTER TABLE'; (d) eventual consistency in some (Cassandra); (e) inability to enforce schema (application-level validation). Herramientas: DynamoDB has no migration tool nativo — custom scripts. MongoDB Compass, mongomigrate. Cassandra CQL migration tools. Trade-offs vs SQL: (a) more flexibility (add fields anytime); (b) more app complexity (handle mixed formats); (c) no locking issues; (d) different scaling considerations.",
+      "realWorld": "Netflix DynamoDB migrations extensive — Airbnb similar. Instagram photo metadata migrations. Uber trip data schema evolution. Discord message store (Cassandra) migrations. Amazon retail catalog data. NoSQL 'schema evolution' is application-level discipline, not tool-based. Requires strong engineering culture.",
+      "tags": ["NoSQL", "DynamoDB", "MongoDB", "Cassandra"],
+      "tech": ["DynamoDB", "MongoDB", "Cassandra"],
+      "references": [{ "title": "DynamoDB migration patterns" }, { "title": "MongoDB schema versioning" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "reliability",
+      "topic": "Migration monitoring",
+      "difficulty": "mid",
+      "scenario": "Long migration running en producción. Team needs visibility.",
+      "question": "¿Qué observability necesitas durante migrations?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Progress tracking: rows processed / total rows, percentage, ETA. Dashboard visible en Grafana o similar. Enable team to know status without querying DB directly.", "correct": true, "why": "Correcto. Basic visibility. Long migration sin progress = anxiety. ETA calculation from current rate essential." },
+        { "letter": "B", "text": "DB performance impact: monitor query latency, CPU, IO durante migration. Ensure migration no está overwhelming production DB. Alert si p99 latency exceeds threshold.", "correct": true, "why": "Correcto. Migration should not degrade prod. Monitoring ensures throttling working correctly." },
+        { "letter": "C", "text": "Replication lag: si replicas fall behind, application reads may be stale. Alert if replication lag > threshold. Some migrations should pause si replicas behind.", "correct": true, "why": "Correcto. Cascading impact: master pushed hard by migration, replicas can't keep up, stale reads to users. Monitor + throttle." },
+        { "letter": "D", "text": "Error tracking: migration errors (single row failures, transient DB errors, timeout) logged y aggregated. Investigate patterns, decide whether to continue or abort.", "correct": true, "why": "Correcto. Errors normal en long processes. Track patterns. Small % ok; sudden spike = investigate." },
+        { "letter": "E", "text": "Just check logs after migration completes.", "correct": false, "why": "Antipatrón. Real-time monitoring essential para long migrations. Reactive troubleshooting doesn't work at scale." }
+      ],
+      "explanation": "Migration observability stack: (1) Progress metric — rows_processed / total_rows; (2) Rate metric — rows/second (throttled correctly?); (3) DB metrics — connections, queries, latency, CPU, IO; (4) Replication lag — replicas behind master?; (5) Error rate — failures per second, patterns; (6) Business metrics — data quality checks (e.g., 'orders count should not decrease'); (7) Alerts — thresholds for pause/abort. Dashboard views: (a) real-time progress; (b) rate + ETA; (c) DB health overlay; (d) errors + samples. Prometheus + Grafana standard. Custom instrumentation en migration scripts. Log aggregation: structured logs with migration ID, batch, row IDs affected. Post-migration verification: (a) count checks (rows in new schema == rows in old); (b) sample comparisons (spot-check specific rows); (c) data quality (nulls, invalid values). Auto-abort thresholds: replication lag > N seconds, error rate > X%, DB CPU > Y%.",
+      "realWorld": "Notion during re-sharding had extensive monitoring — dashboards, alerts, custom tools. GitHub gh-ost has built-in observability. Discord backfill jobs con detailed metrics. Stripe migration culture emphasizes monitoring. Real story: 'migration was running fine but replication lag hit 10min, users saw stale data — realized needed to throttle harder'.",
+      "tags": ["monitoring", "observability", "progress", "replication lag"],
+      "tech": ["Prometheus", "Grafana"],
+      "references": [{ "title": "Migration monitoring patterns" }, { "title": "gh-ost metrics" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "reliability",
+      "topic": "Cross-service data migrations",
+      "difficulty": "staff",
+      "scenario": "Microservices architecture. Service A owns 'users' table. Service B currently reads from A's DB directly (bad practice, but reality). Team wants: B should call A's API, not read DB. Migration involves both services + data.",
+      "question": "¿Cómo abordar cross-service data migrations?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Strangler fig pattern: gradually replace direct DB reads con API calls. Feature flag controls: '5% of B's user reads via A's API instead of DB'. Increase gradually. Monitor errors, latency. Once 100%, remove DB access. Named after strangler fig plant that gradually strangles host tree.", "correct": true, "why": "Correcto. Strangler fig pattern (Martin Fowler) para gradual migration. Applies broadly to system migrations. Progressive replacement, not big-bang." },
+        { "letter": "B", "text": "Event-driven data replication: A publishes events (user_created, user_updated); B subscribes and materializes its own local view. B queries local view instead of A's DB. Kafka, Kinesis, EventBridge common brokers.", "correct": true, "why": "Correcto. CDC (change data capture) o application events. Reduces coupling. Well-suited para microservices at scale. Netflix, Uber patterns." },
+        { "letter": "C", "text": "API gateway pattern: B calls A's REST/gRPC API. A owns data, decides what to expose. Introduces network hop but clean separation.", "correct": true, "why": "Correcto. Standard service boundary. Trade-off: latency vs cleanliness. Caching helps latency." },
+        { "letter": "D", "text": "Coordination across teams: migration touches both service A team + service B team. Requires alignment. RFC process, project plan. Not just technical, organizational.", "correct": true, "why": "Correcto. Cross-team coordination critical. Conway's Law reversed — organizational alignment enables architectural change. Communication + timeline crucial." },
+        { "letter": "E", "text": "Just have B keep reading A's DB directly.", "correct": false, "why": "Antipatrón (shared DB across services). Encapsulation violation. Coupling. Technical debt." }
+      ],
+      "explanation": "Cross-service migration approaches: (1) Strangler fig — gradual replacement with feature flags; (2) Event-driven — CDC or events, B builds own view; (3) API-based — B calls A directly; (4) Data mirror — A replicates to B's DB read-only. Considerations: (a) latency (network hop for API vs direct DB); (b) consistency (event-driven eventually consistent); (c) load (A now serves more requests); (d) failure modes (A down = B down if API-coupled). Herramientas: Kafka Connect for CDC, Debezium for MySQL/Postgres CDC, EventBridge for AWS. Anti-patterns: (a) shared DB (violates encapsulation); (b) big-bang migration (huge risk); (c) migration without cross-team coordination. Timeline: cross-service migrations often months (organizational overhead). Success criteria: clean service boundaries, low latency, resilience to individual service failures.",
+      "realWorld": "Uber famous migration from monolith to microservices. Netflix service extraction over years. LinkedIn Kafka origin for event-driven data flow. Amazon 'two-pizza teams' with clean service boundaries. Strangler fig commonly cited pattern. Real story: teams frequently discover shared DB reads that shouldn't exist, gradually migrate to API/events.",
+      "tags": ["strangler fig", "microservices", "cross-service", "CDC"],
+      "tech": ["Kafka", "Debezium", "EventBridge"],
+      "references": [{ "title": "Martin Fowler — StranglerFigApplication" }, { "title": "CDC patterns" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "reliability",
+      "topic": "Sharding migrations",
+      "difficulty": "staff",
+      "scenario": "Postgres monolithic DB reaching limits (200M rows, high write load). Need to shard by user_id.",
+      "question": "¿Cómo migrar de una DB monolítica a sharded architecture?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Setup new sharded infrastructure paralelamente: multiple Postgres instances (per shard), routing layer (app or middleware) que decides shard basado en shard key (user_id % N). Not yet serving traffic.", "correct": true, "why": "Correcto. Setup shard infrastructure first, no traffic. Verify routing layer works, shards healthy. Foundation for migration." },
+        { "letter": "B", "text": "Dual-write phase: app writes to BOTH monolithic DB + appropriate shard. Reads still from monolith. Both should be in sync. Discrepancies detected + corrected.", "correct": true, "why": "Correcto. Dual-write ensures shards populated correctly. Monolith remains source of truth durante transition. Verification via comparison." },
+        { "letter": "C", "text": "Backfill existing data: async job migrates historical rows from monolith to appropriate shard (based on user_id). Throttled, resumable, monitored. Can take weeks para millions of rows.", "correct": true, "why": "Correcto. Backfill in background. Small chunks. Throttled. Notion took weeks para reshard. Expected for large migrations." },
+        { "letter": "D", "text": "Progressive read cutover: shift reads from monolith to shards gradually (1% → 100%). Monitor for correctness + performance. Combined con dark reads (compare monolith vs shard) for validation.", "correct": true, "why": "Correcto. Standard progressive cutover. Rollback if issues. Feature flag controls %." },
+        { "letter": "E", "text": "Just shard immediately — no gradual approach.", "correct": false, "why": "Antipatrón. High-risk. Gradual approach standard for critical data." }
+      ],
+      "explanation": "Sharding migration steps: (1) Design shard key (user_id, tenant_id, hash); (2) Setup sharded infrastructure (multiple DBs, routing layer); (3) Dual-write (monolith + shards); (4) Backfill historical data; (5) Verification (data consistency between monolith y shards); (6) Progressive read cutover; (7) Full cutover (shards primary, monolith becomes backup); (8) Eventually decommission monolith. Duration: months for large systems. Shard key considerations: (a) even distribution (avoid hotspots); (b) query patterns support (queries should hit few shards ideally); (c) cross-shard queries expensive; (d) rebalancing considerations. Herramientas: Vitess (MySQL sharding), Citus (Postgres sharding), custom app-level. Real cases: Notion Postgres reshard 2021 (blog post). Discord Cassandra migration. Uber MySQL sharding. Instagram sharded from beginning. GitHub Vitess adoption.",
+      "realWorld": "Notion Postgres re-shard 2021 — blog post detailed pattern. Discord Cassandra to ScyllaDB migration. Uber MySQL sharding. Instagram photo metadata sharded from beginning. GitHub adopting Vitess. Real timelines: Notion months of planning + execution, dual-write for extended period, gradual cutover.",
+      "tags": ["sharding", "reshard", "cross-shard", "Vitess"],
+      "tech": ["Vitess", "Citus", "sharding"],
+      "references": [{ "title": "Notion Engineering — Re-sharding Postgres" }, { "title": "Discord — ScyllaDB migration" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "reliability",
+      "topic": "Data quality durante migrations",
+      "difficulty": "senior",
+      "scenario": "Migration copies data old schema → new. How to verify data quality after migration?",
+      "question": "¿Cómo verificar data quality durante y después de migrations?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Row count comparison: SELECT COUNT(*) FROM old = SELECT COUNT(*) FROM new after backfill. Simple, quick, catches gross failures.", "correct": true, "why": "Correcto. Basic sanity check. Fast. Catches missing rows. Not sufficient alone (rows might match but values differ)." },
+        { "letter": "B", "text": "Checksum comparison: hash of critical fields per row, aggregate hashes, compare. Detects value differences not just row counts. Ejemplo: SUM(HASH(user_id, email, name)) FROM old = SUM(HASH(...)) FROM new.", "correct": true, "why": "Correcto. Detects value corruption. Aggregate hash sensitive to any change. More thorough than count." },
+        { "letter": "C", "text": "Sampling: spot-check random N rows por full field comparison. Cheaper than comparing all rows. If sample matches, statistical confidence data matches.", "correct": true, "why": "Correcto. Trade-off cost vs coverage. Statistical sampling common. 1000 random rows checked = high confidence for millions of rows." },
+        { "letter": "D", "text": "Continuous comparison durante dark read phase: every read compares old y new, log discrepancies. Detects issues in real production data patterns.", "correct": true, "why": "Correcto. Dark read comparison finds bugs in production patterns not seen en testing. Facebook Chat pattern." },
+        { "letter": "E", "text": "Trust that migration script is correct — no verification.", "correct": false, "why": "Antipatrón. Always verify. Migration bugs common. Data quality issues found via verification, not trust." }
+      ],
+      "explanation": "Data quality verification layers: (1) Row count — quick sanity; (2) Aggregate checksum — value-level; (3) Sampling — spot-check details; (4) Dark reads — production-pattern validation; (5) Business rules — constraints (unique emails, valid dates); (6) Referential integrity — foreign keys valid; (7) Statistical distributions — expect similar aggregate stats (avg age, count per region). Herramientas: dbt tests, Great Expectations, custom scripts. Ejecutar en verificación: SELECT COUNT(*), SUM(HASH(col)), MIN(col), MAX(col), AVG(col) FROM new; compare with old. Continuous verification post-migration: monitor for drift (business rules should hold). Post-mortem inclusions: data quality metrics before/after. Anti-patrones: (a) verify only rows count; (b) skip sampling because 'too slow'; (c) no ongoing verification post-migration.",
+      "realWorld": "Notion re-shard included extensive verification. Stripe data migration discipline. GitHub gh-ost has verification steps. Real bug story: 'migration script had subtle bug, dropped last 3 characters of some emails, discovered by sampling after migration, painful to fix'.",
+      "tags": ["data quality", "verification", "checksum", "sampling"],
+      "tech": ["dbt", "Great Expectations"],
+      "references": [{ "title": "Data quality patterns" }, { "title": "dbt tests" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "deployment",
+      "topic": "Migration workflow best practices",
+      "difficulty": "staff",
+      "scenario": "Team quiere establecer disciplina de migrations. Currently: devs run migrations manually en cada env. Chaos.",
+      "question": "¿Qué workflow establecer para production migrations disciplinado?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Migrations en git: versioned, PR-reviewed, treated como code. No manual DB changes. All changes via committed migration files.", "correct": true, "why": "Correcto. Foundation. Sin git-based flow, chaos. PR review = second pair of eyes on schema changes." },
+        { "letter": "B", "text": "Environment progression: dev → staging → prod. Each env applies migrations automatically o via approval. Same migration files across envs — no divergence.", "correct": true, "why": "Correcto. Progression prevents 'migration works in dev but not prod' issues. Same code path across envs." },
+        { "letter": "C", "text": "Migration approval workflow para production: destructive changes (DROP, ALTER TYPE) require extra approval. Senior engineer review. Change management integration.", "correct": true, "why": "Correcto. Blast radius > standard code change. Extra scrutiny para destructive operations. SOX/compliance consideration." },
+        { "letter": "D", "text": "Automated testing: CI runs migrations against test DB, tests app functionality after. Catches migration bugs early. Blocks merge if migration breaks tests.", "correct": true, "why": "Correcto. Migration in CI prevents 'works locally, breaks in CI/prod'. Test with app together." },
+        { "letter": "E", "text": "Each dev runs migrations directly en production DB.", "correct": false, "why": "Antipatrón grave. Chaos, drift, no audit, breakage. Never direct prod DB access for schema changes." }
+      ],
+      "explanation": "Migration workflow: (1) Dev writes migration file, adds to PR; (2) CI runs migration in test DB, runs test suite; (3) Peer review of PR (schema change + app change together); (4) Merge triggers deploy to staging; (5) Migration + app deploy to staging; (6) Staging tests verify functionality; (7) Manual approval for prod (especially destructive); (8) Prod deploy migration + app; (9) Post-deploy verification. Tooling: Flyway/Liquibase for versioning; CI/CD integration; Terraform for DB provisioning; Atlantis-like for DB (though rare). RBAC on prod DB: no direct write access for humans, only via migration tool via automation. Change management: (a) ticket per migration; (b) rollback plan documented; (c) monitoring plan; (d) communication plan. Cadence: some teams have 'migration Fridays' or 'migration window'; modern approach is continuous but with proper gating.",
+      "realWorld": "Stripe migration culture — extensive PR review, staged deploys. GitHub gh-ost integration with deployment automation. Airbnb migration workflow documented. Notion during re-shard extensive process. Real anti-example: 'startup where any dev could run migrations manually — production DB regularly in inconsistent states'.",
+      "tags": ["workflow", "PR review", "environment progression"],
+      "tech": ["Flyway", "CI/CD", "PR review"],
+      "references": [{ "title": "Migration workflows" }, { "title": "Stripe migration discipline" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "reliability",
+      "topic": "Case study — Notion Postgres reshard",
+      "difficulty": "staff",
+      "scenario": "Estudiar case famoso: Notion re-shardeó Postgres monolito a sharded 2021. Multi-mes migration.",
+      "question": "¿Qué patterns podemos aprender del Notion Postgres reshard?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Extensive planning phase: months de design work antes de execution. Shard key selection (workspace_id), impact analysis, tooling development. 'Measure twice, cut once' para large migrations.", "correct": true, "why": "Correcto. Notion invested heavily in planning. Blog post described extensive design phase. Large migrations without planning = disasters." },
+        { "letter": "B", "text": "Dual-write for months: durante transition, all writes went to BOTH monolith y appropriate shard. Extensive verification. Only after confidence en shards, gradually shifted reads.", "correct": true, "why": "Correcto. Long dual-write period standard. Verification during dual-write catches bugs before cutover." },
+        { "letter": "C", "text": "Progressive read cutover with feature flags: gradual increase from 0% shard reads → 100%. Ability to rollback instantly if issues. Monitor everything.", "correct": true, "why": "Correcto. Standard progressive migration. Notion described flag-controlled cutover. Rollback capability crítico." },
+        { "letter": "D", "text": "Custom tooling development: existing OSS tools insufficient para their scale + specific needs. Notion built custom migration infrastructure, monitoring, verification.", "correct": true, "why": "Correcto. Large migrations often require custom tooling. Notion invested in migration infrastructure. Trade-off vs off-the-shelf." },
+        { "letter": "E", "text": "Rushed migration with minimal testing.", "correct": false, "why": "Falso. Opuesto — Notion was extensively careful. Rush would have caused disaster given data criticality." }
+      ],
+      "explanation": "Notion re-shard lessons: (1) Planning phase — months of design; (2) Shard key selection — workspace_id (natural boundary); (3) Infrastructure setup — new Postgres cluster + routing layer; (4) Dual-write phase — extensive, verified; (5) Backfill — background jobs, throttled, resumable; (6) Progressive read cutover — feature flag % increases; (7) Full cutover — shards primary; (8) Decommission monolith — after confidence period. Blog post detailed lessons: (a) invest en testing; (b) build monitoring first; (c) design for rollback at every step; (d) communicate extensively (users, team); (e) expect surprises; (f) verify data quality continuously. Real duration: months to plan + months to execute. Team dedicated. Similar patterns: Instagram DB scaling, GitHub scaling, Discord ScyllaDB migration. Consistent lessons: careful planning, verification, gradual cutover, feature flags, custom tooling as needed.",
+      "realWorld": "Notion blog post 'The great re-shard' (2021). Detailed technical + organizational lessons. Similar case studies: Discord ScyllaDB migration, Instagram scaling, GitHub Vitess adoption. Consistent patterns across cases. Value: patterns work but require investment.",
+      "tags": ["Notion", "case study", "reshard", "lessons learned"],
+      "tech": ["PostgreSQL", "sharding"],
+      "references": [{ "title": "Notion Engineering — The great re-shard" }, { "title": "Discord — ScyllaDB migration" }]
+    }
+  ]
+}

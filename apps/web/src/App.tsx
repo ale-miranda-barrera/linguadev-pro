@@ -20,6 +20,11 @@ import { LevelPath } from './features/path/LevelPath.js';
 import { AwsHome } from './features/aws/AwsHome.js';
 import { AwsCert } from './features/aws/AwsCert.js';
 import { AwsSimRunner } from './features/aws/AwsSimRunner.js';
+import { ProgrammingHome } from './features/programming/ProgrammingHome.js';
+import { TechTrackDetail } from './features/programming/TechTrackDetail.js';
+import { TechSimRunner } from './features/programming/TechSimRunner.js';
+import { TechMixMode } from './features/programming/TechMixMode.js';
+import { Progress } from './features/progress/Progress.js';
 import { useProfileStore } from './stores/profile.js';
 import { usePacksStore } from './stores/packs.js';
 
@@ -53,6 +58,11 @@ export default function App() {
           <Route path="/aws" element={<AwsHome />} />
           <Route path="/aws/:certId" element={<AwsCert />} />
           <Route path="/aws/:certId/sim/:simId" element={<AwsSimRunner />} />
+          <Route path="/programming" element={<ProgrammingHome />} />
+          <Route path="/programming/mix" element={<TechMixMode />} />
+          <Route path="/programming/:trackId" element={<TechTrackDetail />} />
+          <Route path="/programming/:trackId/sim/:simId" element={<TechSimRunner />} />
+          <Route path="/progress" element={<Progress />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -82,6 +82,21 @@ export interface AwsSimAttempt {
   perDomainStats?: Record<string, { correct: number; total: number }>;
 }
 
+// Progreso por simulación Tech (Programador, Arquitectura, DevOps, etc.).
+// Mismo espíritu que AwsSimAttempt pero desacoplado del enum AWS.
+export interface TechSimAttempt {
+  simId: string;
+  trackId: 'programmer' | 'architecture' | 'devops' | 'databases' | 'systemdesign' | 'ai-programming';
+  order: number;
+  bestScore01: number;
+  attempts: number;
+  passed: boolean;
+  firstPassedAt?: string;
+  lastAttemptAt: string;
+  // Estadísticas por área temática (fundamentals, data-structures, ...)
+  perAreaStats?: Record<string, { correct: number; total: number }>;
+}
+
 // Progreso por nivel (los 250 niveles CEFR). Un registro por pack completado.
 export interface LevelProgress {
   packId: string; // ej. "a2-01-greetings-introductions"
@@ -104,6 +119,7 @@ class LinguaDB extends Dexie {
   awsAttempts!: Table<AwsSimAttempt, string>;
   chats!: Table<Chat, string>;
   chatMessages!: Table<ChatMessage, string>;
+  techAttempts!: Table<TechSimAttempt, string>;
 
   constructor() {
     super('linguadev');
@@ -151,6 +167,19 @@ class LinguaDB extends Dexie {
       awsAttempts: 'simId, certId, [certId+order], passed',
       chats: 'id, updatedAt, preset',
       chatMessages: 'id, [chatId+createdAt], chatId, createdAt',
+    });
+    // v6: añade tabla `techAttempts` para tracks de programación/arquitectura.
+    this.version(6).stores({
+      packs: 'id, level, enabled',
+      srs: 'cardId, due, state',
+      errors: 'id, ts, skill',
+      profile: 'id',
+      conversations: 'id, createdAt, level',
+      levelProgress: 'packId, band, [band+levelOrder], passed',
+      awsAttempts: 'simId, certId, [certId+order], passed',
+      chats: 'id, updatedAt, preset',
+      chatMessages: 'id, [chatId+createdAt], chatId, createdAt',
+      techAttempts: 'simId, trackId, [trackId+order], passed',
     });
   }
 }

@@ -1,0 +1,479 @@
+{
+  "id": "devops-sim-37-disaster-recovery-and-backups",
+  "trackId": "devops",
+  "order": 37,
+  "title": "Simulacro 37 — Disaster Recovery y estrategias de backup",
+  "focus": "Disaster Recovery real: RTO/RPO como decisiones de negocio (no técnicas), estrategias de backup (full/incremental/differential/PITR), regla 3-2-1, testing de restore (un backup no probado no es backup), immutable backups (WORM/Object Lock), cross-region, protección contra ransomware (Vault Lock, air-gap), patrones DR (backup&restore, pilot light, warm standby, active-active), Aurora Global Database vs DynamoDB Global Tables, RDS Point-In-Time Recovery, cifrado de backups y gestión de claves. GitLab 2017, Colonial Pipeline y Facebook Oct 2021 como casos reales.",
+  "areaCoverage": ["reliability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "reliability",
+      "topic": "RTO vs RPO — definición",
+      "difficulty": "junior",
+      "scenario": "Tu CTO te pregunta cuál es la diferencia entre RTO y RPO. Un dev junior responde: 'son lo mismo, tiempo de recuperación'. Otro dice: 'RTO es cuánto tarda y RPO es cuánto perdemos'.",
+      "question": "¿Qué representan RTO y RPO exactamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "RTO (Recovery Time Objective) = tiempo MÁXIMO aceptable entre desastre y servicio restaurado (cuánto puedes estar CAÍDO). RPO (Recovery Point Objective) = cantidad MÁXIMA aceptable de datos perdidos, medida en tiempo (cuánto puedes PERDER). Ambas son decisiones de NEGOCIO, no técnicas — el negocio dice 'perder 1h de datos me cuesta X€', ingeniería diseña para cumplirlo.", "correct": true, "why": "Correcto. RTO responde '¿cuánto downtime tolera el negocio?'. RPO responde '¿cuántos datos puedo perder?'. Un banco puede tener RTO=4h y RPO=0 (no puedo perder ninguna transacción). Un blog puede tener RTO=24h y RPO=24h." },
+        { "letter": "B", "text": "RTO y RPO son sinónimos, ambos miden downtime.", "correct": false, "why": "Falso. Son ejes ortogonales: puedes tener RTO alto (tardas mucho en levantar) con RPO bajo (no pierdes datos porque tienes replicación síncrona), o al revés." },
+        { "letter": "C", "text": "RTO es responsabilidad de ingeniería, RPO es responsabilidad de compliance.", "correct": false, "why": "Ambos son decisiones de NEGOCIO. Ingeniería los cumple, no los define. Compliance a veces impone mínimos (ej: GDPR/SOX), pero el owner es el negocio." },
+        { "letter": "D", "text": "RTO mide latencia de red y RPO mide throughput de replicación.", "correct": false, "why": "Confunde conceptos. RTO/RPO son objetivos de negocio, no métricas técnicas de infraestructura." }
+      ],
+      "explanation": "RTO y RPO son la BASE de todo diseño DR. Definirlos MAL lleva a sobre-ingeniería (gastar millones en active-active para un blog) o sub-ingeniería (banco con backup diario que pierde 24h de transacciones tras un fallo).\n\nLa fórmula mental: RTO = 'cuánto tiempo estamos caídos' (downtime), RPO = 'cuántos datos volvemos atrás' (data loss). Ambos se expresan en TIEMPO pero miden cosas distintas.\n\nEjemplo bancario: si RPO=0, necesitas replicación síncrona (cada transacción confirmada en 2+ nodos antes de responder al cliente) — costoso y con impacto en latencia. Si RPO=1h, backup cada hora es suficiente.\n\nEjemplo RTO: si RTO=15min, necesitas warm standby o active-active (imposible con backup&restore, que tarda horas). Si RTO=24h, backup&restore es aceptable.\n\nEl error clásico: ingeniería asume RTO/RPO sin preguntar al negocio, o el negocio dice 'RTO=0, RPO=0' sin entender el coste (multiplica infraestructura x5-x10).",
+      "realWorld": "GitLab en 2017 perdió 6 horas de datos de producción porque su RPO real (backups no verificados fallaban silenciosamente) era mucho peor que su RPO declarado. Descubrieron durante el incident que 5 de sus 5 métodos de backup estaban rotos. Amazon RDS por defecto ofrece PITR con RPO~5min. Aurora Global Database garantiza RPO<1s cross-region.",
+      "tags": ["RTO", "RPO", "disaster recovery", "negocio", "SLA"],
+      "tech": ["AWS", "Aurora", "RDS"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability Pillar" },
+        { "title": "GitLab.com Database Incident 2017-01-31 Postmortem" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "reliability",
+      "topic": "Regla 3-2-1",
+      "difficulty": "junior",
+      "scenario": "Un consultor te pregunta si tu estrategia de backup sigue la 'regla 3-2-1'. Tu equipo tiene backups diarios en el mismo S3 bucket que la aplicación, y punto.",
+      "question": "¿Qué es la regla 3-2-1 y cómo la incumple tu setup?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "3 COPIAS de los datos, en 2 MEDIOS/tecnologías distintos, con 1 copia OFFSITE (idealmente offline o en otra región/proveedor). Tu setup falla en todos los ejes: 1 sola copia, 1 solo medio (S3), 0 offsite. Un ransomware que cifra el bucket o un bug que borra 'todo' te deja sin recuperación.", "correct": true, "why": "Correcto. La regla 3-2-1 nació en fotografía (Peter Krogh) pero se adoptó como estándar de backup. La lógica: cualquier fallo único (hardware, humano, ransomware, región cloud) no debe eliminar TODAS las copias." },
+        { "letter": "B", "text": "3 backups diarios, 2 semanales, 1 mensual. Tu setup lo cumple porque tienes backup diario.", "correct": false, "why": "Confunde 3-2-1 con retention policy. 3-2-1 habla de COPIAS SIMULTÁNEAS del mismo backup, no de frecuencia." },
+        { "letter": "C", "text": "3 personas con acceso, 2 procesos de restore, 1 responsable. No aplica a backup técnico.", "correct": false, "why": "Inventado. 3-2-1 es sobre redundancia técnica de datos." },
+        { "letter": "D", "text": "3 backups en cloud, 2 en on-prem, 1 en cinta. Tu setup no aplica porque eres full cloud.", "correct": false, "why": "Interpretación demasiado literal. La regla es sobre principios (múltiples copias, múltiples medios, offsite), no una prescripción exacta." }
+      ],
+      "explanation": "3-2-1 es la regla de oro clásica: 3 COPIAS (producción + 2 backups), en 2 MEDIOS distintos (evita que un fallo del medio elimine todo), con 1 OFFSITE (evita que un desastre físico/lógico local elimine todo).\n\nAdaptación cloud moderna: '3-2-1-1-0': 3 copias, 2 medios, 1 offsite, 1 IMMUTABLE (WORM/Object Lock), 0 errores en el último test de restore. Esta versión (Veeam) añade la protección contra ransomware explícita.\n\nEjemplo bien hecho: base de datos RDS en us-east-1 → (1) DB principal, (2) automated snapshots en S3 mismo region, (3) cross-region copy a us-west-2 con Object Lock. Cumple 3 copias, 2 tipos (DB volume + S3 objects), 1 offsite (otra región), 1 immutable.\n\nAnti-patrón común: 'backup en el mismo cluster/bucket' — cero protección real. Si el atacante compromete el cluster, compromete el backup. Si un bug de la app borra la tabla, borra también el backup si están en la misma DB.",
+      "realWorld": "Colonial Pipeline (2021) pagó $4.4M de rescate porque no tenían backups offline verificados — el ransomware cifró incluso los backups conectados a la red. GitLab 2017: tenían 5 métodos de backup pero todos fallaban silenciosamente (violación implícita de 3-2-1 porque efectivamente tenían 0 copias válidas).",
+      "tags": ["3-2-1", "backup", "regla", "redundancia", "ransomware"],
+      "tech": ["S3", "backup"],
+      "references": [
+        { "title": "Veeam — 3-2-1-1-0 Backup Rule" },
+        { "title": "US-CERT — Data Backup Options" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "reliability",
+      "topic": "Full vs Incremental vs Differential",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate entre 3 estrategias de backup para 500GB de datos que cambian ~10GB/día. Un dev propone full diario (500GB×30=15TB/mes). Otro propone incremental (mucho más pequeño). Otro propone differential.",
+      "question": "¿Qué diferencia hay entre incremental, differential y full, y qué trade-offs implican?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "FULL: copia completa de todos los datos cada vez. Más grande, más lento, pero restore es 1 paso (rápido y simple). Storage costoso pero backup y restore son independientes.", "correct": true, "why": "Correcto. Full es el 'ground truth'. Todos los otros dependen de un full previo. Restore desde full = un solo file, sin dependencias." },
+        { "letter": "B", "text": "INCREMENTAL: cada backup contiene solo los cambios desde el ÚLTIMO backup (sea full o incremental). Muy pequeño y rápido de generar. Restore requiere el full + TODOS los incrementales en orden — cualquier incremental corrupto rompe la cadena.", "correct": true, "why": "Correcto. Trade-off clásico: backup barato, restore frágil y lento. Ejemplo: full + 29 incrementales diarios = restore aplica 30 pasos secuenciales." },
+        { "letter": "C", "text": "DIFFERENTIAL: cada backup contiene los cambios desde el último FULL (no desde el último differential). Crece cada día. Restore = full + último differential (2 pasos, no 30). Más seguro que incremental, más caro en storage.", "correct": true, "why": "Correcto. Es el punto medio: restore rápido (solo 2 pasos) pero backups crecen linealmente hasta el próximo full." },
+        { "letter": "D", "text": "PITR (Point-In-Time Recovery): combina full periódicos + WAL/binlog continuos (cada transacción). Permite restaurar a CUALQUIER segundo, no solo puntos de backup. RPO cercano a 0. Usado por Postgres, MySQL, RDS, Aurora, DynamoDB.", "correct": true, "why": "Correcto. PITR es el estándar moderno para bases de datos críticas. RDS retiene WAL 35 días max; Aurora hasta 35 días; DynamoDB PITR 35 días." },
+        { "letter": "E", "text": "Incremental y differential son sinónimos, cambia solo el nombre según el vendor.", "correct": false, "why": "Falso. La diferencia (desde el último backup vs desde el último FULL) es sustancial y afecta directamente el tiempo de restore." }
+      ],
+      "explanation": "El trade-off central: STORAGE vs RESTORE TIME vs RESTORE RIESGO.\n\nFull diario: caro en storage, restore trivial y rápido. Usar cuando storage es barato o RTO agresivo.\n\nIncremental: mínimo storage, backup rápido, restore LENTO y frágil (una corrupción rompe la cadena). Usar cuando el volumen de datos hace full inviable.\n\nDifferential: storage medio, restore RÁPIDO (siempre 2 pasos). Sweet spot común: full semanal + differential diario.\n\nPITR: la evolución moderna. Full base + log continuo (WAL en Postgres, binlog en MySQL). Permite restaurar al segundo 12:34:56.789 del 15 de marzo — imposible con snapshots. Es lo que hace RDS/Aurora automáticamente.\n\nDecisión: para OLTP crítico, PITR es no-negociable. Para data warehouse (batch), differential semanal puede bastar. Para logs archivados, snapshot mensual + immutable storage.",
+      "realWorld": "PostgreSQL PITR = base backup + WAL archiving continuo, RPO ~segundos. Amazon RDS lo hace automáticamente con Automated Backups (5 min RPO por defecto). DynamoDB PITR se activa con 1 click y retiene 35 días. GitLab 2017: usaban pg_dump (full) sin PITR — cuando borraron datos, no podían restaurar al segundo previo.",
+      "tags": ["full backup", "incremental", "differential", "PITR", "WAL", "trade-offs"],
+      "tech": ["PostgreSQL", "RDS", "Aurora", "DynamoDB"],
+      "references": [
+        { "title": "PostgreSQL Docs — Continuous Archiving and Point-in-Time Recovery" },
+        { "title": "AWS RDS — Automated Backups" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "reliability",
+      "topic": "Untested backups = no backups",
+      "difficulty": "mid",
+      "scenario": "Tu equipo tiene backups automáticos configurados hace 2 años. Nunca han probado un restore. Un auditor pregunta: '¿cuándo fue el último restore test?'.",
+      "question": "¿Por qué es CRÍTICO probar restores regularmente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un backup no probado NO es un backup — es una esperanza. Los backups fallan de mil maneras silenciosas: cronjob que corrompe archivos, storage lleno hace 6 meses, encryption key perdida, versión de DB incompatible, permisos rotos, archivos truncados. Solo el restore VERIFICA. La industria lo llama 'Schrödinger's Backup': su estado se desconoce hasta que intentas restaurarlo.", "correct": true, "why": "Correcto. Esta es la lección más cara y repetida de la historia de DevOps. Automatizar el restore test (game days, chaos engineering) es la ÚNICA garantía." },
+        { "letter": "B", "text": "Solo importa para compliance (ISO, SOC2). Técnicamente no aporta.", "correct": false, "why": "Compliance lo exige porque la evidencia empírica muestra que backups no probados fallan masivamente. No es papeleo — es supervivencia." },
+        { "letter": "C", "text": "Si el software de backup no reporta errores, el restore funcionará.", "correct": false, "why": "Falso peligroso. Ejemplo GitLab 2017: pg_dump reportaba éxito pero producía archivos vacíos por incompatibilidad de versiones. El monitoring decía 'green' mientras los backups eran basura." },
+        { "letter": "D", "text": "Basta con probar 1 vez al inicio y confiar en que sigue funcionando.", "correct": false, "why": "Los sistemas cambian: nuevas tablas, nuevos schemas, nuevos permisos, nuevas versiones. Un restore que funcionó hace 1 año puede no funcionar hoy. Cadencia mínima: trimestral, idealmente mensual, ideal automatizado semanal." }
+      ],
+      "explanation": "El principio: 'A backup is not a backup until it has been restored'. Es la ley más citada en DR y la más ignorada.\n\nModos de fallo silenciosos observados en la industria: (1) Backup completa pero archivo corrupto — checksum no se verifica. (2) Storage se llena y nuevos backups se descartan pero antiguos siguen intactos — no notas. (3) Rotación borra backups viejos antes de que el nuevo se valide. (4) Cambio de schema DB hace incompatible el restore. (5) Encryption key rotada y la vieja perdida. (6) Cambio de versión mayor (pg 12 → 15) hace ilegibles dumps antiguos. (7) Permisos IAM cambian y el rol de restore ya no puede leer el bucket.\n\nSolución: restore automatizado periódico + verificación funcional (no solo 'archivo existe' sino 'DB se levanta + query devuelve datos + row count coincide'). Netflix hace esto con Chaos Kong (mata regiones enteras para probar recovery). AWS recomienda 'game days' trimestrales.\n\nRegla operativa: si no lo has probado en 90 días, asume que está roto.",
+      "realWorld": "GitLab 31 de enero 2017: perdieron 6h de datos de producción. Cuando intentaron restaurar, descubrieron que 5 de 5 métodos de backup fallaban silenciosamente hace meses. El postmortem público es la lectura obligada de DevOps. Facebook Oct 2021: la recuperación tardó horas porque tenían que acceder físicamente a datacenters — su plan estaba probado, por eso tardaron 'solo' 6h y no días.",
+      "tags": ["restore testing", "verificación", "Schrödinger backup", "game day", "postmortem"],
+      "tech": ["chaos engineering"],
+      "references": [
+        { "title": "GitLab.com Database Incident 2017-01-31 Postmortem" },
+        { "title": "Netflix — Chaos Engineering" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "reliability",
+      "topic": "DR patterns — 4 niveles",
+      "difficulty": "mid",
+      "scenario": "Tu CEO pregunta qué opciones DR existen. Tienes que explicar los 4 patrones que AWS reconoce como estándar, ordenados de más barato/lento a más caro/rápido.",
+      "question": "¿Cuáles son los 4 patrones DR y sus trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "BACKUP & RESTORE: solo backups cross-region, cero infraestructura en DR. Restore = provisionar todo + restaurar datos. RTO horas-días, RPO minutos-horas. Más barato. OK para cargas no críticas.", "correct": true, "why": "Correcto. Es el mínimo viable. Cero coste running, coste alto en tiempo de recovery." },
+        { "letter": "B", "text": "PILOT LIGHT: infraestructura mínima 'apagada' en DR (DB replicada continuously, apps con imágenes listas pero sin correr). Al desastre: encender apps, escalar. RTO 10min-1h, RPO segundos. Coste medio-bajo.", "correct": true, "why": "Correcto. Metáfora: la llama piloto de una caldera — encendida siempre, mínima, lista para escalar. La DB replicada es lo crítico." },
+        { "letter": "C", "text": "WARM STANDBY: entorno DR CORRIENDO pero a escala reducida (10-20% de capacidad). Al desastre: escalar horizontalmente + failover DNS. RTO minutos, RPO segundos. Coste alto (pagas infra corriendo).", "correct": true, "why": "Correcto. La diferencia clave con pilot light: en warm standby las apps YA CORREN (aunque pequeñas), solo hay que escalar. En pilot light hay que arrancarlas primero." },
+        { "letter": "D", "text": "ACTIVE-ACTIVE (multi-region): tráfico dividido entre 2+ regiones simultáneamente. Al desastre: la otra región absorbe TODO. RTO ~segundos (DNS/health checks), RPO ~0 con replicación síncrona. Coste doble o más. Complejidad muy alta.", "correct": true, "why": "Correcto. Es el Rolls-Royce del DR. Netflix, Amazon.com, Google Search operan así. Complejidad brutal: split-brain, consistencia eventual, testing continuo (chaos)." },
+        { "letter": "E", "text": "SINGLE-REGION HA: replicación a múltiples AZs de la misma región cuenta como DR pattern.", "correct": false, "why": "Falso. Multi-AZ protege contra fallo de AZ pero NO contra fallo de región. Si us-east-1 completo cae (ha pasado), multi-AZ no ayuda. DR real = multi-region." }
+      ],
+      "explanation": "Los 4 patrones son el espectro de trade-off RTO/RPO vs coste:\n\n1. BACKUP & RESTORE: barato pero lento. Aplicaciones no críticas, dev/test, sistemas con tolerancia a horas de downtime.\n\n2. PILOT LIGHT: DB replicada (Aurora Global, DynamoDB Global Tables), infra codificada en Terraform/CDK pero apagada, AMIs pre-baked. Failover: aplicar Terraform + arrancar. 30-60 min típico.\n\n3. WARM STANDBY: infraestructura corriendo a 10-20%. ASG escala al ver la carga. Failover: 5-15 min típico. Coste ~30-40% del active.\n\n4. ACTIVE-ACTIVE: tráfico partido con Route53 latency/geo routing. Ambas regiones absorben lecturas y escrituras. Conflict resolution (last-writer-wins, CRDTs, saga patterns). Coste 2x+.\n\nElección: el negocio dice RTO/RPO, ingeniería elige patrón. RTO=24h → backup&restore. RTO=1h → pilot light. RTO=15min → warm standby. RTO<1min → active-active.\n\nError común: elegir active-active 'por si acaso' cuando el negocio tolera 4h de downtime. Sobreingeniería carísima.",
+      "realWorld": "Netflix: active-active multi-region con Chaos Kong (matan regiones enteras rutinariamente). Facebook Oct 2021: aunque tenían DR sofisticado, la caída fue por BGP misconfiguration global — DR multi-region no ayuda si el problema es la configuración replicada. Aurora Global Database (2018) implementa el pattern pilot light con RPO<1s y RTO<1min.",
+      "tags": ["backup restore", "pilot light", "warm standby", "active-active", "AWS DR"],
+      "tech": ["AWS", "Aurora Global", "Route53", "multi-region"],
+      "references": [
+        { "title": "AWS Whitepaper — Disaster Recovery of Workloads on AWS" },
+        { "title": "Netflix — Active-Active Multi-Region" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "reliability",
+      "topic": "Cross-region backups",
+      "difficulty": "mid",
+      "scenario": "Tu setup actual: RDS en us-east-1 con snapshots automáticos y S3 backups del app data, todo en us-east-1. Un colega dice: 'suficiente, S3 tiene 11 nines de durabilidad'.",
+      "question": "¿Por qué no basta con backups en la misma región y qué añades para cumplir DR real?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 tiene alta durabilidad (11 nines contra pérdida de OBJETO por hardware) pero NO protege contra: (1) fallo de región completa (raro pero ha pasado: us-east-1 caídas 2011, 2015, 2017, 2021), (2) borrado accidental o malicioso (11 nines no protege contra DELETE), (3) desastre regional (huracán, terremoto). Solución: cross-region replication (S3 CRR o snapshots copiados a otra región) + Object Lock/immutable para el eje malicioso.", "correct": true, "why": "Correcto. Durabilidad ≠ disponibilidad ≠ protección contra malicioso. Los 11 nines son un dato de ingeniería del hardware, no una garantía contra fallos correlacionados o error humano." },
+        { "letter": "B", "text": "S3 con 11 nines es suficiente. AWS no ha perdido una región entera nunca.", "correct": false, "why": "Falso. us-east-1 ha tenido caídas de servicios enteros: Dec 2021 (API Gateway, Lambda), Feb 2017 (S3 metadata), Sep 2015 (DynamoDB). Además, la durabilidad no cubre borrado." },
+        { "letter": "C", "text": "Basta con habilitar S3 Versioning en el mismo bucket.", "correct": false, "why": "Versioning protege contra sobreescritura y borrado accidental (puedes restaurar versiones anteriores) PERO sigue en la misma región. Un fallo regional o un DELETE marker malicioso + delete permanente te deja sin nada." },
+        { "letter": "D", "text": "Solo hace falta cross-AZ, no cross-region.", "correct": false, "why": "Multi-AZ es HA local, no DR. Un fallo de región completa afecta todas las AZs de esa región simultáneamente." }
+      ],
+      "explanation": "Los 11 nines de S3 (99.999999999%) son sobre DURABILIDAD de un objeto ya escrito contra fallo de hardware — no una promesa contra todos los modos de fallo.\n\nModos NO cubiertos por 11 nines:\n- Región entera caída (disponibilidad, no durabilidad).\n- Borrado por usuario o por proceso (S3 obedece el DELETE, no lo previene).\n- Ransomware que cifra tus objetos con tu misma cuenta.\n- Bug en tu app que escribe basura sobre datos buenos.\n- Compromiso de credenciales AWS.\n\nSolución en capas:\n1. Cross-region replication (S3 CRR o snapshots cross-region con `aws rds copy-db-snapshot`).\n2. Versioning + MFA Delete para prevenir borrado accidental/malicioso.\n3. Object Lock (WORM) en la copia offsite: hasta el root user no puede borrar.\n4. Cuenta AWS separada para backups (blast radius): si comprometen la cuenta principal, la de backup sigue intacta.\n5. Cifrado con KMS keys en la cuenta de backup (no las mismas de producción).\n\nAWS Backup centraliza todo esto: puede orquestar backups cross-region + cross-account + Vault Lock.",
+      "realWorld": "Code Spaces (2014) fue destruida en horas: atacante ganó acceso a la cuenta AWS y borró TODO — backups, snapshots, S3, EC2. Estaban todos en la misma cuenta. Colonial Pipeline (2021): ransomware llegó a los backups conectados a la red. Solución moderna: cuenta separada + Vault Lock + air-gap para copias críticas.",
+      "tags": ["S3", "cross-region", "durabilidad", "CRR", "AWS Backup"],
+      "tech": ["S3", "RDS", "AWS Backup", "KMS"],
+      "references": [
+        { "title": "AWS — S3 Cross-Region Replication" },
+        { "title": "Code Spaces Postmortem (2014)" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "reliability",
+      "topic": "Immutable backups y WORM",
+      "difficulty": "senior",
+      "scenario": "El CISO te dice: 'quiero garantía de que ningún atacante con credenciales de admin pueda borrar nuestros backups'. Un dev propone IAM policies muy restrictivas. Otro propone Object Lock.",
+      "question": "¿Qué es WORM/Object Lock y por qué las IAM policies no son suficientes contra un atacante con admin?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "WORM (Write Once Read Many) = tras escribir, NADIE puede modificar/borrar hasta que expire el retention period, ni siquiera root. Implementaciones: S3 Object Lock (Compliance mode = irreversible incluso para root; Governance mode = root puede overrides), Glacier Vault Lock (policy immutable tras el 'Lock'). IAM policies pueden ser modificadas por un admin comprometido — WORM está anclado en el objeto, no en la policy. Es la ÚNICA defensa efectiva contra ransomware/insider con admin.", "correct": true, "why": "Correcto. La diferencia crítica: IAM es un permiso que puede cambiarse; WORM es una propiedad física del objeto durante su retention. Compliance mode de S3 Object Lock: ni AWS Support puede borrarlo antes de tiempo (garantía escrita)." },
+        { "letter": "B", "text": "WORM es un patrón viejo de cintas magnéticas, obsoleto en cloud.", "correct": false, "why": "Falso. El concepto se trasladó a cloud precisamente PORQUE es la única defensa contra atacante con admin. SEC/FINRA/HIPAA lo exigen para records financieros." },
+        { "letter": "C", "text": "IAM con MFA Delete es equivalente a WORM.", "correct": false, "why": "MFA Delete es una capa útil pero un admin con acceso al MFA device (o al hardware, o al root account) sigue pudiendo borrar. WORM no depende de credenciales." },
+        { "letter": "D", "text": "Object Lock solo aplica a compliance regulatorio, no protección técnica.", "correct": false, "why": "Al revés: nació para compliance pero su valor técnico es enorme. Muchas empresas lo usan sin obligación regulatoria, solo por ransomware protection." }
+      ],
+      "explanation": "El modelo mental: IAM policies son 'reglas' que dicen quién puede hacer qué. Un atacante con admin puede REESCRIBIR las reglas. WORM cambia la naturaleza del OBJETO: durante el retention, ni existe operación válida para borrarlo (la API lo rechaza a nivel de storage).\n\nS3 Object Lock tiene 2 modos:\n- GOVERNANCE: root con permiso especial (s3:BypassGovernanceRetention) puede override. Útil para mistakes.\n- COMPLIANCE: nadie puede borrar antes del retention, ni root, ni AWS Support. Irreversible. Es la garantía cripto-económica más fuerte disponible en cloud.\n\nGlacier Vault Lock lleva esto aún más lejos: puedes 'lock' una vault policy que dice 'retention 7 años' — tras el Lock, ni tú puedes cambiarla. Es literalmente inmutable.\n\nPatrón moderno anti-ransomware:\n1. Cuenta AWS separada solo para backups.\n2. Backups escritos con Object Lock Compliance mode + retention (30/90/365 días).\n3. Retention alineada a RTO/RPO + tiempo para detectar el ransomware (típicamente 60-90 días).\n4. KMS keys en la cuenta de backup, con policy que no permite delete.\n5. Vault Lock encima como cinturón + tirantes.\n\nCoste: sí, pagas storage por todo el retention, pero es la única defensa real.",
+      "realWorld": "Colonial Pipeline (2021): sin Object Lock, el ransomware cifró backups y pagaron $4.4M. Post-incident, US Treasury emitió guías recomendando immutable backups. AWS documenta que Compliance mode 'cannot be disabled by any user, including root user' — es una garantía escrita por AWS Legal.",
+      "tags": ["WORM", "Object Lock", "Vault Lock", "immutable", "ransomware", "compliance"],
+      "tech": ["S3", "Glacier", "AWS KMS"],
+      "references": [
+        { "title": "AWS S3 Object Lock — Compliance Mode" },
+        { "title": "AWS S3 Glacier Vault Lock" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "reliability",
+      "topic": "Aurora Global Database vs DynamoDB Global Tables",
+      "difficulty": "senior",
+      "scenario": "Tu app fintech necesita presencia en US y EU con failover cross-region. Un arquitecto propone Aurora Global Database. Otro propone DynamoDB Global Tables. ¿Cuál eliges para qué caso?",
+      "question": "¿En qué se diferencian Aurora Global Database y DynamoDB Global Tables, y cuándo usar cada uno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "AURORA GLOBAL: 1 primary region (writer) + hasta 5 secondary regions (readers). Replicación storage-level, RPO<1s, RTO<1min típico. Escrituras SOLO en primary — secondaries son read-only. Modelo relacional (Postgres/MySQL), transacciones ACID, joins complejos. Failover manual o automatizado con managed planned failover.", "correct": true, "why": "Correcto. Es 'single-master multi-region': todas las escrituras van a un lado, replicación al otro. Ideal cuando necesitas consistencia fuerte y modelo relacional." },
+        { "letter": "B", "text": "DYNAMODB GLOBAL TABLES: multi-master ACTIVO en todas las regiones (cada región lee Y escribe). Replicación async con last-writer-wins (basado en timestamp). RPO segundos, RTO efectivamente 0 (siempre hay otro nodo activo). Modelo NoSQL key-value, sin joins. Eventual consistency cross-region.", "correct": true, "why": "Correcto. Es 'multi-master': todas las regiones absorben escrituras. Trade-off: conflictos resueltos por LWW, no puedes garantizar orden global de escrituras." },
+        { "letter": "C", "text": "Aurora Global es mejor para: banking, ERP, sistemas donde la consistencia ACID cross-region importa (aunque en la práctica, solo la primary escribe). DynamoDB Global es mejor para: session store, user profiles, carrito de compras donde LWW es aceptable y la disponibilidad local (write en la región del usuario) importa más que consistencia estricta.", "correct": true, "why": "Correcto. Es la regla heurística: consistencia fuerte + escritura centralizada → Aurora Global. Alta disponibilidad + escritura local + LWW aceptable → DynamoDB Global." },
+        { "letter": "D", "text": "Ambos son totalmente intercambiables, la elección es solo de precio.", "correct": false, "why": "Falso. El modelo de consistencia es fundamentalmente distinto (single-master ACID vs multi-master eventual). Elegir mal causa bugs de datos o bottlenecks de escritura." },
+        { "letter": "E", "text": "Ambos garantizan RPO=0 con replicación síncrona cross-region.", "correct": false, "why": "Falso. La replicación cross-region síncrona a través del Atlántico introduciría 100+ ms de latencia por transacción — inviable. Ambos usan replicación asíncrona (RPO segundos, no 0)." }
+      ],
+      "explanation": "La distinción clave: MULTI-MASTER vs SINGLE-MASTER MULTI-REGION.\n\nAurora Global Database (single-master):\n- 1 región escribe, N regiones leen.\n- Replicación via storage layer (no via SQL) — latencia ~100ms cross-region, throughput altísimo.\n- Failover: promocionar una secondary a primary (managed failover ~1min).\n- Consistencia local: fuerte (dentro de la region primary). Reads en secondaries: eventualmente consistente (~100ms lag).\n\nDynamoDB Global Tables (multi-master):\n- Todas las regiones escriben localmente.\n- Replicación async peer-to-peer.\n- Conflictos: last-writer-wins basado en timestamp (con lo cual necesitas relojes sincronizados y aceptar que un write puede 'perderse' si otro con timestamp posterior lo sobrescribe).\n- No hay 'failover' real: si una región cae, las otras siguen aceptando writes.\n\nCasos de uso:\nAurora Global — banking (una fuente de verdad), ERP, e-commerce con inventory global, apps que necesitan JOINs y transacciones ACID.\nDynamoDB Global — session tokens, user preferences, IoT telemetry, cualquier caso donde 'write local + read local + eventual consistency' es OK.\n\nAmbos son válidos como DR: Aurora Global cumple pilot light/warm standby, DynamoDB Global cumple active-active.",
+      "realWorld": "Amazon.com usa DynamoDB Global Tables para su carrito y session — la disponibilidad local mata a la consistencia estricta. Airbnb usa Aurora para reservas (necesitan ACID). Netflix combina ambos: DynamoDB para user data (LWW aceptable), Aurora para billing.",
+      "tags": ["Aurora Global", "DynamoDB Global Tables", "multi-region", "consistencia", "CAP theorem"],
+      "tech": ["Aurora", "DynamoDB", "AWS"],
+      "references": [
+        { "title": "AWS — Aurora Global Database" },
+        { "title": "AWS — DynamoDB Global Tables V2" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "reliability",
+      "topic": "RDS PITR — Point-In-Time Recovery",
+      "difficulty": "senior",
+      "scenario": "A las 14:32 UTC, un dev ejecutó DELETE FROM users sin WHERE en RDS Postgres producción. Tu backup automático nightly es de las 03:00 UTC. Ya son las 14:45 UTC.",
+      "question": "¿Qué opciones de recuperación tienes con RDS y por qué PITR importa aquí?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Con RDS Automated Backups habilitados, tienes PITR granular al SEGUNDO (típicamente hasta 5 min antes del incidente). Proceso: RestoreDBInstanceToPointInTime especificando la marca de tiempo justo ANTES del DELETE (ej: 14:31:59 UTC). AWS combina el último snapshot + los WAL/transaction logs continuos para reconstruir el estado exacto. Genera una NUEVA instancia (no reemplaza la actual — tienes que switch la app o dump/restore la tabla). Sin PITR (solo backup nightly), perderías 11 horas de datos.", "correct": true, "why": "Correcto. Este es el escenario canónico donde PITR salva. RDS lo hace por defecto (retention 7 días default, hasta 35). Sin PITR, el mejor caso sería restaurar el snapshot de las 03:00 y perder todo lo del día." },
+        { "letter": "B", "text": "Solo puedes restaurar al último snapshot (03:00), perdiendo 11h de datos. RDS no ofrece PITR.", "correct": false, "why": "Falso. RDS ofrece PITR desde 2010. Es una feature core de RDS y Aurora." },
+        { "letter": "C", "text": "PITR sobreescribe la instancia actual, así que perderías el estado incorrecto.", "correct": false, "why": "Falso. PITR crea una NUEVA instancia — la original queda intacta. Esto es intencional: te permite comparar, extraer solo la tabla afectada, o hacer switch controlado." },
+        { "letter": "D", "text": "PITR requiere haber habilitado un plugin manualmente y probablemente no lo tienes.", "correct": false, "why": "Falso. Automated Backups (que incluyen PITR) están habilitados por defecto en RDS. Solo tienes que verificar el retention window." }
+      ],
+      "explanation": "PITR (Point-In-Time Recovery) en RDS funciona así internamente:\n\n1. RDS toma snapshots automáticos diarios (backup completo).\n2. Continuamente archiva transaction logs (WAL en Postgres, binlog en MySQL) a S3.\n3. Cuando pides restore a un timestamp T, RDS: (a) restaura el snapshot más reciente <= T, (b) reproduce los transaction logs hasta llegar exactamente a T.\n\nLímites: RPO ~5 minutos (los logs se envían periódicamente, no en tiempo real). Retention: default 7 días, configurable hasta 35.\n\nEstrategia real ante el DELETE catastrófico:\n1. NO tocar la instancia actual (podría corromper logs).\n2. RestoreDBInstanceToPointInTime a T-1s del DELETE, genera 'my-db-recovered'.\n3. Verificar que la tabla users tiene los datos.\n4. Opción A (downtime): switch endpoint de la app a la nueva instancia.\n5. Opción B (sin downtime): pg_dump solo la tabla users de la recovered, restaurar en la producción, sobrescribir la tabla vacía.\n\nAurora tiene backtrack (rewind) que es aún más rápido: rebobinar la MISMA instancia in-place hasta 72h atrás en segundos. MySQL solo, no Postgres.\n\nMoraleja: verifica que Automated Backups estén habilitados y con retention >= tu RPO acordado. Cero coste extra, salva carreras.",
+      "realWorld": "GitLab 2017: no tenían PITR en Postgres bien configurado; perdieron 6h. Con PITR habría sido 5min máximo. RDS PITR es usado a diario en la industria — cualquier senior DBA lo tiene como reflejo. AWS documenta casos de recovery en <15 min para bases de datos de TB.",
+      "tags": ["PITR", "RDS", "recovery", "WAL", "transaction logs"],
+      "tech": ["RDS", "PostgreSQL", "MySQL", "Aurora"],
+      "references": [
+        { "title": "AWS RDS — Point-in-Time Recovery" },
+        { "title": "PostgreSQL — WAL Archiving" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "reliability",
+      "topic": "Backup encryption y key management",
+      "difficulty": "senior",
+      "scenario": "Tu equipo cifra los backups con una KMS key. Un auditor pregunta: ¿qué pasa si esa key se borra o se pierde? Un dev responde: 'no pasa nada, tenemos los backups'.",
+      "question": "¿Por qué la gestión de claves es CRÍTICA para backups y qué prácticas evitan que el cifrado te bloquee el restore?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un backup cifrado con una key perdida = backup INÚTIL (matemáticamente irrecuperable). Prácticas críticas: (1) KMS keys con deletion protection y waiting period 30 días (AWS default); (2) Multi-Region KMS keys si backups son cross-region; (3) Key ROTATION automática (AWS KMS rota anualmente conservando versiones anteriores — puedes descifrar backups viejos); (4) Backup de la key policy (no la key material — no exportable — sino la policy y metadata); (5) Cuenta separada para keys de backup con MFA y hardware tokens; (6) Documentar quién tiene acceso y auditar CloudTrail.", "correct": true, "why": "Correcto. AES-256 con key perdida es literalmente irrompible con tecnología actual. La gestión de claves es el ETERNO Punto único de fallo del cifrado. La disciplina operativa importa más que el algoritmo." },
+        { "letter": "B", "text": "Si la key se pierde, AWS Support puede recuperarla porque son los custodios.", "correct": false, "why": "Falso peligroso. AWS Support NO puede recuperar KMS keys borradas — es una garantía crítica de KMS (si pudieran, tendrían acceso a tus datos). Esto es una feature, no un bug." },
+        { "letter": "C", "text": "El cifrado no es necesario para backups, complica sin aportar.", "correct": false, "why": "Compliance (GDPR, HIPAA, PCI-DSS) exige cifrado at-rest de datos sensibles. Además, un backup no cifrado que se leaka es una breach reportable." },
+        { "letter": "D", "text": "Basta con backups sin cifrar mientras el bucket esté privado.", "correct": false, "why": "Defense in depth: bucket privado + cifrado. Si la ACL/policy se rompe (error humano), el cifrado sigue protegiendo." }
+      ],
+      "explanation": "El teorema fundamental: 'el cifrado transforma el problema de proteger DATOS en proteger CLAVES'. Y las claves son mucho más pequeñas, más críticas, y más fáciles de perder.\n\nEscenarios de fallo históricos:\n- Empresa borra KMS key 'no usada' → descubre que backups de 3 años se cifraron con esa key → todos ilegibles.\n- Rotación manual pierde la versión anterior → backups viejos irrecuperables.\n- KMS key en cuenta comprometida → atacante deniega su uso, ransomware sin cifrar tus datos.\n- Backups cross-region con key single-region → no puedes descifrar en el failover.\n\nBest practices:\n1. AWS KMS Multi-Region Keys para backups cross-region.\n2. Rotación anual automática (KMS mantiene las versiones anteriores).\n3. Deletion protection + 30-day waiting period.\n4. Key policies con múltiples principals (evita que un solo compromise deje inaccesible).\n5. Auditoría CloudTrail de todas las operaciones KMS.\n6. Envelope encryption: los backups tienen data keys únicas, cifradas por la KMS key maestra. La KMS key rara vez toca datos directamente.\n7. HSM-backed keys (CloudHSM, KMS External Key Store) para compliance ultra-alto.\n\nTest: parte del restore drill trimestral debe VERIFICAR que puedes descifrar con la key actual.",
+      "realWorld": "Numerosos postmortems privados de empresas que borraron KMS keys 'huérfanas' para ahorrar $1/mes y perdieron backups de años. AWS documenta que la KMS key deletion es IRREVERSIBLE tras el waiting period — literalmente pierdes los datos. GDPR Art. 32 exige cifrado + key management responsable.",
+      "tags": ["KMS", "encryption", "key management", "envelope encryption", "multi-region key"],
+      "tech": ["AWS KMS", "CloudHSM", "encryption"],
+      "references": [
+        { "title": "AWS KMS — Multi-Region Keys" },
+        { "title": "AWS KMS — Key Deletion (Irreversible)" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "reliability",
+      "topic": "Ransomware protection layers",
+      "difficulty": "senior",
+      "scenario": "El CISO pide un plan anti-ransomware para backups. Debes diseñar defense-in-depth. Un consultor dice: 'basta con Object Lock'. Otro dice: 'necesitas cuentas separadas + air-gap + monitoring'.",
+      "question": "¿Cuáles son las capas críticas de defense-in-depth contra ransomware para backups?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CUENTA AWS SEPARADA (blast radius): backups en una AWS account distinta a producción, con IAM cross-account limitado a AssumeRole solo para AWS Backup service. Si comprometen la cuenta de prod, no llegan a los backups.", "correct": true, "why": "Correcto. La regla de oro: 'blast radius'. Un compromise en un lugar no debe cascar en el otro. AWS Organizations + SCP para forzar esto." },
+        { "letter": "B", "text": "IMMUTABLE STORAGE (S3 Object Lock Compliance mode + Vault Lock): retention 30-90+ días donde nada puede borrar los backups, ni root. Retention debe ser mayor al tiempo típico de detección de ransomware (60-90 días).", "correct": true, "why": "Correcto. Es la defensa TÉCNICA definitiva: matemáticamente el atacante no puede borrar (la API rechaza la operación). Compliance mode es irreversible." },
+        { "letter": "C", "text": "AIR-GAPPED COPY (opcional pero recomendado): copia offline periódica (cinta LTO, disco físico rotado a bóveda) para datos críticos. Un ataque cyber no puede llegar a lo que no está conectado.", "correct": true, "why": "Correcto. Es la última línea de defensa. Bancos, gobiernos, hospitales críticos lo hacen. Cinta LTO parece 'viejo' pero es literalmente irrompible por ataques de red." },
+        { "letter": "D", "text": "MONITORING de operaciones de backup: alertas por (1) rate de backups fallidos, (2) volumen de datos anómalo (encryption in-place se ve como cambios masivos), (3) intentos de disable de Object Lock, (4) accesos KMS sospechosos. Detección temprana = ventana de restore antes de que retention expire.", "correct": true, "why": "Correcto. Los ataques ransomware modernos primero comprometen el sistema, LUEGO intentan destruir backups, LUEGO cifran. Detectar la fase 2 salva la fase 3." },
+        { "letter": "E", "text": "Solo con MFA en la consola AWS es suficiente contra ransomware moderno.", "correct": false, "why": "MFA es una capa útil pero insuficiente. Ataques modernos comprometen sesiones, roles de EC2, o access keys programáticas donde MFA no aplica. Defense in depth = múltiples capas." }
+      ],
+      "explanation": "El playbook moderno de ransomware NO es cifrar y pedir rescate. Es: (1) infiltrarse silenciosamente, (2) reconocer, (3) DESTRUIR BACKUPS, (4) cifrar producción, (5) pedir rescate. Sin backups destruidos, la víctima puede negarse a pagar. Por eso los backups son el objetivo #1.\n\nCapas críticas (defense in depth):\n\n1. IDENTITY: MFA hardware para admins, no keys de larga vida, SSO con condicional access, principio de menor privilegio.\n\n2. SEGREGATION: cuenta AWS separada solo para backups. Cross-account access via role assumption con condition MFA. SCPs en AWS Organizations que impidan borrar backup vaults desde member accounts.\n\n3. IMMUTABILITY: S3 Object Lock Compliance mode + Glacier Vault Lock. Retention > tiempo típico de detección (Mandiant: dwell time promedio 21 días en 2023, pero worst-case 100+ días).\n\n4. AIR-GAP: para joyas de la corona, copia offline periódica. LTO tape sigue siendo el estándar (bancos, aseguradoras).\n\n5. MONITORING: CloudTrail + GuardDuty + alertas custom sobre operaciones KMS y S3 sensibles. Anomaly detection de volumen.\n\n6. TESTING: game days trimestrales simulando 'todos los backups en prod cuenta están comprometidos, restaura desde immutable'.\n\nCoste: sí, es más caro. Pero el coste promedio de un ataque ransomware es $4.5M (IBM 2023). El seguro de backup vale la pena.",
+      "realWorld": "Colonial Pipeline (mayo 2021): pagó $4.4M porque ransomware había comprometido backups conectados. Post-incident, Biden emitió Executive Order requiring immutable backups para infraestructura crítica. Maersk NotPetya (2017): perdieron TODO su Active Directory global — 45.000 PCs — sobrevivieron porque UN controlador estaba caído en Ghana durante el ataque y sirvió de backup air-gap accidental.",
+      "tags": ["ransomware", "defense in depth", "air-gap", "Object Lock", "blast radius", "monitoring"],
+      "tech": ["S3", "KMS", "AWS Organizations", "AWS Backup"],
+      "references": [
+        { "title": "CISA — Ransomware Guide" },
+        { "title": "Maersk NotPetya Recovery Story" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "reliability",
+      "topic": "Testing DR — Game Days",
+      "difficulty": "mid",
+      "scenario": "Tu equipo tiene un runbook DR bien documentado desde hace 2 años. Nunca lo han ejecutado en un simulacro real. El CTO pregunta si eso es un problema.",
+      "question": "¿Por qué son críticos los Game Days y qué pasa cuando un runbook no probado se ejecuta bajo presión?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un runbook no probado envejece silenciosamente: (1) los sistemas cambian (nuevos servicios, nuevas dependencias no documentadas); (2) las personas cambian (quien sabía el runbook se fue); (3) los pasos que 'obviamente funcionan' rara vez lo hacen (permisos IAM cambiados, VPC re-diseñadas, endpoints movidos). Game Days = simulacros reales con timing real, revelan estos gaps SIN el estrés de un incident real. Netflix es el pionero con Chaos Engineering: matan servicios en producción rutinariamente para verificar que el sistema aguanta. Sin Game Days, tu DR está en modo Schrödinger: no sabes si funciona hasta que lo necesitas.", "correct": true, "why": "Correcto. Es exactamente el mismo principio de 'untested backup = no backup' aplicado a procedimientos operativos. La única evidencia de que un runbook funciona es haberlo ejecutado recientemente en condiciones reales." },
+        { "letter": "B", "text": "Basta con revisar el runbook trimestralmente en meeting.", "correct": false, "why": "Revisar en papel NO detecta gaps operativos. Solo la ejecución real revela permisos rotos, comandos deprecados, secrets rotados, etc." },
+        { "letter": "C", "text": "Los Game Days son caros y solo tienen ROI en empresas grandes.", "correct": false, "why": "El coste de un Game Day (unas horas) es despreciable frente al coste de un DR fallido (horas/días de downtime + reputación + posiblemente el negocio)." },
+        { "letter": "D", "text": "Un runbook nuevo solo debe probarse cuando cambia significativamente.", "correct": false, "why": "Los sistemas cambian aunque el runbook no. Nueva versión de servicio, permisos IAM ajustados, dependencias upgrade — todo puede romper el runbook sin cambiarlo." }
+      ],
+      "explanation": "Game Day: simulacro estructurado donde un equipo ejecuta un escenario DR real (o casi real) contra sistemas de producción o staging fiel a producción. Objetivo: revelar gaps ANTES del incident real.\n\nEstructura típica:\n1. Planning: escenario ('perdemos us-east-1', 'DB principal corrupta'), objetivo (RTO=1h), participantes (on-call, engineering leads, comms).\n2. Ejecución: alguien 'rompe' algo (chaos), otros ejecutan el runbook. Tiempo se cronometra.\n3. Retrospective: qué funcionó, qué no, action items para mejorar el runbook.\n\nMadurez Chaos Engineering:\n- Nivel 1: Game Day trimestral en staging.\n- Nivel 2: Chaos Monkey en producción (Netflix, 2010) — matar instancias aleatorias.\n- Nivel 3: Chaos Kong — matar regiones enteras (Netflix multi-region).\n- Nivel 4: Continuous Chaos — chaos experiments corriendo diariamente sin intervención humana.\n\nHallazgos típicos en primer Game Day:\n- Runbook menciona un IAM role que fue borrado hace 6 meses.\n- Passwords en el runbook están rotados y nadie sabe los nuevos.\n- La región DR no tiene los secrets sincronizados.\n- Los DNS TTLs son 24h en vez de 60s (failover tarda 1 día).\n- El equipo on-call no tiene permisos para ejecutar el failover.\n\nEsos gaps siempre existen. La cuestión es si los descubres en Game Day (barato) o en un desastre real (carísimo).",
+      "realWorld": "Netflix Chaos Engineering (2010→): fundó el campo. Amazon 'Game Day' es práctica interna documentada. AWS Well-Architected exige Game Days como parte del Reliability Pillar. Facebook Oct 2021: aunque su plan DR estaba probado, algunas partes (acceso físico a datacenter) no lo estaban — de ahí las 6h de downtime en vez de menos.",
+      "tags": ["Game Day", "Chaos Engineering", "runbook", "testing", "resilience"],
+      "tech": ["Chaos Monkey", "Gremlin", "AWS Fault Injection Simulator"],
+      "references": [
+        { "title": "Netflix — Chaos Engineering Principles" },
+        { "title": "AWS Well-Architected — REL13 Plan for DR" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "reliability",
+      "topic": "Retention policy design",
+      "difficulty": "senior",
+      "scenario": "Tu equipo debate cuánto retener backups. Un dev dice: '7 días es suficiente'. El CISO dice: 'necesitamos 7 años para compliance'. Finanzas dice: 'reduce costos, borra todo tras 30 días'.",
+      "question": "¿Cómo diseñas una retention policy multicapa que balancee costo, compliance y ventana de detección de amenazas?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TIERED retention: (1) HOT tier (S3 Standard, 30 días): backups diarios, restore rápido para incidents recientes; (2) WARM tier (S3 IA / Glacier IR, 90 días-1 año): backups semanales, restore en horas, cubre ventana de detección de ransomware (dwell time promedio 21-100 días); (3) COLD tier (Glacier Deep Archive, 1-7 años): backups mensuales/anuales, compliance-driven, restore 12-48h. Todo con Object Lock en el tier compliance. Coste optimizado por tier + lifecycle policies automáticas. Cada tier responde a un requerimiento distinto (operacional, seguridad, legal).", "correct": true, "why": "Correcto. Los 3 stakeholders tienen requerimientos LEGÍTIMOS pero distintos. Retention plana no los satisface a todos y desperdicia dinero. Tiering es la solución estándar." },
+        { "letter": "B", "text": "7 días de todo, cumplimiento es responsabilidad de compliance team.", "correct": false, "why": "Compliance no es opcional. GDPR, SOX, HIPAA, PCI-DSS imponen retenciones mínimas (típicamente 3-7 años para financial records). Ignorarlo = multas + prisión posible para directivos." },
+        { "letter": "C", "text": "7 años de TODO en S3 Standard.", "correct": false, "why": "Coste absurdo. S3 Standard vs Glacier Deep Archive: 100x más caro. Para backups de acceso raro, es tirar dinero. Lifecycle policies existen exactamente para esto." },
+        { "letter": "D", "text": "Retener solo el último backup y sobreescribir los anteriores.", "correct": false, "why": "Catastrófico. Si detectas corrupción/ransomware con 5 días de dwell, tu 'último backup' ya está corrupto. Necesitas ventana histórica." }
+      ],
+      "explanation": "Retention design tiene 3 drivers:\n\n1. OPERACIONAL (RPO): permite restaurar ante bugs/errores humanos recientes. Días de retención = tiempo típico para detectar corrupción vía monitoring. Típicamente 7-30 días en hot storage.\n\n2. SEGURIDAD (ventana ransomware): retention que exceda el dwell time del atacante. Mandiant 2023: mediana 16 días, promedio 21, cola larga hasta 200+ días. Retención de 90 días en storage immutable = protege contra 90% de casos.\n\n3. COMPLIANCE (legal): impuesto por reguladores. Financial (SOX): 7 años records. Healthcare (HIPAA): 6 años records médicos. GDPR: hasta que dejes de necesitar el dato (variable).\n\nEjemplo real de tiering:\n- Últimos 30 días: full diario + WAL continuo en S3 Standard, sin Object Lock (necesitas poder rotar).\n- 30-90 días: full semanal en S3 IA con Object Lock Compliance 60 días (ransomware buffer).\n- 90 días - 1 año: full mensual en Glacier Flexible Retrieval.\n- 1-7 años: full trimestral/anual en Glacier Deep Archive con Object Lock 7 años (compliance).\n\nCoste S3 Standard: ~$0.023/GB/mes. Deep Archive: ~$0.00099/GB/mes. 23x más barato. Para 100TB * 7 años, la diferencia es millones.\n\nLifecycle policies automáticas de S3 hacen el movimiento entre tiers sin código.",
+      "realWorld": "SEC Rule 17a-4 exige WORM 7 años para brokers. HIPAA 6 años. PCI-DSS 1 año mínimo. Muchas empresas usan AWS Backup + S3 lifecycle + Glacier Vault Lock exactamente en esta arquitectura tiered. El caso Colonial Pipeline mostró la importancia del tier de seguridad separado del operacional.",
+      "tags": ["retention", "lifecycle", "Glacier", "compliance", "tiered storage", "SOX", "HIPAA"],
+      "tech": ["S3", "Glacier", "AWS Backup", "lifecycle policies"],
+      "references": [
+        { "title": "AWS — S3 Lifecycle Policies" },
+        { "title": "SEC Rule 17a-4 — Records Retention" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "reliability",
+      "topic": "Failover DNS y Route53",
+      "difficulty": "senior",
+      "scenario": "Tu app está en us-east-1. Diseñas failover a us-west-2. El DNS actual apunta a us-east-1 con TTL 24h. Un dev dice: 'basta con cambiar el A record cuando pase el desastre'.",
+      "question": "¿Qué problemas tiene ese approach y cómo se hace failover DNS profesional?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TTL de 24h significa que los resolvers (browsers, ISPs, corporate) cachean la IP vieja hasta 24h. Cambiar el record no efectiviza el failover para la mayoría de usuarios hasta que expiren los caches. RTO efectivo: hasta 24h. Solución: bajar TTL a 60s ANTES de que haga falta (ahora, como preparación).", "correct": true, "why": "Correcto. Este es el gotcha #1 del DNS failover. TTL bajo es 'gratis' en tiempo normal (pequeño overhead de DNS queries) y crítico en failover." },
+        { "letter": "B", "text": "Route53 Health Checks + Failover Routing Policy: Route53 monitorea el endpoint principal, si falla N veces cambia automáticamente al secondary. Combinado con TTL bajo (60s), el failover es <2min sin intervención humana.", "correct": true, "why": "Correcto. Es el patrón estándar en AWS. Health Checks también pueden invocar Lambdas, alertas SNS, o CloudWatch alarms." },
+        { "letter": "C", "text": "Latency-based Routing / Geo-Routing: dirigen tráfico a la región más cercana normalmente. Si una región cae, health checks marcan como unhealthy y redirect global.", "correct": true, "why": "Correcto. Combina performance normal (usuario US va a us-east-1, EU va a eu-west-1) con failover automático. Requiere el sistema activo en ambas regiones (warm standby o active-active)." },
+        { "letter": "D", "text": "Global Accelerator como alternativa/complemento: anycast IPs estáticas que se anuncian desde múltiples regiones. El failover ocurre a nivel de BGP en la red de AWS, no via DNS resolution. Menor RTO (~30s), no depende de TTL de resolvers.", "correct": true, "why": "Correcto. Global Accelerator es superior al DNS failover puro para latencia baja y RTO mínimo, porque bypass el modelo TTL. Coste extra pero justificado para apps críticas." },
+        { "letter": "E", "text": "Basta con cambiar el A record manualmente sin bajar TTL — los clientes modernos ignoran TTL.", "correct": false, "why": "Falso. Los clientes SÍ respetan TTL (o incluso lo aumentan, como algunos resolvers públicos que cachean min. 5min). Nunca confíes en el cliente." }
+      ],
+      "explanation": "DNS failover profesional requiere planificación PROACTIVA:\n\n1. TTL BAJO (60s) siempre en records críticos. Coste: más DNS queries (nano-cents). Beneficio: RTO real de failover ~2min.\n\n2. HEALTH CHECKS: Route53 verifica endpoints cada 10-30s desde múltiples locations. Configurable con calculated health checks (combinar múltiples signals).\n\n3. FAILOVER ROUTING POLICY: primary/secondary con health-check-driven switch. Alternativas: weighted (canary/split), latency-based (performance + failover), geo (compliance).\n\n4. WARM SECONDARY: el failover DNS solo sirve si el secondary está preparado para recibir tráfico. Sin warm standby, DNS apunta a un endpoint que aún no está listo.\n\n5. GLOBAL ACCELERATOR: para RTO <1min, DNS es demasiado lento (aunque bajes TTL, los resolvers públicos como 8.8.8.8 pueden cachear más). GA usa anycast BGP: la IP es la misma globalmente, y AWS routea a la región healthy vía red interna. Failover <30s garantizado.\n\n6. GOTCHAS:\n- Java tiene un DNS cache infinito por defecto (networkaddress.cache.ttl=-1). Configurar a 60s.\n- Corporate resolvers a veces ignoran TTL bajos por 'protección' — probar.\n- CloudFront tiene su propio comportamiento (usa origin failover).\n\n7. TESTING: como todo, hacer Game Days de DNS failover. Modificar el registro y medir cuánto tarda el tráfico real en switchear.",
+      "realWorld": "Amazon.com usa Global Accelerator + Route53. Netflix usa DNS multi-region con health checks Cloudflare. Facebook Oct 2021: el problema fue BGP (los DNS servers de Facebook desaparecieron de internet), no un failover normal — nada del stack DNS habitual habría ayudado. GitHub Oct 2018 tuvo failover DB de 24h, DNS estaba OK pero el DR de datos no.",
+      "tags": ["DNS", "Route53", "TTL", "health checks", "Global Accelerator", "failover"],
+      "tech": ["Route53", "Global Accelerator", "AWS"],
+      "references": [
+        { "title": "AWS Route53 — DNS Failover" },
+        { "title": "AWS Global Accelerator" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "reliability",
+      "topic": "Data consistency en active-active",
+      "difficulty": "staff",
+      "scenario": "Tu equipo diseña active-active multi-region. Un dev dice: 'usamos DynamoDB Global Tables, tenemos consistency gracias a AWS'. Un staff engineer objeta: 'no entiendes qué te da AWS y qué debes resolver tú'.",
+      "question": "¿Qué garantiza y qué NO garantiza DynamoDB Global Tables sobre consistencia, y cómo lidias con conflictos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Global Tables garantiza REPLICACIÓN eventual entre regiones (segundos) y LAST-WRITER-WINS (LWW) para conflicts basado en timestamp del item. NO garantiza: (1) ordering global de operaciones (dos writes concurrentes en distintas regiones pueden aplicarse en orden distinto en cada réplica antes de converger), (2) ausencia de perdidas de writes por LWW (si dos users editan el mismo item simultáneamente, uno gana), (3) transacciones cross-region (TransactWriteItems es solo intra-region), (4) read-your-writes cross-region (write en us-east, read inmediato en eu-west puede no verlo). Diseño: usar version numbers / CAS optimistic locking, particionar datos por región cuando posible, CRDTs para datos que deben mergear (counters, sets), sagas para workflows cross-region.", "correct": true, "why": "Correcto. Esta es una comprensión senior/staff. DynamoDB Global Tables NO es magia — es una arquitectura con trade-offs concretos que debes entender para diseñar correctamente. Ignorar esto lleva a data loss silencioso." },
+        { "letter": "B", "text": "Global Tables garantiza consistencia fuerte cross-region.", "correct": false, "why": "Falso. Consistencia fuerte cross-region es físicamente imposible sin latencias enormes (100+ms por transacción). DynamoDB Global usa eventual consistency." },
+        { "letter": "C", "text": "Los conflictos se resuelven pidiendo al usuario cuál versión quiere.", "correct": false, "why": "AWS no hace conflict resolution interactivo. Es LWW automático. Si necesitas conflict resolution custom, lo implementas tú a nivel aplicación (versioning, CRDTs, sagas)." },
+        { "letter": "D", "text": "Basta con habilitar Global Tables y AWS resuelve todo transparentemente.", "correct": false, "why": "Esta es la creencia peligrosa. AWS resuelve la MECÁNICA de replicación, pero los INVARIANTES de tu dominio (ej: 'un usuario no puede tener saldo negativo') son tu problema." }
+      ],
+      "explanation": "El teorema CAP en la práctica: en un sistema distribuido cross-region no puedes tener simultáneamente Consistency + Availability + Partition tolerance. Como las particiones son inevitables, eliges C o A. DynamoDB Global elige A (availability).\n\nLo que AWS te da:\n- Replicación async peer-to-peer entre regiones.\n- Convergencia eventual (segundos típicamente).\n- LWW automático usando el timestamp aws:rep:updatetime.\n- Escrituras locales aceptadas SIEMPRE en cada región (alta disponibilidad).\n\nLo que TÚ debes resolver:\n\n1. WRITE CONFLICTS: dos writes al mismo item desde distintas regiones. LWW elige uno, el otro se pierde silenciosamente. Mitigación: version numbers + CAS (ConditionExpression = 'version = :expected'), particionamiento por region ownership, CRDTs.\n\n2. UNIQUE CONSTRAINTS: 'este email es único' es imposible garantizar cross-region con eventual consistency. Dos users pueden registrar el mismo email en dos regiones simultáneamente. Mitigación: región 'owner' del email (regional sharding) o aceptar detect+reconcile posterior.\n\n3. ORDENING: eventos ordenados globalmente es difícil. Mitigación: event sourcing con region_id + local_timestamp + vector clocks para reconstruir ordering causal.\n\n4. TRANSACCIONES: TransactWriteItems solo intra-region. Cross-region requiere sagas (compensating transactions).\n\n5. READ-YOUR-WRITES: escribir en us-east + leer inmediato en eu-west puede no ver el write. Mitigación: routing del user a su 'home region' consistentemente.\n\nAlternativa: si necesitas ACID cross-region, considera Aurora Global (single-writer) o CockroachDB / Spanner (ACID distribuido con consenso).",
+      "realWorld": "Amazon.com carrito de compras usa DynamoDB Global aceptando LWW (si sumas item en us-east y otro en eu-west simultáneamente, el user puede perder uno — pero es raro y el trade-off vale la disponibilidad). Google Spanner elige C sobre A: usa TrueTime + consenso Paxos para transacciones ACID cross-region con latencia visible. CockroachDB usa Raft para consenso similar.",
+      "tags": ["CAP theorem", "eventual consistency", "LWW", "DynamoDB Global", "conflict resolution", "CRDTs"],
+      "tech": ["DynamoDB", "Aurora", "Spanner", "CockroachDB"],
+      "references": [
+        { "title": "AWS DynamoDB Global Tables — Conflict Resolution" },
+        { "title": "Google Spanner — TrueTime" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "reliability",
+      "topic": "Backup de datos vs backup de infraestructura",
+      "difficulty": "staff",
+      "scenario": "Tu equipo tiene backups impecables de bases de datos. En un simulacro DR, un staff engineer pregunta: 'y las lambdas? los secrets? las IAM policies? las Kinesis streams? la config de API Gateway?'.",
+      "question": "¿Qué componentes deben incluirse en una estrategia de backup completa más allá de las bases de datos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "INFRASTRUCTURE AS CODE en git (Terraform, CDK, CloudFormation): TODA la infra debe ser reproducible desde código. Sin IaC, restaurar una región es meses de trabajo manual. Con IaC + backup de datos, en horas tienes todo. Git repo replicado (GitHub + mirror) es tu 'backup' de infra.", "correct": true, "why": "Correcto. IaC es el backup real de la infraestructura. Sin IaC, tienes bases de datos pero nada donde correrlas." },
+        { "letter": "B", "text": "SECRETS y CONFIGURATION: AWS Secrets Manager, Parameter Store, Vault. Deben tener cross-region replication. Sin secrets, tu app no arranca aunque tengas la DB. Rotación coordinada + backup out-of-band (encrypted archive con root secrets en cold storage).", "correct": true, "why": "Correcto. Los secrets son un blind spot común. Un DR sin secrets = app no puede conectar a la DB = failover falla." },
+        { "letter": "C", "text": "ESTADO EFÍMERO CRÍTICO: sessions activas (cache de Redis con TTL), colas SQS/Kafka en flight, workflows en ejecución (Step Functions, Temporal). Diseñar apps para tolerar pérdida de este estado (idempotencia, retries, resumable jobs) — es más barato que backup completo.", "correct": true, "why": "Correcto. Cierto estado se acepta como 'perdible' en DR si la app es idempotente. Backup exhaustivo de todo es imposible; diseño resiliente es la respuesta." },
+        { "letter": "D", "text": "CÓDIGO Y ARTEFACTOS: git repos (GitHub replicado), container registries (ECR con cross-region replication), artefactos S3, model registries (ML). Sin código no hay app. Sin containers no hay deployment.", "correct": true, "why": "Correcto. GitHub caído en Oct 2018 mostró que 'nuestro código está en GitHub' no es una estrategia DR. ECR y S3 con CRR son estándar." },
+        { "letter": "E", "text": "Solo la base de datos importa, el resto se puede recrear rápido.", "correct": false, "why": "Falso. Sin lambdas deployeadas, sin secrets, sin config, sin IAM policies, la DB restaurada es inútil. DR es holístico." }
+      ],
+      "explanation": "El error clásico de 'DR solo cubre DBs' viene de un modelo mental viejo (LAMP: si tienes la DB y el código, restauras rápido). En arquitecturas cloud-native modernas, hay MUCHO más estado que backup.\n\nInventario completo típico:\n\n1. DATOS: RDS/Aurora, DynamoDB, S3 data, ElastiCache si es datastore, OpenSearch, Redshift.\n\n2. INFRAESTRUCTURA: Terraform/CDK/CloudFormation en git. Estado de Terraform en S3 con versioning + cross-region.\n\n3. CÓDIGO: git repos (GitHub o GitLab con mirror), container images (ECR CRR), Lambda code (los ZIP están en S3 owned by AWS), artefactos S3.\n\n4. SECRETOS Y CONFIG: Secrets Manager con cross-region replication, Parameter Store, KMS keys (multi-region), env vars documentadas.\n\n5. IDENTIDAD: IAM policies (parte de IaC), roles, users, SSO configs, MFA devices (recovery codes en safe deposit box).\n\n6. NETWORKING: VPC design, security groups, route tables, VPN endpoints, Direct Connect (si aplica, planning físico).\n\n7. STATEFUL SERVICES: Kinesis streams, MSK topics con datos in-flight, SQS colas (aceptar pérdida o snapshot con MirrorMaker), Step Functions state.\n\n8. OBSERVABILIDAD: CloudWatch alarms/dashboards, PagerDuty configs, Grafana dashboards (backup como JSON en git).\n\n9. DOMAIN Y DNS: registro de dominios (renovaciones no expiran), Route53 zones (export/import).\n\n10. LICENCIAS Y SUSCRIPCIONES: docs de qué se paga a quién, credentials de vendors.\n\nEl inventario es un ejercicio doloroso pero fundamental. Sin él, DR falla por el eslabón más débil.",
+      "realWorld": "Facebook Oct 2021: el problema no fueron los datos (todo intacto), fue la CONFIGURACIÓN BGP + acceso físico al datacenter (badges electrónicos dependían del sistema caído). Recuperación tardó 6h porque un engineer tuvo que ir físicamente. GitLab 2017: aunque restauraron datos (con pérdida), tuvieron que reconfigurar mucha infra manualmente porque no todo estaba en IaC.",
+      "tags": ["IaC", "secrets", "config", "holistic DR", "container registry", "state"],
+      "tech": ["Terraform", "Secrets Manager", "ECR", "CloudFormation"],
+      "references": [
+        { "title": "AWS Well-Architected — Reliability Pillar" },
+        { "title": "Facebook Oct 2021 Outage Explained" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "reliability",
+      "topic": "Backup de sistemas distribuidos y consistencia",
+      "difficulty": "staff",
+      "scenario": "Tu arquitectura usa 3 microservicios cada uno con su propia base de datos. Un dev propone: 'backup cada DB por su cuenta, cada noche 03:00'. Un staff engineer objeta: 'no capturas un estado consistente global'.",
+      "question": "¿Cuál es el problema de backups independientes en sistemas distribuidos y qué patrones lo resuelven?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Backups independientes capturan cada DB en un instante distinto → estado INCONSISTENTE global. Ejemplo: orders-db backup 03:00:01, payments-db backup 03:00:05, inventory-db backup 03:00:12. Si a las 03:00:03 se creó una orden con pago y stock, tu restore puede tener: (a) pago sin orden, (b) orden sin stock decrementado, (c) inconsistencias imposibles en producción. Soluciones: (1) SAGAS + idempotencia: aceptar la inconsistencia y reconciliar en restore vía compensating actions; (2) EVENT SOURCING: backup del event log — replay reconstruye estado consistente; (3) COORDINATED BACKUP: momento único de quiescing (raro, costoso); (4) POINT-IN-TIME across services: PITR de todo a un timestamp común, luego reconciliation. Solución real casi siempre es (1) o (2).", "correct": true, "why": "Correcto. Este es un problema profundo de distributed systems que muchas arquitecturas microservices ignoran. La consistencia entre backups es un caso especial del problema general de consistencia distribuida." },
+        { "letter": "B", "text": "No es problema porque cada microservicio es un bounded context independiente.", "correct": false, "why": "Bounded context aísla el CÓDIGO, pero los DATOS cruzan boundaries via events/APIs. La inconsistencia post-restore es real y visible al usuario final." },
+        { "letter": "C", "text": "Basta con backup coordinado sincronizado al segundo.", "correct": false, "why": "Aunque los backups fueran simultáneos al ms, las operaciones cross-service in flight NO están commiteadas en todos los sistemas a la vez. El problema es fundamental, no de sincronización." },
+        { "letter": "D", "text": "Solo importa si son bases relacionales, con NoSQL no aplica.", "correct": false, "why": "Al revés: NoSQL SIN transacciones lo empeora. El problema aplica a cualquier sistema con estado distribuido entre múltiples stores." }
+      ],
+      "explanation": "El problema: en sistemas monolíticos con 1 DB, un backup captura un snapshot consistente (transacciones ACID garantizan). En microservices con N DBs, no existe un 'snapshot global consistente' natural.\n\nCasos que van mal en restore:\n- Order creado (orders-db tiene la row) pero payment no procesado (payments-db no tiene row correspondiente). Efecto: user cobrado pero sin pedido.\n- Inventory decrementado (inventory-db) pero order no confirmado (orders-db). Efecto: stock 'perdido'.\n- Event enviado a Kafka + procesado por consumer A, pero consumer B no lo procesó aún → replay tras restore duplica el trabajo de A.\n\nSoluciones profesionales:\n\n1. EVENT SOURCING como fuente de verdad: la 'DB real' es el event log (Kafka, Kinesis, EventStore). Cada servicio tiene su read model derivado. Backup del event log + replay = estado consistente reconstruible. Netflix, LinkedIn, Uber usan esto.\n\n2. SAGAS + IDEMPOTENCIA: cada operación cross-service es una saga con compensating actions. En restore, ejecutar reconciliation job que detecta inconsistencies (order sin payment) y aplica compensating action (cancel order o retry payment). Aceptas inconsistencia temporal.\n\n3. OUTBOX PATTERN: cada servicio escribe eventos a una tabla 'outbox' en la misma transacción que su cambio de estado. Un relay envía a Kafka. Backup incluye outbox → replay determinista.\n\n4. COORDINATED BACKUP CON QUIESCING: pausar writes globalmente (drain queues, drain in-flight requests), tomar backup, reanudar. Solo viable para sistemas con downtime windows aceptable.\n\n5. PITR A TIMESTAMP COMÚN: si todas las stores soportan PITR (RDS, Aurora, DynamoDB), restaurar todo a T-1min y ejecutar reconciliation. RPO = tiempo de reconciliation.\n\nDecisión de arquitectura: la mayoría de sistemas modernos aceptan inconsistencia temporal + reconciliation, porque coordinated backup no escala.",
+      "realWorld": "Amazon.com usa event sourcing + sagas para carrito+checkout+inventory+shipping. Netflix usa event replay como estrategia core de recovery. Uber (Cadence/Temporal) usa event sourcing con guarantees de exactly-once processing. El caso de estudio clásico: 'The Twelve Fallacies of Distributed Computing' (Peter Deutsch) — un backup no coordinado asume implícitamente que 'network is instantaneous' y 'transport cost is zero'.",
+      "tags": ["distributed systems", "event sourcing", "saga pattern", "consistency", "outbox pattern", "microservices"],
+      "tech": ["Kafka", "Temporal", "event sourcing"],
+      "references": [
+        { "title": "Chris Richardson — Microservices Patterns (Saga, Outbox)" },
+        { "title": "Martin Fowler — Event Sourcing" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "reliability",
+      "topic": "Financial modeling de DR",
+      "difficulty": "staff",
+      "scenario": "El CFO te pregunta: '¿por qué gastar $200k/año en warm standby si no ha habido desastres en 3 años?'. Debes justificar la inversión con matemática financiera de riesgo.",
+      "question": "¿Cómo modelas económicamente el ROI de una estrategia DR?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MODELO DE EXPECTED LOSS: E[loss] = P(desastre/año) × Coste(desastre). Coste = Downtime × RevenuePerHour + Reputational + Regulatorio + Data Loss. Ejemplo: P=5%, downtime esperado sin DR = 48h, revenue = $50k/h → E[loss/año] = 0.05 × 48 × $50k = $120k. Con warm standby ($200k/año), downtime = 30min → E[loss/año] = 0.05 × 0.5 × $50k = $1.25k. Ahorro esperado = $118.75k contra costo $200k → aparentemente NO vale. PERO ignora: (1) probabilidad heavy-tail (desastres correlacionados: pandemia, ciberataque global), (2) reputational damage no lineal (pérdida de confianza cliente), (3) compliance (multas pueden ser 10x downtime cost), (4) seguros (cyber insurance requiere DR probado). El cálculo completo suele justificar la inversión aunque el modelo simple no lo haga.", "correct": true, "why": "Correcto. Este es el análisis que un staff engineer debe saber presentar a finanzas. El modelo simple + factores no cuantificables + tail risk = la justificación real." },
+        { "letter": "B", "text": "Simplemente decir 'seguridad ante todo, gastar lo que haga falta'.", "correct": false, "why": "Argumento débil ante CFO. Ingeniería con presupuesto ilimitado no existe. Necesitas cuantificar." },
+        { "letter": "C", "text": "Comparar con lo que gastan otras empresas del sector.", "correct": false, "why": "Benchmark tiene valor limitado — cada empresa tiene distinto perfil de riesgo. Útil como sanity check pero no como justificación primaria." },
+        { "letter": "D", "text": "Solo si hay compliance requirement obligatorio.", "correct": false, "why": "Compliance es un mínimo, no un óptimo. Muchos DR investments razonables no son compliance-driven sino risk-management." }
+      ],
+      "explanation": "El framework Expected Loss + tail risk es la lengua de finanzas:\n\n1. FRECUENCIA: P(evento/año). Basado en industria (Uptime Institute reports), historial propio, threat intelligence. Ejemplo: outage regional AWS ≈ 1-2 casos significativos/año globalmente.\n\n2. IMPACTO: componentes del coste de un desastre:\n- Revenue lost (downtime × revenue/h).\n- Productivity lost (empleados que no trabajan).\n- SLA credits a clientes.\n- Reputational damage (customer churn, brand equity — más difícil de cuantificar).\n- Regulatory fines (GDPR = hasta 4% revenue global; SOX; HIPAA).\n- Recovery cost (overtime, consultants, rebuild).\n- Cyber insurance premium increase.\n- Litigation (customers demanding).\n\n3. MITIGATION EFFECTIVENESS: cuánto reduce cada estrategia el downtime esperado.\n\n4. COSTO DE MITIGATION: infra + ops + testing.\n\n5. TAIL RISK: los desastres no son eventos aislados. Ransomware puede ir junto con data theft (PR crisis) + regulatory investigation. El costo del worst case es 10-100x el promedio.\n\n6. COMPARATIVAS:\n- Ponemon Cost of Downtime Report: promedio $9k/min en enterprise.\n- IBM Cost of Data Breach 2023: $4.5M promedio.\n- Uptime Institute: 44% de outages costaron >$1M en 2023.\n\n7. FRAMING PARA CFO: presentar como riesgo asegurable ('estamos comprando insurance de $200k contra pérdida potencial de $XX millones'). Un CFO entiende insurance.\n\n8. DECISIÓN: presentar RANGOS (best case / expected / worst case) y dejar que el negocio elija el nivel de riesgo aceptable — es su decisión, no de ingeniería.",
+      "realWorld": "British Airways 2017 outage: $80M en 3 días. Delta 2016: $150M en downtime. TSB migration 2018: £330M costes + salida CEO + crisis regulatoria — DR insuficiente en migración. Facebook Oct 2021: estimado $60-100M en revenue perdido en 6h. Estos números son 'lo que argumentas al CFO'.",
+      "tags": ["ROI", "expected loss", "risk management", "financial modeling", "insurance"],
+      "tech": [],
+      "references": [
+        { "title": "Uptime Institute — Cost of Downtime Report" },
+        { "title": "IBM — Cost of a Data Breach Report" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "reliability",
+      "topic": "Backup validation con checksums y integrity",
+      "difficulty": "staff",
+      "scenario": "Tus backups son grandes (multi-TB). Un dev pregunta: '¿cómo sabemos que no se corrompen silenciosamente durante el storage?'. Otro dice: 'S3 hace checksums automáticos, es suficiente'.",
+      "question": "¿Qué mecanismos garantizan integridad de backups a lo largo del tiempo y por qué los checksums de S3 no bastan solos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Defensa en capas: (1) S3 checksums (SHA-256, CRC32C) verifican integridad en upload y detectan bit rot en storage — pero solo del OBJETO, no de si el objeto es un backup VÁLIDO; (2) Application-level checksums en el archivo backup (ej: pg_dump con checksums, tar con SHA-256 manifest) — verifican que los DATOS coinciden con lo esperado; (3) RESTORE VERIFICATION periódico — la única prueba definitiva es un restore + queries de verificación (row counts, checksums de tablas críticas, referential integrity); (4) VERSIONING inmutable para detectar tampering (Object Lock previene modificaciones); (5) MONITORING de cambios de tamaño (si un backup de 500GB baja a 100GB, algo raro pasó). Los checksums S3 solo verifican 'este archivo es idéntico a cuando lo subí' — no verifican semánticamente si es un backup útil.", "correct": true, "why": "Correcto. Distinción staff-level: integridad de STORAGE (bit-level) vs integridad SEMÁNTICA (backup útil). Ambas necesarias, ninguna suficiente sola." },
+        { "letter": "B", "text": "S3 con SHA-256 automático es suficiente, AWS garantiza durabilidad 11 nines.", "correct": false, "why": "Confunde durabilidad de storage con validez de backup. Si el proceso que crea el backup lo hace mal (empty file, dump truncado), S3 lo almacena perfectamente pero es inservible." },
+        { "letter": "C", "text": "Basta con validar el checksum al momento del restore.", "correct": false, "why": "Reactivo, no proactivo. Descubres el problema cuando lo necesitas restaurar (peor momento). Validation continua es esencial." },
+        { "letter": "D", "text": "La integridad solo importa en compliance regulado.", "correct": false, "why": "Falso. La integridad importa para CUALQUIER backup, porque un backup corrupto es igual a no tener backup." }
+      ],
+      "explanation": "Modelo mental: hay 3 niveles de integridad, cada uno con su mecanismo:\n\nNIVEL 1 — BIT INTEGRITY (bit rot, hardware failure, transmission errors):\n- S3 usa checksums (SHA-256 desde 2022, antes MD5) automáticos.\n- Verifica en upload y periódicamente en background.\n- Detecta si un bit cambió — auto-repara desde réplicas internas.\n- LIMITACIÓN: solo verifica 'el objeto es igual a lo subido'. Si subes basura, guarda basura.\n\nNIVEL 2 — SEMANTIC INTEGRITY (el backup es un dump válido de la DB):\n- Application-level: pg_dump tiene --checksums; pg_basebackup verifica WAL; mysqldump --tab genera checksums.\n- Tar/gzip con manifest de SHA-256 por archivo.\n- Verifica que el CONTENIDO tenga sentido, no solo que exista.\n- Automatización: pipeline post-backup que hace 'pg_restore --list' y valida la estructura.\n\nNIVEL 3 — FUNCTIONAL INTEGRITY (el backup restaura una DB usable):\n- Restore automático periódico (semanal) a instancia efímera.\n- Queries de smoke test: SELECT COUNT(*) de tablas críticas, verificación de foreign keys, samples de datos con checksums esperados.\n- Comparación con producción (row counts razonables, no cero).\n- La ÚNICA prueba definitiva.\n\nAntipatrones observados:\n- 'S3 es durable, no necesitamos verificar' → backups vacíos por bug del script no detectados hasta emergency.\n- 'Verificamos al inicio' → schema cambió, restore falla 6 meses después.\n- 'MD5 de S3 es suficiente' → MD5 tiene colisiones, S3 usa SHA-256 desde 2022 por eso.\n\nGolden rule: si no lo has restaurado en <90 días, asume que no funciona.",
+      "realWorld": "GitLab 2017: sus backups pasaban 'health checks' de tamaño y timestamp pero eran archivos vacíos por incompatibilidad de versión pg_dump. Los checksums de storage no detectaron nada porque los archivos ESTABAN íntegros — solo estaban vacíos. Postmortem público mostró que solo restore verification real habría detectado el problema. Amazon usa 'Bit Rot Detection' en S3 (background scanning) desde 2007.",
+      "tags": ["integridad", "checksums", "bit rot", "SHA-256", "validation", "corrupción silente"],
+      "tech": ["S3", "PostgreSQL", "pg_dump", "SHA-256"],
+      "references": [
+        { "title": "AWS S3 — Additional Checksums (SHA-256)" },
+        { "title": "PostgreSQL — Backup Verification" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "reliability",
+      "topic": "DR governance y organizational readiness",
+      "difficulty": "staff",
+      "scenario": "Tu empresa tiene 200 engineers en 15 equipos. Cada equipo hace su propio DR de sus servicios, con calidad variable. El CTO te pide diseñar un DR governance program corporativo.",
+      "question": "¿Qué elementos necesita un programa DR corporativo maduro para escalar más allá de esfuerzos aislados por equipo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TIERING de servicios (Tier 0 crítico → Tier 3 nice-to-have) con RTO/RPO por tier definidos por el negocio. Cada equipo mapea sus servicios al tier y hereda los requerimientos. Elimina debates ad-hoc sobre cuánto invertir por servicio.", "correct": true, "why": "Correcto. Sin tiering, cada equipo pelea su presupuesto individualmente. Con tiering, hay marco corporativo estándar." },
+        { "letter": "B", "text": "PLATFORM/GOLDEN PATH: equipo dedicado (Platform / SRE central) que provee tooling estandarizado (Terraform modules para backups, AWS Backup vaults compartidos, monitoring templates) que los equipos usan. Elimina que cada equipo reinvente la rueda mal.", "correct": true, "why": "Correcto. Es el patrón Platform Engineering aplicado a DR. Reduce coste total y aumenta calidad promedio significativamente." },
+        { "letter": "C", "text": "CADENCE DE GAME DAYS a nivel corporativo: (1) team-level quarterly, (2) service-level bi-annual, (3) company-wide anual ('perdemos us-east-1 completo por 4 horas'). Documentado, medido, reportado a leadership.", "correct": true, "why": "Correcto. Sin cadence forzada, los Game Days se posponen indefinidamente. La cultura de testing debe ser obligatoria y visible." },
+        { "letter": "D", "text": "COMPLIANCE + AUDIT: cada equipo debe demostrar (a) IaC completo, (b) backups verificados últimos 90 días, (c) runbook DR aprobado, (d) game day último año. Auditado por security/compliance team. Servicios que no cumplen no van a producción.", "correct": true, "why": "Correcto. Sin enforcement, DR es opcional. Compliance gates son la palanca para forzar mínimos aceptables." },
+        { "letter": "E", "text": "Basta con documentar best practices en confluence y confiar en que los equipos las adopten voluntariamente.", "correct": false, "why": "Falso. Documentación sin enforcement + tooling + cadence tiene adopción <20% típicamente. DR maduro requiere programa estructurado." }
+      ],
+      "explanation": "DR maduro a escala corporativa NO es 'cada equipo se organice'. Es un programa multi-dimensional:\n\n1. TIERING: Tier 0 (revenue/regulatorio crítico): RTO=15min, RPO=0, active-active o warm standby. Tier 1 (importante): RTO=1h, RPO=5min, pilot light. Tier 2 (interno productividad): RTO=4h, RPO=1h, backup+restore. Tier 3 (dev/analytics): RTO=24h, RPO=24h, backup básico. Cada servicio se clasifica y hereda requerimientos.\n\n2. PLATFORM ENGINEERING: equipo central (SRE / Platform / Reliability) provee:\n- Golden path Terraform modules (aurora-multi-region-module, s3-immutable-backup-module).\n- Central AWS Backup service con backup plans por tier.\n- Runbook templates.\n- Monitoring/alerting standard.\n- Chaos Engineering tooling (Fault Injection Simulator, Gremlin).\n\n3. GOVERNANCE: DR Review Board mensual/trimestral, revisa incidents + game days + audits. Reporta a CTO/CISO. KPIs: % de servicios con backup verificado <90d, % con IaC completo, MTTR promedio, game days ejecutados vs planned.\n\n4. TRAINING: on-call debe pasar DR certification. Nuevos joiners hacen shadow game day. Documentation as code.\n\n5. INCENTIVES: bonus del team lead ligado a métricas DR de sus servicios. Blameless postmortems obligatorios post-incident.\n\n6. COMPLIANCE GATES:\n- Nuevo servicio → checklist DR obligatorio pre-launch.\n- Cambios significativos → re-review.\n- Auditoría anual por Security/Compliance.\n\nMétricas Cauditorables:\n- Backup success rate.\n- Restore verification frequency.\n- Game day cadence.\n- RTO/RPO compliance por servicio.\n- Time-to-detect y time-to-recover en incidents reales.\n\nEjemplos: Google SRE tiene toda una function dedicada. Netflix hace Chaos Kong company-wide. Facebook tiene 'SEV levels' con playbooks obligatorios.",
+      "realWorld": "Google SRE Book Ch. 27 describe su programa DiRT (Disaster Recovery Testing) anual. Facebook (post-Oct 2021) reforzó governance de configuración BGP + DR. Amazon usa 'GameDays' a escala regional para probar failover. British Airways post-2017 outage: contrataron nueva Chief Resilience Officer + programa DR corporativo. TSB post-2018 migration disaster: rediseñaron completamente su governance.",
+      "tags": ["DR governance", "tiering", "platform engineering", "compliance", "maturity model"],
+      "tech": ["AWS Backup", "Terraform", "AWS FIS", "Gremlin"],
+      "references": [
+        { "title": "Google — Site Reliability Engineering Book, Ch. 27 DiRT" },
+        { "title": "AWS Well-Architected Reliability Pillar" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+{
+  "id": "devops-sim-09-kubernetes-networking-storage",
+  "trackId": "devops",
+  "order": 9,
+  "title": "Simulacro 09 — Kubernetes Networking y Storage",
+  "focus": "CNI plugins (Calico, Cilium, Flannel), Network Policies, Services vs Endpoints, DNS interno (CoreDNS), PersistentVolumes vs Claims, StorageClasses, CSI drivers, dynamic provisioning, StatefulSet volumeClaimTemplates. Entender el data plane real del cluster.",
+  "areaCoverage": ["kubernetes"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "kubernetes",
+      "topic": "El modelo de red de Kubernetes",
+      "difficulty": "junior",
+      "scenario": "Un colega dice: 'Kubernetes tiene su propia red mágica'. Otro: 'Los Pods usan NAT como Docker'. Un tercero: 'Cada Pod tiene su IP única en el cluster'.",
+      "question": "¿Cuál es el modelo de red que Kubernetes REQUIERE?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kubernetes exige un modelo FLAT (plano): (1) todo Pod tiene una IP única en toda la red del cluster; (2) todo Pod puede hablar con todo Pod sin NAT (por default); (3) todo Nodo puede hablar con todo Pod sin NAT; (4) la IP que ve el Pod internamente es la misma que ven otros. Este contrato lo implementa el CNI plugin (Calico, Cilium, Flannel, etc.). K8s NO implementa el networking — solo define el contrato.", "correct": true, "why": "Correcto. Este modelo simplifica dramáticamente vs Docker (que usaba NAT por default en modo bridge). Los Pods se comportan como VMs en una LAN plana desde el punto de vista de conectividad. Semantic sencillo: '10.0.5.2 es el Pod X, siempre'. La complejidad se delega al CNI." },
+        { "letter": "B", "text": "K8s usa NAT como Docker.", "correct": false, "why": "Falso. K8s explícitamente evita NAT entre Pods para simplificar. Solo tráfico saliente hacia fuera del cluster puede usar NAT (SNAT masquerade en el nodo)." },
+        { "letter": "C", "text": "Cada Pod comparte IP con su nodo.", "correct": false, "why": "Al revés — cada Pod tiene su PROPIA IP distinta del nodo. Por eso puedes tener 100 Pods en un nodo sin colisión de puertos." },
+        { "letter": "D", "text": "El networking es propietario de Kubernetes.", "correct": false, "why": "K8s solo especifica el contrato. Las implementaciones son PLUGINS (CNI) — Calico, Cilium, Flannel, Weave, AWS VPC CNI, GKE Alias IP, etc. Puedes cambiar de plugin sin cambiar tus manifests." }
+      ],
+      "explanation": "El modelo flat se justifica por simplicidad: sin NAT, los Pods se ven entre sí como en una LAN, y las apps no necesitan saber si están en el mismo nodo o distinto. Este contrato se implementa vía CNI (Container Network Interface) — spec creada por CoreOS + Google + Red Hat, adoptada por K8s. El CNI plugin se ejecuta cuando kubelet arranca un Pod: (1) crea network namespace del Pod; (2) attach interface (veth pair, IPVLAN, XDP); (3) IPAM (asigna IP del pool del nodo o cluster); (4) instala rutas. Distintos plugins usan distintos approaches (overlay VXLAN vs BGP vs eBPF), pero todos cumplen el contrato flat.",
+      "realWorld": "K8s networking model documentado desde 1.0. Google Andromeda (SDN interno). AWS VPC CNI da IPs de la VPC AWS a Pods (integración con AWS security groups). Azure CNI similar. GKE Alias IPs. Estos cloud-native CNIs simplifican integration con la red del cloud pero limitan IPs disponibles (VPC CIDR limits).",
+      "tags": ["network model", "cni", "flat network", "no-nat"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Cluster Networking" }, { "title": "CNI — github.com/containernetworking/cni" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "kubernetes",
+      "topic": "CoreDNS — DNS interno del cluster",
+      "difficulty": "junior",
+      "scenario": "Tu Pod hace `curl http://payments-api` y funciona. ¿Cómo K8s resuelve 'payments-api' a la IP correcta del Service?",
+      "question": "¿Qué es CoreDNS y cómo funciona el DNS en K8s?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CoreDNS es un DNS server que corre como Deployment en kube-system (usualmente 2 réplicas). Kubelet configura /etc/resolv.conf de cada Pod para usar el ClusterIP del Service kube-dns (que apunta a CoreDNS). CoreDNS watchea el API server y responde queries: <svc-name>.<namespace>.svc.cluster.local → ClusterIP del Service. Pods también tienen su record: <pod-ip-dashed>.<namespace>.pod.cluster.local.", "correct": true, "why": "Correcto. CoreDNS reemplazó al viejo kube-dns en K8s 1.13+. Es modular (plugins), rápido, escalable. La resolución sigue el 'search domains' definido en resolv.conf — por eso 'payments-api' funciona sin FQDN si estás en el mismo namespace (busca en <ns>.svc.cluster.local automáticamente)." },
+        { "letter": "B", "text": "K8s no tiene DNS interno — usas IPs.", "correct": false, "why": "Falso. Los Services son la abstracción por DNS name — hardcode IPs es anti-patrón (IPs pueden cambiar entre reinicios de cluster o namespaces recreados)." },
+        { "letter": "C", "text": "El DNS lo provee cada nodo separadamente.", "correct": false, "why": "Confusión con Node Local DNS Cache (nodelocaldns) — es cache PER NODO pero el authoritative es CoreDNS central. NodeLocal reduce latency y load a CoreDNS." },
+        { "letter": "D", "text": "CoreDNS es proprietary de GKE.", "correct": false, "why": "Falso — CoreDNS es CNCF Graduated project, open source, standard en la mayoría de distros K8s." }
+      ],
+      "explanation": "DNS es CRÍTICO en K8s — usar Service names desacopla apps de IPs. FQDN completo: <svc>.<ns>.svc.<cluster-domain> (default cluster.local). Pods tienen resolv.conf con search paths que permiten short names (usar 'db' resuelve 'db.default.svc.cluster.local' si estás en default). CoreDNS plugins: kubernetes (source de records), forward (queries externas), cache, health, prometheus (metrics), errors, log. NodeLocal DNS Cache reduce load significativamente en clusters grandes. Common issues: (1) resolv.conf ndots:5 causa muchas queries (searches todos los suffixes) — problema en apps con conexiones frecuentes; (2) CoreDNS bajo load (unicast) — más réplicas o autoscaler; (3) headless Services: SRV records para descubrir Pods individuales.",
+      "realWorld": "CoreDNS creado por Miek Gieben (originalmente 'skydns'), donated a CNCF. Netflix reportó reducción de latencia con NodeLocal DNS Cache. DNS issues son top causa de incidentes K8s (Airbnb, otros). Cilium introduces DNS-aware policies (allow only DNS to specific domains).",
+      "tags": ["dns", "coredns", "service discovery", "resolv.conf"],
+      "tech": ["kubernetes", "coredns"],
+      "references": [{ "title": "kubernetes.io — DNS for Services and Pods" }, { "title": "coredns.io" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "kubernetes",
+      "topic": "CNI plugins — Calico, Cilium, Flannel",
+      "difficulty": "mid",
+      "scenario": "Necesitas elegir CNI para un cluster nuevo. Requerimientos: NetworkPolicies, alta performance, observability. Tres opciones populares: Flannel, Calico, Cilium.",
+      "question": "¿Qué diferencia hay entre Flannel, Calico y Cilium?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Flannel: el más simple. Overlay VXLAN o host-gw. NO soporta NetworkPolicies (necesitas Calico for policy). Popular en clusters básicos, minikube, dev. Bajo overhead conceptual, poca feature.", "correct": true, "why": "Correcto. Flannel es 'plug and play'. Para prod real con security/observability, insufficient. Muchas empresas comenzaron con Flannel y migraron a Calico/Cilium cuando necesitaron policies." },
+        { "letter": "B", "text": "Calico: production standard. Soporta NetworkPolicies (K8s NetPol + Calico NetPol extendida con selectores más ricos, layer 7 con Envoy). Modes: IPIP tunnel, VXLAN, native BGP (routes directas — mejor performance). Puede reemplazar kube-proxy con eBPF (recent). Amplia adopción.", "correct": true, "why": "Correcto. Calico es el veterano confiable. BGP mode es especialmente potente (routes en el underlying network). Tigera (empresa detrás) ofrece enterprise. Amplia community." },
+        { "letter": "C", "text": "Cilium: basado en eBPF. Data plane extremadamente eficiente (kernel bytecode custom). Features avanzadas: L7 policies (bloquear POST /admin sin auth), transparent encryption (WireGuard/IPsec), Hubble para observability (flujo de red visible). Reemplaza kube-proxy nativamente.", "correct": true, "why": "Correcto. Cilium es 'CNI moderno'. Adoption creciente rápido (Google GKE Dataplane V2 usa Cilium). eBPF elimina iptables overhead. Observability con Hubble es diferenciador. Isovalent (empresa detrás) crecimiento rápido." },
+        { "letter": "D", "text": "Flannel es el más rápido en producción.", "correct": false, "why": "Falso. Overlay VXLAN de Flannel tiene overhead. Cilium/Calico BGP superan performance. Flannel value es simplicidad, no performance." },
+        { "letter": "E", "text": "Todos los CNIs soportan NetworkPolicy por default.", "correct": false, "why": "Falso. Flannel NO soporta NetworkPolicy. Necesitas Calico, Cilium, Weave, Antrea u otros que implementen la spec." }
+      ],
+      "explanation": "CNI landscape: (1) Flannel — simplest, no policy; (2) Calico — production standard, robust policy; (3) Cilium — eBPF, modern, best observability + advanced policies; (4) Weave Net — encryption easy; (5) AWS VPC CNI — AWS-native, Pods use VPC IPs; (6) Azure CNI, Google Alias IPs — cloud-native equivalents; (7) Antrea — VMware-backed. Elección importa mucho: cambiar de CNI mid-flight es DIFÍCIL (a menudo requiere rebuild cluster). Decision factors: features (NetPol, encryption, L7), performance (eBPF > iptables > overlay), operability (troubleshooting, docs), cloud integration (AWS VPC CNI para SG integration). Cilium está tomando el liderazgo del mercado moderno.",
+      "realWorld": "GKE Dataplane V2 = Cilium. AKS supports Cilium. EKS default es AWS VPC CNI (con opción Cilium). Datadog migró a Cilium (blog). Adobe uses Cilium. Isovalent tuvo crecimiento rápido, Cisco acquired 2023.",
+      "tags": ["cni", "flannel", "calico", "cilium", "ebpf"],
+      "tech": ["kubernetes", "cilium", "calico"],
+      "references": [{ "title": "cilium.io" }, { "title": "projectcalico.org" }, { "title": "kubernetes.io — Network Plugins" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "kubernetes",
+      "topic": "NetworkPolicy — firewall entre Pods",
+      "difficulty": "mid",
+      "scenario": "Por default, todo Pod puede hablar con todo Pod (incluida DB). Necesitas: (a) solo Pods de payments-frontend pueden hablar con payments-db; (b) los demás bloqueados.",
+      "question": "¿Qué es NetworkPolicy y cómo se estructura?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "NetworkPolicy es un firewall L3/L4 declarativo por Pod (selector). Selecciona qué Pods se protegen (podSelector) y define reglas Ingress (quién PUEDE entrar) y/o Egress (adónde PUEDE salir). Sin NetworkPolicy = todo permitido (default open). Cuando UNA NetworkPolicy select un Pod, ese Pod pasa a 'default deny' EXCEPTO por lo que la policy permite (deny-by-default per-Pod ONCE selected). Requiere que el CNI implemente NetworkPolicy (Calico, Cilium sí; Flannel no).", "correct": true, "why": "Correcto. La semantic 'default open globalmente + default deny per Pod cuando hay policy que lo selecciona' es no trivial. Best practice: primera policy es 'deny-all' explícito (podSelector: {} sin rules) → convierte namespace a deny-by-default, luego añades allow policies específicas." },
+        { "letter": "B", "text": "NetworkPolicy funciona a nivel L7 (HTTP paths, headers).", "correct": false, "why": "L3/L4 solo (IP, port, protocol). Para L7 policies necesitas Cilium extensions, service mesh (Istio AuthorizationPolicy), o Kubernetes Gateway API." },
+        { "letter": "C", "text": "NetworkPolicy es aplicado por default en K8s.", "correct": false, "why": "Falso. Sin config explícita, todo tráfico intra-cluster está permitido. Debes crear NetworkPolicies para restrict." },
+        { "letter": "D", "text": "NetworkPolicy afecta tráfico saliente al internet automáticamente.", "correct": false, "why": "Debes definir Egress rules específicamente. Sin Egress definido en una policy que ya select el Pod, se bloquea también internet. Cuidado con default deny egress." }
+      ],
+      "explanation": "NetworkPolicy structure: (1) podSelector (qué Pods aplica); (2) policyTypes ([Ingress, Egress]); (3) ingress rules (from: [podSelector, namespaceSelector, ipBlock], ports); (4) egress rules (to: ..., ports). Best practice: (1) primero deny-all como baseline (podSelector: {}); (2) allow ingress específicas (frontend → backend); (3) allow egress necesarias (DNS a kube-system:53, DB egress, external APIs); (4) test con temporary Pod (kubectl run --rm -it debug --image=nicolaka/netshoot). Common issues: DNS bloqueado por egress deny (Pod no puede resolver nada), NodeLocal DNS cache path, egress a metadata service para IAM roles. Advanced: Cilium adds L7 policies (allow HTTP GET /api/v1/*), FQDN policies (allow only *.amazon.com), Kafka topic policies.",
+      "realWorld": "Netflix uses extensive NetworkPolicies (Titus). Airbnb standard: deny-all + explicit allows. AWS docs recommend NetworkPolicies as fundamental security control. Cilium's L7 policies used in Adobe. Common pitfall: dev experience friction (devs can't understand why their new service can't talk).",
+      "tags": ["network-policy", "firewall", "security", "microsegmentation"],
+      "tech": ["kubernetes", "calico", "cilium"],
+      "references": [{ "title": "kubernetes.io — Network Policies" }, { "title": "kubernetes.io — Declare Network Policy tutorial" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "kubernetes",
+      "topic": "Services vs Endpoints vs EndpointSlices",
+      "difficulty": "mid",
+      "scenario": "Un colega dice: 'Service tiene los IPs de Pods'. Otro: 'los IPs están en Endpoints separados'. En clusters grandes hay 'EndpointSlices'.",
+      "question": "¿Cómo se relacionan Service, Endpoints y EndpointSlices?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Service define el ABSTRACT (name, selector, ports). Endpoints (objeto SEPARADO) contiene las IPs+puertos REALES de los Pods que matchean el selector — actualizado por el endpoints-controller cada vez que Pods aparecen/mueren. EndpointSlices (K8s 1.21+) reemplaza Endpoints en clusters grandes: divide en múltiples slices (max 100 endpoints por slice) para reducir carga en API server (updates son más chicos). kube-proxy consume EndpointSlices para instalar reglas iptables/IPVS.", "correct": true, "why": "Correcto. La separación Service/Endpoints es histórica (K8s core desde inicio). EndpointSlices resuelve el scaling problem: un Service con 1000 Pods causaba updates enormes de un Endpoints único cada vez que un Pod cambiaba. Slices de 100 = updates más pequeños." },
+        { "letter": "B", "text": "Service y Endpoints son el mismo objeto con distinto nombre.", "correct": false, "why": "Son objetos separados en la API. Service (kind: Service) y Endpoints (kind: Endpoints) — puedes ver ambos con kubectl." },
+        { "letter": "C", "text": "Endpoints no existen — son campos internos de Service.", "correct": false, "why": "Existen como objetos independientes. kubectl get endpoints muestra los objetos. Esta separación permite 'sin selector' Services + Endpoints manuales." },
+        { "letter": "D", "text": "EndpointSlices reemplaza completamente al Service.", "correct": false, "why": "No — solo reemplaza Endpoints. El Service sigue siendo la abstracción del usuario. Slices es implementation detail." }
+      ],
+      "explanation": "Flow: (1) creas Service con selector app=api; (2) K8s crea Endpoints (o EndpointSlices) matching Pods; (3) endpoints-controller watchea Pods + Services, actualiza Endpoints; (4) kube-proxy en cada nodo watchea Endpoints/EndpointSlices, instala iptables/IPVS rules. Advanced use case: Service SIN selector — creas Endpoints manuales apuntando a IPs externas (ej. base de datos on-premise). K8s trata las IPs como si fueran Pods de este Service — apps se conectan al Service, el traffic va a IPs externas. Migration pattern: durante migración de DB externa a K8s-native, Service sin selector inicialmente, luego con selector.",
+      "realWorld": "EndpointSlices merged 1.17 alpha, 1.21 GA. Reducción de update size 20x en clusters grandes. Google Borg tenía concept similar (endpoint groups). Cloudflare service mesh uses EndpointSlices. Cilium consumes EndpointSlices directly (más eficiente).",
+      "tags": ["service", "endpoints", "endpointslices", "kube-proxy"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — EndpointSlices" }, { "title": "kubernetes.io — Services without selectors" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "kubernetes",
+      "topic": "PersistentVolume vs PersistentVolumeClaim",
+      "difficulty": "mid",
+      "scenario": "Tu Pod necesita storage persistente (base de datos, uploaded files). Un colega dice: 'usa hostPath'. Otro: 'crea un PersistentVolume'. Otro: 'debes usar PVC'.",
+      "question": "¿Cuál es la diferencia entre PV, PVC y por qué existen las dos abstracciones?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PV (PersistentVolume): recurso cluster-scoped que representa un pedazo de storage REAL (disco EBS, disco GCE, NFS share, Ceph volume). Puede ser provisionado manualmente por admin (static) o creado dinámicamente. PVC (PersistentVolumeClaim): namespace-scoped, la app dice 'necesito 20GB tipo SSD'. K8s hace BINDING: match PVC a PV compatible (o crea uno vía StorageClass). El Pod monta el PVC (no el PV directamente). Separación resuelve: dev pide 'necesito storage'; ops (o dynamic provisioner) provee el storage real.", "correct": true, "why": "Correcto. La analogía: PVC es como 'necesito una computadora'; PV es 'ok, aquí tienes esta laptop específica'. Dev no necesita saber el detalle del backend. Ops (o el StorageClass) provee. Distinta ownership + lifecycle (PVs sobreviven al PVC si reclaimPolicy: Retain)." },
+        { "letter": "B", "text": "PV y PVC son sinónimos.", "correct": false, "why": "Distinct objects. PV es storage available; PVC es storage requested. Binding matches them." },
+        { "letter": "C", "text": "hostPath es equivalente a PV.", "correct": false, "why": "hostPath monta directorio del nodo — no persistente frente a reschedule (Pod se mueve a otro nodo, ya no ve la data). Solo para debugging o DaemonSets specific." },
+        { "letter": "D", "text": "PVCs solo funcionan con clouds públicos.", "correct": false, "why": "Funcionan con cualquier storage backend con CSI driver: NFS on-prem, Ceph, Longhorn, OpenEBS, Portworx, etc." }
+      ],
+      "explanation": "Storage abstraction stack: (1) STORAGE BACKEND: real disks (EBS, GCE PD, NFS, Ceph); (2) CSI DRIVER: talks to backend (provision, attach, mount); (3) StorageClass: template for dynamic provisioning ('use gp3 SSD'); (4) PVC: user's storage request; (5) PV: bound resource; (6) Pod uses PVC (volumeMounts). Access modes: ReadWriteOnce (single node — most block storage), ReadOnlyMany, ReadWriteMany (NFS, EFS — multi-node write), ReadWriteOncePod (1.22+, one Pod only). ReclaimPolicy: Retain (keep after PVC deletion — safety), Delete (delete backend disk too), Recycle (deprecated). Best practice: Retain para prod DBs (accidental delete = safety).",
+      "realWorld": "AWS EBS most common in EKS (ReadWriteOnce). EFS for ReadWriteMany. GCE PD for GKE. Ceph via Rook operator. Longhorn (Rancher, CNCF) simple on-prem. Portworx enterprise. StatefulSets consume PVCs via volumeClaimTemplates.",
+      "tags": ["pv", "pvc", "storage", "volume"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Persistent Volumes" }, { "title": "kubernetes.io — Storage Classes" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "kubernetes",
+      "topic": "StorageClass y dynamic provisioning",
+      "difficulty": "mid",
+      "scenario": "Tienes 100 StatefulSets con PVCs. Ops no quiere crear PVs manuales cada vez. Necesitas provisioning automático.",
+      "question": "¿Qué es StorageClass y cómo habilita dynamic provisioning?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "StorageClass es un TEMPLATE que define: (1) provisioner (CSI driver name — ebs.csi.aws.com, disk.csi.azure.com); (2) parameters (type=gp3, iops=3000, encrypted=true); (3) reclaimPolicy; (4) volumeBindingMode (Immediate = provisionar al crear PVC, WaitForFirstConsumer = provisionar cuando Pod schedulea — importante para multi-AZ). Cuando creas un PVC con storageClassName, el CSI driver provisiona un PV automáticamente basado en la StorageClass. Sin StorageClass, static provisioning (ops crea PVs manualmente).", "correct": true, "why": "Correcto. Dynamic provisioning es THE way en clouds. WaitForFirstConsumer es especialmente importante para multi-AZ: sin él, PV se crea en AZ arbitraria, luego el Pod puede no poder schedulearse en esa AZ (mismatch). Con WFC, K8s espera a que Pod schedulée y provisiona en la misma AZ." },
+        { "letter": "B", "text": "StorageClass es un objeto solo para VMware.", "correct": false, "why": "Falso — funciona con AWS EBS, Azure Disk, GCP PD, NFS, Ceph, etc. Cada cloud/backend tiene su CSI driver." },
+        { "letter": "C", "text": "Solo puedes tener una StorageClass por cluster.", "correct": false, "why": "Múltiples — típicamente varias (gp3-fast, hdd-cold, encrypted, etc.). Marca una como default (annotation storageclass.kubernetes.io/is-default-class=true) para PVCs sin especificar." },
+        { "letter": "D", "text": "StorageClass es una alternativa al CSI driver.", "correct": false, "why": "StorageClass USA CSI driver — no lo reemplaza. StorageClass es la config; CSI driver es la implementation." }
+      ],
+      "explanation": "StorageClass parameters vary by driver. AWS EBS ejemplos: type (gp3, io2), iops, throughput, encrypted, kmsKeyId, fsType. Azure Disk: skuName (Premium_LRS), kind. GCE PD: type, replication-type. VolumeBindingMode critical decision: Immediate (default old) vs WaitForFirstConsumer (WFC, recommended for multi-AZ). WFC also matters for topology-aware provisioning (some CSIs support). Retain vs Delete reclaimPolicy: Delete borra disk cuando PVC borrado — puede ser catastrófico (backups + Retain para prod). Advanced: VolumeSnapshotClass para snapshots consistentes de volumes. Multiple StorageClasses: tiered storage (hot vs cold), by team, by SLO.",
+      "realWorld": "AWS EBS CSI driver adds encryption, gp3 support. GKE default StorageClass gp3-based. Datadog stores TSDB data on gp3 EBS. Longhorn provides dynamic block storage on-prem. OpenEBS + StorageClass for hyperconverged storage. Volume snapshots for backup (Velero uses them).",
+      "tags": ["storageclass", "dynamic provisioning", "csi", "volume-binding-mode"],
+      "tech": ["kubernetes", "csi"],
+      "references": [{ "title": "kubernetes.io — Storage Classes" }, { "title": "kubernetes.io — Dynamic Volume Provisioning" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "kubernetes",
+      "topic": "CSI (Container Storage Interface)",
+      "difficulty": "senior",
+      "scenario": "K8s soportaba storage via 'in-tree' drivers (código dentro de K8s). Ahora todo migra a CSI. ¿Por qué?",
+      "question": "¿Qué es CSI y qué problemas resuelve?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CSI = Container Storage Interface. Spec para que storage vendors escriban drivers 'out-of-tree' (fuera del código K8s). Antes: cada storage backend (EBS, PD, NFS) tenía código en el propio kubernetes/kubernetes repo → cada bug fix requería release de K8s. Ahora: driver es su propio proyecto, versión independiente. Vendor puede fix/release sin esperar K8s release cycle.", "correct": true, "why": "Correcto. In-tree era un anti-pattern arquitectural. CSI desacopla vendor code de K8s core. K8s 1.30 eliminó todos los in-tree drivers major (deprecados desde 1.21+). Migración obligatoria: tus in-tree StorageClass configs need convert a CSI driver names." },
+        { "letter": "B", "text": "CSI drivers corren como Pods en el cluster (típicamente StatefulSet + DaemonSet). El controller StatefulSet maneja provisioning (crear disk en cloud); el DaemonSet en cada nodo maneja attach/mount local. Comunica con kubelet vía gRPC over Unix socket.", "correct": true, "why": "Correcto. Arquitectura CSI en dos partes: controller (centralizado) para operaciones de nube; node daemon (per-node) para operaciones locales de mount. Kubelet talks to node daemon via socket." },
+        { "letter": "C", "text": "CSI habilita features avanzadas: snapshots (VolumeSnapshot API), cloning (dataSource: PVC), resize online (expandiendo volumen sin restart), topology-aware (respect zones).", "correct": true, "why": "Correcto. Estas features son universales via CSI spec. Antes eran vendor-specific o hacks. VolumeSnapshotClass permite backup consistente. Resize online support depende del backend." },
+        { "letter": "D", "text": "CSI es proprietary de Red Hat.", "correct": false, "why": "Falso. CSI es spec CNCF, open standard. Múltiples drivers open source (AWS, GCP, Azure, VMware, Ceph, Portworx)." },
+        { "letter": "E", "text": "Con CSI ya no necesitas StorageClass.", "correct": false, "why": "Falso. StorageClass sigue siendo la abstracción para dynamic provisioning. Cambia el provisioner name (ebs.csi.aws.com en lugar de kubernetes.io/aws-ebs)." }
+      ],
+      "explanation": "CSI ecosystem components: (1) External Provisioner (sidecar en driver controller — creates PVs); (2) External Attacher (attach volumes to nodes); (3) External Resizer (online expansion); (4) External Snapshotter (VolumeSnapshot support); (5) Node Driver Registrar (registers driver with kubelet). Drivers well-maintained: ebs-csi-driver (AWS), gcp-compute-persistent-disk-csi-driver, csi-driver-nfs. Migration from in-tree: enable CSIMigration feature gate (default now), install CSI driver, translate old StorageClass. Modern features requiring CSI: online volume resize, snapshots, cloning, generic ephemeral volumes.",
+      "realWorld": "AWS EBS CSI driver replaces in-tree since 1.23. Amazon EKS Add-ons ship CSI. Google GKE has CSI drivers. Rook (Ceph operator) uses CSI. Portworx enterprise CSI. Longhorn CSI for on-prem block storage.",
+      "tags": ["csi", "storage", "driver", "snapshot", "resize"],
+      "tech": ["kubernetes", "csi"],
+      "references": [{ "title": "kubernetes-csi.github.io" }, { "title": "AWS EBS CSI Driver" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "kubernetes",
+      "topic": "StatefulSet volumeClaimTemplates",
+      "difficulty": "senior",
+      "scenario": "Tu StatefulSet 'postgres' tiene 3 réplicas. Cada replica necesita su propio disco de 100GB (no compartido). ¿Cómo?",
+      "question": "¿Cómo funciona volumeClaimTemplates y por qué es diferente a un PVC compartido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "volumeClaimTemplates en el StatefulSet define un template de PVC. Para cada Pod (postgres-0, postgres-1, postgres-2), K8s crea un PVC ÚNICO (data-postgres-0, data-postgres-1, data-postgres-2). Cada PVC es independiente — se provisiona su propio PV (disk de 100GB propio). Los PVCs sobreviven a la muerte del Pod (safety) — postgres-0 muere y renace, obtiene el MISMO PVC (data-postgres-0) con la MISMA data. Cuando escalas de 3 a 5, se crean 2 nuevos PVCs (postgres-3, postgres-4).", "correct": true, "why": "Correcto. Esto es fundamental para stateful. Cada Pod tiene su propio storage no compartido — es el modelo shared-nothing (Kafka, Cassandra, Postgres replicas). Un PVC compartido (single PVC + Deployment + ReadWriteMany) sería scenario distinto (shared filesystem) inapropiado para databases." },
+        { "letter": "B", "text": "volumeClaimTemplates crea un solo PVC compartido por todos los Pods.", "correct": false, "why": "Falso. Crea UN PVC POR POD. Semánticamente 'cada uno tiene su propio disco'." },
+        { "letter": "C", "text": "Los PVCs se eliminan cuando el Pod muere.", "correct": false, "why": "Sobreviven al Pod. Delete del StatefulSet no elimina PVCs (safety). Debes borrar manualmente." },
+        { "letter": "D", "text": "Puedes montar el mismo PVC en varios Pods del StatefulSet.", "correct": false, "why": "Cada Pod tiene su PVC único. Shared filesystem entre replicas de un StatefulSet no es el modelo — sería un anti-pattern (cada Postgres necesita su propio storage)." }
+      ],
+      "explanation": "volumeClaimTemplates naming: <template-name>-<statefulset-name>-<ordinal>. Data flow: (1) creas StatefulSet with volumeClaimTemplates; (2) para cada réplica, K8s crea PVC según template; (3) PVC dispara dynamic provisioning (via StorageClass); (4) PV se crea, se attach al nodo del Pod; (5) Pod mounts al path especificado en volumeMounts. Scale down: PVCs NO se eliminan (safety) — data se conserva. Cuando escalas up de nuevo, el mismo PVC se re-usa (data preservada). Delete StatefulSet: PVCs sobreviven a menos que uses cascade=orphan y luego delete manualmente. Best practice: NEVER delete PVCs de prod databases sin backup verified.",
+      "realWorld": "PostgreSQL Operator (Zalando) uses volumeClaimTemplates. Kafka Strimzi. Elastic Operator. Cassandra Operator. Common ops issue: scale up limit — running out of AZ capacity (WFC binding mode helps). Backups: Velero + VolumeSnapshotClass para snapshot consistent de storage.",
+      "tags": ["statefulset", "volume-claim-templates", "storage", "stateful"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — StatefulSet Basics" }, { "title": "kubernetes.io — Run a Replicated Stateful Application" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "kubernetes",
+      "topic": "Ingress Controllers vs Gateway API",
+      "difficulty": "senior",
+      "scenario": "Ingress ha sido el API para HTTP routing. Ahora K8s promueve Gateway API. Necesitas decidir.",
+      "question": "¿Qué es Gateway API y por qué reemplaza gradualmente Ingress?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ingress limitations: cada Controller (nginx, Traefik, ALB) inventó annotations propietarias para features que Ingress no cubría (rewrite, canary, rate limit, TLS options). Portability rota — cambiar de nginx-ingress a Traefik requiere re-escribir annotations. Ingress es limitado en L7 features (no header matching, no cross-namespace references, no traffic splitting nativo).", "correct": true, "why": "Correcto. Annotations vendor-specific son el pain point real. `nginx.ingress.kubernetes.io/canary-weight` no funciona en Traefik. Portability entre controllers rota." },
+        { "letter": "B", "text": "Gateway API (K8s SIG-Network): API mejor diseñado. Objects: GatewayClass (implementation info), Gateway (LB configuration), HTTPRoute/TCPRoute/GRPCRoute (routing rules). Cross-namespace references (org donde infra team maneja Gateway, app teams manejan Routes). Traffic splitting nativo (canary sin annotations). Header/method matching en spec.", "correct": true, "why": "Correcto. Gateway API es 'Ingress rediseñado con learnings de años'. Reached GA in 1.29 para v1 API. Vendor implementations: Istio, Envoy Gateway, GKE Gateway, nginx Gateway Fabric." },
+        { "letter": "C", "text": "Gateway API mantiene backwards compat con Ingress: puedes correr ambos side-by-side durante migration. Los controllers modernos implementan ambos.", "correct": true, "why": "Correcto. Migration es gradual. Ingress no será removed (yet) — Gateway API es el 'preferred going forward'." },
+        { "letter": "D", "text": "Service Mesh (Istio, Linkerd) también uses Gateway API for ingress/egress control.", "correct": true, "why": "Correcto. Istio adopted Gateway API para reemplazar sus VirtualService/Gateway propietarios. Convergencia hacia standard." },
+        { "letter": "E", "text": "Gateway API es solo para L4 (TCP/UDP), Ingress para L7 (HTTP).", "correct": false, "why": "Falso. Gateway API cubre L4 (TCPRoute, UDPRoute) Y L7 (HTTPRoute, GRPCRoute). Es strictly superset de Ingress." }
+      ],
+      "explanation": "Gateway API design principles: (1) role-oriented (Infrastructure Provider defines GatewayClass, Cluster Operator defines Gateway, App Developer defines HTTPRoute); (2) portable (features en spec, no annotations); (3) expressive (traffic splitting, header matching, request modification); (4) extensible (custom filters). Migration: install Gateway API CRDs, install Gateway-compatible controller (Envoy Gateway, GKE Gateway, nginx Gateway Fabric, Traefik v3, Istio), convert Ingress → HTTPRoute (tools available). Timeline: v1 GA in 1.29 (2024). Adoption growing rapidly.",
+      "realWorld": "GKE Gateway API GA'd 2023. Envoy Gateway 1.0 released 2023. Istio adopting fully. Netflix, Airbnb evaluating. Kubernetes SIG Network maintains. Kong, Solo.io, Tetrate contributing.",
+      "tags": ["gateway-api", "ingress", "routing", "httproute"],
+      "tech": ["kubernetes", "istio", "envoy"],
+      "references": [{ "title": "gateway-api.sigs.k8s.io" }, { "title": "kubernetes.io — Gateway API blog" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "kubernetes",
+      "topic": "Headless Services",
+      "difficulty": "senior",
+      "scenario": "Tu StatefulSet Kafka necesita: cada broker discoverable individualmente (para cluster formation). Regular Service da UNA IP virtual — no sirve.",
+      "question": "¿Qué es un Headless Service y cuándo lo usarías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Headless Service = Service con clusterIP: None. No tiene IP virtual asignada. En vez de resolver a UNA IP (que kube-proxy load-balancea), DNS devuelve DIRECTAMENTE las IPs de todos los Pods matching el selector. Cliente hace su propio load balancing o discovery. Usos: (1) StatefulSets (broker-0.svc.cluster.local, broker-1.svc.cluster.local — direct addressing); (2) apps que hacen client-side LB (gRPC con Round-Robin); (3) descubrimiento de peers en clusters (Elasticsearch, Cassandra).", "correct": true, "why": "Correcto. Sin la abstracción del ClusterIP, el cliente ve la topología real. Para clustering (Kafka broker replicará a broker-2.kafka.default.svc.cluster.local specifically), necesitas addressing directo. Regular Service ocultaría los Pods individuales." },
+        { "letter": "B", "text": "Headless Service es una versión más lenta de ClusterIP.", "correct": false, "why": "No es una cuestión de velocidad — es distinto SEMÁNTICO. Headless expone Pod IPs; ClusterIP hace VIP + LB." },
+        { "letter": "C", "text": "Headless funciona sin CoreDNS.", "correct": false, "why": "Al contrario — Headless depende críticamente de DNS para exponer las Pod IPs vía A records." },
+        { "letter": "D", "text": "Headless Service tiene load balancing built-in.", "correct": false, "why": "No — es el punto. Cliente hace su propio LB. Si necesitas LB del K8s use ClusterIP normal." }
+      ],
+      "explanation": "Headless Service DNS: Regular Service my-svc → 1 A record (ClusterIP). Headless Service my-svc → N A records (uno por Pod). Además, StatefulSet + Headless Service da records por Pod: pod-0.my-svc.namespace.svc.cluster.local. Use cases: (1) Databases con clustering — Postgres replicas, MongoDB, Cassandra; (2) Message brokers — Kafka, RabbitMQ; (3) Distributed cache — Redis Cluster; (4) Coordination — Zookeeper, etcd, Consul; (5) Apps que hacen client-side LB — gRPC con round-robin sobre resolved IPs. NO usar Headless para: apps client-agnostic (que solo quieren '1 endpoint estable'), acceso desde fuera del cluster (Headless no tiene IP externa).",
+      "realWorld": "Kafka (Strimzi), Cassandra, Elasticsearch, Zookeeper all use Headless Services. gRPC applications often use Headless for client-side LB con DNS resolution. Redis Cluster with Sentinel setup. Netflix Genie architecture uses.",
+      "tags": ["headless-service", "statefulset", "dns", "discovery"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Headless Services" }, { "title": "kubernetes.io — StatefulSet Basics" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "kubernetes",
+      "topic": "Network Policy egress y DNS",
+      "difficulty": "senior",
+      "scenario": "Aplicas NetworkPolicy con Egress deny-all. Tus Pods pierden conectividad TOTAL — no pueden ni resolver nombres. Que pasa?",
+      "question": "¿Cuál es el gotcha típico con NetworkPolicy egress y DNS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Al bloquear egress, también bloqueas DNS queries a CoreDNS (kube-system:53). Sin DNS, apps no pueden resolver NADA (ni Services internos, ni externos). Fix: allow egress a kube-system Pods con label k8s-app=kube-dns en puerto UDP/TCP 53. Best practice: allow DNS es la primera regla de cualquier NetworkPolicy egress.", "correct": true, "why": "Correcto. Este es el bug más común de NetworkPolicy. DNS es 'infrastructure' que se olvida. Pattern: (1) primera policy allow DNS a kube-dns; (2) luego policies restrictivas específicas del workload." },
+        { "letter": "B", "text": "NetworkPolicy no afecta DNS — está exempt.", "correct": false, "why": "Falso. NetworkPolicy es L3/L4 — no distingue DNS traffic. Egress deny bloquea también 53/udp." },
+        { "letter": "C", "text": "Los Pods usan un DNS local independiente.", "correct": false, "why": "Con NodeLocal DNS Cache, hay cache en cada nodo — pero forwarding a CoreDNS eventualmente. La policy aún debe permitir DNS." },
+        { "letter": "D", "text": "Sin DNS los Pods usan IPs hardcoded.", "correct": false, "why": "Impractical y anti-pattern. Los Services necesitan DNS names porque IPs cambian." }
+      ],
+      "explanation": "NetworkPolicy egress common gotchas: (1) DNS blocked → allow to kube-system app=kube-dns:53; (2) Kubernetes API server blocked → allow to specific IP or use k8s.io/kubernetes-api label (some CNIs); (3) External APIs blocked → allow to specific IPs or use CIDR (Cilium FQDN policies help); (4) Node metadata service blocked → allow specific IP if needed (IAM roles); (5) Inter-namespace blocked → namespaceSelector needed. Best practice pattern: (1) global NetworkPolicy allowing DNS from any Pod to CoreDNS; (2) per-workload restrictive policies (deny all + allow specific); (3) test with debug Pod (nicolaka/netshoot image has dig, curl, nc). Cilium enterprise features: DNS-aware policies (allow only api.stripe.com resolution).",
+      "realWorld": "Extremely common issue in production. Learnings: Airbnb, Datadog document 'allow DNS' as fundamental rule. Cilium Hubble shows flow visibility making debugging easier. Falco can alert on policy violations.",
+      "tags": ["network-policy", "egress", "dns", "coredns"],
+      "tech": ["kubernetes", "coredns"],
+      "references": [{ "title": "kubernetes.io — Network Policy examples" }, { "title": "Cilium — Layer 7 Policies" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "kubernetes",
+      "topic": "IPAM y Pod IP exhaustion",
+      "difficulty": "senior",
+      "scenario": "En AWS EKS con VPC CNI, tus Pods cannot get IPs. Los nodos están 'full' pero tienen CPU/memory disponibles.",
+      "question": "¿Qué es Pod IP exhaustion y cómo se resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AWS VPC CNI asigna Pods IPs de la VPC. Cada instance type tiene límite de IPs (Elastic Network Interfaces × IPs por ENI). t3.medium: 3 ENIs × 6 IPs = 18 IPs. Cuando llenas: cannot schedulear más Pods aunque haya CPU/RAM. Fixes: (1) usar prefix delegation (IPv4 blocks per ENI, más Pods per node); (2) instance types más grandes; (3) IPv6; (4) alternate CNI (Cilium con overlay usa su propio IPAM no limitado por VPC).", "correct": true, "why": "Correcto. Este es un gotcha classic de AWS VPC CNI. Cada nodo tiene un LÍMITE fijo de Pods por hardware limit de ENIs. Prefix delegation (IPv4 blocks) multiplica capacity 16x pero puede ejercer presión sobre VPC subnet CIDR." },
+        { "letter": "B", "text": "IP exhaustion no ocurre — K8s asigna IPs infinitamente.", "correct": false, "why": "Falso. CNI plugins tienen pools finitos. VPC CIDR limita, ENI limits en AWS, subnet CIDR en cualquier setup." },
+        { "letter": "C", "text": "Fix es aumentar CPU/memoria del nodo.", "correct": false, "why": "No — el limit es IPs, no CPU. Un nodo m5.large con solo 5 Pods usaría los 29 IPs disponibles y no puede schedule más." },
+        { "letter": "D", "text": "Cambiar de CNI no afecta.", "correct": false, "why": "Muy relevante. Cilium con overlay tunneling no está limitado por VPC — usa 100.64.0.0/10 (o similar) para Pods, no consume VPC IPs. Calico BGP mode también flexible." }
+      ],
+      "explanation": "IPAM strategies: (1) VPC-native (AWS VPC CNI, Azure CNI, GKE Alias IPs) — Pods usan IPs de la VPC/VNET; integra con security groups, load balancers; limitado por CIDR y ENI limits; (2) Overlay (Cilium VXLAN, Calico IPIP, Flannel VXLAN) — Pods usan IPs de un pool separado (típicamente 10.244.0.0/16); no limitado por cloud network; overhead de encapsulation; (3) BGP-native (Calico BGP) — routes propagados en underlay; performance nativa; requires network cooperation. Trade-offs: VPC-native mejor security integration; Overlay más flexibility. Prefix delegation (AWS 2021+) 16x Pod capacity per node manteniendo VPC-native. Custom networking con multiple CIDRs también posible.",
+      "realWorld": "Netflix uses AWS VPC CNI con prefix delegation. Airbnb migrated to Cilium partly para IP flexibility. Datadog blog on IPAM strategies. AWS re:Invent talks on VPC CNI performance tuning.",
+      "tags": ["ipam", "vpc-cni", "ip-exhaustion", "prefix-delegation"],
+      "tech": ["kubernetes", "aws", "cilium"],
+      "references": [{ "title": "AWS EKS — VPC CNI Best Practices" }, { "title": "amazon-vpc-cni-k8s" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "kubernetes",
+      "topic": "Access Modes — RWO, ROX, RWX, RWOP",
+      "difficulty": "senior",
+      "scenario": "Tienes: (a) MySQL que necesita disk exclusivo; (b) 5 web servers que comparten archivos uploaded; (c) config file read-only para 100 Pods.",
+      "question": "¿Qué access mode aplica a cada caso y qué backends lo soportan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "ReadWriteOnce (RWO): un solo NODE puede montar read-write. Múltiples Pods en ese node pueden compartir. La mayoría de block storage (EBS, GCE PD, Azure Disk) soporta solo RWO. (a) MySQL: RWO (exclusive disk).", "correct": true, "why": "Correcto. RWO es block storage nativo. Único node mount = un Pod típicamente (o multi-Pod en mismo node). Bases de datos casi siempre RWO." },
+        { "letter": "B", "text": "ReadWriteMany (RWX): múltiples nodes pueden montar read-write simultáneamente. Requiere shared filesystem: NFS, AWS EFS, Azure Files, CephFS, GlusterFS. NO soportado por block storage. (b) shared file uploads: RWX (EFS).", "correct": true, "why": "Correcto. RWX típicamente NFS-like. Trade-off: latency más alta que block, complexity operational, cost más alto. Solo cuando REALMENTE necesitas shared write." },
+        { "letter": "C", "text": "ReadOnlyMany (ROX): múltiples nodes pueden montar read-only. Menos común. (c) config read-only: si tuvieras un shared read-only mount. Suele reemplazarse por ConfigMap (para configs pequeñas).", "correct": true, "why": "Correcto. ROX use case es raro. Configs típicamente ConfigMap; assets estáticos pueden usar ROX o distribuir vía CDN." },
+        { "letter": "D", "text": "ReadWriteOncePod (RWOP, K8s 1.22+ GA): incluso más restrictivo que RWO — solo UN Pod puede montar (no múltiples Pods del mismo node). Prevents accidental double-mount que puede corromper databases.", "correct": true, "why": "Correcto. RWOP añade safety para stateful — evita que dos Pods (posiblemente durante deploy overlap) escriban al mismo disk. Bases de datos deberían usar RWOP para safety extra." },
+        { "letter": "E", "text": "Todos los access modes se soportan por cualquier backend.", "correct": false, "why": "Falso. Backends limitan qué modes soportan. EBS solo RWO. NFS solo RWX/ROX. StorageClass debe documentar accessModes soportados." }
+      ],
+      "explanation": "Access modes son declarations por el usuario (PVC) sobre lo que necesita; backend enforcement es responsibility del CSI driver. Common patterns: (1) Databases (Postgres, MySQL) → RWO or RWOP (safety); (2) Shared uploads / user files → RWX (EFS, NFS, Ceph); (3) Config / read-only assets → ConfigMap or ROX; (4) Big data / analytics → RWX for shared compute. Anti-patterns: usar RWX cuando no lo necesitas (más caro, más slow); asumir que RWO permite multi-Pod en distintos nodes (fallará attach). Debugging: `kubectl describe pvc` muestra events si mount fails; `kubectl describe pv` muestra access modes accepted.",
+      "realWorld": "AWS EFS common for shared uploads in K8s. Airbnb uses NFS for shared storage. Rook Ceph RBD (RWO) y CephFS (RWX). Longhorn RWO/RWX support. AWS FSx for Lustre para HPC workloads (RWX). Portworx supports all modes.",
+      "tags": ["access-modes", "rwo", "rwx", "rox", "storage"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Persistent Volume Access Modes" }, { "title": "kubernetes.io — CSI Volume Types" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "kubernetes",
+      "topic": "Service topology y externalTrafficPolicy",
+      "difficulty": "senior",
+      "scenario": "LoadBalancer Service reparte tráfico externo. Un pod en zone A recibe tráfico enviado a un node en zone C → cross-AZ latency ($costs). Cliente IP se pierde (aparece como node IP).",
+      "question": "¿Qué es externalTrafficPolicy y cómo optimiza el tráfico?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "externalTrafficPolicy: Cluster (default) — cualquier node puede recibir tráfico externo y forwardea a algún Pod (posiblemente en otro node). Load balances evenly pero: (1) pierde client IP (SNAT); (2) extra hop cross-node. externalTrafficPolicy: Local — solo nodes con Pods locales reciben tráfico. Preserva client IP, elimina extra hop, PERO desbalanceado (nodes sin Pods marked unhealthy en LB, si Pods no distribuidos evenly load es desigual). K8s 1.21+ topology aware hints ayudan a optimizar cross-AZ.", "correct": true, "why": "Correcto. Trade-off clásico: balance vs latency + client IP. Local es preferred para apps que necesitan client IP (rate limiting per user IP, geolocation). Cluster es simplest cuando client IP no importa. Topology aware hints (nuevo, GA 1.27+) enrutan preferentemente a Pods del mismo zone." },
+        { "letter": "B", "text": "externalTrafficPolicy afecta solo tráfico interno.", "correct": false, "why": "Al revés — afecta external traffic (NodePort, LoadBalancer). Internal traffic tiene internalTrafficPolicy (K8s 1.22+)." },
+        { "letter": "C", "text": "Cluster es siempre mejor que Local.", "correct": false, "why": "Depende. Cluster loses client IP; Local preserves it. Elección según needs." },
+        { "letter": "D", "text": "externalTrafficPolicy no afecta cross-AZ costs.", "correct": false, "why": "Sí afecta. Local previene cross-AZ hops si LB es AZ-aware. Topology aware hints (K8s feature) más granular." }
+      ],
+      "explanation": "Traffic flow options: (1) etp=Cluster: LB → any node → SNAT → random Pod. Pros: even LB; Cons: extra hop, no client IP. (2) etp=Local: LB → node with local Pod → local Pod. Pros: client IP preserved, no extra hop; Cons: uneven load if Pods not spread evenly, LB health checks fail on nodes without Pods (some LBs handle this via 'externalTrafficPolicy: Local' aware). Topology aware hints/routing: newer mechanism (Kubernetes 1.27 GA as TopologyAwareRoutingHints) that adds hints to EndpointSlices — kube-proxy prefers Pods in same zone. Cost savings cross-AZ traffic. internalTrafficPolicy (1.22+): same concept but for internal Service traffic (Cluster or Local). NodeLocal DNS Cache uses internalTrafficPolicy: Local.",
+      "realWorld": "Booking.com blog on cross-AZ costs — moved to topology hints. Netflix uses Local extensively. AWS ELB with externalTrafficPolicy: Local better UX. GKE topology aware routing GA'd 2023.",
+      "tags": ["external-traffic-policy", "topology", "load-balancing", "client-ip"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Traffic Policies" }, { "title": "kubernetes.io — Topology Aware Routing" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "kubernetes",
+      "topic": "MTU, jumbo frames, y network performance",
+      "difficulty": "senior",
+      "scenario": "Tu CNI (Flannel VXLAN) tiene MTU 1450. Aplicaciones tienen throughput bajo. Descubres que packets grandes se fragmentan.",
+      "question": "¿Cómo afecta el MTU el performance de la red K8s?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MTU (Max Transmission Unit) es el tamaño max de un paquete. Ethernet default 1500. Overlays (VXLAN, Geneve) añaden headers → MTU efectivo del Pod menor (típicamente 1450 para VXLAN, 8950 para clusters jumbo frame). Si tu app sends 1500-byte packets over VXLAN → fragmentation → performance hit. Fix: (1) configurar MTU del Pod ≤ MTU disponible; (2) usar CNI native (Calico BGP, AWS VPC CNI) que no añade overhead; (3) enable jumbo frames end-to-end (MTU 9000) para bulk throughput (Kafka, backups).", "correct": true, "why": "Correcto. Overlay overhead es real — VXLAN adds 50 bytes de headers. En clouds con MTU 1500 (default), Pods over VXLAN operan con MTU 1450. Native CNIs (BGP mode Calico, AWS VPC CNI) no tienen ese overhead. Jumbo frames son ganancia para workloads network-heavy pero requieren support end-to-end." },
+        { "letter": "B", "text": "MTU es irrelevante — K8s lo maneja automáticamente.", "correct": false, "why": "K8s no ajusta MTU. Es config del CNI plugin y underlying network." },
+        { "letter": "C", "text": "Jumbo frames son standard y siempre mejores.", "correct": false, "why": "Requieren support end-to-end (nodes, switches, cloud VPC). Sin support total, hay drops. Cloud VPCs difieren en jumbo frame support." },
+        { "letter": "D", "text": "Overlay CNIs tienen mejor performance que native.", "correct": false, "why": "Al revés — overlays add encapsulation overhead. Native (BGP, VPC CNI) skips it. Overlays are más flexibles pero cost performance." }
+      ],
+      "explanation": "Network performance stack: (1) MTU tuning — Pod MTU should be ≤ underlying MTU minus overlay overhead; (2) CNI choice — Cilium eBPF > iptables kube-proxy; native CNI > overlay for raw throughput; (3) TCP tuning — receive buffer sizes, congestion control (BBR); (4) NIC offloading — TSO/GRO/GSO for large packets; (5) Cross-AZ considerations — cost + latency; (6) RDMA / DPDK / eBPF XDP for extreme cases. Debugging: `ip link show`, `iperf3` for throughput tests, packet captures. Cilium provides host firewall, L7 policies, transparent encryption without major perf loss due to eBPF efficiency. Overlays traditionally slower — Cilium's eBPF minimizes overhead.",
+      "realWorld": "AWS supports 9001 MTU on some instance types. GCP up to 8896. Azure varies. Cilium published perf comparisons showing eBPF advantage. Datadog uses Cilium partly for perf reasons. Netflix HPC workloads use RDMA-enabled instances.",
+      "tags": ["mtu", "network-performance", "overlay", "jumbo-frames"],
+      "tech": ["kubernetes", "cilium"],
+      "references": [{ "title": "cilium.io — CNI Performance Benchmark" }, { "title": "AWS — Network Performance Best Practices" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "kubernetes",
+      "topic": "Ephemeral vs persistent volumes",
+      "difficulty": "senior",
+      "scenario": "Necesitas: (a) tmp scratch space por Pod; (b) shared cache entre containers del mismo Pod; (c) DB persistent; (d) mount ConfigMap como archivos.",
+      "question": "¿Qué tipo de volumen usar en cada caso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "emptyDir para (a) y (b): creado al arrancar el Pod, muerto al morir el Pod. Ideal para scratch space y sharing entre containers del Pod (comparten mismo emptyDir mount). Puede ser en disk del nodo o memoria (medium: Memory) para performance.", "correct": true, "why": "Correcto. emptyDir es un tmp workspace por Pod. Comparte entre containers del Pod (ambos montan la misma path). Nunca sobrevive al Pod. Uso: caches, scratch, communication entre containers." },
+        { "letter": "B", "text": "PVC para (c): storage persistente cross-Pod-lifecycle. Provisionado dinámicamente vía StorageClass. Bases de datos, uploaded files, logs persistidos.", "correct": true, "why": "Correcto. PVC + StorageClass = standard persistente. StatefulSet + volumeClaimTemplates = uno por réplica." },
+        { "letter": "C", "text": "ConfigMap/Secret volume para (d): monta las keys como archivos. Auto-refresh cuando el ConfigMap cambia (aunque puede tardar hasta 60s + timing depends on kubelet). Alternative: env vars pero sin auto-refresh.", "correct": true, "why": "Correcto. Config as files es más flexible (multi-line values, archivos de config). Auto-update es feature útil (cambio en ConfigMap → Pod ve nuevo config) pero apps deben re-read el archivo (o usar reload webhook, tools como Reloader trigger restarts)." },
+        { "letter": "D", "text": "Generic ephemeral volume (K8s 1.23+ GA): PVC-like pero embedded en Pod spec — vive con el Pod, borrado al terminar. Uso: temporal storage que necesita StorageClass features (encrypted, provisioned dynamic) pero no persist across Pods. Ejemplo: temporal ML scratch encrypted.", "correct": true, "why": "Correcto. Generic ephemeral resuelve gap entre emptyDir (simple pero limited) y PVC (persistent pero heavy). CSI-backed ephemeral. Useful pattern para modern workloads con requirements de temporary encrypted storage." },
+        { "letter": "E", "text": "hostPath es la mejor opción para cualquier storage.", "correct": false, "why": "Anti-pattern. hostPath monta directorio del nodo — no persistente frente a Pod reschedule a otro nodo. Solo casos específicos (log agents leyendo /var/log del nodo, DaemonSet system stuff)." }
+      ],
+      "explanation": "Volume types complete: (1) emptyDir — temp, per-Pod; (2) hostPath — node's filesystem (careful!); (3) PVC — persistent, dynamic provisioning; (4) configMap/secret — config as files; (5) generic ephemeral — CSI-backed temp; (6) projected — combine multiple sources (SA token + configMap + secret + downwardAPI); (7) csi — CSI volumes referenced directly; (8) downwardAPI — Pod info as files; (9) local — local disk with node affinity (bare metal). Best practices: (1) prefer emptyDir over hostPath; (2) prefer PVC over local for portability; (3) mount configMaps/secrets as files, not env vars, para large or multi-line; (4) use volume subPath para mount specific keys as specific files.",
+      "realWorld": "emptyDir memory-backed common for high-perf caches. Redis Pods often use emptyDir for AOF backups temp. ConfigMap volumes for nginx configs, prometheus rules. External Secrets Operator writes to Secret which becomes volume. Vault Agent Injector writes secrets to emptyDir shared between containers.",
+      "tags": ["volumes", "emptydir", "pvc", "configmap-volume"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Volumes" }, { "title": "kubernetes.io — Ephemeral Volumes" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "kubernetes",
+      "topic": "Snapshot y backup de PVCs",
+      "difficulty": "staff",
+      "scenario": "Tienes 20 databases en K8s con PVCs. Necesitas: (1) snapshots regulares consistent; (2) restore-testable; (3) portable entre clusters.",
+      "question": "¿Cómo implementar backup y restore de volumes en K8s?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "VolumeSnapshot API (K8s stable): snapshot puntual de un PVC via CSI. Requiere CSI driver que soporte snapshots. VolumeSnapshotClass define parameters. Restore: crear PVC con dataSource: VolumeSnapshot. Para app-consistent: pre-snapshot hooks (freeze DB, flush buffers) + snapshot + post-snapshot hooks. Herramientas: Velero (backup+restore K8s incluyendo objects + PV data via snapshots), Kasten K10 (comercial), Stash, Portworx.", "correct": true, "why": "Correcto. VolumeSnapshot es la abstracción K8s-native. Velero orchestra it: backups incluye objetos + snapshots de volumes. Restore recrea objects y crea PVCs desde snapshots. Cross-cluster requires object storage (S3, GCS) + compatible CSI drivers en destination." },
+        { "letter": "B", "text": "Copiar los datos del PVC a otro PVC con kubectl cp.", "correct": false, "why": "Anti-pattern. kubectl cp es for debugging small files, no backups. No consistent, no schedule, no restore workflow." },
+        { "letter": "C", "text": "K8s hace backups automáticamente.", "correct": false, "why": "Falso. K8s no hace backups. Es responsabilidad ops. Managed K8s (GKE, EKS) puede tener backup features integrated (GKE Backup for Kubernetes, AWS Backup) pero configuración explícita." },
+        { "letter": "D", "text": "Solo snapshots del cloud EBS/PD son suficientes.", "correct": false, "why": "Los snapshots del disk sin coordinación con app pueden ser inconsistent (DB en middle of write). App-consistent requires quiesce (fsfreeze, pg_start_backup, etc.)." }
+      ],
+      "explanation": "Backup landscape: (1) crash-consistent snapshots — bit-level snapshot of disk state, DB puede recover from journal. Simple but risky para complex apps; (2) app-consistent — pre-snapshot hook quiesces DB, snapshot, post-hook resumes. Higher quality, needs coordination; (3) logical backups — pg_dump, mysqldump, mongodump. Slower but portable and simpler restore; (4) hybrid — logical + snapshot for point-in-time recovery. Velero + CSI snapshot es popular. Kasten K10 enterprise-grade. StatefulSet + Operator (Postgres Operator) may handle backups internally with WAL archiving to S3. Best practice: TEST RESTORES REGULARLY. Un backup sin restore verified es fake safety.",
+      "realWorld": "Velero (VMware, open source) leader. Kasten K10 acquired by Veeam. Portworx PX-Backup. Zalando Postgres Operator archives WAL to S3. Airbnb + Netflix have custom backup pipelines. Famous incidents: backup that couldn't restore during real crisis.",
+      "tags": ["backup", "restore", "volume-snapshot", "velero"],
+      "tech": ["kubernetes", "velero", "csi"],
+      "references": [{ "title": "kubernetes.io — Volume Snapshots" }, { "title": "velero.io" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "kubernetes",
+      "topic": "Service Mesh — cuándo aplica",
+      "difficulty": "staff",
+      "scenario": "Tu empresa tiene 50 microservicios. Necesitas: mTLS entre servicios, observability de tráfico, canary releases, circuit breaking. Un colega propone Istio.",
+      "question": "¿Qué es Service Mesh y cuándo justifica su complejidad?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Service Mesh (Istio, Linkerd, Consul Connect): capa de infraestructura entre servicios que provee mTLS, traffic management, observability sin cambio de código. Data plane (sidecar proxies como Envoy inyectados en cada Pod) + control plane (config, cert distribution). Features: mTLS automático, retries, timeouts, circuit breaking, canary/A-B, distributed tracing.", "correct": true, "why": "Correcto. Sidecar proxy intercepta all traffic in/out del Pod → adds features sin cambio de app. mTLS entre services sin que apps sepan. Circuit breakers y retries centralizados." },
+        { "letter": "B", "text": "Trade-off: COMPLEJIDAD significativa. Sidecar por Pod añade latency (1-5ms), memoria (~50-100MB por sidecar × N Pods), CPU. Control plane a operar. Debugging más difícil (más piezas). Vale la pena solo cuando tenés muchos microservicios donde mTLS + resilience + traffic control son requisitos.", "correct": true, "why": "Correcto. Service Mesh no es free. Airbnb, Uber han publicado sobre complejidad de operar Istio en scale. Overhead real. Learning curve steep. Antes de adoptarlo, evaluar si menos servicios o alternative solutions bastan." },
+        { "letter": "C", "text": "Ambient Mesh (Istio 1.20+): elimina sidecars por node-level proxy (ztunnel) + waypoints. Reduce overhead (menos proxies) y complexity (no sidecar injection). Trade-off: shared blast radius (node proxy issue affects all Pods on node).", "correct": true, "why": "Correcto. Ambient es la respuesta a la queja sidecar-heavy. Menor overhead pero less isolation. Newer, less battle-tested pero promising direction." },
+        { "letter": "D", "text": "Linkerd es la alternativa más ligera a Istio: Rust proxy (linkerd2-proxy) más liviano que Envoy. Menos features pero simpler operation. Preferred cuando quieres mTLS + basic observability sin toda la ceremonia de Istio.", "correct": true, "why": "Correcto. Linkerd (Buoyant, CNCF Graduated) is 'simplicity-first' mesh. Great for teams that want core mesh benefits without Istio's operational overhead." },
+        { "letter": "E", "text": "Service Mesh es obligatorio para microservicios.", "correct": false, "why": "Falso. Google engineered Borg + Stubby (RPC) sin sidecar mesh. Many companies run microservices con NetworkPolicies + language libraries (Netflix Hystrix pattern). Service Mesh es una option, no requirement." }
+      ],
+      "explanation": "Service Mesh decision framework: (1) # services (100+ suggests need); (2) polyglot (más lenguajes = más argument para mesh vs libraries per language); (3) mTLS compliance requirements (regulatory); (4) canary/traffic split needs; (5) observability needs (distributed tracing native). Alternatives without mesh: (a) libraries per language (Netflix, Twitter); (b) Kubernetes NetworkPolicy + SPIFFE/SPIRE for identity; (c) L7 features via Ingress Controller; (d) Ambient Mesh (Istio, less overhead). Costs: latency (5-20ms extra), memory per Pod, learning curve, upgrade complexity, debugging harder. Adoption pattern: start with subset of services, evaluate. Don't roll-out big-bang.",
+      "realWorld": "Istio very high complexity — Uber publicly discussed challenges. Linkerd simpler, Buoyant survey shows growth. GKE Anthos Service Mesh (managed Istio). Cilium Service Mesh (eBPF-based, no sidecar). Netflix, Twitter run without traditional mesh using libraries.",
+      "tags": ["service-mesh", "istio", "linkerd", "mtls", "sidecar"],
+      "tech": ["kubernetes", "istio", "linkerd", "envoy"],
+      "references": [{ "title": "istio.io" }, { "title": "linkerd.io" }, { "title": "cilium.io/blog/service-mesh" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "kubernetes",
+      "topic": "Multi-cluster networking y federation",
+      "difficulty": "staff",
+      "scenario": "Tu empresa opera 5 clusters K8s (US-East, US-West, EU-West, on-prem). Necesitas: (1) services discoverable cross-cluster; (2) failover; (3) mTLS entre clusters; (4) unified observability.",
+      "question": "¿Cuáles son las estrategias para multi-cluster K8s?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Multi-cluster service mesh: Istio multi-primary or multi-cluster, Linkerd multi-cluster. Servicios de cluster A pueden llamar servicios de cluster B con mTLS + failover. Complejidad alta pero features poderosas.", "correct": true, "why": "Correcto. Istio multi-cluster gateways permite cross-cluster service discovery + mTLS. Traffic entre clusters via ingress gateways. Complejo pero maduro." },
+        { "letter": "B", "text": "Submariner (CNCF): connectivity L3/L4 entre clusters. Túneles entre clusters, service discovery via Multi-cluster Services API. Menos rich que service mesh pero simpler.", "correct": true, "why": "Correcto. Submariner (originalmente Red Hat) provee capa network cross-cluster. Buen for basic scenarios sin needing service mesh full." },
+        { "letter": "C", "text": "Cilium Cluster Mesh: cross-cluster con eBPF. Pods en cluster A pueden alcanzar Services en cluster B por nombre. mTLS opcional. Performance native (no overlays adicionales).", "correct": true, "why": "Correcto. Cilium Cluster Mesh popular reciente. Performance excelente. Uses BGP or direct IPAM. Fit para performance-sensitive multi-cluster." },
+        { "letter": "D", "text": "External DNS + GSLB (global load balancing): approach más simple — cada cluster expone Services vía Ingress + external DNS entries. Failover via DNS o cloud LB. No cross-cluster service discovery K8s-native pero funciona.", "correct": true, "why": "Correcto. Sometimes simpler wins. DNS-based routing + healthchecks es battle-tested. Airbnb usó ese approach para años. External DNS operator sync DNS entries automáticamente." },
+        { "letter": "E", "text": "KubeFed (Kubernetes Federation v1/v2) es la solución current.", "correct": false, "why": "KubeFed largely abandoned. v1 deprecated. v2 (KubeFed2) never gained wide adoption. Modern approach: multi-cluster mesh (Istio, Cilium) or Submariner. Federation as approach shifted." }
+      ],
+      "explanation": "Multi-cluster patterns: (1) HA/DR — replicate workloads across clusters for failover; (2) Geographic — clusters in different regions for latency + compliance; (3) Hybrid — cloud + on-prem; (4) Bursting — extend to cloud during peaks. Technologies: (a) Service mesh cross-cluster (Istio, Linkerd) — most features, most complex; (b) Submariner — L3/L4 focus; (c) Cilium Cluster Mesh — eBPF-based; (d) DNS + GSLB — simplest; (e) Managed solutions (GKE Multi-cluster, EKS + AWS Cloud Map). Considerations: (1) which resource types federate (Services, Deployments, ConfigMaps); (2) how sync (push vs pull, ArgoCD ApplicationSets); (3) certificate identity (SPIFFE across clusters); (4) observability aggregation.",
+      "realWorld": "Airbnb ha corrido multi-cluster durante años. Netflix multi-region. Datadog multi-cluster with own tooling. Google GKE has Multi-cluster Ingress, Multi-cluster Services API. Fleet management: Rancher, ArgoCD ApplicationSets. Cross-cluster mesh: Istio, Cilium.",
+      "tags": ["multi-cluster", "federation", "istio", "cilium-mesh", "submariner"],
+      "tech": ["kubernetes", "istio", "cilium", "submariner"],
+      "references": [{ "title": "Cilium Cluster Mesh" }, { "title": "istio.io/latest/docs/setup/install/multicluster" }, { "title": "submariner.io" }]
+    }
+  ]
+}

@@ -1,0 +1,466 @@
+{
+  "id": "ai-programming-sim-02-rag-embeddings-chunking",
+  "trackId": "ai-programming",
+  "order": 2,
+  "title": "Simulacro 02 — RAG parte 1: embeddings, chunking y estrategias de indexación",
+  "focus": "Qué es un embedding, cómo se elige un modelo de embedding (dimensiones, coste, calidad), estrategias de chunking (fixed, sentence, semantic, hierarchical), preprocesamiento, dedup, metadata, actualización incremental.",
+  "areaCoverage": ["context-engineering"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "context-engineering",
+      "topic": "Qué es un embedding en la práctica",
+      "difficulty": "junior",
+      "scenario": "Un compañero jr te pregunta: 'Estoy haciendo mi primer RAG. Le paso mi texto a `openai.embeddings.create()` y me devuelve un array de 1536 números decimales. ¿Qué se supone que son esos números y para qué sirven exactamente?'",
+      "question": "¿Cuál es la explicación técnica correcta que le darías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Son un hash del texto para deduplicación rápida.", "correct": false, "why": "Un hash da valores distintos para textos casi idénticos. Los embeddings hacen lo contrario: textos con SIGNIFICADO parecido dan vectores parecidos, aunque las palabras sean distintas." },
+        { "letter": "B", "text": "Es una representación densa del texto en un espacio vectorial de N dimensiones donde la CERCANÍA (típicamente coseno) captura similitud semántica. 'Rey' y 'monarca' quedan cerca; 'rey' y 'plátano' quedan lejos. Sirve para buscar por SIGNIFICADO en vez de por palabras exactas — base de RAG, semantic search, clustering, deduplicación semántica.", "correct": true, "why": "Correcto. Los embeddings mapean texto a un vector aprendido durante el entrenamiento del modelo de embedding. La geometría del espacio codifica semántica. Es lo que permite buscar 'devolución de dinero' y encontrar chunks que dicen 'reembolso'." },
+        { "letter": "C", "text": "Son los tokens del texto convertidos a números para pasarlos al LLM.", "correct": false, "why": "Confusión típica. Tokens → IDs (tokenización) es cosa aparte. Embeddings salen de un modelo dedicado (encoder) y no se pasan al LLM directamente en RAG — se usan para BUSCAR el chunk relevante." },
+        { "letter": "D", "text": "Es un modelo probabilístico del siguiente token en el texto.", "correct": false, "why": "Eso es lo que hace un LLM autoregresivo. Un embedding es una representación estática (un solo vector) del texto completo, no una distribución sobre siguientes tokens." }
+      ],
+      "explanation": "Un embedding = función encoder(texto) → vector ∈ R^d con la propiedad clave: si dos textos significan cosas parecidas, sus vectores están cerca según alguna métrica (típicamente coseno). El entrenamiento típico usa contrastive learning: acercar pares 'query-answer' relacionados, alejar negativos aleatorios. Modelos usados en RAG: bi-encoders (una torre para query, una para doc, o compartida). Se contrapone a cross-encoders que puntúan pares (query, doc) juntos — más precisos pero más lentos, útiles como rerankers.",
+      "realWorld": "OpenAI popularizó text-embedding-ada-002 en 2022; en enero 2024 lanzó text-embedding-3-small y -large con 'Matryoshka embeddings' (truncables sin reentrenar). Cohere Embed v3, Voyage AI, BGE (BAAI), y Nomic han competido publicando modelos abiertos con calidad comparable o superior en benchmarks MTEB.",
+      "tags": ["embeddings", "semantic search", "RAG basics", "vector"],
+      "tech": ["OpenAI embeddings", "Cohere Embed", "BGE", "Voyage"],
+      "references": [
+        { "title": "OpenAI — New embedding models", "url": "https://openai.com/index/new-embedding-models-and-api-updates/" },
+        { "title": "MTEB Leaderboard (Massive Text Embedding Benchmark)", "url": "https://huggingface.co/spaces/mteb/leaderboard" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "context-engineering",
+      "topic": "Coseno vs euclidiana vs dot product",
+      "difficulty": "junior",
+      "scenario": "Estás configurando Pinecone y te pregunta qué distance metric usar: cosine, euclidean, o dotproduct. Un compañero dice 'siempre coseno, es el estándar'. Otro contra-argumenta 'depende del modelo de embedding'.",
+      "question": "¿Cuál es la explicación práctica correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Todas dan resultados idénticos siempre; es solo terminología.", "correct": false, "why": "Falso. Ordenan resultados igual solo si los vectores están normalizados (norma L2 = 1). Sin normalización, euclidiana y dot product cambian el orden vs coseno." },
+        { "letter": "B", "text": "Depende del modelo: si los embeddings vienen L2-NORMALIZADOS (OpenAI, la mayoría de sentence-transformers), coseno = dot product y ambos son óptimos. Si no están normalizados, coseno es más seguro (invariante a magnitud). Euclidiana rara vez es la mejor opción en embeddings semánticos porque penaliza magnitud. Regla mental: (a) mira docs del modelo — si dice 'normalized' usa dot product (más rápido), (b) si no, coseno, (c) evita euclidiana salvo casos específicos.", "correct": true, "why": "Correcto. Muchos modelos modernos exponen vectores ya normalizados. En ese caso dot product es idéntico a coseno pero más rápido (no requiere calcular norma cada vez). Elegir bien es un free performance win." },
+        { "letter": "C", "text": "Euclidiana es siempre superior porque respeta la geometría real del espacio.", "correct": false, "why": "En espacios de embeddings de alta dimensión, la magnitud del vector rara vez codifica algo útil semánticamente. Penalizarla (euclidiana) empeora la búsqueda." },
+        { "letter": "D", "text": "Cambiar la metric requiere reentrenar el modelo de embedding.", "correct": false, "why": "No — la metric se elige en la vector DB, no en el modelo. Puedes probar las tres sobre el mismo índice si tu DB lo permite." }
+      ],
+      "explanation": "Coseno: mide ángulo entre vectores (∈ [-1, 1]). Robusto a magnitud. Dot product: A·B = |A||B|cos(θ). Si |A|=|B|=1, es idéntico a coseno pero más rápido. Euclidiana: √Σ(a_i - b_i)². Sensible a magnitud. En vectores normalizados, ordena igual que coseno (existe relación matemática) pero la mayoría de DBs lo optimizan por separado. Recomendación práctica: usa dot product con vectores normalizados. OpenAI, Cohere, BGE, muchos de sentence-transformers vienen L2-normalizados. Verifica en docs y con `numpy.linalg.norm(vec)` antes de decidir.",
+      "realWorld": "Pinecone documenta explícitamente que si sabes que tus vectores están normalizados, uses `dotproduct` en lugar de `cosine` — es más rápido. En benchmarks internos de Weaviate y Qdrant, el cambio ahorra 10-30% de latencia en queries.",
+      "tags": ["similarity metrics", "cosine", "dot product", "normalization"],
+      "tech": ["Pinecone", "Weaviate", "Qdrant"],
+      "references": [
+        { "title": "Pinecone — Distance metrics", "url": "https://docs.pinecone.io/guides/indexes/understanding-indexes#distance-metrics" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "context-engineering",
+      "topic": "Elegir modelo de embedding — trade-offs",
+      "difficulty": "mid",
+      "scenario": "Startup B2B con: (1) 10 millones de docs a indexar, (2) queries en español + inglés, (3) presupuesto ajustado, (4) latencia importante en query (P95 < 500ms). Un compañero propone 'usar OpenAI text-embedding-3-large con 3072 dimensiones por defecto porque es el más preciso'.",
+      "question": "¿Qué contrapunto técnico y económico haces?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Análisis: (1) 3072 dims = 12KB/vector = 120GB solo para vectores (indexación pesada). (2) Coste de embedding inicial: 10M docs * ~500 tokens = 5B tokens * $0.13/MTok = ~$650 (asumible pero no gratis; agregar re-index futuros multiplica). (3) OpenAI-3-large permite TRUNCAR dimensiones (Matryoshka) — puedes usar 512 o 1024 con calidad casi igual y 3-6x menos storage. (4) Considerar alternativas: multilingual-e5-large, BGE-M3 (multilingüe fuerte), Cohere Embed v3 multilingual, Voyage v3. Muchas veces igual/mejor calidad, más baratas o self-hosted. (5) Benchmarking en TU dominio (español) es crítico — MTEB es una guía pero no tu ground truth.", "correct": true, "why": "Correcto. Análisis maduro: coste, storage, latencia, multilingüismo, y sobre todo BENCHMARK EN TU DOMINIO. No hay 'el mejor modelo' universal para embeddings." },
+        { "letter": "B", "text": "3072 dimensiones siempre son mejores; no hay razón para bajar.", "correct": false, "why": "Falso. Matryoshka embeddings están diseñados justo para reducir sin reentrenar. Ganas storage y velocidad con degradación mínima." },
+        { "letter": "C", "text": "OpenAI es lo único usable en producción; los open-source son inmaduros.", "correct": false, "why": "BGE, E5, Nomic, Jina, Voyage compiten en calidad con OpenAI y en muchos benchmarks los superan. Self-hosting reduce coste variable a fijo, útil a volumen." },
+        { "letter": "D", "text": "En español los embeddings no funcionan bien; usar solo BM25.", "correct": false, "why": "Modelos multilingües modernos (E5-multilingual, BGE-M3, Cohere Embed v3 multilingual) funcionan muy bien en español. BM25 es un buen complemento (hybrid search) pero no reemplazo." }
+      ],
+      "explanation": "Framework para elegir embedding model: (1) IDIOMAS — verifica soporte real, no promesas. (2) DIMENSIONES — más ≠ mejor; considera Matryoshka. (3) COSTE — inicial (indexación 10M docs) + operativo (re-index, updates). (4) LATENCIA — query embedding también cuenta, especialmente en chat. (5) PRIVACIDAD — self-host vs API. (6) LICENCIA — Apache 2, MIT, propietario. (7) BENCHMARK PROPIO — construye eval set de 200-500 queries con ground truth y compara recall@10 real. Modelos 2024-2026 relevantes: OpenAI text-embedding-3, Cohere Embed v3/v4, Voyage v3, BGE-M3/large, NV-Embed, Jina v3, Nomic embed v2, Google gemini-embedding.",
+      "realWorld": "Anthropic Contextual Retrieval (2024) mostró que la elección de embedding + reranker + contextual prefix mejora recall más que subir dimensiones. Notion migró parte de embeddings de OpenAI a Voyage AI reportando mejor recall en su dominio a menor coste.",
+      "tags": ["embedding models", "cost", "multilingual", "Matryoshka"],
+      "tech": ["OpenAI embeddings", "Cohere Embed", "BGE-M3", "Voyage", "E5"],
+      "references": [
+        { "title": "OpenAI — text-embedding-3 (Matryoshka)", "url": "https://openai.com/index/new-embedding-models-and-api-updates/" },
+        { "title": "BGE-M3: One-For-All Multi-lingual Multi-functional Multi-granularity Text Embeddings", "url": "https://arxiv.org/abs/2402.03216" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "context-engineering",
+      "topic": "Chunking fixed vs sentence vs semantic",
+      "difficulty": "mid",
+      "scenario": "Un compañero implementó chunking así: `[text[i:i+1000] for i in range(0, len(text), 1000)]` — trozos de 1000 caracteres sin overlap. La recall del sistema RAG es baja. Muchas respuestas del LLM son 'no encuentro esa información' cuando el corpus SÍ la tiene.",
+      "question": "¿Cuáles son los DOS problemas principales de ese chunking y qué estrategia mejora?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Corta a mitad de oración/párrafo, rompiendo unidades semánticas. Un dato relevante puede quedar partido entre dos chunks y ninguno recuperarse. Solución: chunking por SENTENCE o RECURSIVE (langchain RecursiveCharacterTextSplitter) que respeta separadores naturales.", "correct": true, "why": "Correcto. Fixed-size chunking ignora estructura del texto. Un chunk que termina a la mitad de '...la contraseña se cambia en la sección de settings' pierde información crítica en el corte." },
+        { "letter": "B", "text": "Sin overlap, un concepto que aparece al final de un chunk y su explicación en el siguiente no se relacionan al buscar. Solución: overlap de 10-20% (ej. 150-200 chars sobre 1000).", "correct": true, "why": "Correcto. Overlap es la mitigación estándar para no perder contexto en fronteras. El coste extra de storage es menor y la mejora de recall notable." },
+        { "letter": "C", "text": "El tamaño 1000 es demasiado pequeño; siempre chunks de 5000+.", "correct": false, "why": "Al contrario: chunks demasiado grandes diluyen el embedding (mezcla muchos temas → vector poco específico). El sweet spot típico está entre 200-800 tokens según dominio." },
+        { "letter": "D", "text": "Faltan metadata (title, section, doc_id) en cada chunk para filtrar y re-rankear.", "correct": false, "why": "Es un problema real pero secundario al chunking en sí. Mejora recall+precision cuando se usa con hybrid search, pero no es la causa del fallo básico descrito." },
+        { "letter": "E", "text": "El corpus tiene demasiados documentos; hay que reducirlo.", "correct": false, "why": "Reducir el corpus no es solución técnica al chunking. El problema es cómo se preprocesa, no cuánto se preprocesa." }
+      ],
+      "explanation": "Chunking estrategias (de simple a compleja): (1) Fixed-size (por chars/tokens) — barato pero rompe semántica. (2) Recursive character splitter — intenta separar por \\n\\n, luego \\n, luego . , luego ' '. LangChain RecursiveCharacterTextSplitter es el default recomendado. (3) Sentence-based — usa NLTK, spaCy para segmentar en oraciones y agrupar hasta tamaño target. (4) Semantic chunking (Kamradt 2024) — mide similitud entre oraciones vecinas y corta en 'valles' semánticos. (5) Hierarchical/parent-child — indexa chunks pequeños para búsqueda, devuelve el chunk padre grande para el LLM. (6) Structural — respeta headings de Markdown/HTML, secciones. Casi siempre: overlap 10-20% + respeto de estructura + metadata rica en cada chunk = base sólida.",
+      "realWorld": "LangChain, LlamaIndex, y Haystack todos exponen recursive splitters como default. En el blogpost de Anthropic Contextual Retrieval, mostraron que combinar chunking sensato + contextual prefix + hybrid + reranking reduce el retrieval failure rate del 5.7% al 1.9% (67% reducción).",
+      "tags": ["chunking", "text splitting", "overlap", "retrieval"],
+      "tech": ["LangChain", "LlamaIndex", "RecursiveCharacterTextSplitter"],
+      "references": [
+        { "title": "LangChain — Text splitters", "url": "https://python.langchain.com/docs/concepts/text_splitters/" },
+        { "title": "Greg Kamradt — 5 Levels of Text Splitting", "url": "https://github.com/FullStackRetrieval-com/RetrievalTutorials" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "context-engineering",
+      "topic": "Tamaño de chunk — sweet spot",
+      "difficulty": "mid",
+      "scenario": "En A/B testing de un RAG legal, mides recall@5 con distintos tamaños de chunk. Chunks de 100 tokens: recall 45%. 400 tokens: recall 71%. 1200 tokens: recall 68%. 3000 tokens: recall 52%. Un compañero propone 'siempre 400 tokens porque ganó'.",
+      "question": "¿Qué análisis y recomendación matizada darías?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Existe un sweet spot y varía por dominio/tipo de contenido. Explicación: (1) chunks muy chicos (100) fragmentan contexto — el embedding no captura el concepto completo. (2) muy grandes (3000+) diluyen — el vector es la suma de muchos temas, similitud degradada. (3) Sweet spot típico: 300-800 tokens para prosa técnica, 500-1500 para código. (4) El resultado depende del tipo de query: queries factoides funcionan mejor con chunks chicos; queries que requieren razonar múltiples párrafos, con chunks más grandes. (5) Patrón avanzado: parent-child chunking (indexa chunks pequeños para buscar, devuelve chunk grande para LLM) — combina lo mejor.", "correct": true, "why": "Correcto. Hay ganador local en TU test, pero recomendar '400 siempre' ignora que el óptimo varía por corpus, tipo de query, y modelo de embedding usado." },
+        { "letter": "B", "text": "El resultado es aleatorio; el chunk size no influye significativamente.", "correct": false, "why": "Falso. La diferencia 45% vs 71% muestra que sí influye significativamente." },
+        { "letter": "C", "text": "Chunks más pequeños siempre mejores porque el embedding es más específico.", "correct": false, "why": "El resultado 45% con chunks de 100 tokens desmiente esto en el propio experimento." },
+        { "letter": "D", "text": "Hay que subir dimensiones del embedding para compensar chunks grandes.", "correct": false, "why": "Dimensiones más altas no compensan el problema de 'un vector representa muchos temas'. El vector sigue promediando semántica." }
+      ],
+      "explanation": "Chunk size trade-off: (1) más chico = mejor precisión de embedding + peor cobertura por chunk (necesitas top-K más grande). (2) más grande = mejor cobertura + peor precisión (dilución). Sweet spot depende de: modelo de embedding (context length que respeta), tipo de contenido (código vs prosa vs listados), tipo de query (factoide vs conceptual), tamaño de corpus. Metodología correcta: (a) construir eval set con 100+ queries + ground truth chunks, (b) hacer sweep de tamaños (100, 200, 400, 800, 1600 tokens), (c) medir recall@K y NDCG, (d) elegir según ese resultado. Patrón parent-child: indexar chunks chicos (mejor búsqueda) + devolver chunk padre grande al LLM (más contexto para razonar) es hoy la práctica recomendada en LlamaIndex y muchas apps RAG serias.",
+      "realWorld": "OpenAI Cookbook (2024) publicó experimentos empíricos: chunks de 400-500 tokens con overlap 25% ganaron en su dataset legal. Pero apuntaron explícitamente que en otros dominios (medicina, código) el óptimo fue distinto. La lección: no copies parámetros, mide.",
+      "tags": ["chunk size", "trade-off", "recall", "empirical tuning"],
+      "tech": ["LangChain", "LlamaIndex", "evaluation"],
+      "references": [
+        { "title": "OpenAI Cookbook — Question answering with a retrieval-augmented QA chain", "url": "https://cookbook.openai.com/examples/question_answering_using_embeddings" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "context-engineering",
+      "topic": "Semantic chunking — cuándo vale la pena",
+      "difficulty": "senior",
+      "scenario": "Un compañero senior propone reemplazar el recursive chunking por semantic chunking (calcula embeddings de cada oración, mide similitud con la vecina, corta donde hay un 'valle'). Argumenta 'da chunks alineados con la semántica'. El coste de indexación se triplica.",
+      "question": "¿Cuál es el análisis pragmático correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Semantic chunking a menudo NO justifica su coste: (1) benchmarks públicos (Chroma Research, LangChain) muestran mejoras marginales sobre recursive + overlap bien tunado. (2) 3x coste de indexación + 3x latencia si haces re-index frecuente. (3) Depende del tipo de contenido: prosa continua con transiciones suaves lo aprovecha; texto muy estructurado (docs técnicas, código) casi no. Recomendación: usar recursive splitter tuneado + parent-child + metadata como default. Considerar semantic solo cuando (a) tienes evidencia empírica de mejora en TU dominio, (b) el coste es asumible, (c) NO hay estructura explícita útil (headings, sections).", "correct": true, "why": "Correcto. Semantic chunking suena impresionante pero en la práctica el diferencial suele ser <5% en recall y costoso. Mejora más el ROI: contextual retrieval, mejor reranker, o hybrid search." },
+        { "letter": "B", "text": "Siempre mejor semantic chunking; el coste es despreciable.", "correct": false, "why": "3x coste NO es despreciable a escala. Y la mejora es marginal para la mayoría de corpus." },
+        { "letter": "C", "text": "Semantic chunking rompe RAG porque genera chunks de tamaño variable.", "correct": false, "why": "El tamaño variable no rompe nada — la vector DB lo maneja. Puede sesgar recall si los chunks 'ganadores' son sistemáticamente más grandes o más pequeños, pero es manejable." },
+        { "letter": "D", "text": "Es incompatible con reranking; hay que elegir uno u otro.", "correct": false, "why": "Falso. Son ortogonales — semantic chunking define UNIDADES, reranking ordena RESULTADOS. Se combinan sin problema." }
+      ],
+      "explanation": "Semantic chunking (Greg Kamradt lo popularizó, 2024): embeddea cada oración, calcula distancia entre oraciones consecutivas, define umbral percentil, corta donde la distancia supera el umbral. Idea intuitiva potente. En práctica: (1) coste alto (embedding por oración vs por chunk), (2) mejora sobre recursive bien tunado suele ser <5% en benchmarks públicos, (3) sensible al modelo de embedding usado para las oraciones. Alternativas más rentables por lo general: (a) parent-child chunks (Anthropic Contextual Retrieval — añade contexto del doc al inicio de cada chunk), (b) hybrid search (dense + BM25), (c) reranking (Cohere Rerank, BGE reranker), (d) HyDE, (e) query rewriting con LLM.",
+      "realWorld": "Chroma Research publicó en 2024 una evaluación de chunking strategies mostrando que recursive con overlap era competitivo o superior a semantic chunking en la mayoría de datasets, con 3-5x menos coste. LlamaIndex y LangChain siguen ofreciendo semantic chunking pero recomiendan recursive como default.",
+      "tags": ["semantic chunking", "chunking strategies", "cost-benefit"],
+      "tech": ["LangChain", "LlamaIndex", "Chroma"],
+      "references": [
+        { "title": "Greg Kamradt — 5 Levels of Text Splitting", "url": "https://github.com/FullStackRetrieval-com/RetrievalTutorials" },
+        { "title": "Chroma Research — Evaluating Chunking Strategies", "url": "https://research.trychroma.com/evaluating-chunking" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "context-engineering",
+      "topic": "Metadata en chunks — para qué y cómo",
+      "difficulty": "mid",
+      "scenario": "En code review revisas la ingesta: cada chunk se indexa como `{id, text, embedding}` sin más info. Un usuario pregunta 'muéstrame docs sobre auth POSTERIORES a la migración a OAuth2 (junio 2024)'. El RAG mezcla docs de 2020 con 2025 y confunde al modelo.",
+      "question": "¿Cuál es el diseño correcto de metadata y cómo se usa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Añadir metadata rica: {id, text, embedding, doc_id, doc_title, section, url, created_at, updated_at, author, tags, product_area, chunk_index, doc_type}. En query: filtrar POR METADATA en la vector DB (WHERE updated_at > '2024-06-01') ANTES o combinado con la búsqueda vectorial. Vector DBs modernas (Pinecone, Weaviate, Qdrant, pgvector) soportan filtros híbridos eficientes. Además: mostrar la fuente al LLM y al usuario (citations) mejora trust y facilita debug.", "correct": true, "why": "Correcto. Metadata + filtros pre/post búsqueda es una de las palancas más potentes de RAG. Convierte 'buscar en 10M docs' en 'buscar en 50k docs filtrados' — más rápido, más preciso." },
+        { "letter": "B", "text": "Metadata no aporta; el modelo de embedding ya captura fecha y autor.", "correct": false, "why": "Rotundamente falso. Embeddings capturan semántica del texto, no fechas ni autoría de forma confiable. Filtros estructurados son la solución." },
+        { "letter": "C", "text": "Meter la fecha dentro del texto del chunk resuelve el problema.", "correct": false, "why": "Ayuda al LLM a razonar sobre fechas pero no resuelve el retrieval — sigues recuperando docs viejos por similitud semántica." },
+        { "letter": "D", "text": "Solo el id y el texto son necesarios; metadata infla el índice.", "correct": false, "why": "Metadata añade unos bytes por chunk pero da control quirúrgico sobre el retrieval. El coste es mínimo comparado con el beneficio." }
+      ],
+      "explanation": "Metadata en RAG cumple varios roles: (1) FILTRADO pre-retrieval (fecha, producto, permisos de usuario, idioma) — reduce el espacio de búsqueda. (2) FILTRADO post-retrieval (deduplicación, MMR). (3) CITATIONS al usuario. (4) DEBUG (ver qué doc contribuyó). (5) PERMISOS (aislar por tenant/user). Vector DBs modernas soportan hybrid filtering eficiente. Best practices: (a) siempre incluir doc_id, source, created_at, updated_at, permissions. (b) tags/categories como enum para filtros exactos. (c) versión del pipeline de ingesta para debug/re-index selectivo. (d) pensar en multi-tenancy desde day 1 — retrofitting es doloroso.",
+      "realWorld": "Notion Q&A y Slack AI reportaron que el filtrado por metadata (workspace_id, user permissions) es CRÍTICO para privacidad — sin ese filtro, un query podría recuperar chunks de otro tenant. Los diseñan con filtrado obligatorio a nivel de infra.",
+      "tags": ["metadata", "filtering", "hybrid retrieval", "permissions"],
+      "tech": ["Pinecone", "Weaviate", "pgvector", "Qdrant"],
+      "references": [
+        { "title": "Pinecone — Metadata filtering", "url": "https://docs.pinecone.io/guides/data/filter-with-metadata" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "context-engineering",
+      "topic": "Preprocesamiento — HTML, PDF, código",
+      "difficulty": "mid",
+      "scenario": "Un compañero jr indexa páginas web usando `BeautifulSoup(html).text`. Los chunks acaban llenos de 'Cookies acceptar rechazar menu inicio footer copyright…' y ruido de navegación. Los embeddings son basura.",
+      "question": "¿Cuál es el proceso limpio para ingesta web/PDF/código y qué tools ayudan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Preprocesamiento en capas: (1) EXTRACCIÓN especializada por tipo: readability/trafilatura para web (extrae contenido principal, quita navigation/ads), unstructured.io o LlamaParse para PDFs (respeta tablas, layout, OCR si es imagen), tree-sitter/AST para código. (2) LIMPIEZA — quitar boilerplate detectado con patrones o heurística. (3) NORMALIZACIÓN — Unicode NFC, dedup de whitespace. (4) DEDUPLICACIÓN semántica antes de indexar (evita indexar 20 versiones del mismo doc). (5) ENRIQUECIMIENTO — metadata (title, url, section), a veces contextual prefix (Anthropic pattern). Sin esto, embeddings quedan contaminados.", "correct": true, "why": "Correcto. RAG es garbage-in-garbage-out. La calidad de la extracción y limpieza afecta más al recall final que la elección del modelo de embedding o la vector DB." },
+        { "letter": "B", "text": "BeautifulSoup.text es suficiente; el modelo de embedding ignora el ruido.", "correct": false, "why": "Falso. Los embeddings SÍ se ven afectados por el ruido — un chunk con 80% de basura de menú tiene un vector distinto al del contenido real." },
+        { "letter": "C", "text": "Ingestar todo el HTML crudo incluyendo tags para que el modelo aprenda la estructura.", "correct": false, "why": "Los modelos de embedding no están entrenados para interpretar HTML — el ruido de tags degrada calidad." },
+        { "letter": "D", "text": "Convertir todo a JSON antes de embedear.", "correct": false, "why": "JSON no es un formato semánticamente rico para embeddings — solo mejora si es la representación natural del contenido (ej. datos estructurados)." }
+      ],
+      "explanation": "Toolkits recomendados por tipo: (1) WEB — trafilatura, readability-lxml, jusText, Firecrawl. Extraen contenido principal filtrando nav/ads/footers. (2) PDF — unstructured.io, LlamaParse, Marker, Docling, pymupdf4llm. Manejan tablas, columnas, OCR. (3) DOCX/PPTX — python-docx, unstructured.io. (4) CÓDIGO — tree-sitter (parse por AST), tantivy con language-specific tokenizers. (5) MARKDOWN — mistune, markdown-it-py. Después de extraer: normalizar Unicode (NFC), collapse whitespace, dedup exact + semántico (embedding similarity > 0.95), enriquecer metadata (title del doc, section, url, timestamp), aplicar chunking apropiado. Cada capa mata errores; saltar una capa cuesta recall.",
+      "realWorld": "Perplexity, Cursor, y Anthropic Claude for Docs reportaron públicamente que la mayor parte de su esfuerzo en RAG fue en INGESTA/LIMPIEZA, no en el modelo. Firecrawl y LlamaParse son productos que existen exactamente porque esta capa es el bottleneck real.",
+      "tags": ["preprocessing", "ingestion", "PDF parsing", "web scraping"],
+      "tech": ["trafilatura", "unstructured.io", "LlamaParse", "Firecrawl", "tree-sitter"],
+      "references": [
+        { "title": "unstructured.io — Documentation", "url": "https://docs.unstructured.io/" },
+        { "title": "Trafilatura — Main content extraction", "url": "https://trafilatura.readthedocs.io/" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "context-engineering",
+      "topic": "Deduplicación en el índice",
+      "difficulty": "mid",
+      "scenario": "Índice RAG de Confluence + Google Docs corporativo. Muchos docs son copias con pequeñas variaciones (v1, v2, draft). El retriever devuelve 8/10 chunks casi idénticos, dejando 2 slots para diversidad. El LLM ve info redundante y omite datos útiles que estaban al final.",
+      "question": "¿Cuál es la estrategia adecuada para eliminar/mitigar duplicados?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combinación de dos capas: (1) DEDUP EN INGESTA — hash exacto (SHA-256 del texto normalizado) descarta duplicados 1:1; MinHash/LSH o embedding similarity descarta casi-duplicados (>0.95 similitud). (2) DIVERSIDAD EN RETRIEVAL — MMR (Maximal Marginal Relevance): en vez de top-K por similitud, elige balancing relevance vs novelty. Ej. λ=0.5 mezcla mitad relevancia mitad diversidad. También ayuda: filtrar por metadata (una versión por doc_id, la más reciente).", "correct": true, "why": "Correcto. Dos capas: dedup preventivo en ingesta + diversificación en retrieval. Ambas ortogonales y complementarias." },
+        { "letter": "B", "text": "Subir K a 30 y confiar en que el LLM ignore duplicados.", "correct": false, "why": "Empeora el problema: más ruido, más tokens, más coste, y el modelo puede aún así hardcodear la redundancia percibida ('esta info aparece muchas veces, debe ser importante')." },
+        { "letter": "C", "text": "Bajar K a 3 para forzar que los resultados sean diversos.", "correct": false, "why": "No garantiza diversidad — los top-3 pueden ser los 3 más duplicados. Y pierdes recall en queries que sí necesitan varios chunks." },
+        { "letter": "D", "text": "La deduplicación rompe el retrieval; siempre indexar todo tal cual.", "correct": false, "why": "Falso. Dedup razonable mejora tanto storage como calidad de retrieval." }
+      ],
+      "explanation": "Duplicación en RAG es un problema real y común. Estrategias: (1) DEDUP EXACTO — hash sobre texto normalizado (lowercase, whitespace, punctuation). Barato y efectivo para copies exactas. (2) NEAR-DUPLICATE DETECTION — MinHash + LSH (SimHash, datasketch library) para escala. Detecta 95%+ overlap. (3) SEMANTIC DEDUP — embedding similarity con umbral (>0.95) — detecta paraphrases. Coste alto. (4) VERSIONING — retener solo la versión más reciente por doc_id/canonical_url con metadata (updated_at). (5) MMR (Carbonell & Goldstein 1998) en retrieval — MMR = argmax(λ·sim(q,d) - (1-λ)·max_sim(d, seleccionados)). LangChain, LlamaIndex, Haystack lo implementan built-in. Combinar 1-4 en ingesta + 5 en retrieval es el playbook estándar.",
+      "realWorld": "Common Crawl y Refined Web (Falcon dataset) publicaron papers detallando cuánto mejora la calidad del modelo pre-training tras aplicar MinHash dedup — reducciones de 50%+ del corpus con mejora de calidad. Mismo principio aplica a RAG: menos ruido = mejor recall efectivo.",
+      "tags": ["deduplication", "MMR", "MinHash", "diversity"],
+      "tech": ["MinHash", "LSH", "MMR", "datasketch"],
+      "references": [
+        { "title": "Carbonell & Goldstein — The Use of MMR for Reordering Documents", "url": "https://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf" },
+        { "title": "MinHash — Wikipedia (LSH for near-duplicate detection)", "url": "https://en.wikipedia.org/wiki/MinHash" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "context-engineering",
+      "topic": "Actualización incremental del índice",
+      "difficulty": "senior",
+      "scenario": "Índice RAG con 5M docs. Nueva ingesta diaria: 20k updates, 5k nuevos, 2k borrados. Un compañero propone 'reindexar todo cada noche, es más simple'. Coste del reindex full: $200 en embeddings + 4 horas + ventana de datos stale.",
+      "question": "¿Cuál es el diseño correcto para actualización incremental?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Diseño incremental: (1) CAPTURA DE CAMBIOS — hash de cada doc guardado; en ingesta comparas hash actual vs anterior y solo re-embedeas los cambiados. (2) UPSERTS en la vector DB (todas las DBs modernas lo soportan) — actualizas embedding + metadata por doc_id. (3) DELETES por doc_id cuando corresponde. (4) VERSIONING del pipeline de embeddings — si cambias de modelo o preprocesamiento, marca versión y re-indexa por batches. (5) FULL REINDEX solo cuando: cambias modelo de embedding, cambias estrategia de chunking, o detectas drift/corrupción. Ahorro del ejemplo: en vez de 5M docs, procesas 27k (5k nuevos + 20k updates + 2k deletes) = ~$1 y 3 minutos en vez de $200 y 4h.", "correct": true, "why": "Correcto. Es el patrón industrial. Full reindex es como recompilar todo el mono-repo por cambiar una línea — funciona pero no escala." },
+        { "letter": "B", "text": "Full reindex diario es más simple y garantiza consistencia; el coste es asumible.", "correct": false, "why": "$200/día = $73k/año solo en embeddings. Ventana de 4h de datos stale es mala UX. E introduce ventana de riesgo (corte a mitad del reindex)." },
+        { "letter": "C", "text": "Solo INSERTS incrementales, sin manejar deletes; los docs viejos se quedan y ya.", "correct": false, "why": "Genera 'garbage retrieval' — el RAG devuelve docs que ya no existen, con potenciales problemas de compliance (right to erasure GDPR) y calidad." },
+        { "letter": "D", "text": "Cambiar de vector DB a una que 'no necesite reindex'.", "correct": false, "why": "Toda vector DB necesita actualización — el problema es del pipeline de ingesta, no de la DB." }
+      ],
+      "explanation": "Pipeline de ingesta incremental típico: (1) SOURCE watcher — webhooks (Confluence, GitHub, Notion API), CDC (Debezium sobre DB), o polling con cursor. (2) CHANGE DETECTION — hash de contenido normalizado; comparación con estado anterior. (3) PROCESSING QUEUE — Kafka/SQS/Kinesis para desacoplar detección de embedding. (4) EMBEDDING — batch requests al API (ahorra costes y respeta rate limits). (5) UPSERT/DELETE en vector DB por doc_id (todos los chunks del doc). (6) VERSIONING del pipeline (embedding_model_version, chunking_version) para saber cuándo re-indexar full. (7) MONITORING — % de docs stale, latencia end-to-end, errores. Herramientas: Airflow/Dagster/Prefect para orquestación, LlamaIndex/LangChain para pipeline, unstructured.io Serverless para ingesta gestionada.",
+      "realWorld": "Notion Q&A, Slack AI, y Confluence Rovo describen arquitecturas de ingesta near-realtime (segundos-minutos de latencia) usando CDC + queue + upserts. Reindex full es evento planificado (cambios de modelo) no operación diaria.",
+      "tags": ["incremental indexing", "CDC", "upsert", "pipeline design"],
+      "tech": ["Pinecone", "Weaviate", "Kafka", "Debezium", "LlamaIndex"],
+      "references": [
+        { "title": "Pinecone — Upsert operations", "url": "https://docs.pinecone.io/guides/data/upsert-data" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "context-engineering",
+      "topic": "Matryoshka embeddings — cómo usar bien",
+      "difficulty": "senior",
+      "scenario": "Estás evaluando OpenAI text-embedding-3-large (3072 dims por defecto, entrenado con Matryoshka Representation Learning). Un compañero pregunta: '¿Puedo truncar a 256 dims para ahorrar storage? ¿Se pierde mucha calidad?'",
+      "question": "¿Cuál es la explicación correcta y qué hay que tener en cuenta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, MRL entrena el modelo para que las PRIMERAS N dimensiones ya sean útiles por sí solas — puedes truncar a 256, 512, 1024, 1536 sin reentrenar. Se pierde algo de calidad pero mucho menos que si truncases un embedding no-MRL. En el paper y en OpenAI blog: text-embedding-3-large truncado a 256 mantiene ~85-90% del rendimiento a 3072 en MTEB. Reglas: (1) DEBES re-normalizar (L2) después de truncar. (2) Mide en TU dominio. (3) Los primeros N dims son coarse, los últimos son fine-grained — no truques desde el final. (4) Cambiar dims entre indexado y query rompe todo — pinnea la dimensión.", "correct": true, "why": "Correcto. Este entendimiento matizado ahorra 6-12x storage con degradación mínima. Renormalizar después de truncar es paso crítico que mucha gente olvida." },
+        { "letter": "B", "text": "Truncar embeddings destruye la información; siempre usar dimensiones nativas.", "correct": false, "why": "Falso para MRL. Modelos entrenados con Matryoshka objective explícitamente aprenden que los prefijos son útiles. Modelos no-MRL sí sufren más al truncar." },
+        { "letter": "C", "text": "Truncar es equivalente a usar PCA para reducir dimensionalidad.", "correct": false, "why": "PCA proyecta a las direcciones de máxima varianza — requiere fit sobre un dataset. MRL es una propiedad ENTRENADA del modelo — no requiere fit posterior." },
+        { "letter": "D", "text": "Puedes truncar libremente sin renormalizar; la similitud coseno lo compensa.", "correct": false, "why": "Al truncar cambia la norma del vector; para mantener las propiedades de similitud comparables debes renormalizar (típicamente L2). Es un paso barato pero necesario." }
+      ],
+      "explanation": "Matryoshka Representation Learning (Kusupati et al. 2022): entrena el modelo con un objetivo que fuerza a los primeros K dims a ser suficientes por sí solos, para múltiples valores de K anidados (como muñecas rusas). Beneficios: (1) mismo modelo sirve múltiples usos (search rápido con 128 dims, exact con 3072). (2) permite two-stage retrieval (recall grande con dims chicas, rerank con dims completas). (3) 3-10x ahorro en storage/RAM/costo de índice. Modelos MRL disponibles: OpenAI text-embedding-3-*, Nomic embed v1.5, Snowflake Arctic Embed, Alibaba GTE. Cómo usar: (1) llama API con parámetro dimensions, o (2) trunca vector[0:N] y renormaliza `v/np.linalg.norm(v)`. Pinnea la dimensión en tu pipeline — mezclar dimensiones destroza la búsqueda.",
+      "realWorld": "OpenAI en su blog de embeddings-3 (2024) mostró que text-embedding-3-large truncado a 256 dims supera a text-embedding-ada-002 completo (1536 dims) en MTEB. Muchas apps migraron a 512/1024 dims ganando storage y latencia sin perder calidad.",
+      "tags": ["Matryoshka", "MRL", "dimensionality", "storage"],
+      "tech": ["OpenAI embeddings-3", "Nomic embed", "Snowflake Arctic"],
+      "references": [
+        { "title": "Kusupati et al. — Matryoshka Representation Learning", "url": "https://arxiv.org/abs/2205.13147" },
+        { "title": "OpenAI — New embedding models and API updates", "url": "https://openai.com/index/new-embedding-models-and-api-updates/" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "context-engineering",
+      "topic": "Anthropic Contextual Retrieval",
+      "difficulty": "senior",
+      "scenario": "Compañero senior lee sobre 'Contextual Retrieval' de Anthropic (2024) y propone: 'antes de embedear cada chunk, le pedimos a Claude Haiku que añada 1-2 frases de contexto del documento entero al inicio del chunk. Coste extra ~$1 por millón de docs. Reduce retrieval failure rate 35-67%'.",
+      "question": "¿Cuál es la explicación técnica correcta y qué caveats aplican?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Correcto en la técnica: chunks aislados pierden contexto ('Se aplica una tarifa del 10%' — ¿de qué?; con prefix contextual: 'En la política de refunds Q3 2024 de ACME Corp para clientes premium, se aplica una tarifa del 10%'). El prefix mejora tanto embedding como BM25. Caveats: (1) coste de LLM en ingesta (mitigable con prompt caching — Haiku hace 100x más barato aún), (2) 3x el coste de tokens indexados aumenta storage y potencialmente ruido, (3) el prefix debe ser CORTO y descriptivo, no inventado, (4) combinar con hybrid + reranking amplifica beneficio (paper reportó 67% reducción combinando todo). Usar cuando el corpus tiene chunks con muchos pronombres/referencias implícitas al doc padre.", "correct": true, "why": "Correcto. Contextual Retrieval es una de las mejoras más costo-efectivas publicadas en 2024, especialmente combinada con hybrid search y reranking." },
+        { "letter": "B", "text": "Es marketing; no hay mejora real vs chunking estándar.", "correct": false, "why": "Anthropic publicó números específicos con datasets y código open. Investigadores externos han replicado el patrón." },
+        { "letter": "C", "text": "El contexto se puede añadir en query time, no en ingesta.", "correct": false, "why": "En query time no tienes el doc completo delante; el LLM que rewrite no sabe de qué doc habla el chunk. El punto de Contextual Retrieval es que el enriquecimiento sucede EN INGESTA cuando sí conoces el doc padre." },
+        { "letter": "D", "text": "Solo funciona con embeddings de Anthropic (que no existen).", "correct": false, "why": "El patrón es agnóstico al proveedor. Anthropic lo propuso pero funciona con cualquier embedding + BM25 + reranker." }
+      ],
+      "explanation": "Contextual Retrieval (Anthropic Sept 2024): antes de embedear/indexar un chunk, le pides a un LLM barato (Haiku) que añada 50-100 tokens de contexto del doc completo al inicio del chunk. Prompt canónico: 'Aquí está el chunk. Aquí está el documento completo. Da un contexto breve para situar este chunk en el documento.' Con prompt caching el coste es negligible ($1.02 por millón de docs en su ejemplo). Resultados publicados: (1) Contextual Embeddings solo → -35% retrieval failure vs baseline. (2) + Contextual BM25 → -49%. (3) + Reranking → -67%. Requisitos: (a) doc grande donde el chunking pierde referencias, (b) usable con cualquier embedding, (c) el contexto debe ser generado por LLM confiable — mala generación degrada. Complementa RAG estándar sin reemplazarlo.",
+      "realWorld": "Publicación de Anthropic con código open: https://github.com/anthropics/anthropic-cookbook/tree/main/skills/contextual-embeddings. Adoptado rápidamente por muchas startups en 2024-2025. Cursor y otros IDE-agents lo mencionaron como parte de su stack RAG.",
+      "tags": ["contextual retrieval", "chunking", "Anthropic pattern", "prompt caching"],
+      "tech": ["Claude Haiku", "prompt caching", "BM25", "embeddings"],
+      "references": [
+        { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "context-engineering",
+      "topic": "Sliding window vs recursive vs por estructura",
+      "difficulty": "mid",
+      "scenario": "Ingesta de documentación técnica en Markdown con headings (# H1, ## H2, ### H3). Un compañero propone chunking con `RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)`. Otro propone `MarkdownHeaderTextSplitter` que respeta headings.",
+      "question": "¿Cuál es la mejor estrategia y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Para Markdown/HTML estructurado, respetar la estructura es superior: (1) headings dan contexto natural (title del chunk se puede propagar como metadata: {h1, h2, h3}), (2) los cortes ocurren en fronteras semánticas verdaderas, (3) evita partir código a mitad. Combo ganador: MarkdownHeaderTextSplitter primero (chunks por sección), luego RecursiveCharacterTextSplitter DENTRO de sección si excede tamaño target. LlamaIndex tiene splitters similares (MarkdownNodeParser). Además: guarda los headings como metadata — filtros y citations mejoran.", "correct": true, "why": "Correcto. Para contenido con estructura explícita (Markdown, HTML, código, JSON), aprovecharla mejora recall y facilita citations. Recursive character splitter es plan B (cuando no hay estructura)." },
+        { "letter": "B", "text": "Da lo mismo — el chunker recursivo se encarga.", "correct": false, "why": "El recursivo respeta separadores genéricos (\\n\\n, \\n, . ) pero puede cortar dentro de un bloque de código o entre H2 y su contenido inmediato — genera chunks con contexto incompleto." },
+        { "letter": "C", "text": "MarkdownHeaderTextSplitter genera chunks demasiado grandes; usa fixed-size siempre.", "correct": false, "why": "Se resuelve componiendo: header splitter primero + recursive dentro de sección si excede el límite. No es 'uno u otro'." },
+        { "letter": "D", "text": "Convertir Markdown a texto plano antes de chunkear es lo más limpio.", "correct": false, "why": "Al hacer eso pierdes la estructura que precisamente ayuda al chunking. Es desperdiciar información." }
+      ],
+      "explanation": "Chunking por estructura: Markdown (headings), HTML (semantic tags), código (funciones/clases con tree-sitter), JSON (paths). Beneficios: (1) chunks coherentes semánticamente, (2) metadata rica automática (title de sección, path, lenguaje), (3) mejor experiencia de citations (mostrar 'sección X.Y'). Herramientas: LangChain (MarkdownHeaderTextSplitter, HTMLSectionSplitter, RecursiveJsonSplitter, PythonCodeTextSplitter), LlamaIndex (MarkdownNodeParser, CodeSplitter, JSONNodeParser), unstructured.io (auto-detecta estructura). Patrón compuesto: structural splitter para respetar boundaries + recursive character splitter para subdividir secciones largas. Casi siempre supera a splitters uniformes en corpus estructurados.",
+      "realWorld": "Cursor y GitHub Copilot Chat usan splitters específicos por lenguaje (tree-sitter) para su indexado de código. Mintlify y GitBook usan header-based splitters para docs. Todos reportan mejoras notables vs chunking uniforme.",
+      "tags": ["structural chunking", "Markdown", "code splitting", "tree-sitter"],
+      "tech": ["LangChain", "LlamaIndex", "tree-sitter", "MarkdownHeaderTextSplitter"],
+      "references": [
+        { "title": "LangChain — Text Splitters (structure-aware)", "url": "https://python.langchain.com/docs/how_to/#text-splitters" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "context-engineering",
+      "topic": "Embeddings multilingües vs monolingües",
+      "difficulty": "mid",
+      "scenario": "Startup en Latam con docs en español y clientes que a veces preguntan en inglés (o mezclan spanglish). Un compañero propone 'usar text-embedding-3-large de OpenAI, que soporta 100+ idiomas'. Otro propone 'entrenar dos índices, uno por idioma'.",
+      "question": "¿Cuál es la mejor arquitectura y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Modelo multilingüe SÓLIDO con un único índice: (1) modelos como text-embedding-3-large, Cohere Embed v3 multilingual, BGE-M3, multilingual-e5-large mapean idiomas al MISMO espacio vectorial — 'car' y 'coche' quedan cerca. (2) Query en inglés recupera docs en español y viceversa (cross-lingual retrieval). (3) Un solo índice = un solo pipeline = menos ops. (4) Verifica en TU corpus con eval multilingüe (MIRACL, MMTEB benchmarks). Contra 'dos índices': duplica infra, complica routing, y no aporta ganancia si el modelo es bueno. La excepción: si un idioma es muy raro y el modelo lo soporta mal, considera modelo especializado O reranker específico.", "correct": true, "why": "Correcto. Cross-lingual retrieval con modelos multilingües modernos funciona muy bien. Dos índices es una solución del pasado que hoy solo tiene sentido en casos raros." },
+        { "letter": "B", "text": "Dos índices SIEMPRE, uno por idioma; los modelos multilingües son mediocres.", "correct": false, "why": "Muchos modelos multilingües actuales (BGE-M3, E5-multilingual, Cohere v3, OpenAI-3) superan a monolingües en benchmarks como MIRACL y MMTEB." },
+        { "letter": "C", "text": "Traducir todos los docs a inglés y usar solo embeddings monolingües.", "correct": false, "why": "Pipeline caro (LLM translation por doc), pierdes matices del original, pierde trazabilidad, y añade una fuente de error (mala traducción)." },
+        { "letter": "D", "text": "El idioma no importa; los embeddings son 'universales' por defecto.", "correct": false, "why": "Modelos monolingües (entrenados sólo en inglés) sí ven idiomas no vistos como ruido. La afirmación aplica solo a modelos explícitamente multilingües." }
+      ],
+      "explanation": "Cross-lingual embeddings: mapean texto de múltiples idiomas al mismo espacio, permitiendo que query y doc estén en idiomas distintos. Modelos recomendados 2024-2026: (1) BGE-M3 — multi-lingual (100+), multi-functional (dense, sparse, colbert), multi-granularity. (2) multilingual-e5-large/small — sólido y open. (3) Cohere Embed v3/v4 multilingual — comercial fuerte. (4) OpenAI text-embedding-3-large — bueno pero MTEB inglés-centric. (5) Google gemini-embedding — competitivo. Cómo verificar: benchmark MIRACL (18 idiomas), MMTEB, o mejor: eval propio con queries reales en tu producto. Cuidado con: (a) mezcla de scripts (latin, cyrillic, cjk) donde algunos modelos degradan, (b) code-switching (spanglish) que puede confundir tokenizers pobres.",
+      "realWorld": "Cohere publicó case studies de fintechs latam usando Embed multilingual para RAG mixto EN/ES con excelente cross-lingual recall. Lex.page (redacción legal multilingüe) y Perplexity mencionan embeddings multilingües en sus stacks.",
+      "tags": ["multilingual embeddings", "cross-lingual", "MIRACL"],
+      "tech": ["BGE-M3", "Cohere multilingual", "E5-multilingual", "OpenAI-3"],
+      "references": [
+        { "title": "BGE-M3 paper", "url": "https://arxiv.org/abs/2402.03216" },
+        { "title": "MIRACL benchmark", "url": "https://project-miracl.github.io/" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "context-engineering",
+      "topic": "Sparse embeddings (SPLADE) y late interaction (ColBERT)",
+      "difficulty": "senior",
+      "scenario": "En un architecture review un compañero propone: 'en vez de embeddings densos, usemos SPLADE (sparse) o ColBERT (late interaction), son más precisos'. El equipo está confundido sobre qué son y cuándo aplican.",
+      "question": "¿Cuál es la explicación correcta y cuándo elegir cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los tres son enfoques distintos: (1) DENSO (OpenAI, BGE, E5) — un vector por doc, similitud coseno. Rápido, storage bajo, calidad buena. (2) SPARSE (SPLADE) — vector de vocabulario con activaciones learned, retiene interpretabilidad léxica (mejor con jerga técnica, términos raros, exact match). Combina bien con dense en hybrid. (3) LATE INTERACTION (ColBERT) — vector POR TOKEN, similitud max-sim entre todos los tokens de query y doc. Muy preciso pero storage 30-100x más y query lenta. Trade-off: precisión ↑, coste ↑↑. Recomendación: empezar con dense + BM25 hybrid + reranker. Considerar SPLADE si dominio muy técnico. ColBERT solo si tienes recursos y recall es crítico (búsqueda enterprise, e-discovery).", "correct": true, "why": "Correcto. Es la comparación honesta. SPLADE y ColBERT existen porque dense tiene limitaciones reales (term-matching, exact recall) pero pagan un coste que muchos proyectos no justifican." },
+        { "letter": "B", "text": "ColBERT reemplaza a dense embeddings en todos los casos; hay que migrar.", "correct": false, "why": "Storage 30-100x más grande, latencia mayor. En muchos proyectos el coste no justifica la mejora marginal. Dense + reranker cubre el 80% del caso." },
+        { "letter": "C", "text": "SPLADE y ColBERT son solo teoría académica sin implementación práctica.", "correct": false, "why": "Falso. SPLADE está en producción (Naver Search), ColBERT tiene implementaciones maduras (RAGatouille, PLAID, Vespa, Qdrant). Vespa y Qdrant soportan late interaction en producción." },
+        { "letter": "D", "text": "SPLADE es sparse, y sparse es siempre peor que dense.", "correct": false, "why": "SPLADE (learned sparse) supera a BM25 en muchos benchmarks y a menudo iguala a dense — el 'sparse' se refiere a la representación, no a la calidad." }
+      ],
+      "explanation": "Tres paradigmas: (1) DENSE bi-encoder — encode(query) y encode(doc) por separado, similitud por operación vectorial. Rápido, escala bien. (2) SPARSE learned (SPLADE, uniCOIL) — el modelo aprende a activar términos del vocabulario, similar a TF-IDF pero neural. Retiene ventajas léxicas de BM25 con aprendizaje semántico. Buen complemento a dense en hybrid. (3) LATE INTERACTION (ColBERT, ColPali para vision) — encode a nivel de token, similitud vía max-sim. Preserva más señal fina pero storage y compute mucho mayor. Ecosistema: Vespa soporta los tres, Qdrant soporta dense + sparse + ColBERT nativo, Pinecone añadió sparse. La industria en 2025 va hacia hybrid dense+sparse+reranker como default; ColBERT en casos donde recall es business-critical.",
+      "realWorld": "Anthropic Contextual Retrieval showed BM25 + dense hybrid + rerank funciona muy bien. Naver Search usa SPLADE en producción a escala web. Vespa (Yahoo) permite combinar los tres en un solo índice. ColPali (visión) usa late interaction para PDFs y funciona bien.",
+      "tags": ["SPLADE", "ColBERT", "sparse", "late interaction"],
+      "tech": ["SPLADE", "ColBERT", "Vespa", "Qdrant", "RAGatouille"],
+      "references": [
+        { "title": "Formal et al. — SPLADE (Sparse Lexical And Expansion)", "url": "https://arxiv.org/abs/2107.05720" },
+        { "title": "Khattab & Zaharia — ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction", "url": "https://arxiv.org/abs/2004.12832" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "context-engineering",
+      "topic": "Evaluación de un pipeline de retrieval",
+      "difficulty": "senior",
+      "scenario": "Tu equipo desplegó un RAG hace 3 meses. Los usuarios se quejan de 'a veces no encuentra info que sí está'. No hay métricas de retrieval, solo user feedback. Un compañero propone 'medimos con recall@10'.",
+      "question": "¿Cuál es el proceso correcto para evaluar y mejorar rigurosamente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Proceso: (1) CONSTRUIR EVAL SET — 100-500 queries reales (de logs) + ground truth: qué chunk(s)/doc(s) deberían recuperarse. Puede empezarse con LLM-generated y refinarse a mano. (2) MÉTRICAS — recall@K (¿está el correcto en los K primeros?), MRR (Mean Reciprocal Rank), NDCG (calidad del orden), context precision (% de chunks devueltos que son relevantes). (3) TRACK POR SEGMENTO — desglosa por tipo de query, longitud, dominio. (4) HERRAMIENTAS — Ragas, TruLens, DeepEval, promptfoo automatizan esto. (5) LLM-as-judge para eval semántico. (6) A/B TEST cambios (chunk size, embedding model, reranker) contra el mismo eval set. (7) DASHBOARD y CI — bloquea deploys si métricas caen. Sin eval no se sabe si estás mejorando o empeorando.", "correct": true, "why": "Correcto. Es el playbook estándar. Recall@10 es una métrica útil pero insuficiente por sí sola — necesitas eval set + múltiples métricas + tracking en el tiempo." },
+        { "letter": "B", "text": "Basta con recall@10 sobre 20 queries manuales; más es sobre-ingeniería.", "correct": false, "why": "20 queries no captura la variedad de casos reales. Y solo recall@10 no dice nada sobre el ORDEN — top-1 correcto es muy distinto que 'estaba en posición 10'." },
+        { "letter": "C", "text": "Confiar en LLM-as-judge para evaluar el output final del RAG es suficiente.", "correct": false, "why": "Eval end-to-end (output del LLM) mezcla errores de retrieval con errores de generación. Necesitas eval separada por capa para saber DÓNDE arreglar." },
+        { "letter": "D", "text": "El user feedback (thumbs up/down) es lo único que importa; métricas técnicas son ruido.", "correct": false, "why": "User feedback es lagged, sparse, y sesgado (los enfadados clickan más). Métricas técnicas + user feedback juntas dan la imagen completa." }
+      ],
+      "explanation": "Eval de RAG debe separar CAPAS: (1) RETRIEVAL — dado query, ¿trajo los chunks correctos? Métricas: recall@K, precision@K, MRR, NDCG. (2) GENERATION — dado contexto correcto, ¿el LLM respondió bien? Métricas: faithfulness (¿inventa?), answer relevancy, correctness. (3) END-TO-END — ¿el usuario está contento? Métricas: user feedback, task completion. Herramientas 2024-2026: Ragas (métricas RAG específicas), TruLens (tracing + eval), DeepEval (unit tests), Langfuse (obs + eval), Braintrust (eval + experiments), promptfoo (comparison), Arize Phoenix (open source). Best practice: (a) eval set version-controlled, (b) CI corre eval en cada PR, (c) alerta si métrica cae >X%, (d) golden dataset + adversarial dataset. Sin esto, cambios se hacen a ciegas.",
+      "realWorld": "Anthropic, LangChain, y OpenAI todos publicaron guides recomendando construir eval set PRIMERO, antes de iterar en el sistema. Mucho equipo pierde meses tuneando en producción cuando 2 semanas construyendo eval set les habría dado velocidad 10x.",
+      "tags": ["evaluation", "recall", "MRR", "eval set"],
+      "tech": ["Ragas", "TruLens", "DeepEval", "Langfuse", "Braintrust"],
+      "references": [
+        { "title": "Ragas — Metrics for RAG evaluation", "url": "https://docs.ragas.io/" },
+        { "title": "Anthropic — Building Evals", "url": "https://docs.anthropic.com/en/docs/build-with-claude/develop-tests" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "context-engineering",
+      "topic": "PII/sensitive data en embeddings",
+      "difficulty": "senior",
+      "scenario": "Compliance officer alerta: 'estáis indexando emails de clientes con nombres, teléfonos, IBAN, direcciones. Esos embeddings podrían filtrar datos si alguien accede al índice.' El equipo debe decidir cómo manejarlo.",
+      "question": "¿Cuál es el enfoque correcto para RAG sobre datos sensibles?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estrategia por capas: (1) DETECT y CLASIFICAR PII en ingesta (Presidio, Amazon Comprehend PII, Google DLP). (2) DECIDIR por tipo: (a) enmascarar antes de embedear cuando el dato NO es semánticamente necesario ('el cliente [NAME] pidió refund' → 'el cliente [MASK] pidió refund'), (b) mantener con controles cuando SÍ importa. (3) FILTRO POR PERMISOS — metadata con user_id/tenant_id y filtro obligatorio en query time. (4) STORAGE encriptado at-rest (KMS, TDE). (5) AUDIT LOG de accesos al índice. (6) DATA RESIDENCY — vector DB en la región legal correcta. (7) RETENTION policies — TTL/purge según GDPR/legal. (8) Considerar embeddings HAY riesgo teórico de reconstrucción (embedding inversion research), pero es baja en la práctica; capas anteriores importan más. Los embeddings NO son 'ofuscación' de por sí.", "correct": true, "why": "Correcto. Es la respuesta madura de compliance. PII en RAG debe tratarse con la misma seriedad que en cualquier dato de la empresa. Los embeddings no son un mecanismo de privacidad." },
+        { "letter": "B", "text": "Los embeddings son irreversibles matemáticamente; no hay riesgo.", "correct": false, "why": "Investigación (Song & Raghunathan 2020, y trabajos posteriores) demostró que se puede reconstruir texto original a partir de embeddings con modelos inversos. La aserción es falsa técnicamente." },
+        { "letter": "C", "text": "Encriptar la vector DB al vuelo con AES resuelve todo.", "correct": false, "why": "Encriptación at-rest es necesaria pero insuficiente. No protege contra usuarios legítimos con permisos que hacen queries indebidas. Necesitas access control + PII scrubbing + audit." },
+        { "letter": "D", "text": "No usar RAG con datos sensibles; solo LLM sin retrieval.", "correct": false, "why": "Elimina el problema pero también el producto. RAG con datos sensibles se puede hacer bien con las capas adecuadas." }
+      ],
+      "explanation": "PII/privacy en RAG requiere design deliberado: (1) DETECCIÓN — Microsoft Presidio (open source), AWS Comprehend PII, Google Cloud DLP. Detectan emails, phones, credit cards, IBANs, etc. con reglas + ML. (2) MASKING/PSEUDONIMIZACIÓN — reemplazar por placeholders reversibles (con tokenization vault) o irreversibles. (3) ACCESS CONTROL — metadata + filtros obligatorios (row-level security en pgvector, per-tenant en Pinecone). (4) ENCRYPTION — at-rest (TDE) y in-transit (TLS). (5) AUDIT — log inmutable de queries y resultados. (6) DATA RESIDENCY — región legal (EU, US). (7) RETENTION — TTL o purge por GDPR right-to-erasure. (8) EMBEDDING INVERSION — research (Morris et al. 2023 'Text Embeddings Reveal Almost as Much as Text') muestra que dense embeddings pueden ser invertidos a texto aproximado; no confíes en 'irreversibilidad' como control.",
+      "realWorld": "Samsung prohibió ChatGPT internamente en 2023 tras un incidente donde código propietario fue enviado a la API. Enterprise deployments (Anthropic Claude Enterprise, OpenAI ChatGPT Enterprise, Azure OpenAI) enfatizan data residency, no-training-on-data, y access control como diferencial.",
+      "tags": ["PII", "privacy", "GDPR", "embedding inversion"],
+      "tech": ["Presidio", "AWS Comprehend PII", "Google DLP", "pgvector RLS"],
+      "references": [
+        { "title": "Morris et al. — Text Embeddings Reveal (Almost) As Much As Text", "url": "https://arxiv.org/abs/2310.06816" },
+        { "title": "Microsoft Presidio — PII detection", "url": "https://microsoft.github.io/presidio/" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "context-engineering",
+      "topic": "Fine-tune embedding model vs domain adaptation",
+      "difficulty": "senior",
+      "scenario": "Dominio muy especializado (biotech). Con embedding off-the-shelf (OpenAI-3-large), recall@10 = 62%. Un compañero propone 'fine-tune del embedding con nuestro dominio'. Otro propone 'contextual retrieval + reranker especializado, es más barato'.",
+      "question": "¿Cuál es la recomendación correcta y qué considerar antes de fine-tunear?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Orden de esfuerzo (menor a mayor coste): (1) Optimización sin fine-tune — chunk size sensato, hybrid search, reranker (Cohere Rerank biomédico, BGE-reranker-v2), contextual retrieval, query rewriting. Suele mejorar 15-30 puntos de recall. (2) Fine-tune del RERANKER — más barato que embedder, gran impacto en top-K precision. (3) Fine-tune del EMBEDDING — cara (dataset de pares query-positive-negative), riesgo de overfitting, difícil eval. Solo si (1) y (2) no bastan y tienes dataset grande (5k+ pares). (4) Train from scratch — nunca en 99% de los casos. Además, verifica si existen modelos ya especializados (BioBERT, PubMedBERT, MedCPT para biotech) — mejor punto de partida que fine-tunear text-embedding-3.", "correct": true, "why": "Correcto. Orden pragmático. Fine-tunear embeddings es la última bala, no la primera. La mayoría de mejoras vienen de arquitectura del pipeline, no del modelo." },
+        { "letter": "B", "text": "Fine-tune del embedding siempre primero; da la mejora más grande.", "correct": false, "why": "Coste alto, riesgo alto, y a menudo se puede lograr similar mejora con reranking + hybrid + contextual, que son más baratos y reversibles." },
+        { "letter": "C", "text": "Cambiar de OpenAI a Cohere y ya; embeddings comerciales son mediocres, los open siempre mejores.", "correct": false, "why": "Depende del dominio y del modelo. Ni comerciales ni open son universalmente mejores. Benchmark en tu caso." },
+        { "letter": "D", "text": "Fine-tuning de embeddings no funciona; solo LLMs se pueden fine-tunear útilmente.", "correct": false, "why": "Sí funciona (papers como GTR, BGE muestran mejoras con fine-tune de embedders). Pero es esfuerzo y coste no trivial." }
+      ],
+      "explanation": "Domain adaptation para embeddings orden de prioridad: (1) PIPELINE tuning — chunking, hybrid search, metadata filters, reranking. Alto ROI. (2) MODEL SELECTION — probar embedders especializados (BioBERT/PubMedBERT/MedCPT en médico, LegalBERT en legal, CodeBERT/UniXcoder en código, FinBERT en finanzas). (3) FINE-TUNE RERANKER — datasets más pequeños, gran impacto. Cohere ofrece rerank fine-tuning; BGE-reranker fine-tune con MS-MARCO-like data. (4) FINE-TUNE EMBEDDER — método: recolectar (query, positive, negative) triples de logs, contrastive loss (MultipleNegativesRanking). Frameworks: sentence-transformers, SetFit para few-shot, embed-anything. Riesgos: overfitting al set training, degradación en queries fuera de distribución, coste de re-index cuando cambies modelo. (5) TRAIN FROM SCRATCH — solo en casos extraordinarios.",
+      "realWorld": "Cohere publicó case studies de rerank fine-tuning mejorando NDCG 15-25% en dominios verticales con datasets modestos (1-5k pares). Voyage AI ofrece 'voyage-finance-2' y otros verticales pre-fine-tuneados — a menudo mejores que fine-tune propio para el mismo dominio.",
+      "tags": ["fine-tuning", "domain adaptation", "reranker", "specialized embeddings"],
+      "tech": ["sentence-transformers", "Cohere Rerank", "BGE-reranker", "Voyage"],
+      "references": [
+        { "title": "sentence-transformers — Training your own embeddings", "url": "https://www.sbert.net/docs/training/overview.html" },
+        { "title": "BGE — Fine-tuning", "url": "https://github.com/FlagOpen/FlagEmbedding" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "context-engineering",
+      "topic": "Indexación de código fuente para RAG",
+      "difficulty": "senior",
+      "scenario": "Estás construyendo un 'chat con tu codebase' tipo Cursor/Codebase Chat. Tienes un repo Python de 500k LOC. Un compañero propone 'chunk_size=1500 con recursive character splitter'. Otro dice 'no, el código necesita splitting específico'.",
+      "question": "¿Cuál es la estrategia correcta para chunkear e indexar código?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estrategia específica para código: (1) SPLIT POR AST — usar tree-sitter (o LSP) para chunkear por función/clase/método completa, respetando indentación y scope. LangChain PythonCodeTextSplitter/tree-sitter, LlamaIndex CodeSplitter, ast-grep. (2) METADATA rica — path, file, language, function name, class, imports, línea. (3) EMBEDDING MODEL ESPECIALIZADO — Voyage code embeddings, CodeBERT, UniXcoder, jina-embeddings-v2-base-code. Superan a modelos generales en recall de código. (4) CONTEXTUAL — incluir doc-string, imports del archivo, tipo de retorno. (5) HYBRID search obligatorio — BM25 recupera exact names (funciones, símbolos) que dense a veces pierde. (6) RE-INDEX incremental por diff de git.", "correct": true, "why": "Correcto. Código tiene estructura sintáctica que ignorarla es dejar recall en la mesa. Tree-sitter + code embeddings + hybrid + metadata es el playbook de todos los code assistants modernos." },
+        { "letter": "B", "text": "Chunk size 1500 con recursive character es suficiente; el LLM ya entiende código.", "correct": false, "why": "El LLM entiende código en el prompt final, pero el RECUPERAR el snippet correcto se beneficia mucho de AST-aware splitting y embeddings especializados." },
+        { "letter": "C", "text": "Chunkear cada archivo entero como un chunk único.", "correct": false, "why": "Archivos grandes (>2000 LOC) diluyen embeddings y desbordan context. Y muchos archivos completos son irrelevantes para una query específica." },
+        { "letter": "D", "text": "No se puede hacer RAG útil sobre código; usar solo grep.", "correct": false, "why": "Falso. Cursor, GitHub Copilot Chat, Sourcegraph Cody, Claude Code, Aider — todos hacen RAG sobre código con éxito." }
+      ],
+      "explanation": "Playbook RAG para código: (1) AST SPLITTING — tree-sitter (30+ lenguajes), ast en Python, roslyn en C#. Chunk = función/clase/método. Respeta scope y evita cortar bloques. (2) EMBEDDING — voyage-code-2, jina-embeddings-v2-base-code, UniXcoder, CodeSage. Entrenados con contrastive learning sobre pares (código, docstring). (3) METADATA — path completo, lenguaje, symbol name, imports, dependencies, git commit hash. (4) HYBRID SEARCH — BM25 crucial para símbolos exactos (nombre de función, variable). (5) DYNAMIC CONTEXT — incluir call graph, imports, tipo hints (LSP puede ayudar). (6) INCREMENTAL — git diff-driven re-index (solo archivos cambiados). Herramientas: Sourcegraph Cody, Cursor, Claude Code, Aider, Sweep AI — todos publican sobre sus arquitecturas.",
+      "realWorld": "Cursor publicó en 2024 que su indexado usa embeddings especializados + AST splitting con tree-sitter. Sourcegraph Cody usa combinación de BM25 (zoekt) + embeddings + graph search. GitHub Copilot Workspace usa similar approach para 'chat with repo'.",
+      "tags": ["code RAG", "AST splitting", "tree-sitter", "code embeddings"],
+      "tech": ["tree-sitter", "Voyage code", "UniXcoder", "Cursor", "Sourcegraph Cody"],
+      "references": [
+        { "title": "Voyage — code embeddings", "url": "https://blog.voyageai.com/2024/01/23/voyage-code-2-elevate-your-code-retrieval/" },
+        { "title": "tree-sitter — Multi-language parser", "url": "https://tree-sitter.github.io/tree-sitter/" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "context-engineering",
+      "topic": "Freshness — datos que cambian rápido",
+      "difficulty": "staff",
+      "scenario": "Producto asistente de soporte que consulta status de tickets (cambia cada minuto), knowledge base (cambia semanal), y docs regulatorias (cambia mensualmente). Un compañero propone 'todo en un mismo índice, reindex diario'. Los usuarios reportan 'me dice que el ticket está abierto pero ya se cerró hace 20 minutos'.",
+      "question": "¿Cuál es el diseño correcto por FRESHNESS de cada tipo de dato?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SEPARAR por freshness: (1) TICKET STATUS (segundos-minutos) — NO va en RAG. Va a TOOL CALL directo a la DB/API en query time. RAG es cache stale por definición. (2) KNOWLEDGE BASE (días-semanas) — RAG estándar con webhook-triggered reindex incremental. (3) DOCS REGULATORIAS (meses) — RAG con reindex mensual, filtro por effective_date. Además: (a) metadata con `data_freshness` para que el LLM sepa qué tan fresco es, (b) el orquestador (agente) decide qué usar según intent detectado ('status' → tool; 'cómo hago X' → RAG KB; 'cuál es la política' → RAG regs), (c) prompt caching aplica solo a lo estable. RAG no es la respuesta universal — es una capa de MEMORIA APROXIMADA.", "correct": true, "why": "Correcto. Es diseño maduro: cada dato en la capa correcta según su freshness. Confundir 'datos que cambian' con 'RAG' causa exactamente el bug del enunciado." },
+        { "letter": "B", "text": "Reindex cada minuto para tener status de tickets fresco.", "correct": false, "why": "Reindex de un dataset entero cada minuto es carísimo y sigue teniendo latencia (embedding + upsert + query). Para datos que cambian por request, tool call directo es la respuesta." },
+        { "letter": "C", "text": "Añadir un disclaimer al usuario 'la info puede estar hasta 24h desatualizada'.", "correct": false, "why": "Solución no-técnica que degrada la UX. Los usuarios quieren info correcta, no disclaimers." },
+        { "letter": "D", "text": "Todo debería ir a un LLM con context window enorme, sin RAG.", "correct": false, "why": "No resuelve freshness — el context tampoco se actualiza en tiempo real. Y es carísimo. El problema conceptual persiste." }
+      ],
+      "explanation": "Regla fundamental: cada dato en su capa según su naturaleza. (1) FACTS EN VIVO (order status, precio actual, inventario) → TOOL/API call en query time. Nunca RAG. (2) SEMI-STATIC (docs, KB, políticas) → RAG con reindex acorde a la frecuencia de cambio. (3) STATIC (books, laws, manuals versionados) → RAG con reindex raro + prompt caching alto. (4) CONVERSATIONAL MEMORY (perfil del usuario, historial) → memoria persistente (mem0, LangGraph memory) o system prompt con caching. Además: metadata como `as_of` timestamp en cada chunk, y el LLM debe presentar la fecha al usuario cuando es relevante. Arquitectura de agente que hace routing según intent es lo que hoy usan asistentes de producción (Zendesk AI, Intercom Fin, Sierra).",
+      "realWorld": "Intercom Fin, Zendesk AI, y Sierra publicaron blogs sobre su arquitectura: RAG solo para docs estables, tool calls para live data (tickets, orders, user info). El error 'ticket abierto' pero ya cerrado es incidente clásico documentado por múltiples equipos que pusieron todo en RAG.",
+      "tags": ["freshness", "hybrid architecture", "RAG vs tools", "data staleness"],
+      "tech": ["RAG", "tool calling", "webhooks", "CDC"],
+      "references": [
+        { "title": "LangChain — Agents that decide when to use RAG vs tools", "url": "https://python.langchain.com/docs/concepts/agents/" }
+      ]
+    }
+  ]
+}

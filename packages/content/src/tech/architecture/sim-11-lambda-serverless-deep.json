@@ -1,0 +1,482 @@
+{
+  "id": "architecture-sim-11-lambda-serverless-deep",
+  "trackId": "architecture",
+  "order": 11,
+  "title": "Simulacro 11 — Lambda y serverless en profundidad",
+  "focus": "Cold start real, Provisioned Concurrency vs SnapStart, Lambda en VPC, límites de payload/timeout, memory-CPU, cuándo Lambda cuesta MÁS que ECS, event sources, Reserved Concurrency y DLQ.",
+  "areaCoverage": ["serverless", "scalability", "resilience"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "serverless",
+      "topic": "Anatomía del cold start",
+      "difficulty": "senior",
+      "scenario": "Tienes una Lambda Node.js 20 con bundle de 40MB (npm bundle sin tree-shaking) que importa AWS SDK v2 completo, un cliente Postgres y varias librerías de negocio. p50 = 90ms, p99 = 2.8s. Los peaks de p99 correlacionan con invocaciones a contenedores nuevos.",
+      "question": "¿Qué acciones reducirían el cold start de forma MÁS efectiva?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Migrar a AWS SDK v3 y usar tree-shaking / esbuild para bundlear solo los clients usados (ej. @aws-sdk/client-dynamodb).", "correct": true, "why": "SDK v3 es modular; puedes importar solo los clients que uses. Con esbuild + minify + tree-shaking, un bundle de 40MB baja a 1-3MB. Menos bytes = menos tiempo de descarga desde S3 al sandbox + menos parse time del runtime Node." },
+        { "letter": "B", "text": "Mover imports pesados y clientes de DB al top-level del módulo (fuera del handler) para que el INIT los ejecute una vez y se reutilicen en warm invocations.", "correct": true, "why": "Correcto y crítico. El INIT (fase 3) se corre 1 vez por sandbox; el handler se ejecuta por request. Si creas el pool de Postgres dentro del handler, cada invocación warm también lo paga. Top-level = amortizado en warm invocations." },
+        { "letter": "C", "text": "Subir la memoria de 128MB a 1024MB o 1769MB (donde 1 vCPU está garantizado).", "correct": true, "why": "Lambda asigna CPU proporcional a memoria. A 1769MB obtienes ~1 vCPU full. INIT y parse de JS son CPU-bound: más CPU = INIT más rápido. Muchas veces es MÁS BARATO subir memoria (menos tiempo de facturación) que dejarla baja." },
+        { "letter": "D", "text": "Habilitar Provisioned Concurrency para toda la función 24/7 al máximo pico esperado.", "correct": false, "why": "Ineficiente en costo. Provisioned Concurrency 24/7 al pico anula la ventaja pay-per-use. Solo tiene sentido con schedule (autoscaling PC por horas pico) o si latencia p99 crítica lo justifica. Primero optimiza cold start; PC como último recurso." },
+        { "letter": "E", "text": "Reescribir en Java para tener un runtime más maduro.", "correct": false, "why": "Contraproducente: JVM cold start es 3-10s SIN SnapStart. Node/Python/Go/Rust son mejores para minimizar cold start. Solo justifica Java si ya tienes ecosistema o usas SnapStart." }
+      ],
+      "explanation": "Cold start tiene tres fases medibles en CloudWatch (Init Duration): (1) sandbox init (Firecracker microVM, ~100-200ms, AWS lo optimiza); (2) runtime init (arranque de Node/Python/JVM); (3) function init (tu código top-level: imports, connect pools). Optimizar (2)+(3) es lo que controlas. Reglas: bundle pequeño con esbuild, imports lazy solo si son opcionales, top-level para reuso, memoria suficiente para tener CPU, ARM64 (Graviton) 20% mejor price/perf. SnapStart resuelve Java. Provisioned Concurrency solo para latencia crítica en pico predecible.",
+      "realWorld": "AWS re:Invent 2022 (SVS404) mostró benchmarks de LEGO migrando su e-commerce a Lambda: tras migrar SDK v3 y esbuild, cold starts p99 pasaron de 1.8s a 300ms sin PC. Yan Cui (theburningmonk.com) publicó mediciones de que subir memoria de 256 a 1024MB baja init time 3-4x en Node/Python.",
+      "tags": ["cold start", "esbuild", "AWS SDK v3", "memoria Lambda"],
+      "tech": ["Lambda", "esbuild", "Node.js", "SnapStart", "Provisioned Concurrency"],
+      "references": [
+        { "title": "AWS Builders' Library — Reducing Lambda cold starts" },
+        { "title": "Yan Cui — 'How does Lambda cold start really work?'" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "serverless",
+      "topic": "Provisioned Concurrency vs SnapStart",
+      "difficulty": "staff",
+      "scenario": "Tienes una API en Lambda Java 17 (Spring Boot 3) con cold start de 6-8s. La API sirve 200 req/s en horario 9-18h, y 5 req/s el resto del tiempo. El SLA es p99 < 500ms.",
+      "question": "¿Cuál es la estrategia de mitigación MÁS costo-efectiva?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Habilitar Lambda SnapStart: snapshotea el estado post-init de la JVM y restaura desde ese snapshot. Cold starts de 6-8s bajan a 200-500ms. Sin costo extra por PC. Complemento: usar 'runtime hooks' para reinicializar recursos no-serializables (conexiones DB, PRNGs) tras el restore.", "correct": true, "why": "Correcto. SnapStart fue anunciado precisamente para el 'Java cold start problem'. Es gratis (no cobras por snapshot). Requiere Java 11/17/21. Restaura Firecracker snapshot en ~200ms. El único gotcha son recursos que no deben persistir (conexiones cerradas al restore, tokens caducados, seeds de RNG). Usa CRaC hooks para reinicializar." },
+        { "letter": "B", "text": "Provisioned Concurrency = 200 unidades 24/7.", "correct": false, "why": "Costoso: pagas 200 instancias corriendo 24/7 aunque solo necesites 200 en 9h del día. Además SnapStart es gratis y resuelve el mismo problema en Java." },
+        { "letter": "C", "text": "Migrar a Node.js.", "correct": false, "why": "Reescritura completa por un problema de cold start es sobreingeniería si SnapStart soluciona el 90% del gap. Considerar solo si hay otras razones (ecosistema, equipo)." },
+        { "letter": "D", "text": "Meter la Lambda detrás de API Gateway con cache. El cache elimina las llamadas.", "correct": false, "why": "Solo funciona para respuestas cacheables. Además no arregla la primera invocación tras evicción de cache. No es una solución al cold start; es distinta." }
+      ],
+      "explanation": "SnapStart (2022) es la solución nativa de AWS al Java cold start. Toma un snapshot del Firecracker microVM DESPUÉS del init de tu función (post-Spring context, post-JIT warmup si haces initializer). Cuando llega un cold start, restaura ese snapshot en ~200-500ms en lugar de rearrancar la JVM. Consideraciones: (1) hay latencia en la PRIMERA versión publicada (crear snapshot toma minutos); (2) recursos con estado (conexiones abiertas, timestamps, IDs únicos) hay que reinicializar en 'afterRestore' hook usando CRaC; (3) requiere versión publicada, no funciona con $LATEST. Provisioned Concurrency sigue teniendo sentido para latencia < 100ms garantizada, pero para el 90% de casos Java, SnapStart es mejor y gratis.",
+      "realWorld": "AWS re:Invent 2022 keynote presentó SnapStart mostrando cold start de app Spring Boot pasando de 6s a 200ms. Coca-Cola FEMSA reportó ahorros de 60% al reemplazar PC con SnapStart en cargas variables.",
+      "tags": ["SnapStart", "Java", "cold start", "Firecracker", "CRaC"],
+      "tech": ["Lambda", "SnapStart", "Spring Boot", "Java 17", "CRaC"],
+      "references": [
+        { "title": "AWS — Lambda SnapStart docs" },
+        { "title": "AWS re:Invent 2022 — SVS402 SnapStart deep dive" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "serverless",
+      "topic": "Lambda dentro de VPC — ENI overhead",
+      "difficulty": "senior",
+      "scenario": "Necesitas que tu Lambda acceda a un RDS Postgres en subnets privadas. Configuras la Lambda en VPC. Antes de 2019, cold starts saltaban de 200ms a 10-15s. Post-2019 mejoró, pero sigues viendo comportamiento distinto.",
+      "question": "¿Qué es CIERTO sobre Lambda en VPC hoy?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Desde 2019 AWS introdujo Hyperplane ENIs: en lugar de una ENI por sandbox, hay ENIs compartidas por 'unique combination (subnet, security group)'. El impacto en cold start bajó de 10s a ~1s adicional en la primera invocación de esa combinación.", "correct": true, "why": "Correcto. Antes de 2019, cada nueva Lambda-instance creaba una ENI (proceso lento en EC2 API, hasta 10s). Con Hyperplane, AWS gestiona un pool de ENIs por (subnet, SG) combo — los sandboxes se attachean a una ENI existente. Fue una mejora enorme, casi eliminando el 'VPC cold start penalty'." },
+        { "letter": "B", "text": "Lambdas en VPC pueden llegar a Internet directamente sin NAT Gateway.", "correct": false, "why": "Falso. Una Lambda en VPC privada NO puede alcanzar Internet a menos que la subnet tenga ruta a NAT Gateway (o VPC Endpoint para el servicio AWS específico). Es un error clásico: ponen la Lambda en VPC para llegar a RDS, y de repente rompen las llamadas a APIs externas / a S3." },
+        { "letter": "C", "text": "Para acceder a servicios AWS (S3, DynamoDB, Secrets Manager) desde Lambda en VPC sin pagar NAT, se recomiendan VPC Endpoints (Gateway para S3/DynamoDB, Interface para el resto).", "correct": true, "why": "Correcto y crítico en costos. NAT Gateway cobra ~$0.045/hora + $0.045/GB. Con VPC Endpoints (Gateway = gratis; Interface = $0.01/hora por AZ + $0.01/GB) el tráfico a servicios AWS no sale de la VPC ni pasa por NAT. En cargas altas, ahorro puede ser miles al mes." },
+        { "letter": "D", "text": "Necesitas subnets en al menos 2 AZs para HA, y suficientes IPs libres para escalar (cada ejecución concurrente consume IP privada de la subnet cuando se attachea a la ENI compartida).", "correct": true, "why": "Correcto. Aunque Hyperplane reduce el número de ENIs, cada ejecución concurrente aún consume conexiones. Si tu Lambda escala a 1000 concurrentes en una subnet con 100 IPs libres, obtendrás errores de 'EC2 throttled: Insufficient free IP addresses'. Diseña subnets /24 o mayores para producción." },
+        { "letter": "E", "text": "Lambda en VPC ya no tiene ningún overhead — es como estar fuera.", "correct": false, "why": "Sobrestimado. Hyperplane redujo enormemente el overhead pero: (1) primera invocación de una nueva combo subnet+SG paga ~1s extra; (2) si la Lambda no está en VPC, no consume IPs privadas ni depende de NAT/Endpoints." }
+      ],
+      "explanation": "Antes de decidir 'meter Lambda en VPC', evalúa alternativas: (1) usar RDS Proxy (maneja pool de conexiones fuera y da endpoint accesible desde Lambda; también salva a Postgres del thundering herd de miles de conexiones); (2) DynamoDB en lugar de RDS (accesible sin VPC); (3) si necesitas VPC, diseña bien subnets (múltiples AZs, /23 o /22 para IPs suficientes), usa VPC Endpoints para todo servicio AWS accedido frecuentemente, y considera NAT solo para tráfico externo raro. RDS Proxy es especialmente importante: Lambda sin proxy puede abrir 1000+ conexiones simultáneas y saturar Postgres (max_connections 100 por default).",
+      "realWorld": "AWS Compute Blog 'Announcing improved VPC networking for AWS Lambda functions' (2019) documentó Hyperplane. Coinbase escribió sobre cómo RDS Proxy salvó su migración a Lambda cuando Postgres se saturaba de conexiones cortas.",
+      "tags": ["VPC", "ENI", "Hyperplane", "NAT Gateway", "VPC Endpoints", "RDS Proxy"],
+      "tech": ["Lambda", "VPC", "RDS Proxy", "NAT Gateway", "VPC Endpoint"],
+      "references": [
+        { "title": "AWS Compute Blog — Improved VPC networking for Lambda (2019)" },
+        { "title": "AWS — RDS Proxy for Lambda concurrency" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "serverless",
+      "topic": "Payload y timeout limits",
+      "difficulty": "mid",
+      "scenario": "Tu Lambda procesa archivos que llegan por API Gateway. Los clientes empiezan a mandar archivos de hasta 20MB. También hay un job de export que tarda hasta 20 minutos generando reportes.",
+      "question": "¿Cuáles son los límites reales y sus workarounds?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "API Gateway REST tiene límite de 10MB en payload; API Gateway HTTP y Function URLs también 6MB (invoke sync). Workaround: pre-signed URLs a S3 — el cliente sube directo a S3 y la Lambda se dispara con el S3 event.", "correct": true, "why": "Correcto. Los payloads de invocación síncrona están limitados: 6MB sync, 256KB async, 10MB en API Gateway REST. Para archivos, el patrón estándar es: cliente pide pre-signed PUT URL a tu API, sube directo a S3 (no pasa por tu backend), y S3 event notification dispara la Lambda que procesa. Escala infinitamente y no cargas tu API." },
+        { "letter": "B", "text": "Lambda tiene timeout máximo de 15 minutos. Un job de 20 min NO cabe. Alternativas: partir en chunks con Step Functions (que orquesta múltiples invocaciones), o correr en Fargate/ECS para cargas largas.", "correct": true, "why": "Correcto. 900 segundos (15 min) es límite duro de Lambda. Step Functions Standard soporta 1 año de duración y orquesta N Lambdas. Para cargas monolíticas largas (>15 min): Fargate task. Para pipeline batch: Step Functions con estado en DynamoDB." },
+        { "letter": "C", "text": "Puedes pedir a AWS Support subir el timeout de Lambda a 60 minutos.", "correct": false, "why": "Falso. El límite de 15 min es hard limit del servicio, no se puede subir. Es una decisión arquitectural de AWS." },
+        { "letter": "D", "text": "Response payload de Lambda tiene también límite (6MB sync). Para respuestas grandes: streaming responses (Function URLs / Lambda Response Streaming) o generar el output en S3 y devolver una pre-signed URL.", "correct": true, "why": "Correcto. Response también limitado a 6MB. Response Streaming (2023) permite hasta 20MB con streaming (útil para SSE, JSON grande, imágenes generadas). Para exports grandes: escribe a S3 y devuelve URL pre-signed." },
+        { "letter": "E", "text": "El límite de disco /tmp es de 512MB fijo, no configurable.", "correct": false, "why": "Falso desde 2022. /tmp de Lambda es configurable de 512MB a 10GB (pagas extra por almacenamiento efímero). Útil para procesar archivos temporales o cachear artefactos pesados." }
+      ],
+      "explanation": "Los límites de Lambda son de diseño y hay patrones aceptados para cada uno. Para uploads: pre-signed S3 URLs (patrón #1). Para jobs largos: Step Functions o Fargate. Para respuestas grandes: streaming o S3 + URL. Para almacenamiento temporal: /tmp hasta 10GB o EFS mount (para state compartido entre invocaciones o modelos ML grandes). Conocer estos límites evita rediseños tardíos.",
+      "realWorld": "Netflix procesa uploads de video con pre-signed URLs a S3 (nunca pasan por su API). AWS re:Invent 2023 (SVS309) mostró Response Streaming ahorrando 3s de latencia en respuestas de 10MB al empezar a enviar bytes antes de terminar el proceso.",
+      "tags": ["límites Lambda", "S3 pre-signed", "Step Functions", "Response Streaming", "/tmp"],
+      "tech": ["Lambda", "S3", "Step Functions", "Fargate", "API Gateway"],
+      "references": [
+        { "title": "AWS — Lambda quotas" },
+        { "title": "AWS — Lambda Response Streaming (2023)" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "serverless",
+      "topic": "Memory-CPU relationship",
+      "difficulty": "mid",
+      "scenario": "Un compañero configura todas las Lambdas con 128MB 'para ahorrar'. Miden y ven que el procesamiento tarda 8 segundos.",
+      "question": "¿Qué es cierto sobre memoria y facturación en Lambda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Facturas por GB-segundo (memoria × tiempo). Subir de 128MB a 1024MB cuadruplica el costo por segundo, pero da 8x más vCPU: si el trabajo baja de 8s a 1s, costo total podría ser MENOR aún con más memoria. Herramienta oficial: AWS Lambda Power Tuning.", "correct": true, "why": "Correcto. La facturación es GB-seg. Si a 128MB cuestas X × 8s = 8X, y a 1024MB cuestas 8X × 1s = 8X (mismo costo) pero 8x más rápido. Muchas cargas CPU-bound son MÁS BARATAS con más memoria porque el tiempo baja no linealmente. Alex Casalboni's Lambda Power Tuning (Step Functions) ejecuta la función con distintas memorias y grafica cost vs speed para encontrar el punto óptimo." },
+        { "letter": "B", "text": "Más memoria = más caro siempre. 128MB siempre es más barato.", "correct": false, "why": "Falso. Si el trabajo es CPU-bound, más memoria = más CPU = menos tiempo total = potencialmente menor costo. Solo si el trabajo es I/O-bound (esperando red/DB) es cierto que más memoria no ayuda." },
+        { "letter": "C", "text": "El CPU es configurable independientemente de la memoria en Lambda.", "correct": false, "why": "Falso. Lambda asigna CPU proporcionalmente a memoria. No hay control separado. A 1769MB obtienes 1 vCPU full; a 3538MB obtienes 2; hasta ~6 vCPUs a 10240MB." },
+        { "letter": "D", "text": "Lambda solo cobra por invocación, no por duración.", "correct": false, "why": "Falso. Cobra ambos: request price ($0.20 por 1M requests) + duration ($0.0000166667 por GB-seg en x86, más barato en ARM)." }
+      ],
+      "explanation": "El truco de Lambda: el precio es memory × time, pero CPU escala con memory. Subir memoria puede ser gratis o hasta más barato si baja tiempo proporcionalmente. Herramienta: AWS Lambda Power Tuning (open source de Alex Casalboni, ahora Serverless Hero) que grafica ambos ejes. Ejemplo típico Python heavy: 128MB=6000ms, 512MB=1500ms, 1024MB=800ms, 3008MB=600ms. Costo: casi plano entre 512 y 1024, pero latencia 2x mejor. Regla: nunca dejes 128MB por default; profila con datos reales.",
+      "realWorld": "Alex Casalboni (AWS Serverless Hero) creó Lambda Power Tuning; es citada en AWS Well-Architected Serverless Lens como herramienta oficial. iRobot documentó ahorros de 40% en Lambda tras aplicar Power Tuning a sus funciones core.",
+      "tags": ["memoria", "vCPU", "billing", "Power Tuning"],
+      "tech": ["Lambda", "Lambda Power Tuning", "Step Functions"],
+      "references": [
+        { "title": "AWS Lambda Power Tuning (GitHub)" },
+        { "title": "AWS Well-Architected — Serverless Lens" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "serverless",
+      "topic": "Cuándo Lambda cuesta MÁS que ECS/Fargate",
+      "difficulty": "staff",
+      "scenario": "Un servicio recibe 500 req/s constantes las 24 horas. Cada request tarda 200ms y necesita 512MB. El equipo debate entre Lambda o Fargate.",
+      "question": "¿Cuál es el análisis CORRECTO de costo/beneficio?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "A carga constante 24/7, Lambda es típicamente 3-5x MÁS CARO que Fargate/ECS. Fargate cobra por vCPU-hora y memoria-hora reservada, no por request. A 500 req/s constantes usarías todo el CPU permanentemente, y Fargate te da eso más barato. Lambda brilla con carga variable/bursty (autoscaling instantáneo, 0 cuando no hay carga).", "correct": true, "why": "Correcto y contra-intuitivo. Lambda a $0.0000166667/GB-s × 512MB × 200ms × 500 × 86400 = ~$74/día = ~$2200/mes SOLO en duration. Un Fargate task de 1 vCPU / 2GB corriendo 24/7 con Savings Plan sale ~$25/mes. Escalado horizontal a 10 tasks: $250/mes. Diferencia grande. Regla: Lambda gana si carga <30-40% del tiempo O si el equipo no puede/quiere operar contenedores." },
+        { "letter": "B", "text": "Lambda siempre es más barato porque 'pay-per-use'.", "correct": false, "why": "El mantra publicitario. Pay-per-use gana con USO BAJO O VARIABLE. Con uso constante alto, alquilas capacidad todo el tiempo — más eficiente hacerlo con contenedores." },
+        { "letter": "C", "text": "Fargate no puede escalar automáticamente.", "correct": false, "why": "Falso. ECS Service Auto Scaling + Fargate escala por CPU/memoria/custom metrics. Toma minutos (arranque de task) vs segundos de Lambda, pero para cargas predecibles es suficiente." },
+        { "letter": "D", "text": "Como Lambda es managed, siempre vale la pena por menos operación aunque cueste más.", "correct": false, "why": "Con carga constante y previsible, la 'operación' de Fargate es mínima (task definition + service). No justifica 3-5x costo. Argumento válido solo para equipos pequeños o cargas variables." }
+      ],
+      "explanation": "Regla del arquitecto experimentado: Lambda es genial para (a) carga esporádica/bursty, (b) event-driven (S3, DynamoDB Streams, EventBridge), (c) glue code entre servicios AWS, (d) MVPs y prototipos. Fargate/ECS gana para (a) carga alta sostenida 24/7, (b) latencia p99 sin cold starts, (c) websockets long-lived, (d) trabajos que superan 15 min. EC2 spot gana para cómputo batch tolerante a interrupción. Hay que hacer el cálculo: cost per million requests × requests/mes vs Fargate task cost × hours/mes. No es dogma: es aritmética.",
+      "realWorld": "Prime Video publicó un caso famoso (2023, 'Scaling up the Prime Video audio/video monitoring service') donde migraron de Lambda + Step Functions a un monolito en ECS y bajaron 90% el costo. Fue polémico pero real: para carga alta y sostenida, contenedores ganan. Ampliamente comentado por Corey Quinn (Duckbill Group).",
+      "tags": ["costo Lambda vs Fargate", "carga constante", "trade-offs"],
+      "tech": ["Lambda", "Fargate", "ECS", "Savings Plans"],
+      "references": [
+        { "title": "Prime Video Tech Blog — 'Scaling up Prime Video monitoring' (2023)" },
+        { "title": "Corey Quinn — analysis of Prime Video migration" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "serverless",
+      "topic": "Event source: SQS",
+      "difficulty": "senior",
+      "scenario": "Configuras SQS Standard queue como event source de una Lambda. Bajo carga, ves duplicados en el procesamiento y en algunos casos mensajes se procesan en orden distinto al enviado.",
+      "question": "¿Qué es cierto sobre SQS + Lambda?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SQS Standard entrega 'at-least-once' y NO garantiza orden. Duplicados son esperados; tu Lambda debe ser idempotente (Idempotency-Key en DynamoDB, o Lambda Powertools Idempotency).", "correct": true, "why": "Correcto. SQS Standard prioriza throughput sobre garantías estrictas. Puede entregar el mismo mensaje 2 veces (visibility timeout expirado antes de que Lambda lo confirme, retry). Solución: dedup a nivel aplicación con clave idempotente (MessageId de SQS o hash del payload) + tabla DynamoDB con TTL. Lambda Powertools tiene un decorator @idempotent que hace esto por ti." },
+        { "letter": "B", "text": "SQS FIFO garantiza orden y exactly-once dentro de un MessageGroupId, pero limita throughput a ~300 msg/s por grupo (3000 con batching).", "correct": true, "why": "Correcto. FIFO es útil cuando el orden importa (por usuario, por transacción). El truco es MessageGroupId: mensajes con mismo group van en orden; grupos distintos pueden procesarse en paralelo. Diseño típico: userId como MessageGroupId — orden por usuario, paralelismo entre usuarios." },
+        { "letter": "C", "text": "El batch size de SQS-Lambda determina cuántos mensajes recibe la Lambda por invocación. Con batchSize=10 y reportBatchItemFailures, puedes fallar mensajes individuales sin reprocesar todo el batch.", "correct": true, "why": "Correcto y muy usado. Antes de reportBatchItemFailures (2021), si 1 mensaje fallaba, el batch entero volvía a la cola. Ahora tu Lambda devuelve un array de itemIdentifiers fallidos; el resto se confirma. Reduce reprocesamiento y costos. Batch size hasta 10000 en Standard (con maxBatchingWindowSeconds)." },
+        { "letter": "D", "text": "Visibility Timeout de la cola debe ser al menos 6x el timeout de la Lambda (recomendación AWS).", "correct": true, "why": "Correcto. Si Lambda tiene timeout 30s y visibility timeout es 30s, un retry interno más lento se solapa con otro consumidor procesando el mismo mensaje. AWS recomienda visibility timeout >= 6x function timeout, y también >= tiempo total con retries. Sino, duplicados garantizados." },
+        { "letter": "E", "text": "SQS entrega mensajes push-based a Lambda; no hay polling.", "correct": false, "why": "Falso. Lambda hace long polling a SQS (el Event Source Mapping gestiona pollers internos por AWS, no cobras por poll). No es push-based genuino; es 'Lambda-managed polling'." }
+      ],
+      "explanation": "SQS Standard + Lambda es el par más común para async processing en AWS. Reglas: (1) idempotencia obligatoria; (2) reportBatchItemFailures activado; (3) DLQ configurado para veneno de mensaje; (4) visibility timeout calibrado; (5) Reserved Concurrency en la Lambda si necesitas rate limit hacia downstream (RDS, API externa). FIFO para orden estricto pero acepta el techo de throughput. Alternativas: Kinesis Data Streams (orden + replay), EventBridge (pub/sub multi-consumer, filtering).",
+      "realWorld": "Coca-Cola procesa millones de eventos de vending con SQS + Lambda + idempotencia. AWS Lambda Powertools nació en Amazon Prime Video como librería interna precisamente para estos patrones (idempotency, batch processing, tracing).",
+      "tags": ["SQS", "idempotencia", "batchItemFailures", "FIFO", "visibility timeout"],
+      "tech": ["SQS", "Lambda", "DynamoDB", "Lambda Powertools"],
+      "references": [
+        { "title": "AWS — Using SQS with Lambda" },
+        { "title": "AWS Lambda Powertools (Python/TS) — Idempotency" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "serverless",
+      "topic": "Event source: DynamoDB Streams / Kinesis",
+      "difficulty": "senior",
+      "scenario": "Necesitas replicar cambios de una tabla DynamoDB a OpenSearch para búsqueda full-text. Enganchas DynamoDB Streams a Lambda.",
+      "question": "¿Qué características de DynamoDB Streams (y Kinesis) debes considerar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "DynamoDB Streams tiene shards; el orden se garantiza dentro de un shard (que corresponde a una PartitionKey). Lambda invoca 1 concurrencia por shard como máximo → paralelismo limitado por número de shards.", "correct": true, "why": "Correcto. Streams (y Kinesis) son log-based ordenados por shard. La partition key de tu tabla decide en qué shard va cada change record. Si tu tabla tiene pocas PartitionKeys activas, tienes pocos shards activos → paralelismo bajo. Diseñar PartitionKeys de alta cardinalidad ayuda al fanout." },
+        { "letter": "B", "text": "Si tu Lambda falla procesando un batch, por default REBLOCK del shard: se reintenta indefinidamente y bloquea el procesamiento de nuevos records en ese shard (efecto 'poison pill').", "correct": true, "why": "Correcto y peligroso. A diferencia de SQS, un fallo en Streams bloquea el shard. Mitigaciones: (1) MaximumRetryAttempts (default infinito, ponlo en 3-5); (2) MaximumRecordAgeInSeconds; (3) BisectBatchOnFunctionError (subdivide para encontrar el registro venenoso); (4) DestinationConfig para DLQ (SQS o SNS)." },
+        { "letter": "C", "text": "ParallelizationFactor permite procesar hasta 10 batches concurrentes por shard, si tu procesamiento por record es independiente del orden.", "correct": true, "why": "Correcto. Por default 1 batch/shard en paralelo. Subir a 2-10 aumenta throughput. Precaución: rompe orden dentro del shard — solo si tu lógica lo tolera." },
+        { "letter": "D", "text": "DynamoDB Streams retiene records 24 horas; Kinesis retiene 24 horas por default, ampliable hasta 365 días.", "correct": true, "why": "Correcto. Streams 24h fijo. Kinesis retention configurable (24h default, extended hasta 7 días con cargo estándar, hasta 365 días con long-term storage). Para replay/rebuild de OpenSearch en desastres, Kinesis + retention alta es más robusto que Streams." },
+        { "letter": "E", "text": "DynamoDB Streams entrega 'exactly-once' por defecto.", "correct": false, "why": "Falso. Al menos una vez. Puede haber reentregas si Lambda falla o el checkpoint no se confirma. Tu handler debe ser idempotente." }
+      ],
+      "explanation": "Streams y Kinesis son log-oriented (append-only, ordered per shard, replay-capable), a diferencia de SQS (queue, unordered, one-time). Elección: si necesitas orden per-key + replay + múltiples consumidores, log. Si necesitas queue simple con reintentos independientes, SQS. Para tu caso (DDB→OpenSearch), Streams es adecuado: 1 consumidor Lambda, orden por PartitionKey (importante para que el UPDATE llegue después del INSERT en OpenSearch). Configura MaximumRetryAttempts, DestinationConfig DLQ, BisectBatchOnError. Considera OpenSearch Ingestion o Kinesis Data Firehose si el volumen es enorme.",
+      "realWorld": "Amazon Prime Video usa DynamoDB Streams para propagar cambios de catálogo. AWS re:Invent 2020 (DAT409) explicó cómo Zoom usa Kinesis con parallelization factor 10 para procesar 2M events/s en tiempo real.",
+      "tags": ["DynamoDB Streams", "Kinesis", "shard", "parallelizationFactor", "bisect on error"],
+      "tech": ["DynamoDB Streams", "Kinesis", "Lambda", "OpenSearch"],
+      "references": [
+        { "title": "AWS — DynamoDB Streams and Lambda triggers" },
+        { "title": "AWS — Kinesis + Lambda scaling (Parallelization Factor)" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "serverless",
+      "topic": "Event source: S3 y EventBridge",
+      "difficulty": "mid",
+      "scenario": "Necesitas que cuando se suba una imagen a S3, se dispare un procesamiento (thumbnail, análisis con Rekognition, indexado). Además otros equipos también quieren enterarse del evento.",
+      "question": "¿Cuál es la arquitectura MÁS extensible?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "S3 → EventBridge (habilitar 'EventBridge notification' en el bucket) → múltiples rules → múltiples Lambdas/SQS/otros consumidores. EventBridge da fan-out, filtering por content, y otros equipos pueden agregar rules sin tocar tu bucket.", "correct": true, "why": "Correcto y patrón recomendado para eventos que interesan a múltiples consumidores. EventBridge (event bus) permite N consumidores desacoplados con rules propias. Filtros por prefijo, sufijo, tags, etc. Los equipos nuevos crean sus rules sin coordinación." },
+        { "letter": "B", "text": "S3 → Lambda directa. Simple y suficiente.", "correct": false, "why": "S3 Notifications directas soportan 1 destino por evento por prefix/suffix. Si un segundo equipo quiere el mismo evento, hay que reconfigurar o hacer que la primera Lambda re-publique. Anti-patrón para arquitecturas evolutivas." },
+        { "letter": "C", "text": "S3 → SNS → múltiples SQS → Lambdas. También válido pero más piezas y menos filtrado inteligente que EventBridge.", "correct": false, "why": "Válido históricamente (patrón fanout SNS-SQS pre-EventBridge). Funciona pero: (a) filtering SNS es limitado a message attributes; (b) no tienes archive/replay de eventos; (c) más piezas para el mismo resultado. EventBridge es superior hoy." },
+        { "letter": "D", "text": "S3 → Kinesis → Lambda. Da streaming pero es overkill para 'nueva imagen subida' que es un evento discreto.", "correct": false, "why": "Kinesis es para stream continuo de alta cardinalidad. Un upload esporádico de imagen es un evento puntual — EventBridge (o SQS) es el fit natural." }
+      ],
+      "explanation": "S3 Event Notifications: 3 destinos posibles (SNS, SQS, Lambda) con acoplamiento 1:1 por regla. EventBridge: infinitos consumidores desacoplados, filtering rico, archive+replay (para debug o rebuild), integración con 100+ servicios AWS y SaaS. Para eventos 'de dominio' que interesan a varios equipos, EventBridge es la elección arquitectural. Considera Kinesis solo si necesitas ordering + replay + procesamiento continuo (analytics, ETL streaming).",
+      "realWorld": "Autodesk usa EventBridge como event bus corporativo con miles de rules distribuidas entre equipos. AWS re:Invent 2021 (API302) mostró cómo Liberty Mutual migró de SNS-SQS a EventBridge para desacoplar 50+ microservicios.",
+      "tags": ["EventBridge", "S3 notifications", "fan-out", "event bus"],
+      "tech": ["S3", "EventBridge", "SNS", "SQS", "Lambda"],
+      "references": [
+        { "title": "AWS — S3 Event Notifications with EventBridge" },
+        { "title": "AWS re:Invent 2021 — API302 EventBridge patterns" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "serverless",
+      "topic": "Reserved Concurrency — trampas",
+      "difficulty": "staff",
+      "scenario": "Configuras Reserved Concurrency = 10 en tu Lambda para 'proteger' un RDS downstream que solo soporta 20 conexiones. Después empiezas a ver throttles inesperados y comportamiento raro en otras Lambdas.",
+      "question": "¿Qué NO es obvio sobre Reserved Concurrency?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Reserved Concurrency reserva ese cupo del account concurrency pool (default 1000 por región). Si reservas 10 en una función, las otras funciones tienen 990 en lugar de 1000 — puede causar throttles en otras funciones si el pool está tight.", "correct": true, "why": "Correcto. Es una asignación desde un pool global de la cuenta. Reservar 100 para 10 funciones = -1000 disponibles para el resto. En cuentas con muchas Lambdas, hay que pedir aumento del account concurrency limit (default 1000, ampliable a decenas de miles) antes de reservar agresivamente." },
+        { "letter": "B", "text": "Reserved Concurrency también es un LÍMITE: la función NO puede escalar más allá de ese número, aunque el pool tenga capacidad. Si el tráfico sobrepasa, requests son throttled (429).", "correct": true, "why": "Correcto y es su propósito: es upper bound + lower bound simultáneo. Útil para proteger downstream, pero significa que picos legítimos causan throttling. Si tu SLA no tolera 429s en picos, no uses RC como límite arbitrario." },
+        { "letter": "C", "text": "Con SQS como source, si Reserved Concurrency es bajo y llegan más mensajes de lo que puedes procesar, los mensajes se acumulan en la queue (no se pierden). Bien: puedes recuperar. Mal: aumenta latencia, y si la queue no tiene retention suficiente, los mensajes viejos podrían expirar.", "correct": true, "why": "Correcto. RC + SQS es el patrón para 'throttle upstream, no perder eventos'. La queue actúa de buffer. Pero mensajes tienen MessageRetentionPeriod (default 4 días, max 14). Si el backlog dura más, los mensajes expiran silenciosamente." },
+        { "letter": "D", "text": "Reserved Concurrency es lo mismo que Provisioned Concurrency.", "correct": false, "why": "Confusión común pero SON DISTINTOS. Reserved Concurrency = cuánto puede escalar la función (límite/reserva). Provisioned Concurrency = cuántas instancias mantener pre-inicializadas (elimina cold start). Puedes tener ambas: PC ≤ RC." },
+        { "letter": "E", "text": "Reserved Concurrency = 0 desactiva la función efectivamente (no puede invocarse).", "correct": true, "why": "Correcto y útil como 'kill switch'. Setear RC=0 hace que todas las invocaciones sean throttled. Es una forma rápida de 'apagar' una Lambda en incident sin borrarla ni desconectar sources." }
+      ],
+      "explanation": "Reserved Concurrency vs Provisioned Concurrency es la fuente #1 de confusión en Lambda. RC = LIMIT + RESERVATION del pool global. PC = PRE-WARM instances (contra cold start). Usos legítimos de RC: (1) proteger DB downstream con pocas conexiones (mejor: RDS Proxy); (2) rate-limit a un servicio externo con quota; (3) kill switch (RC=0). Cuidado con: consumir el account pool, throttlear picos legítimos, mensajes SQS expirando en backlog. Mejor patrón para proteger RDS: RDS Proxy (pooling nativo) + RC como último recurso.",
+      "realWorld": "AWS re:Invent 2022 (SVS405) mostró cómo Formula 1 usa Reserved Concurrency = 0 como kill switch para desactivar Lambdas sin código durante race incidents. Es más rápido que redeploy.",
+      "tags": ["Reserved Concurrency", "Provisioned Concurrency", "throttling", "kill switch"],
+      "tech": ["Lambda", "SQS", "RDS Proxy"],
+      "references": [
+        { "title": "AWS — Managing Lambda concurrency" },
+        { "title": "AWS Well-Architected — Reserved vs Provisioned Concurrency" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "serverless",
+      "topic": "DLQ y error handling",
+      "difficulty": "senior",
+      "scenario": "Configuras una Lambda invocada por API Gateway. Un compañero dice 'ponle DLQ para no perder errores'. Configura una SQS DLQ en la Lambda pero nunca ve mensajes en ella cuando ocurren errores.",
+      "question": "¿Por qué el DLQ está vacío y qué es correcto sobre error handling en Lambda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DLQ de Lambda (deprecated en favor de Destinations) solo se dispara en invocaciones ASÍNCRONAS que agotan reintentos (2 por default). API Gateway invoca SÍNCRONA — el error va directo al cliente en la response, no al DLQ. Para async (S3, EventBridge, SNS, invoke API con InvocationType=Event), DLQ o Destinations sí capturan.", "correct": true, "why": "Correcto. Es la confusión más frecuente. DLQ/Destinations en Lambda son PARA INVOCACIONES ASYNC del servicio Lambda. Sync (API Gateway REST, ALB, Function URLs con InvokeMode=BUFFERED sync) devuelve el error al llamante — no hay 'queue' que capturar. Para capturar errores de sync, logs + métricas + alarma en Errors > 0." },
+        { "letter": "B", "text": "El DLQ solo funciona si es SNS, no SQS.", "correct": false, "why": "Falso. DLQ acepta SNS o SQS. El problema es sync vs async, no el tipo de destino." },
+        { "letter": "C", "text": "El DLQ necesita permisos IAM específicos que faltan.", "correct": false, "why": "Posible edge case, pero el escenario dice 'la Lambda no encola nada' consistentemente. La causa root más probable es el modelo sync vs async." },
+        { "letter": "D", "text": "El DLQ tiene delay de 5 minutos.", "correct": false, "why": "Inventado. No hay delay artificial." }
+      ],
+      "explanation": "Los 3 modelos de invocación Lambda: (1) Sync — RequestResponse, cliente espera respuesta, errores van al cliente (API Gateway, ALB, direct SDK); (2) Async — Event, Lambda pone en queue interno y responde 202, reintenta 2 veces por default, si falla → DLQ o Destinations (S3 events, SNS, EventBridge, invoke con InvocationType=Event); (3) Stream/Poll — SQS/Kinesis/DDB Streams, gestionado por Event Source Mapping, tiene su propio ReportBatchItemFailures y sus propios errors. Elegir estrategia de error según modelo. Destinations (2019) es superior a DLQ: soporta OnSuccess/OnFailure, con más targets (SQS, SNS, Lambda, EventBridge), y payload más rico (context de la invocación).",
+      "realWorld": "AWS lanzó Lambda Destinations en 2019 para reemplazar el DLQ pattern. Muchos equipos siguen usando DLQ por legacy. Datadog y otras herramientas monitorizan Errors + Throttles + DLQ depth como golden signals de Lambda.",
+      "tags": ["DLQ", "Destinations", "sync vs async", "error handling"],
+      "tech": ["Lambda", "SQS", "SNS", "EventBridge", "Destinations"],
+      "references": [
+        { "title": "AWS — Lambda invocation types" },
+        { "title": "AWS — Lambda Destinations (2019)" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "serverless",
+      "topic": "Concurrency modelo",
+      "difficulty": "senior",
+      "scenario": "Tu Lambda recibe requests. ¿Puede una sola instancia (sandbox) procesar múltiples requests en paralelo?",
+      "question": "¿Cómo funciona la concurrencia en Lambda?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "NO. Cada sandbox Lambda procesa 1 request a la vez. Si llegan 100 requests concurrentes, se levantan 100 sandboxes (o hasta el límite). Esto simplifica el modelo (sin thread safety), pero significa que globals mutables entre invocaciones warm no compiten (misma sandbox procesa 1 request a la vez).", "correct": true, "why": "Correcto. Modelo de aislamiento simple: 1 sandbox = 1 request activa. Autoscaling levanta más sandboxes según demanda. Ventaja: puedes usar variables globales (cache in-memory, conexiones) sin locks. Desventaja: no puedes multiplexar múltiples requests I/O-bound en la misma sandbox (como haría Node.js single-threaded normalmente sirviendo 1000 conns concurrentes con Fastify). Para cargas I/O-bound extremas, container-based (Fargate) puede ser más eficiente." },
+        { "letter": "B", "text": "SÍ. Node.js Lambda puede servir 100 requests concurrentes en la misma sandbox aprovechando el event loop.", "correct": false, "why": "Falso. Aunque el runtime Node soporta concurrencia, Lambda lo ejecuta 1-at-a-time por decisión del servicio. Node's event loop no se usa para multiplexar requests entre invocaciones." },
+        { "letter": "C", "text": "Depende del runtime — Java sí, Node no.", "correct": false, "why": "Falso. Es modelo del servicio Lambda, no del runtime." },
+        { "letter": "D", "text": "Puedes activar 'concurrent mode' en configuración.", "correct": false, "why": "No existe tal opción." }
+      ],
+      "explanation": "Modelo de concurrencia Lambda = horizontal scaling puro. 1 sandbox = 1 request. Implicaciones: (1) las variables globales top-level son thread-safe by design (no hay múltiples threads compitiendo por ellas dentro de una invocation); (2) Lambda NO es eficiente para servir muchas conexiones long-lived o WebSockets (usa API Gateway WebSocket que abstrae esto); (3) para 1000 req/s necesitas 1000 sandboxes si cada request tarda 1s. Alternativas si el modelo no encaja: Fargate (multiplexa requests en 1 container Node/Go usando event loop), ECS EC2 (control total del pool).",
+      "realWorld": "Un desarrollador reportó en 2020 que subir un Node.js server con Express a Lambda daba peor perf que Fargate: Lambda levantaba 1000 sandboxes para servir 1000 req concurrentes; Fargate con 1 container Node servía todo con event loop. AWS documentó este trade-off oficialmente.",
+      "tags": ["concurrencia", "modelo Lambda", "sandbox", "event loop"],
+      "tech": ["Lambda", "Fargate", "Node.js"],
+      "references": [
+        { "title": "AWS — Lambda execution environment lifecycle" },
+        { "title": "AWS Well-Architected Serverless Lens" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "serverless",
+      "topic": "Warm invocations y execution context",
+      "difficulty": "mid",
+      "scenario": "Tu Lambda tiene esta estructura: en el top-level creas un cliente Postgres con pool 10, y en el handler ejecutas queries. Bajo carga con muchos cold starts, Postgres empieza a rechazar conexiones ('too many clients').",
+      "question": "¿Por qué ocurre y cómo resolver?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cada sandbox Lambda abre su propio pool de 10 conexiones. Con 200 sandboxes concurrentes = 2000 conexiones a Postgres, que suele tener max_connections=100. Solución: RDS Proxy que hace pooling fuera de Lambda y presenta un endpoint. Alternativa: bajar pool a 1 por sandbox (Lambda solo procesa 1 request a la vez de todos modos).", "correct": true, "why": "Correcto y muy común. Cada sandbox = pool separado (los sandboxes son procesos aislados, no comparten memoria). Con concurrencia Lambda × pool size = conexiones totales, que escala rápidamente. RDS Proxy soluciona: mantiene pool compartido de conexiones a Postgres, Lambdas se conectan al Proxy con connection reuse. Alternativa: pool=1 por sandbox (ya que Lambda procesa 1 request a la vez, más pool no ayuda)." },
+        { "letter": "B", "text": "Postgres tiene bug con conexiones cortas.", "correct": false, "why": "Falso. Postgres funciona bien con conexiones largas; el problema es cuántas conexiones simultáneas (fork() por conexión es caro en Postgres, no escala bien con miles)." },
+        { "letter": "C", "text": "Aumentar max_connections en Postgres a 5000.", "correct": false, "why": "Anti-patrón. Postgres forkea un proceso por conexión → 5000 procesos consumen RAM/CPU brutal. Regla: max_connections < 500 en Postgres típico. Usa pooling externo (PgBouncer, RDS Proxy)." },
+        { "letter": "D", "text": "Cambiar a MySQL que soporta más conexiones.", "correct": false, "why": "MySQL thread-based también sufre con miles de conexiones. El problema es arquitectural: no crear miles de conexiones cortas — poolear fuera." }
+      ],
+      "explanation": "Regla de oro Lambda + RDS: usa RDS Proxy (o PgBouncer si self-hosted). Sin proxy, cada sandbox nuevo abre conexiones nuevas; el bursting es fatal para el DB. RDS Proxy además: (1) reutiliza conexiones (Lambda handler pide una del pool, la devuelve al terminar); (2) failover más rápido en Multi-AZ; (3) IAM auth. Si no puedes usar RDS Proxy: pool_size=1 por sandbox + connection timeout corto + retry con backoff. Para escalar más allá: considera DynamoDB (sin límite de conexiones) o Aurora Serverless v2 (que escala capacidad automáticamente).",
+      "realWorld": "AWS lanzó RDS Proxy en 2020 principalmente por el caso de uso Lambda + RDS. Coinbase publicó cómo migrar a RDS Proxy salvó un outage cuando su Postgres RDS colapsaba por conexiones de Lambda en horas pico.",
+      "tags": ["RDS Proxy", "connection pooling", "Postgres", "max_connections"],
+      "tech": ["Lambda", "RDS Proxy", "Postgres", "PgBouncer"],
+      "references": [
+        { "title": "AWS — RDS Proxy for Lambda" },
+        { "title": "Aurora Serverless v2 vs RDS + Proxy" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "serverless",
+      "topic": "Observabilidad en Lambda",
+      "difficulty": "senior",
+      "scenario": "Necesitas debuggear una Lambda que a veces devuelve 500 en producción. Los logs de CloudWatch tienen muchos console.log() dispersos.",
+      "question": "¿Qué prácticas de observabilidad son las MÁS correctas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Structured logging (JSON) con correlation IDs (request ID, trace ID). Facilita queries en CloudWatch Logs Insights y Datadog/Grafana Loki.", "correct": true, "why": "Correcto. JSON logs son parseables automáticamente; puedes filtrar por level, error type, userId. Correlation IDs permiten seguir un request a través de múltiples Lambdas y servicios. Lambda Powertools Logger hace esto out-of-the-box." },
+        { "letter": "B", "text": "Habilitar X-Ray (o OpenTelemetry con ADOT) para trazas distribuidas: ves el waterfall completo entre servicios (API Gateway → Lambda → DynamoDB → Lambda → SQS).", "correct": true, "why": "Correcto. X-Ray o OTel dan visibilidad de dónde se pierde tiempo. Sin trazas, en un fallo de 5 servicios distribuidos estás ciego. Lambda tiene integración nativa con X-Ray (habilitar tracing en la config); ADOT (AWS Distro for OpenTelemetry) exporta a X-Ray/Datadog/Grafana/etc." },
+        { "letter": "C", "text": "Emitir métricas custom con CloudWatch EMF (Embedded Metric Format): escribes logs en formato JSON especial que CloudWatch parsea automáticamente como métricas, sin llamada extra API.", "correct": true, "why": "Correcto. Métrica custom vía PutMetricData API cuesta y agrega latencia. EMF es gratis (aprovecha los logs existentes) y automático. Powertools Metrics abstrae esto." },
+        { "letter": "D", "text": "Nunca loggear en producción para ahorrar costo.", "correct": false, "why": "CloudWatch Logs es barato ($0.50/GB ingested + $0.03/GB stored). Ahorrar en logs = ceguera en incidents. Sí controlar log level (INFO en prod, DEBUG solo en dev/troubleshoot puntual) y retention (30-90 días típico)." },
+        { "letter": "E", "text": "Usar Lambda Insights (add-on de AWS) para métricas de runtime: memoria usada, CPU, IO, cold start durations. Complementa las métricas estándar de Lambda.", "correct": true, "why": "Correcto. Lambda estándar no expone memoria usada por invocación (solo el max configurado) — Lambda Insights sí. Ayuda a right-size memoria. Se activa como Lambda Layer + IAM permission. Pequeño overhead de logs adicionales." }
+      ],
+      "explanation": "Los tres pilares de observabilidad en serverless: (1) Logs — JSON estructurados, correlation ID, log level; (2) Traces — X-Ray/OTel para ver waterfall entre servicios; (3) Metrics — CloudWatch nativas (Duration, Errors, Throttles, ConcurrentExecutions) + custom vía EMF + Lambda Insights para deep runtime data. AWS Lambda Powertools (Python, TypeScript, Java, .NET) integra los tres con decorators/middlewares. Es librería semi-oficial mantenida por AWS. Alertas mínimas: Errors > 0 en ventana, Duration p99 > SLA, Throttles > 0, DLQ depth > 0.",
+      "realWorld": "AWS Lambda Powertools nació en Amazon Prime Video 2019 y se opensourceó. Hoy es standard para observabilidad Lambda. Datadog, New Relic, Lumigo compiten en el espacio de 'serverless observability' con instrumentación no-invasive (Lambda Extension).",
+      "tags": ["observabilidad", "structured logging", "X-Ray", "EMF", "Powertools"],
+      "tech": ["CloudWatch", "X-Ray", "OpenTelemetry", "Lambda Powertools", "Lambda Insights"],
+      "references": [
+        { "title": "AWS Lambda Powertools" },
+        { "title": "AWS — CloudWatch Embedded Metric Format" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "serverless",
+      "topic": "Lambda Extensions",
+      "difficulty": "staff",
+      "scenario": "Tu equipo usa Datadog para observabilidad. En Fargate integrar el Datadog Agent es directo. En Lambda no puedes correr un agent sidecar.",
+      "question": "¿Qué es correcto sobre Lambda Extensions?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lambda Extensions son procesos que corren EN el mismo sandbox que tu función, con acceso al Lifecycle API (init, invoke, shutdown). Datadog, New Relic, Lumigo distribuyen sus 'agents' como Extensions (Lambda Layer). Interceptan logs/traces/metrics y los envían a su backend sin bloquear el handler.", "correct": true, "why": "Correcto. Extensions (2020) permiten correr código auxiliar en el sandbox: agents de observabilidad, secrets caching (AWS Parameters and Secrets Lambda Extension), etc. Se instalan como Lambda Layer; el runtime los detecta y arranca en el init. Overhead: cold start extra (100-500ms según extension) y memoria compartida." },
+        { "letter": "B", "text": "Extensions solo funcionan con Node.js runtime.", "correct": false, "why": "Falso. Runtime-agnostic. Funcionan con cualquier runtime Lambda (Node, Python, Java, Go, .NET, Ruby, custom)." },
+        { "letter": "C", "text": "Extensions añaden costo por invocación aparte del duration.", "correct": false, "why": "Falso. No hay cargo separado. Facturación es GB-seg del sandbox, e incluye el consumo de la extension. El overhead es en memoria y ligero costo de init." },
+        { "letter": "D", "text": "Los Extensions reemplazan al handler.", "correct": false, "why": "Falso. Coexisten. El handler procesa el request; la extension corre en paralelo para observabilidad o funciones auxiliares." }
+      ],
+      "explanation": "Lambda Extensions abrieron el modelo Lambda a integraciones que antes eran imposibles: sidecar-like agents, in-memory caching de secrets, log routers (evitando CloudWatch Logs cuando quieres logs a Datadog directamente reduciendo costo). Casos típicos: AWS Parameters and Secrets Extension (cachea Secrets Manager en memoria evitando N llamadas API), Datadog Extension (traces + logs + metrics sin CloudWatch intermedio), OTel Collector (as extension). Trade-off: cold start extra y menos memoria disponible para tu código.",
+      "realWorld": "AWS Parameters and Secrets Lambda Extension (2022) redujo latencia de Secrets Manager de 100ms por llamada a <1ms tras cachear. Datadog Lambda Extension permitió a empresas evitar el 'CloudWatch Logs tax' cuando exportan a Datadog (envío directo, saltándose CW).",
+      "tags": ["Lambda Extensions", "observability", "Datadog", "secrets"],
+      "tech": ["Lambda", "Lambda Extensions", "Datadog", "AWS Parameters and Secrets Extension"],
+      "references": [
+        { "title": "AWS — Lambda Extensions API" },
+        { "title": "AWS — Parameters and Secrets Lambda Extension" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "serverless",
+      "topic": "Lambda + API Gateway vs Function URLs vs ALB",
+      "difficulty": "senior",
+      "scenario": "Necesitas exponer una Lambda por HTTP. Evalúas API Gateway REST, API Gateway HTTP (v2), Function URLs y ALB.",
+      "question": "¿Cuáles son las diferencias RELEVANTES para elegir?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Function URLs es el más simple y barato: URL directa a la Lambda, IAM o none auth, sin costo por request adicional. Bueno para webhooks, prototipos, endpoints simples. Sin throttling avanzado, sin transformación, sin API keys.", "correct": true, "why": "Correcto. Function URLs (2022) elimina la fricción de API Gateway para casos simples. No hay costo extra (solo el de la Lambda). Limitaciones: sin usage plans, sin request/response transformation, sin cache built-in, sin WAF nativo (aunque puedes poner CloudFront delante)." },
+        { "letter": "B", "text": "API Gateway HTTP (v2) es 3-4x más barato que REST (v1) y con menor latencia. Menos features: no VTL, no API keys ni usage plans, no request validation avanzada. Para APIs modernas con JWT auth, es la elección default.", "correct": true, "why": "Correcto. HTTP API: $1/million requests vs REST $3.50/million. Suficiente para la mayoría (JWT auth con Cognito o custom, CORS, integraciones directas). REST es necesario si necesitas usage plans, API keys, resource policies complejas, WAF Regional integrado, o VTL." },
+        { "letter": "C", "text": "ALB puede tener Lambda como target. Útil si ya tienes ALB para otros servicios (ECS) y quieres una ruta que llame Lambda sin añadir API Gateway.", "correct": true, "why": "Correcto. ALB → Lambda target integrations. Payload es distinto (ALB-specific event structure). Útil para consolidar infra bajo un único LB regional. No paga por request (solo el LB hourly + LCU). Menos features que API Gateway (sin usage plans, sin transformación)." },
+        { "letter": "D", "text": "Function URLs soporta WebSockets nativamente.", "correct": false, "why": "Falso. Function URLs es HTTP puro. Para WebSockets se usa API Gateway WebSocket APIs (gestiona connectionId y route keys)." },
+        { "letter": "E", "text": "API Gateway REST tiene caché built-in por endpoint; HTTP API no.", "correct": true, "why": "Correcto. REST tiene cache configurable (0.5GB - 237GB) por stage/endpoint. HTTP API no tiene cache built-in — hay que meter CloudFront delante o cachear en la Lambda." }
+      ],
+      "explanation": "Matriz de decisión: (a) Webhook o endpoint simple sin auth compleja → Function URLs; (b) API pública moderna con JWT/OIDC → HTTP API; (c) API con usage plans, API keys, throttling per-key, WAF Regional, VTL → REST API; (d) Ya tienes ALB para ECS y quieres una ruta a Lambda sin agregar servicio → ALB. Costos importantes en volumen: REST vs HTTP puede ser miles al mes de diferencia en APIs de alto tráfico.",
+      "realWorld": "AWS re:Invent 2020 (API302) lanzó HTTP API vs REST comparison. Yan Cui y muchos AWS Heroes recomiendan HTTP API por default salvo requisitos específicos.",
+      "tags": ["API Gateway", "Function URLs", "ALB", "HTTP API vs REST"],
+      "tech": ["API Gateway", "Function URLs", "ALB", "Lambda"],
+      "references": [
+        { "title": "AWS — Choosing API Gateway REST vs HTTP" },
+        { "title": "AWS — Lambda Function URLs (2022)" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "serverless",
+      "topic": "Lambda Layers y contenedores",
+      "difficulty": "mid",
+      "scenario": "Tu Lambda necesita dependencias pesadas: OpenCV (100MB) para procesar imágenes y ffmpeg binary. El paquete deployment excede los 50MB (zip) y 250MB (unzipped) que Lambda permite.",
+      "question": "¿Cuál es la solución idiomática?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Lambda Container Images: empaqueta como Docker image (hasta 10GB) usando la base image de AWS. Tu código + dependencias en la imagen, subes a ECR, Lambda ejecuta el container. Cold start ligeramente mayor pero soporta paquetes grandes.", "correct": true, "why": "Correcto. Lambda Container Images (2020) rompió el límite de 250MB. Puedes usar Dockerfile con FROM public.ecr.aws/lambda/python:3.11, instalar OpenCV + ffmpeg + tu código, y desplegar. AWS optimizó cold start de containers hasta niveles cercanos a zip (con base images oficiales). Sigues pagando por GB-seg igual, sin sobrecosto por container." },
+        { "letter": "B", "text": "Lambda Layers: partir dependencias en capas de hasta 250MB cada una, hasta 5 layers por función. Total 5×250MB = 1.25GB después de descompresión.", "correct": false, "why": "Parcialmente cierto pero mal presentado. Layers ayudan con hasta 5 layers, PERO el total unzipped de función + todas las layers sigue capped a 250MB. Layers son para compartir código entre Lambdas, no para superar el límite. Container Images es la respuesta correcta para paquetes grandes." },
+        { "letter": "C", "text": "Meter todo en S3 y descargar en el handler.", "correct": false, "why": "Anti-patrón. Cada cold start descarga 100MB desde S3 = latencia enorme + costo transfer. Container Images o EFS son mejores para dependencias grandes." },
+        { "letter": "D", "text": "Migrar a Fargate si superas 250MB.", "correct": false, "why": "Salto arquitectural innecesario. Container Images resuelve el problema manteniendo modelo Lambda." }
+      ],
+      "explanation": "Opciones para dependencias en Lambda: (1) Zip package hasta 50MB compressed / 250MB unzipped — default; (2) Layers hasta 5 por función, pero el total unzipped sigue en 250MB — sirven para SHARE code entre funciones; (3) Container Images hasta 10GB — solución para paquetes grandes; (4) EFS mount — para state compartido o modelos ML muy grandes (varios GB). Container Images vs Zip: cold start similar hoy con base images oficiales, dev experience más familiar (Dockerfile), CI/CD también familiar (build → push ECR → update function). Trade-off: hay que gestionar ECR (retention, lifecycle).",
+      "realWorld": "AWS re:Invent 2020 anunció Container Images como respuesta a demanda de ML/data workloads con dependencias pesadas. Hugging Face y muchas empresas ML usan Lambda Container Images para servir modelos small/medium sin la complejidad de SageMaker.",
+      "tags": ["Container Images", "Layers", "EFS", "package size"],
+      "tech": ["Lambda Container Images", "ECR", "Lambda Layers", "EFS"],
+      "references": [
+        { "title": "AWS — Lambda Container Images (2020)" },
+        { "title": "AWS — Lambda quotas: package sizes" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "serverless",
+      "topic": "Step Functions vs Lambda orchestration",
+      "difficulty": "senior",
+      "scenario": "Un workflow procesa un pedido: validate → charge card → reserve inventory → send email → update analytics. Cada paso es una Lambda. Un compañero propone: 'que Lambda 1 llame a Lambda 2 con invoke, y así en cadena'.",
+      "question": "¿Por qué es MEJOR usar Step Functions?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Step Functions separa la ORQUESTACIÓN del CÓDIGO: state machine explícita, retries por paso con políticas, error handling, visualización, historial persistido (útil para debug y auditoría), sin acoplamiento entre Lambdas. Lambda-invoca-Lambda crea acoplamiento oculto, sin visibilidad de estado, sin recuperación si falla el orchestrator, y paga doble (Lambda A esperando bloquea GB-seg mientras Lambda B corre).", "correct": true, "why": "Correcto. Los problemas de Lambda-invoke-Lambda: (1) doble facturación (Lambda A sync-invoke a B paga por ambos en paralelo); (2) sin state machine visual — el flujo está enterrado en código; (3) si A crashea antes de invocar B, no hay reintento del flujo; (4) errores del step B se pierden si A no los propaga. Step Functions: (a) state persistido; (b) retries declarativos; (c) parallel branches; (d) integraciones directas con 200+ AWS services sin Lambda intermedia (SDK integrations); (e) Express Workflows baratas para high-volume." },
+        { "letter": "B", "text": "Step Functions es más barato siempre.", "correct": false, "why": "No siempre. Standard Workflows cuestan por transición ($25/million); Express Workflows cuestan por invocación + duración (más barato para volumen alto). Puede ser MÁS caro que Lambda-invoke-Lambda en flujos muy simples de 2 pasos. La razón para usarlo NO es costo — es control de flujo y observabilidad." },
+        { "letter": "C", "text": "Step Functions es solo para batch processing.", "correct": false, "why": "Falso. Standard y Express cubren long-running (1 año) y short (5 min), ambos síncronos y asíncronos." },
+        { "letter": "D", "text": "Step Functions no puede llamar Lambdas.", "correct": false, "why": "Falso. Su uso principal es orquestar Lambdas + integraciones directas AWS (DynamoDB PutItem, SQS SendMessage, SNS Publish, etc. sin Lambda intermedia)." }
+      ],
+      "explanation": "Regla: cuando tengas >2 pasos con dependencias, error handling complejo, o necesitas visibilidad del progreso, usa Step Functions. Standard Workflows para workflows durables y auditables ($25/million state transitions, 1 año duración). Express Workflows para high-throughput event-driven ($1/million invocations + duration, 5 min max). El feature 'Distributed Map' (2022) permite procesar millones de items en paralelo (S3 objects, DynamoDB) sin gestionar concurrencia manual. Alternativas: Airflow para pipelines de datos complejos, Temporal para workflows con lógica muy custom.",
+      "realWorld": "Coca-Cola gestiona el workflow de vending machines con Step Functions. AWS re:Invent 2022 lanzó Distributed Map, mostrado con Skyscanner procesando millones de records de vuelos en paralelo. Prime Video (después del monolito ECS famoso) mantiene otros flujos en Step Functions.",
+      "tags": ["Step Functions", "orchestration", "state machine", "Express vs Standard"],
+      "tech": ["Step Functions", "Lambda", "SDK integrations"],
+      "references": [
+        { "title": "AWS — Step Functions Express vs Standard" },
+        { "title": "AWS re:Invent 2022 — Distributed Map" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "serverless",
+      "topic": "Cost gotchas Lambda",
+      "difficulty": "senior",
+      "scenario": "Tu factura Lambda subió 5x este mes sin cambio de tráfico obvio. Investigas.",
+      "question": "¿Cuáles son las causas MÁS PROBABLES de sorpresas en costos Lambda?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Provisioned Concurrency dejada activa fuera del pico. PC cobra 24/7 aunque no haya tráfico. Un typo en la schedule del autoscaling PC puede dejarlo prendido.", "correct": true, "why": "Correcto y muy común. PC cuesta como si la instancia estuviera corriendo siempre. Si dejaste PC=500 y solo lo necesitas 8h/día, pagas 3x lo necesario. Además, PC se cobra en unidades separadas del duration; en el bill sale como 'Lambda Provisioned Concurrency'." },
+        { "letter": "B", "text": "CloudWatch Logs costs: ingesting $0.50/GB. Una Lambda con log DEBUG en producción a millones de invocaciones puede generar TB de logs → miles de dólares en CW.", "correct": true, "why": "Correcto. El costo de CloudWatch Logs a veces supera el costo de Lambda. Log DEBUG con payloads completos en cada invocación es letal. Mitigaciones: log level INFO en prod, retention corto (7-30 días), o exportar directo a S3/Datadog vía Extension sin pasar por CW." },
+        { "letter": "C", "text": "Loops infinitos: Lambda A dispara Lambda B, que dispara A. Se auto-invocan hasta agotar concurrency. Facturas de $10k en horas.", "correct": true, "why": "Correcto y horror real. Un mismatch de configuración (S3 event dispara Lambda que escribe al mismo bucket → dispara Lambda → loop) puede costar miles antes de detectarlo. AWS lanzó 'Recursive Loop Detection' (2023) que detecta loops en Lambda-SQS-Lambda y Lambda-SNS-Lambda y los para automáticamente. Igual pon alarma en Invocations spike." },
+        { "letter": "D", "text": "Cross-region traffic: Lambda en us-east-1 leyendo de DynamoDB en eu-west-1 paga $0.02/GB de egress cross-region.", "correct": true, "why": "Correcto. Cross-region data transfer es caro y a veces accidental (misconfiguración de endpoints). Monitoriza 'DataTransfer' en Cost Explorer." },
+        { "letter": "E", "text": "Lambda cobra por warm invocations más caro que cold.", "correct": false, "why": "Falso. Warm/cold no afectan el precio. El precio es memoria × duración + request. Cold sale más caro porque el init cuenta como duración, pero el precio unitario es el mismo." }
+      ],
+      "explanation": "Costos escondidos en serverless: (1) Provisioned Concurrency siempre-on; (2) CloudWatch Logs a alto volumen; (3) Loops recursivos; (4) Cross-region egress; (5) NAT Gateway para Lambdas en VPC llamando a Internet ($0.045/GB, se acumula fast); (6) DynamoDB on-demand a mucho tráfico (más caro que provisioned si tienes throughput predecible); (7) X-Ray sampling al 100% (0.0000005 por trace suena poco, en millones se acumula). AWS Cost Explorer + Cost Anomaly Detection deberían estar SIEMPRE activos con alertas.",
+      "realWorld": "AWS lanzó Recursive Loop Detection en 2023 después de casos famosos de facturas de $50k por loops. Cloudflare publicó incidente similar en 2020 con sus workers. AWS Cost Anomaly Detection detecta spikes de billing automáticamente.",
+      "tags": ["cost gotchas", "PC waste", "log costs", "recursive loops"],
+      "tech": ["Lambda", "CloudWatch Logs", "Cost Explorer", "Recursive Loop Detection"],
+      "references": [
+        { "title": "AWS — Lambda Recursive Loop Detection (2023)" },
+        { "title": "AWS Cost Anomaly Detection" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "serverless",
+      "topic": "Cuándo NO usar serverless",
+      "difficulty": "staff",
+      "scenario": "El equipo lidera la migración full-serverless de toda la plataforma. Un arquitecto senior dice: 'no todo debe ser Lambda'.",
+      "question": "¿En qué escenarios es CORRECTO EVITAR Lambda?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cargas de tráfico ALTO Y CONSTANTE 24/7 donde Fargate/ECS con Savings Plans sale 3-5x más barato con similar effort operativo.", "correct": true, "why": "Correcto. Lambda gana en pay-per-use variable. En carga constante, alquilar containers reservados es más eficiente. Cálculo simple: si tu Lambda estaría 'usando todo su CPU' >70% del tiempo, considera contenedores." },
+        { "letter": "B", "text": "APIs con SLA de latencia p99 <50ms sin cold start tolerable. Aunque uses Provisioned Concurrency, siempre hay riesgo de cold spike si el tráfico sube más rápido de lo que PC escala.", "correct": true, "why": "Correcto. Latency-critical (trading, ad-serving, gaming servers) suele preferir containers siempre-on. PC ayuda pero no garantiza cero cold starts si demanda excede PC configurada." },
+        { "letter": "C", "text": "WebSockets de larga duración o connections HTTP/2 long-lived. Lambda no está pensada para long-running (aunque hay hacks).", "correct": true, "why": "Correcto. Lambda tiene timeout 15min, y su modelo es request-response corto. Para WebSockets usa API Gateway WebSocket APIs (que abstrae connectionId, Lambda solo procesa mensajes cortos) o Fargate/ECS con Node/Go servidor tradicional." },
+        { "letter": "D", "text": "Jobs batch >15 min (ETL grande, transcoding largo). Requieren Fargate, AWS Batch, EMR, o Step Functions con chunking.", "correct": true, "why": "Correcto. Timeout duro 15 min. Para batch grande: Fargate task (sin límite de duración), AWS Batch (gestiona colas de compute), EMR (Spark)." },
+        { "letter": "E", "text": "Aplicaciones donde el equipo no tolera vendor lock-in fuerte. Lambda es el servicio más 'AWS-específico'; migrar a otro cloud requiere reescritura (aunque OpenFaaS/Knative existen).", "correct": true, "why": "Correcto. Aunque el runtime code es portable, todo el evento model (event sources, IAM, Layers, Extensions) es AWS. Si multi-cloud es requisito estratégico, containers portables son más neutros. La 'serverless portability' es aspiracional en la práctica." }
+      ],
+      "explanation": "Ley del arquitecto: 'la herramienta correcta para el trabajo correcto'. Lambda no es 'la nueva forma de programar todo' — es un pattern óptimo para ciertos workloads: event-driven, variable, corto, integrado a AWS. Para otros workloads: Fargate (containers con menos ops que EC2), ECS EC2 (control total), EKS (Kubernetes multi-cloud), EC2 (workloads especiales), SageMaker (ML), etc. Amazon Prime Video famously migró un servicio DE Lambda A ECS por costo (2023). No es 'moda contra serverless', es aplicar la herramienta correcta. Well-Architected Framework recomienda evaluar por caso, no adoptar dogmáticamente.",
+      "realWorld": "Prime Video 2023: migración de Lambda + Step Functions a ECS monolito, -90% costo. Justificación pública. Corey Quinn escribió extensamente sobre el caso. AWS Well-Architected Serverless Lens reconoce que serverless no es una decisión binaria: hybrid architectures son la norma en cuentas maduras.",
+      "tags": ["cuándo NO Lambda", "trade-offs", "Prime Video case", "hybrid architecture"],
+      "tech": ["Lambda", "Fargate", "ECS", "AWS Batch", "EKS"],
+      "references": [
+        { "title": "Prime Video Tech Blog — Scaling monitoring (2023)" },
+        { "title": "AWS Well-Architected Serverless Lens" }
+      ]
+    }
+  ]
+}

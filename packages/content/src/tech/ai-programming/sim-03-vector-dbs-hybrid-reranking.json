@@ -1,0 +1,463 @@
+{
+  "id": "ai-programming-sim-03-vector-dbs-hybrid-reranking",
+  "trackId": "ai-programming",
+  "order": 3,
+  "title": "Simulacro 03 — RAG parte 2: vector DBs, hybrid search y reranking",
+  "focus": "Elección de vector DB, HNSW vs IVF, hybrid search (dense + BM25), reranking con cross-encoders, recall vs precision, query expansion, evaluación de retrieval.",
+  "areaCoverage": ["context-engineering", "cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "context-engineering",
+      "topic": "Elección de vector DB — trade-offs reales",
+      "difficulty": "junior",
+      "scenario": "Startup en fase seed empieza su primer RAG. Tienen ~200k chunks, Postgres ya en su stack (RDS), equipo de 4 devs sin experiencia en DBs vectoriales. Un compañero propone 'usemos Pinecone porque es el estándar'. Otro dice 'usemos pgvector, ya tenemos Postgres'.",
+      "question": "¿Cuál es la recomendación más pragmática para este stage?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "pgvector sobre el Postgres existente: (1) 200k chunks está muy por debajo del límite práctico de pgvector con HNSW (millones sin drama), (2) reutiliza infra/ops existentes (backups, replicación, monitoring), (3) permite JOIN con tablas relacionales sin pipeline separado, (4) coste marginal casi cero, (5) evita otro proveedor que gestionar. Migrar a dedicated (Pinecone, Qdrant, Weaviate, Milvus) sólo cuando pgvector muestre limitaciones REALES (latencia P99 alta, dificultad de escalar el nodo). Empezar simple es la respuesta correcta en seed.", "correct": true, "why": "Correcto. Principio 'YAGNI' aplicado a infra. Pinecone es excelente pero introduce vendor lock-in, coste fijo mensual, y otra pieza en la arquitectura. Con 200k chunks es overkill." },
+        { "letter": "B", "text": "Pinecone siempre; es lo que usan las grandes empresas.", "correct": false, "why": "'Lo que usan las grandes' no aplica a una startup con 200k chunks. Pinecone brilla en multi-tenant a escala, pero cobra por índice/pod y añade dependencia externa." },
+        { "letter": "C", "text": "Elasticsearch con dense vector, así resuelves también search de texto.", "correct": false, "why": "Es una opción válida (soporta dense vectors desde 8.x), pero introduce una nueva pieza operativa (JVM, cluster, tuning) que un equipo pequeño sin ES-expertise no debe adoptar como default." },
+        { "letter": "D", "text": "Meter los embeddings en Redis Search — es más rápido.", "correct": false, "why": "Redis Search (con RediSearch/Vector) funciona pero es memoria pura — con 200k chunks * 1536 dims * 4bytes = ~1.2GB solo vectores, lo que fuerza instancia con RAM alta = coste. Y pierde la ventaja del SQL relacional." }
+      ],
+      "explanation": "Landscape de vector DBs 2024-2026: (1) pgvector (Postgres extension) — mejor para stacks Postgres, JOIN con datos relacionales, hasta millones de vectores con HNSW. Simple. (2) Pinecone — SaaS, serverless disponible, multi-tenant, filtros híbridos, buen ecosistema. Vendor lock-in y coste. (3) Qdrant — open source con cloud, buen recall, filtros ricos, sparse + dense + ColBERT. (4) Weaviate — open source con cloud, GraphQL, modular (hybrid, multi-tenancy). (5) Milvus/Zilliz — enterprise, escala masiva, más complejo. (6) LanceDB — embedded, on-disk, cero servidor. (7) Chroma — dev-friendly, más pensado para prototipo. (8) Vespa — potente para search complejo (Yahoo). Regla: empieza con lo que ya tienes (pgvector, ES) y migra cuando duela.",
+      "realWorld": "Supabase (usa pgvector) publicó case studies con millones de vectores en Postgres. Notion migró parte de su vector search a un stack construido sobre Postgres. Muchas startups YC 2023-2024 reportaron migraciones desde Pinecone a pgvector para reducir costos.",
+      "tags": ["vector db", "pgvector", "Pinecone", "database choice"],
+      "tech": ["pgvector", "Pinecone", "Qdrant", "Weaviate", "Milvus"],
+      "references": [
+        { "title": "pgvector — GitHub", "url": "https://github.com/pgvector/pgvector" },
+        { "title": "Supabase — pgvector 0.5.0 with HNSW", "url": "https://supabase.com/blog/increase-performance-pgvector-hnsw" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "context-engineering",
+      "topic": "HNSW vs IVF — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "En la vector DB configuras el índice. Las opciones son HNSW (Hierarchical Navigable Small World) o IVF (Inverted File). Un compañero pregunta cuál elegir para 5M vectores con inserts frecuentes.",
+      "question": "¿Cuál es la comparación técnica correcta y qué elegir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HNSW: alta recall/latencia excelente en queries, pero MEMORIA alta (grafo en RAM) y construcción cara. Inserts son OK (append al grafo). IVF: menos memoria, más rápido de construir, pero requiere entrenamiento (k-means para clusters) y reentrenamiento periódico si la distribución cambia. Para 5M vectores con inserts frecuentes → HNSW suele ganar: no requiere reentrenamiento, latencia estable, recall alta con parámetros correctos (M=16-32, ef_construction=100-200, ef_search dinámico). IVF gana en corpus estáticos de escala masiva (100M+) donde la memoria HNSW no cabe. Los parámetros específicos importan mucho.", "correct": true, "why": "Correcto. HNSW es hoy el default de facto en la mayoría de vector DBs (pgvector 0.5+, Qdrant, Weaviate, Milvus, Pinecone Serverless). IVF sigue teniendo espacio en escala extrema o con recall menos crítico." },
+        { "letter": "B", "text": "IVF siempre gana por eficiencia; HNSW es teoría académica.", "correct": false, "why": "Falso. HNSW está en producción en las mayores vector DBs y a menudo supera a IVF en recall a latencia comparable. La mayor parte de la literatura ANN moderna converge en variantes HNSW." },
+        { "letter": "C", "text": "Da igual, la vector DB elige automáticamente el mejor.", "correct": false, "why": "Muchas DBs sí exponen la elección al usuario y los defaults no siempre son óptimos. Y los parámetros (M, ef, nlist, nprobe) impactan mucho." },
+        { "letter": "D", "text": "HNSW no soporta filtros, solo similaridad pura.", "correct": false, "why": "Falso. Vector DBs modernas implementan filtered HNSW (Weaviate, Qdrant, pgvector 0.7+, Pinecone) — filtros aplicados durante la búsqueda del grafo, no post-processing." }
+      ],
+      "explanation": "HNSW (Malkov & Yashunin 2016): grafo multi-capa donde cada nodo conecta con M vecinos aproximados. Búsqueda greedy desde capa alta hasta encontrar top-K. Parámetros: M (conexiones por nodo, más = mejor recall + más memoria), ef_construction (calidad del grafo al construir), ef_search (breadth de búsqueda, more = better recall + slower). IVF: divide el espacio en nlist clusters vía k-means, indexa cada vector al centroide más cercano. Búsqueda: encuentra top-nprobe clusters, busca dentro. Necesita training (k-means sobre muestra), reentrenamiento si distribución cambia. Variantes: IVF-PQ (product quantization sobre IVF, reduce memoria drásticamente pero baja recall). Rule of thumb: HNSW para <100M vectores, IVF-PQ para 100M-10B donde memoria es el bottleneck.",
+      "realWorld": "Pinecone Serverless (2024) usa una variante interna optimizada, expuso 'metric' pero abstrae índice. Qdrant, Weaviate, pgvector 0.5+, Milvus, todos ofrecen HNSW como default. FAISS (Meta) sigue siendo la referencia académica y expone ambos + variantes.",
+      "tags": ["HNSW", "IVF", "ANN", "vector index"],
+      "tech": ["HNSW", "IVF", "FAISS", "pgvector", "Qdrant"],
+      "references": [
+        { "title": "Malkov & Yashunin — Efficient and robust approximate nearest neighbor search using HNSW", "url": "https://arxiv.org/abs/1603.09320" },
+        { "title": "FAISS — Facebook AI Similarity Search", "url": "https://github.com/facebookresearch/faiss" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "context-engineering",
+      "topic": "Parámetros HNSW en la práctica",
+      "difficulty": "mid",
+      "scenario": "Configuras un índice HNSW en Qdrant. Los defaults son M=16, ef_construct=100. Un compañero pregunta: '¿Cambiar M a 64 y ef_construct a 500 no debería dar siempre mejor recall?'.",
+      "question": "¿Cuál es la respuesta técnicamente correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, mejor recall pero con trade-offs: (1) M más alto = más memoria por vector (grafo más denso) y construcción más lenta. Diferencia: M=16 usa ~M*4bytes*2 = 128 bytes de overhead por vector; M=64 usa 512 bytes. En 5M vectores: 640MB vs 2.5GB. (2) ef_construct más alto = construcción MUCHO más lenta (linealmente peor) pero grafo de mejor calidad. Cargar 5M vectores puede pasar de 20min a 3h. (3) La ganancia en recall es marginal después de cierto punto — típicamente M=32 y ef_construct=200 ya te dan >95% recall. (4) El parámetro que ajustas en query es ef_search (dinámico) — sube este para más recall sin re-construir el índice. Regla: benchmark tu recall vs latencia y sube parámetros solo si es necesario.", "correct": true, "why": "Correcto. HNSW tiene retornos decrecientes en recall al subir M/ef_construction. Storage y build time crecen linealmente. ef_search es el knob para query-time trade-off." },
+        { "letter": "B", "text": "M=64 siempre mejor; no hay razón técnica para no subirlo.", "correct": false, "why": "Ignora coste de memoria y build time. En vectores de 1536 dims y 5M chunks, la memoria extra es significativa y afecta al TCO." },
+        { "letter": "C", "text": "M controla la latencia; ef_construct controla la recall. Son independientes.", "correct": false, "why": "Ambos afectan calidad del grafo (recall) y storage/build time. No son independientes." },
+        { "letter": "D", "text": "Cambiar M requiere reconstruir el índice; ef_search se puede cambiar en cada query.", "correct": false, "why": "La primera parte es cierta (M es parámetro de construcción). La segunda también es correcta pero no es la respuesta más completa a la pregunta del compañero." }
+      ],
+      "explanation": "HNSW parameter tuning: (1) M — conexiones por nodo en capa 0 (la más densa). Rango típico 8-64. Más = mejor recall + más memoria + build más lento. Sweet spot 16-32. (2) ef_construction — cuántos candidatos evalúa al construir el grafo. Más = mejor calidad, build más lento. Típico 100-400. (3) ef_search — breadth de búsqueda en query. Más = mejor recall, más latencia. Se puede ajustar dinámicamente sin re-construir. Rango típico 40-500. Estrategia: (a) benchmark recall@10 vs latencia con distintos parámetros sobre eval set, (b) elige punto en la Pareto frontier según tu SLA, (c) usa ef_search como knob de tuning por query (subir para queries críticas). Algunas DBs (Qdrant) permiten quantization (int8/binary) para reducir memoria a costa de recall marginal.",
+      "realWorld": "Qdrant y Weaviate publican benchmarks públicos comparando parámetros. Milvus tiene una calculadora de recursos según parámetros y volumen. La comunidad de vector search converge en M=16-32 como default razonable en la mayoría de casos.",
+      "tags": ["HNSW parameters", "recall vs latency", "index tuning"],
+      "tech": ["HNSW", "Qdrant", "Weaviate", "pgvector"],
+      "references": [
+        { "title": "Qdrant — HNSW parameters", "url": "https://qdrant.tech/documentation/concepts/indexing/#vector-index" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "context-engineering",
+      "topic": "Hybrid search: dense + BM25",
+      "difficulty": "mid",
+      "scenario": "Un usuario busca 'error CVE-2024-3094 en xz-utils' en tu RAG. El dense embedding no lo encuentra (retornó chunks genéricos sobre security vulnerabilities). Pero el string exacto existe en varios docs. Un compañero comenta 'los embeddings deberían encontrarlo, algo está mal'.",
+      "question": "¿Cuál es la explicación técnica y qué arquitectura resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dense embeddings capturan SEMÁNTICA pero pueden fallar en EXACT MATCH: términos raros, IDs, códigos, siglas, nombres propios se colapsan en el espacio vectorial hacia sus conceptos generales. 'CVE-2024-3094' se acerca a 'security vulnerability' pero no discrimina. Solución: HYBRID SEARCH — combinar dense (semántica) + sparse/BM25 (exact match, term-based). En query time se corren AMBOS, se fusionan resultados con Reciprocal Rank Fusion (RRF) u otra técnica de combinación. Muchas vector DBs modernas lo soportan built-in (Weaviate, Qdrant, Pinecone, ES). Recall sube significativamente sin coste apreciable.", "correct": true, "why": "Correcto. Hybrid search es la respuesta canónica al problema de exact match en dense-only retrieval. Anthropic Contextual Retrieval mostró +49% de reducción de failure rate con este patrón combinado." },
+        { "letter": "B", "text": "El problema es el chunk size; aumentar a 3000 lo arregla.", "correct": false, "why": "No aborda el problema: si el chunk contiene el string pero el embedding no discrimina, cambiar el tamaño no ayuda mucho. El problema es cómo mide similitud, no cuánta info hay." },
+        { "letter": "C", "text": "Cambiar de OpenAI-3 a Cohere; algunos modelos son mejores en exact match.", "correct": false, "why": "Todos los dense embedders tienen esta limitación estructural para exact match de tokens raros. La solución es combinar con sparse/BM25, no rotar entre dense models." },
+        { "letter": "D", "text": "Regex sobre el corpus antes de retrieval.", "correct": false, "why": "No escala a millones de docs y no maneja variaciones (case, whitespace). BM25 nativo de la DB es mucho más eficiente y correcto." }
+      ],
+      "explanation": "Hybrid search combina: (1) DENSE — semántica, sinónimos, cross-lingual. (2) SPARSE (BM25 tradicional, SPLADE learned) — exact match, términos raros, keywords específicos. Cada uno cubre debilidad del otro. Fusión típica con Reciprocal Rank Fusion (RRF): score_final = Σ 1/(k + rank_i(doc)) donde k=60 típicamente. RRF es simple, robusto, no requiere calibración de scores dispares. Alternativas: convex combination (α·dense + (1-α)·sparse, requiere normalización), learning-to-rank (más complejo). Vector DBs con hybrid nativo: Weaviate (BM25 + vector), Qdrant (sparse + dense + late-interaction), Pinecone (sparse-dense hybrid vectors), Elasticsearch/OpenSearch, pgvector + tsvector (manual pero simple). Bench: Anthropic Contextual Retrieval reportó BM25 alone -8%, dense alone baseline, hybrid -49% failure rate.",
+      "realWorld": "Anthropic publicó Contextual Retrieval mostrando explícitamente el impacto de hybrid: en su dataset code, dense recall failure 5.7%, con hybrid + contextual + rerank baja a 1.9%. Notion, Slack AI, y Perplexity todos mencionan hybrid en sus stacks.",
+      "tags": ["hybrid search", "BM25", "RRF", "exact match"],
+      "tech": ["BM25", "SPLADE", "Weaviate", "Qdrant", "Elasticsearch"],
+      "references": [
+        { "title": "Cormack et al. — Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods", "url": "https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf" },
+        { "title": "Anthropic — Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "context-engineering",
+      "topic": "Reciprocal Rank Fusion (RRF) vs otras fusiones",
+      "difficulty": "mid",
+      "scenario": "Tienes dos listas ordenadas de resultados: dense top-20 y BM25 top-20. Un compañero jr propone 'sumo los scores de cada uno para fusionar'. Un senior objeta 'los scores no son comparables — RRF es mejor'.",
+      "question": "¿Cuál es la explicación técnica del problema y por qué RRF gana?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los scores tienen ESCALAS distintas: coseno ∈ [-1, 1], BM25 puede ser 0-30+, SPLADE otra distribución. Sumarlos sin normalizar hace que uno domine artificialmente. RRF (Cormack et al.) ignora scores y usa solo el RANK — score_final = Σ 1/(k + rank_i(doc)), k=60 típico. Ventajas: (1) parameter-free (solo k, muy robusto), (2) invariante a escalas, (3) supera experimentalmente a otras fusiones simples en múltiples benchmarks. Alternativas: normalizar scores (z-score, min-max) antes de sumar (funciona pero frágil), learning-to-rank (potente pero requiere labels).", "correct": true, "why": "Correcto. La diferencia de escalas entre scoring functions es un problema real y RRF lo esquiva usando solo rankings. Es la razón por la que RRF es el default de facto en hybrid search moderno." },
+        { "letter": "B", "text": "Sumar scores raw funciona bien; la diferencia es marginal.", "correct": false, "why": "Empíricamente, sumar scores sin normalizar produce degradación notable — uno de los dos rankers domina el resultado. Cormack 2009 y muchos benchmarks posteriores demostraron esto." },
+        { "letter": "C", "text": "Multiplicar los scores es la mejor forma de combinar.", "correct": false, "why": "Multiplicar penaliza excesivamente docs que no están en ambas listas (multiplicar por 0). Es demasiado estricto para hybrid search." },
+        { "letter": "D", "text": "RRF requiere entrenar un modelo sobre datos anotados.", "correct": false, "why": "Falso. RRF es una fórmula cerrada sin parámetros aprendibles más allá de k (rara vez se tunea). Es su mayor virtud vs learning-to-rank." }
+      ],
+      "explanation": "Fusion techniques para hybrid search: (1) SCORE SUM raw — sumar α·dense + (1-α)·sparse. Requiere normalización y calibración de α. Frágil. (2) RECIPROCAL RANK FUSION — 1/(k+rank). Parameter-light (solo k=60 típico), robusto, gana en benchmarks. (3) BORDA COUNT — cada doc gana puntos por su rank en cada lista. Simple, funciona. (4) LEARNING-TO-RANK — LambdaRank, LambdaMART, RankNet. Requiere training data anotada. Potente pero costoso. (5) COMBSUM / COMBMNZ (Fox & Shaw) — normalizar y sumar, o multiplicar por número de listas que contienen el doc. RRF es el default recomendado por Anthropic, Weaviate, Elasticsearch, Vespa, y la mayoría de literatura reciente. Se puede ir más allá con reranking cross-encoder para top-K resultados de RRF.",
+      "realWorld": "Elasticsearch introdujo RRF nativo (v8.8) por su robustez para hybrid dense+sparse. OpenAI, Weaviate, y Pinecone lo mencionan en sus guides. Es 'the boring choice' que gana casi siempre.",
+      "tags": ["RRF", "score fusion", "hybrid search"],
+      "tech": ["RRF", "Elasticsearch", "Weaviate"],
+      "references": [
+        { "title": "Cormack et al. — Reciprocal Rank Fusion", "url": "https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf" },
+        { "title": "Elasticsearch — Reciprocal Rank Fusion", "url": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "context-engineering",
+      "topic": "Reranking con cross-encoder — cuándo y por qué",
+      "difficulty": "mid",
+      "scenario": "RAG con recall@50 = 92%, pero recall@5 = 63%. El LLM ve solo top-5 (por context/coste) y la respuesta a menudo es 'no encontré info'. Un compañero propone 'subir K a 20'. Otra opción es 'reranking con Cohere Rerank'.",
+      "question": "¿Cuál es la mejor estrategia y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reranking es lo correcto: (1) Retriever bi-encoder (dense + BM25) es rápido pero grueso — recupera muchos candidatos plausibles. (2) Cross-encoder (Cohere Rerank, BGE reranker, Voyage rerank, Jina rerank) puntúa CADA par (query, chunk) mirándolos JUNTOS con atención cruzada — mucho más preciso pero lento. (3) Pipeline: retrieve top-50 (rápido) → rerank top-50 (500-800ms) → tomar top-5-10 al LLM. Sube recall@5 significativamente (10-25 puntos típicamente). Alternativa 'subir K a 20' funciona pero costs tokens del LLM y no filtra ruido — reranking sí lo filtra.", "correct": true, "why": "Correcto. Reranking es una de las mejoras más costo-efectivas en RAG. Convierte 'ancho de banda' (recall@50) en 'precisión útil' (top-5 correctos)." },
+        { "letter": "B", "text": "Subir K a 20 es más simple y equivalente.", "correct": false, "why": "Meter 20 chunks al LLM = más tokens (más caro, más lento, más 'lost in the middle'). Y no filtra ruido. Reranking sí prioriza los pocos que valen." },
+        { "letter": "C", "text": "Reranking hace RAG más lento sin mejora medible.", "correct": false, "why": "Falso. Rerank añade 500-800ms típicamente pero mejora recall@5 significativamente. Benchmarks públicos (Cohere, Anthropic) muestran mejoras de 10-25 puntos." },
+        { "letter": "D", "text": "Cambiar de OpenAI-3 embeddings a un modelo mejor evita necesitar reranking.", "correct": false, "why": "Ningún dense embedder sustituye a un cross-encoder. Son arquitecturas fundamentalmente distintas: bi-encoder eficiente pero grueso, cross-encoder preciso pero lento. Se complementan." }
+      ],
+      "explanation": "Retrieve-then-rerank pipeline: (1) RETRIEVER (bi-encoder) — dense + BM25 (hybrid con RRF), recupera top-50 a top-100 candidatos rápido (10-100ms). (2) RERANKER (cross-encoder) — puntúa pares (query, chunk) con full attention, más preciso, más lento (~500ms para top-50). (3) TOP-K al LLM (5-10 chunks). Rerankers 2024-2026: Cohere Rerank v3.5 (comercial, multilingüe, calidad top), BGE-reranker-v2 (open, competitivo), Voyage rerank-2 (comercial), Jina Reranker v2 (open), mxbai-rerank. Trade-off: latencia añadida, coste API si comercial. En Anthropic Contextual Retrieval: rerank sobre hybrid + contextual llevó failure rate de 3.7% a 1.9% (extra -49% vs sin rerank).",
+      "realWorld": "Cohere Rerank es usado por Perplexity, Notion Q&A, y muchos AI copilots. En el paper de Contextual Retrieval, Anthropic mostró que rerank sobre resultados híbridos es lo que llegó a los mejores números. Perplexity publicó también case studies con reranking.",
+      "tags": ["reranking", "cross-encoder", "Cohere Rerank", "bi-encoder"],
+      "tech": ["Cohere Rerank", "BGE-reranker", "Voyage rerank", "Jina Reranker"],
+      "references": [
+        { "title": "Cohere — Rerank API", "url": "https://docs.cohere.com/docs/rerank-overview" },
+        { "title": "BGE Reranker — BAAI", "url": "https://huggingface.co/BAAI/bge-reranker-v2-m3" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "context-engineering",
+      "topic": "Cross-encoder vs bi-encoder — arquitectura",
+      "difficulty": "senior",
+      "scenario": "Un compañero jr pregunta: '¿Por qué no usamos siempre cross-encoders si son más precisos? ¿Por qué existen bi-encoders?'",
+      "question": "¿Cuál es la explicación arquitectónica correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es un trade-off de complejidad computacional: (1) BI-ENCODER — encode(query) y encode(doc) por separado, similitud simple sobre vectores pre-computados. Puedes indexar N docs UNA VEZ y hacer search en O(log N) con ANN. Escalable a millones/billones. (2) CROSS-ENCODER — encode(query, doc) juntos con full attention → un score. Muy preciso pero requiere ejecutar el modelo POR CADA PAR en query time. Con N=10M docs = 10M forward passes por query = imposible. Uso combinado (retrieve-then-rerank) explota lo mejor de ambos: bi-encoder trae top-100 barato, cross-encoder puntúa esos 100 (100 forward passes = feasible). Es la razón fundamental de la existencia de ambos.", "correct": true, "why": "Correcto. Bi-encoders existen por ESCALA; cross-encoders por PRECISIÓN. El pipeline combinado (retrieve-then-rerank) es la síntesis pragmática." },
+        { "letter": "B", "text": "Bi-encoders son un legado histórico obsoleto; con GPUs modernas ya no hay razón para no usar cross-encoders siempre.", "correct": false, "why": "Falso. Ni con las mejores GPUs es viable correr cross-encoder sobre 10M docs por query. La complejidad es O(N) queries de modelo vs O(log N) ANN search." },
+        { "letter": "C", "text": "Cross-encoders solo funcionan con corpus pequeños (<1000 docs).", "correct": false, "why": "Depende del tamaño después de retrieval. Sobre 100-500 candidatos son rápidos (~500ms). Sobre 10M es inviable. El uso correcto es como reranker de una lista pequeña." },
+        { "letter": "D", "text": "Cross-encoders producen embeddings, bi-encoders producen scores.", "correct": false, "why": "Al revés. Bi-encoders producen embeddings (vectores). Cross-encoders producen scores/probabilidades directamente." }
+      ],
+      "explanation": "Arquitecturas de retrieval learning: (1) BI-ENCODER (twin/siamese) — dos torres (o una compartida) que codifican query y doc por separado. Similarity = dot/cosine. Embedding = pre-computable, indexable en vector DB. Modelos: OpenAI embeddings, sentence-transformers, BGE, E5. Complejidad query: O(log N) con ANN, O(1) embedding query. (2) CROSS-ENCODER — modelo que toma (query, doc) concatenados como input, produce score directamente. Beneficio: puede atender query y doc en cualquier posición (mucha más info). Coste: no se pre-computa, hay que ejecutar modelo por cada par. Modelos: MS-MARCO cross-encoders, Cohere Rerank, BGE-reranker, Voyage rerank. (3) LATE INTERACTION (ColBERT) — intermedio: encode tokens por separado, interacción a nivel de token en query time. Más caro que bi-encoder, más rápido que cross-encoder. Pattern moderno estándar: hybrid retrieve → cross-encoder rerank → top-K al LLM.",
+      "realWorld": "Nils Reimers (autor de sentence-transformers) y Jimmy Lin (BEIR, Anserini) han escrito extensamente sobre esta división. La MTEB leaderboard separa 'retrieval' de 'reranking' por esta razón — son tareas distintas con modelos distintos.",
+      "tags": ["cross-encoder", "bi-encoder", "architecture", "trade-offs"],
+      "tech": ["sentence-transformers", "Cohere Rerank", "BGE-reranker"],
+      "references": [
+        { "title": "Reimers & Gurevych — Sentence-BERT (bi-encoder foundational)", "url": "https://arxiv.org/abs/1908.10084" },
+        { "title": "Sentence Transformers — Cross-Encoders", "url": "https://www.sbert.net/examples/applications/cross-encoder/README.html" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "context-engineering",
+      "topic": "Query expansion y HyDE",
+      "difficulty": "senior",
+      "scenario": "Users hacen queries muy cortas ('refund policy?', 'API rate limit') que retorna pocos resultados en tu RAG. Un compañero propone HyDE (Hypothetical Document Embeddings): 'que el LLM genere una respuesta ficticia primero, embedeamos esa, y buscamos'.",
+      "question": "¿Es HyDE una buena idea y qué alternativas existen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HyDE (Gao et al. 2022) funciona en algunos casos: query cortos y en dominios donde el LLM 'sabe' aproximar la respuesta. El embedding de la hypothetical answer suele estar más cerca de los docs reales que el embedding del query corto. Trade-offs: (1) latencia +1 LLM call, (2) coste tokens, (3) puede introducir sesgos del modelo si alucina fuerte. Alternativas más simples primero: (a) QUERY EXPANSION con LLM (genera 3-5 variantes del query, embed each, RRF), (b) QUERY REWRITING (LLM reformula query), (c) MULTI-QUERY (parallel searches con distintas formulaciones). Recomendación: benchmark en TU dataset. HyDE es una herramienta más, no bala de plata.", "correct": true, "why": "Correcto. HyDE es útil pero no universal. Query expansion multi-formulación es un baseline razonable antes de HyDE. Todo debe medirse contra eval set." },
+        { "letter": "B", "text": "HyDE siempre mejora recall en un 30%+; usar sin miedo.", "correct": false, "why": "Los resultados varían mucho por dominio. Algunos benchmarks muestran mejoras marginales; otros negativas cuando el LLM alucina. No es universal." },
+        { "letter": "C", "text": "HyDE es marketing sin sustento científico.", "correct": false, "why": "Falso. Hay paper académico (Gao et al. 2022) con evidencia de mejora en varios benchmarks. La cuestión es cuándo aplica, no si funciona." },
+        { "letter": "D", "text": "Usar HyDE es equivalente a usar un LLM más grande para embed.", "correct": false, "why": "No son equivalentes. HyDE genera pseudo-doc y luego embed; usar modelo más grande de embed es cambiar el encoder. Son técnicas ortogonales." }
+      ],
+      "explanation": "Query understanding techniques: (1) QUERY EXPANSION — LLM genera N variantes ('¿cómo cancelo mi cuenta?' → 'cancelar cuenta', 'desactivar cuenta', 'cerrar cuenta permanentemente'), embed cada una, retrieve, RRF. (2) HyDE (Hypothetical Document Embeddings) — LLM genera respuesta ficticia detallada, embed esa (más rica que el query), search. Efectivo si el LLM conoce el dominio. (3) QUERY REWRITING — LLM reformula query ambigua o incompleta con contexto de conversación previa. Crítico en chats multi-turno. (4) DECOMPOSITION — LLM parte pregunta compleja en sub-preguntas ('cuántas ventas y qué producto top en Q3?' → 2 queries). (5) STEP-BACK PROMPTING — LLM primero pregunta el concepto general antes del específico. (6) MULTI-VECTOR — indexar chunks con múltiples representaciones (summary, questions, keywords). Combinar varias es común en RAG serios.",
+      "realWorld": "LangChain y LlamaIndex integran múltiples de estas técnicas. Perplexity usa query rewriting agresivo. Anthropic Contextual Retrieval mostró que query decomposition ayuda en queries multi-hop. Bench en tu dominio antes de adoptar cualquiera como default.",
+      "tags": ["HyDE", "query expansion", "query rewriting", "retrieval"],
+      "tech": ["HyDE", "LangChain", "LlamaIndex"],
+      "references": [
+        { "title": "Gao et al. — Precise Zero-Shot Dense Retrieval without Relevance Labels (HyDE)", "url": "https://arxiv.org/abs/2212.10496" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "context-engineering",
+      "topic": "MMR (Maximal Marginal Relevance)",
+      "difficulty": "mid",
+      "scenario": "Retriever devuelve top-10 chunks pero 7 son casi idénticos (mismo tópico, distintas versiones del mismo doc). El LLM ignora los 3 chunks diversos que traían información complementaria. Un compañero sugiere MMR.",
+      "question": "¿Cómo funciona MMR y cuándo aplicarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MMR (Carbonell & Goldstein 1998) balancea RELEVANCIA vs DIVERSIDAD: en cada paso, elige el doc que maximiza λ·sim(query, doc) - (1-λ)·max_j sim(doc, ya_seleccionados). λ ∈ [0,1] controla el balance (λ=1 solo relevance, λ=0 solo diversity). Uso típico λ=0.5-0.7. Aplica cuando: (1) retrieval devuelve resultados redundantes, (2) queries que se benefician de perspectivas múltiples ('pros y contras', 'diferentes opciones'). No aplica cuando: (1) query muy específico que solo tiene una respuesta correcta, (2) dedup ya se hizo bien en ingesta. Ortogonal a reranking — se puede combinar: rerank primero, MMR después para diversificar top-N.", "correct": true, "why": "Correcto. MMR es una técnica clásica y robusta. LangChain, LlamaIndex, y muchos frameworks lo exponen. Combinada con dedup en ingesta cubre la mayor parte de duplicación." },
+        { "letter": "B", "text": "MMR sustituye a la similarity search normal.", "correct": false, "why": "No — MMR opera SOBRE los resultados de similarity search (post-processing). No reemplaza el retriever." },
+        { "letter": "C", "text": "MMR requiere que los embeddings sean euclidianos, no funciona con coseno.", "correct": false, "why": "MMR funciona con cualquier función de similaridad (coseno es la más común). No hay restricción sobre la métrica." },
+        { "letter": "D", "text": "MMR es equivalente a bajar K; da los mismos resultados.", "correct": false, "why": "No — bajar K corta la lista pero mantiene los duplicados en top. MMR reordena activamente para diversificar." }
+      ],
+      "explanation": "MMR = Maximal Marginal Relevance. Iterativamente selecciona docs: en paso i, elige argmax_d [λ·sim(q,d) - (1-λ)·max_{d' ∈ selected} sim(d,d')]. Balancea relevance con novedad. Beneficios: (1) evita redundancia en top-K, (2) mejora coverage de sub-topics, (3) parameter simple (λ). Casos de uso ideal: RAG sobre corpus con muchas versiones, búsqueda de 'opciones/alternativas', reranking después de retrieve. Combinaciones: (a) hybrid retrieve → rerank cross-encoder → MMR para diversificar top-10, (b) dedup en ingesta primero (MinHash) para bajar la carga de MMR. Frameworks: LangChain (max_marginal_relevance_search), LlamaIndex (MMRPostprocessor), Haystack. Alternativas: cluster-based selection, submodular optimization (más complejo).",
+      "realWorld": "Google Search usa técnicas de diversificación similares desde hace años en resultados con intent ambiguo. LlamaIndex y LangChain exponen MMR built-in. En code review de RAGs se ve frecuentemente el bug 'top-K redundante' y MMR es el fix estándar.",
+      "tags": ["MMR", "diversity", "redundancy", "reranking"],
+      "tech": ["MMR", "LangChain", "LlamaIndex"],
+      "references": [
+        { "title": "Carbonell & Goldstein — MMR paper", "url": "https://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "context-engineering",
+      "topic": "Recall vs Precision — trade-off consciente",
+      "difficulty": "mid",
+      "scenario": "En una discusión de producto: 'Nuestro RAG a veces devuelve chunks irrelevantes que confunden al LLM. Deberíamos ser más estrictos con el retrieval, subir el umbral de similarity.' Otro compañero: 'No, si subimos el umbral perdemos recall en queries ambiguas'.",
+      "question": "¿Cuál es el análisis correcto del trade-off y qué diseño lo maneja bien?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es un trade-off clásico recall vs precision. (1) Alta RECALL (traer todo lo posible) baja precision (más ruido). (2) Alta PRECISION (solo lo muy similar) baja recall (perdemos casos edge). Diseño maduro: (a) RETRIEVER greedy (high recall, top-K grande, sin umbral), (b) RERANKER estricto que filtra ruido con cross-encoder scores, (c) UMBRAL en score del reranker (más confiable que score de bi-encoder), (d) LLM ve solo top-K post-rerank alto-quality. Además: (e) medir POR TIPO de query, (f) permitir 'no lo sé' cuando ningún chunk pasa umbral (mejor que alucinar). El umbral NUNCA debe aplicarse al bi-encoder alone — sus scores son ruidosos.", "correct": true, "why": "Correcto. Hybrid recall (bi-encoder) + strict precision (cross-encoder) es el patrón industrial. Y saber decir 'no lo sé' cuando el reranker no pasa umbral evita hallucinations." },
+        { "letter": "B", "text": "Siempre alta precision; recall no importa si los resultados son de calidad.", "correct": false, "why": "Con alta precision extrema muchas queries válidas devuelven 0 resultados. UX terrible. El balance importa." },
+        { "letter": "C", "text": "Siempre alta recall; el LLM sabe ignorar los chunks irrelevantes.", "correct": false, "why": "LLMs se confunden con contexto ruidoso. 'Lost in the middle', hallucinations basadas en contenido irrelevante. Recall infinito no es la respuesta." },
+        { "letter": "D", "text": "Estos conceptos no aplican a RAG, son de information retrieval clásico.", "correct": false, "why": "Al contrario, aplican directamente. RAG es un problema de information retrieval más generación." }
+      ],
+      "explanation": "Recall = fracción de relevantes recuperados. Precision = fracción de recuperados que son relevantes. En RAG: (a) recall bajo → LLM no tiene la info → alucina o dice 'no sé'. (b) precision baja → contexto ruidoso → LLM se confunde o cita datos irrelevantes. Diseño maduro: (1) RETRIEVAL con alta recall (top-50, hybrid, sin umbral). (2) RERANKING con cross-encoder para filtrar precision. (3) UMBRAL sobre scores del reranker (más calibrados). (4) FALLBACK explícito cuando ningún chunk pasa umbral (mensaje 'no encontré info suficiente'). Métricas: (a) recall@K y precision@K por segmento de query, (b) hit rate (¿algún chunk relevante en top-K?), (c) MRR (posición del primer relevante), (d) NDCG (orden global). Instrumentar y monitorear en producción.",
+      "realWorld": "Anthropic Constitutional AI y OpenAI 'I don't know' fine-tuning muestran que enseñar al modelo a rechazar cuando el contexto es insuficiente reduce alucinaciones. Combinar con reranker + umbral es la arquitectura estándar en RAGs de producción confiables.",
+      "tags": ["recall vs precision", "trade-off", "reranker threshold"],
+      "tech": ["reranker", "IR metrics"],
+      "references": [
+        { "title": "Manning et al. — Introduction to Information Retrieval, Ch.8", "url": "https://nlp.stanford.edu/IR-book/" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "cost-inference",
+      "topic": "Coste de vector DB — dimensiones, storage, queries",
+      "difficulty": "mid",
+      "scenario": "Cotizando: 50M chunks, embeddings de 1536 dims (float32), y estimando 10 queries/segundo con recall@50. Dos opciones: Pinecone Serverless vs pgvector self-managed en RDS. Un compañero calcula '50M * 1536 * 4 = 300GB — inasumible'.",
+      "question": "¿Cuál es el análisis correcto de coste y qué opciones tiene para reducir?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El cálculo storage bruto es correcto (~300GB solo vectores + índice HNSW añade 50-100% más). Palancas para reducir: (1) DIMENSIONES — usar Matryoshka truncando a 512 (100GB) o 768 (150GB). (2) QUANTIZATION — int8 baja 4x el storage con recall casi igual (Qdrant, Milvus, pgvector 0.7+); binary quantization baja 32x con recall recuperable via reranking. (3) IVF-PQ para escala extrema. (4) SEPARAR HOT/COLD — vectores frecuentes en memoria, resto on-disk. Comparativa Pinecone Serverless vs pgvector: serverless factura por storage GB + reads + writes; pgvector self-managed factura instancia RDS (más previsible pero requiere ops). A 50M vectores el diferencial mensual es significativo (miles $) — depende del patrón de queries.", "correct": true, "why": "Correcto. Quantization y Matryoshka son las palancas principales. El coste de vector storage escala linealmente con vectores × dims × bytes; optimizar cualquiera de los tres reduce coste." },
+        { "letter": "B", "text": "50M chunks es demasiado para RAG; hay que reducir el corpus.", "correct": false, "why": "50M es manejable con quantization + índice apropiado. Vector DBs modernas escalan a billones. La solución es técnica, no reducir alcance." },
+        { "letter": "C", "text": "Comprimir con gzip los embeddings resuelve el problema de storage.", "correct": false, "why": "gzip no funciona bien en vectores float (alta entropía). Y no permite búsqueda sin descomprimir. Quantization aritmética (int8, binary) es la vía correcta." },
+        { "letter": "D", "text": "Todos los vectores caben en RAM de una instancia grande; siempre.", "correct": false, "why": "300GB de vectores requiere r7g.16xlarge o similar (~$5k/mes solo instancia). No siempre viable ni óptimo." }
+      ],
+      "explanation": "Cost drivers en vector DB: (1) STORAGE — vectors × dims × bytes. Reducir con: Matryoshka (menos dims), int8/binary quantization (menos bytes), pruning (menos vectors si es viable). (2) MEMORY — HNSW típicamente requiere grafo en RAM (algunas DBs soportan mmap on-disk). Con quantization se reduce igual proporcionalmente. (3) QUERIES — API calls, compute. Serverless factura por operación; managed factura por hora de instancia. (4) INDEX BUILD — one-time (o cuando cambias modelo). Estrategias: (a) Matryoshka dims=512 (3x ahorro), (b) int8 quantization (4x ahorro adicional con recall casi igual, Qdrant y Milvus lo hacen automático), (c) binary quantization + reranking (32x ahorro; requiere over-fetch y rerank). Vector DBs con quantization built-in: Qdrant, Milvus, Weaviate, pgvector 0.7+. Pinecone Serverless usa técnicas internas y factura por operación.",
+      "realWorld": "Cohere publicó 'int8 embeddings' en 2024 mostrando quantization con recall casi idéntico. Qdrant demostró binary + reranking con reducciones de coste 40x manteniendo recall >95%. Es una tendencia clara 2024-2026 hacia embeddings comprimidos por defecto.",
+      "tags": ["cost", "quantization", "storage", "Matryoshka"],
+      "tech": ["Pinecone", "Qdrant", "Milvus", "pgvector"],
+      "references": [
+        { "title": "Cohere — int8 embeddings", "url": "https://cohere.com/blog/int8-binary-embeddings" },
+        { "title": "Qdrant — Vector Quantization", "url": "https://qdrant.tech/documentation/guides/quantization/" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "context-engineering",
+      "topic": "Filtered vector search — pre vs post filtering",
+      "difficulty": "senior",
+      "scenario": "Query: 'busca en docs del cliente ACME (tenant=42) chunks similares a X'. Vector DB tiene 10M chunks (todos los tenants). Un compañero configuró: primero HNSW top-100 sin filtro, luego filtra por tenant. Los top-K más relevantes son de otro tenant y quedan 3-5 chunks de ACME al final. El filtro después degrada recall efectivo.",
+      "question": "¿Cuál es el diseño correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Filtro POST-search (el actual) es incorrecto para filtros restrictivos: el índice devuelve top-K por similarity global, y si el filtro elimina la mayoría, quedas con pocos resultados relevantes. Vector DBs modernas soportan FILTERED SEARCH nativo (Weaviate, Qdrant, Pinecone, Milvus, pgvector 0.7+): el filtro se aplica DURANTE la búsqueda del grafo HNSW o previa a la búsqueda con un índice inverso. Recall se mantiene alto porque explora más del grafo si necesita. Para multi-tenancy con volumen alto: (a) filter nativo, (b) considerar ÍNDICES SEPARADOS por tenant (namespaces en Pinecone, collections en Qdrant/Weaviate) para aislar recall y accelerar. Cuidado con cardinalidad de tenants — miles de índices tiene sus propios costes.", "correct": true, "why": "Correcto. Post-filtering es antipatrón para filtros restrictivos. Las vector DBs modernas resuelven esto con filtered HNSW o namespacing. Elegir según cardinalidad." },
+        { "letter": "B", "text": "Sube K a 5000 y filtra después.", "correct": false, "why": "Ineficiente y no garantiza recall si el tenant tiene pocos docs. Además latencia alta." },
+        { "letter": "C", "text": "El problema no tiene solución técnica; hay que tener índice por tenant obligatorio.", "correct": false, "why": "Falso. Filtered search nativo es una solución que funciona hasta gran escala. Índice por tenant es alternativa pero no la única." },
+        { "letter": "D", "text": "Filtrar por tenant en la aplicación después del retrieval siempre funciona.", "correct": false, "why": "Es exactamente el diseño roto descrito en el enunciado. No es solución." }
+      ],
+      "explanation": "Filtered vector search estrategias: (1) POST-FILTERING — retrieve top-K, filtra en app. Simple pero mata recall con filtros restrictivos. (2) PRE-FILTERING — filtra por metadata primero, brute force sobre subset. Solo eficiente si subset es pequeño. (3) INTEGRATED (filtered HNSW) — el índice explora dinámicamente hasta encontrar top-K que pasan filtro. Mejor recall/latencia balance. Soportado en Weaviate (2022+), Qdrant, Milvus, Pinecone, pgvector 0.7+. (4) NAMESPACING/PARTITIONING — índices separados por tenant o categoría. Pros: aislamiento total, recall garantizado. Cons: overhead de mantener N índices, cardinalidad no puede ser altísima. Decisión: filtered nativo hasta ~1000 tenants; namespacing para tenants importantes con volumen alto. Multi-tenancy compliance también requiere row-level security en pgvector o equivalente para prevenir cross-tenant leaks.",
+      "realWorld": "Notion Q&A, Slack AI, Zendesk todos manejan multi-tenancy con filtros o namespaces. Pinecone tiene 'namespaces' como abstracción explícita para este caso. Weaviate promueve 'multi-tenancy' como feature de primera clase.",
+      "tags": ["filtered search", "multi-tenancy", "pre vs post filter"],
+      "tech": ["Pinecone namespaces", "Qdrant", "Weaviate multi-tenancy", "pgvector"],
+      "references": [
+        { "title": "Weaviate — Filters and multi-tenancy", "url": "https://weaviate.io/developers/weaviate/manage-data/multi-tenancy" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "context-engineering",
+      "topic": "Evaluación de retrieval — recall@k, MRR, NDCG",
+      "difficulty": "senior",
+      "scenario": "El equipo lleva 3 semanas iterando en el RAG. La métrica que reportan es 'accuracy del LLM' medida por LLM-as-judge en 50 casos. Los cambios de retrieval a veces mejoran, a veces empeoran. Nadie sabe si es ruido del judge o el cambio real.",
+      "question": "¿Qué esquema de evaluación proponer para separar señales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Separar métricas por CAPA: (1) RETRIEVAL — eval set con queries + ground-truth chunks. Métricas: recall@K (¿está el chunk correcto en top-K?), MRR (Mean Reciprocal Rank = 1/rank del primer relevante), NDCG@K (calidad del orden), context precision (% relevantes en top-K), hit rate. (2) GENERATION — con contexto correcto dado, ¿el LLM responde bien? Métricas: faithfulness (¿inventa?), answer relevancy, correctness. (3) END-TO-END — user satisfaction, task completion. Aumentar tamaño del eval a 200-500 casos para reducir varianza. LLM-as-judge útil pero necesita ground truth para calibrar. Frameworks: Ragas, TruLens, DeepEval, Braintrust. Sin capas separadas, cambios en retrieval y generación se confunden.", "correct": true, "why": "Correcto. Es el playbook estándar. Sin separación por capa, iteraciones son a ciegas. 50 casos es muestra pequeña — la varianza domina la señal." },
+        { "letter": "B", "text": "LLM-as-judge sobre output final es suficiente; medir capas es sobre-ingeniería.", "correct": false, "why": "Precisamente el enunciado muestra que NO es suficiente — no puedes atribuir cambios a retrieval o a generación." },
+        { "letter": "C", "text": "Solo user feedback en producción es la métrica real.", "correct": false, "why": "Feedback es lagged (semanas), sparse, y biased. Necesitas métricas técnicas en dev/CI para iterar rápido." },
+        { "letter": "D", "text": "Con 50 casos ya se pueden sacar conclusiones estadísticas robustas.", "correct": false, "why": "Con 50 casos la varianza es alta. Diferencias <5-10% pueden ser ruido. 200-500 casos como mínimo para señales confiables." }
+      ],
+      "explanation": "Evaluación RAG en capas: (1) RETRIEVAL METRICS — recall@K (binaria: ¿al menos un chunk relevante?), precision@K (% relevantes), MRR (posición del primer relevante = 1/rank; captura orden), NDCG (Normalized Discounted Cumulative Gain; gana graded relevance), hit rate (any-relevant en top-K). (2) GENERATION METRICS — faithfulness (Ragas: ¿respuesta soportada por contexto?), answer relevancy, correctness vs ground truth. (3) END-TO-END — user thumbs, task completion. Ground truth construction: (a) queries de logs reales, (b) LLM genera candidatos chunk-response, (c) humano valida (200-500 pares). Tools: Ragas (métricas RAG específicas), TruLens (tracing + eval), DeepEval (unit tests estilo pytest), Braintrust (experiment tracking), Langfuse. CI: bloquea PR si métrica cae >X%. Golden set (regression) + adversarial set (edge cases). Un cambio de recall@10 de 63% → 78% con eval robusto es la señal que necesitas.",
+      "realWorld": "OpenAI, Anthropic, LangChain, y LlamaIndex publican eval frameworks recomendando este patrón. Sin él, muchos equipos giran en círculos meses. Con él, decisiones claras en días.",
+      "tags": ["evaluation", "recall", "MRR", "NDCG", "eval framework"],
+      "tech": ["Ragas", "TruLens", "DeepEval", "Braintrust", "Langfuse"],
+      "references": [
+        { "title": "Ragas — Metrics", "url": "https://docs.ragas.io/en/stable/concepts/metrics/index.html" },
+        { "title": "BEIR — Heterogeneous Benchmark for IR", "url": "https://github.com/beir-cellar/beir" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "context-engineering",
+      "topic": "Sparse vectors nativos (SPLADE, uniCOIL) en producción",
+      "difficulty": "senior",
+      "scenario": "Un compañero senior propone reemplazar BM25 tradicional por SPLADE en la parte sparse del hybrid: 'SPLADE captura mejor la semántica de términos que BM25 puro'. Otro dice 'BM25 es tuneable, gratis, y muy robusto — no complicar'.",
+      "question": "¿Cuál es el análisis correcto y cuándo SPLADE vale el esfuerzo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ambos tienen su sitio: (1) BM25 — probabilístico, sin modelo neural, sin entrenamiento, muy rápido, muy robusto. Baseline duro de batir. Tuneable (k1, b). (2) SPLADE — modelo neural que aprende a expandir queries y docs a un vocabulario sparse con activaciones learned. Supera a BM25 en benchmarks (BEIR) pero requiere: (a) modelo (inference cost), (b) más storage (sparse denso), (c) integración con DB que soporte sparse learned (Vespa, Qdrant, Pinecone sparse-dense). Recomendación: empezar con BM25 en hybrid. Migrar a SPLADE si mides mejora en TU dominio y aceptas complejidad extra. En muchos casos (Anthropic Contextual, ejemplos públicos) BM25 en hybrid es suficiente.", "correct": true, "why": "Correcto. SPLADE es mejor en benchmarks pero paga complejidad. BM25 sigue siendo baseline duro y suficiente en la mayoría de casos prácticos." },
+        { "letter": "B", "text": "SPLADE es dense embedding; no reemplaza BM25.", "correct": false, "why": "SPLADE es explícitamente SPARSE (vector de vocabulario con activaciones learned). Se contrapone a dense embeddings. Es sparse aprendido vs sparse estadístico (BM25)." },
+        { "letter": "C", "text": "BM25 está obsoleto; toda producción usa SPLADE en 2026.", "correct": false, "why": "Falso. BM25 sigue siendo estándar de facto en Elasticsearch, OpenSearch, Solr, Lucene, muchas vector DBs. Robusto y sin ops adicional." },
+        { "letter": "D", "text": "SPLADE y BM25 dan resultados idénticos; solo la implementación cambia.", "correct": false, "why": "No. SPLADE aprende expansión con MLM (Masked Language Model), BM25 usa TF-IDF con parámetros. Retrievals distintos, especialmente en queries cortas o dominio-específicas." }
+      ],
+      "explanation": "BM25 (Robertson & Zaragoza 2009) — extensión de TF-IDF probabilística. Parámetros k1 (term frequency saturation) y b (length normalization). Estándar en Elasticsearch/OpenSearch/Lucene. Sin modelo neural, muy rápido, muy robusto. SPLADE (Formal et al. 2021) — modelo BERT-like que produce sparse vectors sobre el vocabulario. Aprende a expandir queries ('cat' → cat, kitten, feline) y docs. Supera BM25 en BEIR benchmarks. Requiere inference (GPU/CPU) y DBs con sparse learned nativo (Vespa, Qdrant, Pinecone sparse-dense hybrid). Trade-off: mejor calidad, más complejidad. uniCOIL, TILDE, DeepImpact son variantes. Práctica: (1) empezar con BM25 en hybrid, (2) considerar SPLADE si tienes eval que muestra ganancia y aceptas ops extra, (3) para dominios muy técnicos SPLADE puede brillar.",
+      "realWorld": "Naver Search usa SPLADE en producción a escala web. Pinecone integró sparse-dense hybrid. Qdrant soporta sparse vectors nativo. Pero la mayoría de productos AI (Perplexity, Notion) usan BM25 en su hybrid stack.",
+      "tags": ["SPLADE", "BM25", "sparse retrieval", "learned sparse"],
+      "tech": ["BM25", "SPLADE", "Elasticsearch", "Qdrant"],
+      "references": [
+        { "title": "Formal et al. — SPLADE", "url": "https://arxiv.org/abs/2107.05720" },
+        { "title": "Robertson & Zaragoza — The Probabilistic Relevance Framework (BM25)", "url": "https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "context-engineering",
+      "topic": "Multi-tenant a escala",
+      "difficulty": "senior",
+      "scenario": "SaaS B2B con 10.000 tenants, cada uno con 100-100.000 chunks. Un compañero propone 'un índice por tenant en Pinecone/Qdrant'. Otro dice 'un índice compartido con metadata filter'. Discusión sobre coste, aislamiento y latencia.",
+      "question": "¿Cuál es el diseño correcto según cada dimensión?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Depende de cardinalidad y distribución: (1) 10k índices INDIVIDUALES en Pinecone/Qdrant/Weaviate — muchos productos cobran POR ÍNDICE (o pod/collection). $50/mes × 10k = $500k/mes. Insostenible. (2) MULTI-TENANCY NATIVA (Weaviate, Qdrant, Pinecone Serverless con namespaces) — separación lógica dentro de un cluster compartido, aislamiento y query eficiente. Diseñado para este caso. (3) UN ÍNDICE + METADATA FILTER — sirve si los tenants son pocos (ej. 10-100) y los queries filtran eficientemente. A 10k tenants degrada. (4) HÍBRIDO — tenants grandes con índices dedicados; tenants chicos en índice compartido con filter (patrón muy usado). Además: compliance (data residency, aislamiento GDPR) puede FORZAR índices/regiones separadas para tenants enterprise.", "correct": true, "why": "Correcto. Multi-tenancy a esta escala requiere DBs diseñadas para ello (Weaviate, Qdrant, Pinecone Serverless). Un índice por tenant en engine no diseñado explota en coste." },
+        { "letter": "B", "text": "Siempre un índice por tenant, sin excepción.", "correct": false, "why": "A 10k tenants es económicamente inviable en la mayoría de productos. Solo viable si los tenants pagan mucho o los índices son gratis (self-hosted con overhead mínimo)." },
+        { "letter": "C", "text": "Siempre un índice compartido con filter; multi-tenancy nativa es marketing.", "correct": false, "why": "A 10k tenants con datos sensibles, un solo namespace grande tiene issues de aislamiento (cross-tenant leaks si el filter falla), performance (recall degrada con filter restrictivo), y compliance." },
+        { "letter": "D", "text": "Ni Pinecone ni Weaviate soportan multi-tenancy a esa escala.", "correct": false, "why": "Ambos han invertido en multi-tenancy escalable. Pinecone Serverless con namespaces, Weaviate v1.20+ con Multi-Tenancy feature. Escalan a decenas de miles de tenants." }
+      ],
+      "explanation": "Multi-tenant patterns: (1) SHARED INDEX + FILTER — un índice, metadata tenant_id, filter obligatorio. Bien para pocos tenants (<100) con volumen pequeño. Riesgo cross-tenant leak si filter falla. (2) NAMESPACE per tenant (Pinecone Serverless) — separación lógica, misma infra, cost per operation. Buena escalabilidad. (3) MULTI-TENANCY NATIVA (Weaviate MT, Qdrant collections aliases) — separación lógica con optimizaciones (índice separado por tenant en la misma DB, activate/deactivate). Miles de tenants. (4) FÍSICA (índice/cluster separado) — solo tenants grandes o con compliance. Compliance drivers: GDPR (data residency), SOC2/HIPAA (aislamiento), contratos con clientes. Auth: filter debe ser aplicado por infra (RLS en pgvector), no confiar en app-level filter. Migration path: empezar shared+filter, evolucionar a MT nativo cuando escala/compliance lo requiera.",
+      "realWorld": "Notion migró a arquitectura multi-tenant para su Q&A a workspace level. Slack AI, Zendesk Rovo similar. Weaviate publica sobre 'multi-tenancy at scale' con case studies. Pinecone Serverless fue diseñado para namespace-per-tenant como caso de uso primario.",
+      "tags": ["multi-tenancy", "scale", "isolation", "namespaces"],
+      "tech": ["Pinecone namespaces", "Weaviate MT", "Qdrant", "pgvector RLS"],
+      "references": [
+        { "title": "Weaviate — Multi-tenancy", "url": "https://weaviate.io/developers/weaviate/manage-data/multi-tenancy" },
+        { "title": "Pinecone — Namespaces", "url": "https://docs.pinecone.io/guides/indexes/use-namespaces" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "context-engineering",
+      "topic": "Debug de retrieval — dónde falla",
+      "difficulty": "senior",
+      "scenario": "Query específica falla: 'muéstrame la política de reembolso de suscripciones anuales'. RAG dice 'no encontré info' pero un dev sabe que el chunk existe en el doc 'Refund Policy 2024'. ¿Cómo debugueas paso a paso?",
+      "question": "¿Cuál es el proceso sistemático de debug?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Proceso: (1) VERIFICAR EL CHUNK está indexado — busca por metadata (doc_id, url), confirma que existe en la vector DB. (2) EMBED LA QUERY manualmente y compara vs el embedding del chunk esperado — mira similitud coseno. Si es baja (<0.3), el embed model no captura la semántica → probar hybrid o query expansion. (3) CHECK BM25 — busca por keywords ('reembolso', 'suscripción anual'). Si aparece, el hybrid con RRF debería salvarlo. (4) VERIFY FILTROS — ¿hay algún filtro (fecha, tenant, permisos) que lo esté descartando? (5) CHECK RERANKER si está — puede estar despriorizando el chunk correcto. (6) VERIFY CHUNKING — ¿el chunk contiene la respuesta o quedó partido? (7) LOG END-TO-END con IDs para rastrear la trayectoria del chunk. Sin trazabilidad no se debuggea; con tracing sí.", "correct": true, "why": "Correcto. Debug estructurado por capas. Sin tracing (observabilidad) es imposible. Con logs por etapa (retrieval scores, filtros, reranker scores) el problema se localiza rápidamente." },
+        { "letter": "B", "text": "Aumentar K a 100 y ver si aparece el chunk; si sí, el problema es el K bajo.", "correct": false, "why": "Es un test pero no debug. No explica POR QUÉ el retrieval está mal ranqueado; solo pospone el problema." },
+        { "letter": "C", "text": "Cambiar de embedding model; probablemente el actual es malo.", "correct": false, "why": "Cambiar sin diagnosticar es adivinar. Puede empeorar. Primero debuggear la causa." },
+        { "letter": "D", "text": "El problema es del LLM, no del retrieval; tune el prompt.", "correct": false, "why": "Si el LLM dijo 'no encontré info', casi seguro es fallo de retrieval (el chunk correcto no llegó a él). Confundir capas es común pero incorrecto." }
+      ],
+      "explanation": "Debug playbook para retrieval failures: (1) VERIFICAR que el chunk existe y está indexado con la metadata correcta (get by ID en la vector DB). (2) EMBED query y chunk, calcular similitud coseno manualmente. Si es baja, es problema del embedder. (3) TEST HYBRID: ejecutar BM25 puro sobre keywords. Si funciona, el problema es la fusión (RRF, umbrales). (4) CHECK FILTERS — a menudo filtros bien intencionados (fecha, permissions) descartan el chunk. (5) CHECK RERANKER SCORES — a veces reranker despriorizada. (6) VERIFY CHUNKING — el chunk puede estar partido justo antes de la info clave. (7) VERIFY PREPROCESAMIENTO — ¿el texto original tiene ruido que degradó el embedding? Tools de tracing (Langfuse, Arize Phoenix, TruLens) muestran los top-K con scores en cada capa. Sin esto el debug es adivinar. Estandarizar: cada query genera trace con etapas y scores para poder auditar.",
+      "realWorld": "Langfuse, Arize, y Braintrust son productos que existen precisamente porque debug de RAG sin tracing es imposible. Sourcegraph publicó su tooling interno de 'query replay' para debug de code search. Instrumentación es parte del producto.",
+      "tags": ["debug", "tracing", "observability", "retrieval failures"],
+      "tech": ["Langfuse", "Arize", "TruLens", "Braintrust"],
+      "references": [
+        { "title": "Langfuse — Tracing", "url": "https://langfuse.com/docs/tracing" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "context-engineering",
+      "topic": "Rerankers multi-lingual y dominios especializados",
+      "difficulty": "senior",
+      "scenario": "Producto para el sector legal en español y portugués. Rerankers off-the-shelf (Cohere Rerank v3) mejoran pero un compañero dice 'para legal hay que fine-tunear'. Otro propone 'usar reranker especializado ya entrenado en legal'.",
+      "question": "¿Cuál es la recomendación pragmática?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Orden pragmático: (1) BASELINE — probar rerankers multilingües fuertes: Cohere Rerank v3.5 multilingual (soporta 100+ idiomas incl. ES/PT), BGE-reranker-v2-m3 (multi-lingüe), Voyage rerank-2-multilingual. Medir en TU eval set. (2) DOMAIN — buscar rerankers pre-fine-tuneados en legal (Voyage voyage-law-2, algunos modelos HF específicos legal-BERT + fine-tune). (3) FINE-TUNE — si (1) y (2) no bastan, fine-tune del reranker con dataset propio (query, positive, negative). Data: extraer de logs reales, pedir a legal experts anotar 500-2000 pares. Framework: sentence-transformers CrossEncoderTrainer, Cohere rerank fine-tuning. (4) EVALUAR con eval set legal en ES/PT — NDCG@10, MRR. Fine-tune de reranker es más rentable que fine-tune de embedder (dataset más chico, mejor ROI típico).", "correct": true, "why": "Correcto. Empezar con lo pre-fabricado, medir, y escalar complejidad solo si necesario. Fine-tune de reranker es palanca de alto ROI cuando aplica." },
+        { "letter": "B", "text": "Cohere Rerank es siempre suficiente; fine-tune es sobre-ingeniería.", "correct": false, "why": "Depende. En dominios muy específicos (legal, médico) baseline puede quedar corto. La respuesta es 'medir y decidir', no defaults absolutos." },
+        { "letter": "C", "text": "Fine-tune obligatorio desde day 1; los modelos generales son inútiles.", "correct": false, "why": "Fine-tune requiere dataset anotado, ops, y evaluación continua. Empezar con off-the-shelf y validar necesidad de fine-tune es el approach correcto." },
+        { "letter": "D", "text": "En legal es mejor no usar reranker; genera falsos positivos.", "correct": false, "why": "Falso. Reranker filtra ruido y sube precision. En legal es especialmente valioso porque el coste de un chunk incorrecto puede ser alto." }
+      ],
+      "explanation": "Reranker landscape 2024-2026: (1) COMERCIAL — Cohere Rerank v3.5 (multi-lingüe, calidad top), Voyage rerank-2/rerank-2.5-lite (comercial), Jina Reranker v2 (mixto). (2) OPEN — BGE-reranker-v2 (varios tamaños: base, large, m3 multi-lingüe), mxbai-rerank, MonoT5. (3) VERTICAL — Voyage voyage-law-2, voyage-finance-2, voyage-code-2 (fine-tuneados por dominio). (4) FINE-TUNE PROPIO — datasets pequeños (500-5000 pares) pueden mover NDCG 15-25%. Sentence-transformers cross-encoder + MarginMSE o MultipleNegativesRankingLoss. Cohere ofrece fine-tuning de rerank. Estrategia: empezar off-the-shelf, medir gap, decidir fine-tune si el gap justifica el esfuerzo. Trade-off: fine-tune specific vs vs mantener capacidad general.",
+      "realWorld": "Voyage AI publicó voyage-law-2 con benchmarks mostrando ganancias vs off-the-shelf en dominios legales. Ropes (legal AI startup) y Harvey documentaron uso de rerank fine-tune. Cohere Rerank tiene case studies de bancos y firmas legales.",
+      "tags": ["reranker", "fine-tuning", "domain adaptation", "legal AI"],
+      "tech": ["Cohere Rerank", "Voyage", "BGE-reranker", "sentence-transformers"],
+      "references": [
+        { "title": "Voyage — voyage-rerank models", "url": "https://docs.voyageai.com/docs/reranker" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "cost-inference",
+      "topic": "Coste operativo — reranker en cada query",
+      "difficulty": "senior",
+      "scenario": "Servicio con 500 queries/segundo. Cada query hace: retrieve top-50 (bi-encoder) → rerank top-50 con Cohere Rerank ($2/1000 requests). Coste mensual solo de rerank: 500 × 60 × 60 × 24 × 30 = 1.3B requests × $2/1000 = $2.6M/mes. El CFO explota.",
+      "question": "¿Cuáles son las palancas correctas para bajar coste sin degradar UX?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Palancas: (1) CACHING de queries frecuentes (semantic cache o exact) — muchas queries se repiten; cachear rerank result. (2) BAJAR CANDIDATES pasados al reranker de 50 a 20 con hybrid mejorado. Rerank sobre 20 = 40% del coste. (3) SELF-HOST RERANKER — BGE-reranker-v2 en instancias propias sale <$0.10/1000 requests a volumen (con GPU). Save 20x. (4) MODELO MÁS CHICO — Cohere rerank-lite, BGE-reranker-base, Voyage rerank-2-lite. Menos preciso, más barato. (5) SKIP RERANK cuando bi-encoder ya está confiado (top-1 score alto). (6) RATE LIMIT / TIER — capar por usuario/tenant no premium. (7) ROUTING — usar rerank solo para queries complejas; queries triviales directo al LLM. Combinación puede bajar 90%+ el coste.", "correct": true, "why": "Correcto. Optimizar coste de LLM/reranker en producción requiere combinar palancas — caching, self-hosting, routing, right-sizing. Un solo cambio raramente basta." },
+        { "letter": "B", "text": "Quitar rerank; el bi-encoder es suficiente.", "correct": false, "why": "Degrada calidad significativamente. La respuesta es optimizar coste del rerank, no eliminarlo." },
+        { "letter": "C", "text": "Migrar todo a un modelo más chico y grande GPU cluster propio; siempre gana.", "correct": false, "why": "Self-hosting tiene overhead ops significativo (SRE, disponibilidad, on-call). No es 'siempre gana'; depende de escala y expertise." },
+        { "letter": "D", "text": "Renegociar precio con Cohere; enterprise deals bajan 90%.", "correct": false, "why": "Enterprise deals suelen ser 30-50%, no 90%. Y no debería ser tu única palanca." }
+      ],
+      "explanation": "Cost optimization para RAG en producción — palancas: (1) SEMANTIC CACHE (GPTCache, Redis LangCache) — cachear respuestas para queries semánticamente similares. Puede bajar 40-70% en workloads con head skewed (Pareto). (2) RIGHT-SIZE — usar modelo más chico cuando basta (rerank-lite, Haiku vs Opus). (3) SELF-HOST modelos que corren bien on-premise (BGE-reranker, embedders open). Break-even ~$10k/mes. (4) ROUTING inteligente — clasificar query intent y elegir path barato o caro. (5) BATCHING — agrupar requests offline para batch API (50% descuento típico). (6) PROMPT CACHING (LLM) — Anthropic/OpenAI/Gemini, hasta 90% descuento en input repetido. (7) TIER USERS — capar features expensivas a paid tiers. (8) OBSERVABILITY — sin cost tracking granular no sabes qué optimizar. Herramientas: LiteLLM (routing + cache), Helicone (cost obs), Langfuse.",
+      "realWorld": "Perplexity, Notion, Cursor todos publicaron sobre optimizaciones agresivas de coste al escalar. Perplexity migró parte de inference a Groq/Cerebras; Notion usa multi-model routing; Cursor semantic cache. Combinado bajaron coste 60-80% manteniendo o mejorando UX.",
+      "tags": ["cost optimization", "caching", "self-hosting", "routing"],
+      "tech": ["Cohere Rerank", "BGE-reranker", "GPTCache", "LiteLLM", "Helicone"],
+      "references": [
+        { "title": "LiteLLM — Proxy with caching and routing", "url": "https://docs.litellm.ai/" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "context-engineering",
+      "topic": "Agentic retrieval — RAG que decide qué buscar",
+      "difficulty": "staff",
+      "scenario": "Query compleja: 'compara los términos de reembolso entre nuestra política de 2023 y la nueva de 2024, y dime qué cambia para clientes enterprise'. RAG tradicional (single retrieve → single LLM call) falla. Un compañero propone 'agentic RAG'.",
+      "question": "¿Qué es agentic RAG y cuándo aplica?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Agentic RAG = LLM orquesta MÚLTIPLES retrieves iterativos con razonamiento. Loop: (1) LLM analiza query, decide qué buscar primero, (2) hace tool call retrieve(sub-query1), (3) razona con resultados, decide siguiente búsqueda retrieve(sub-query2), (4) itera hasta tener info suficiente, (5) sintetiza respuesta final. En el ejemplo: buscar 'refund policy 2023 enterprise', luego 'refund policy 2024 enterprise', comparar. Aplica cuando: (a) queries multi-hop (múltiples piezas info), (b) requiere razonamiento entre etapas, (c) planificación explícita. Trade-offs: mayor latencia (N calls), mayor coste (N × retrieve + N × LLM), complejidad. No aplica a queries simples factoides. Frameworks: LangGraph, LlamaIndex Agent Runner, CrewAI, MCP-based agents. Combinar con: reflection, self-correction, planning.", "correct": true, "why": "Correcto. Agentic RAG es la respuesta a queries multi-hop que single-shot no puede resolver. Es tendencia clara 2024-2026 con o1/R1/Claude thinking + tool use maduro." },
+        { "letter": "B", "text": "Simplemente hacer retrieve top-100 y meter todo al LLM.", "correct": false, "why": "Top-100 diluye contexto, sube coste linealmente, y sigue sin resolver queries que requieren razonamiento entre resultados. Agentic separa retrieve y razonamiento." },
+        { "letter": "C", "text": "Usar solo LLM con context grande sin retrieval.", "correct": false, "why": "Requiere que el modelo tenga toda la info en entrenamiento (no aplica a docs corporativos privados) o meter todo en context (caro e imposible a escala)." },
+        { "letter": "D", "text": "Fine-tunear el LLM sobre las políticas de reembolso.", "correct": false, "why": "Caro, se degrada cuando cambian políticas, no maneja info actualizada. RAG es mejor pattern para info que cambia." }
+      ],
+      "explanation": "Agentic RAG patterns: (1) SELF-QUERY — LLM re-formula query para retriever (query rewriting). (2) MULTI-QUERY — LLM genera N sub-queries, retrieve en paralelo, RRF. (3) STEP-BY-STEP con planner — LLM plantea plan de búsqueda, ejecuta. (4) REACT-STYLE — Reasoning + Action loops. (5) REFLECTION — LLM valida su output y decide si necesita más info. (6) CORRECTIVE RAG — evalúa relevance de resultados y re-busca si son insuficientes. (7) SELF-RAG (Asai et al. 2023) — LLM aprende cuándo retrievar. Frameworks: LangGraph (Anthropic-recommended stateful agents), LlamaIndex Agent Runner, CrewAI, AutoGen. Combinar con reasoning models (o1/R1/Claude thinking) es especialmente potente. Trade-offs: latencia y coste multiplicativos vs single-shot. Aplicar selectivamente según complejidad del query (router).",
+      "realWorld": "Perplexity Pro y ChatGPT Search usan patrones agentic para queries complejas. Anthropic Claude Sonnet/Opus con tool use maduro habilita este patrón. Papers como Self-RAG, CRAG, y ReAct han influenciado el diseño de agentes. Frameworks como LangGraph y LlamaIndex Agent Runner son adopted por muchas apps.",
+      "tags": ["agentic RAG", "multi-hop", "planning", "reflection"],
+      "tech": ["LangGraph", "LlamaIndex", "CrewAI", "ReAct"],
+      "references": [
+        { "title": "Asai et al. — Self-RAG: Learning to Retrieve, Generate, and Critique", "url": "https://arxiv.org/abs/2310.11511" },
+        { "title": "LangGraph — Docs", "url": "https://langchain-ai.github.io/langgraph/" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "context-engineering",
+      "topic": "Cuando NO usar RAG",
+      "difficulty": "staff",
+      "scenario": "Un compañero staff propone 'metamos RAG en TODO el producto, es la solución para hacer nuestras respuestas más precisas'. Estás en el arquitecto review y quieres poner límites.",
+      "question": "¿Cuáles son los casos donde RAG NO es la respuesta correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Casos donde RAG es antipatrón: (1) DATOS ULTRA-FRESCOS (order status, live prices, ticket state) → TOOL CALL a API/DB, no RAG (RAG siempre tiene lag). (2) OPERACIONES DETERMINISTAS con lógica clara (cálculos, transformaciones, workflows) → CÓDIGO tradicional. (3) DOMINIO PEQUEÑO Y ESTABLE (puedes meter en system prompt con prompt caching) → SYSTEM PROMPT + CACHING más simple y a veces más barato. (4) DECISIONES CON POCA VARIABILIDAD → RULES ENGINE + LLM validation. (5) TAREAS QUE REQUIEREN RAZONAMIENTO SOBRE INFO GLOBAL DEL CORPUS (resumen ejecutivo, análisis de tendencias) — RAG chunks fragmenta; considera long-context o document analysis. (6) OUTPUT ESTRUCTURADO PURO desde datos estructurados → SQL/API + structured output. RAG brilla en Q&A sobre corpus grande, semi-estático, con queries variadas.", "correct": true, "why": "Correcto. RAG es una herramienta valiosa pero no universal. Aplicar RAG donde no aplica añade complejidad (índice, embedding pipeline, monitoring) sin beneficio, y a menudo con degradación (info stale, coste, latencia)." },
+        { "letter": "B", "text": "RAG es la solución para todo problema con LLM, sin excepción.", "correct": false, "why": "Falso. Meter RAG en casos donde tool call, código tradicional, o long-context es superior aumenta complejidad sin beneficio." },
+        { "letter": "C", "text": "RAG solo aplica a Q&A sobre docs; el resto de casos es fine-tuning.", "correct": false, "why": "Reduce falsamente el panorama. Muchos casos NO son ni RAG ni fine-tuning — son tool use, código tradicional, o combinaciones." },
+        { "letter": "D", "text": "Fine-tuning siempre gana a RAG cuando hay más de 1000 docs.", "correct": false, "why": "Falso. RAG y fine-tuning resuelven problemas distintos: fine-tuning ajusta el modelo (formato, tono, tareas específicas); RAG le da acceso a info externa/actualizada. Se combinan, no compiten." }
+      ],
+      "explanation": "Cuando NO usar RAG (o pensar dos veces): (1) DATOS DINÁMICOS → tool calls (API, DB). (2) LÓGICA DETERMINISTA → código tradicional. (3) CORPUS PEQUEÑO Y ESTABLE → system prompt + prompt caching (más simple, mismo resultado). (4) TASK QUE NECESITA INFO GLOBAL → long context o document AI. (5) NECESITAS CONSISTENCIA total → RAG es non-deterministic; considera RULES + LLM validation. (6) NECESITAS ESTILO/FORMATO ESPECÍFICO → fine-tuning más apropiado. (7) DATOS ULTRA-SENSIBLES sin controles adecuados → puede violar compliance. Decision framework: (a) mira los datos, (b) mira las queries, (c) mira los requisitos (freshness, consistency, compliance), (d) elige la herramienta correcta. Muchos productos AI serios combinan RAG + tools + code + fine-tuning + long-context, no RAG solo.",
+      "realWorld": "Anthropic 'Building effective agents' (2024-2025) enfatiza que muchos casos que empiezan como RAG evolucionan a agentes con tool use + RAG + code. Sierra, Intercom Fin, Zendesk AI describen arquitecturas híbridas donde RAG es UNA capa, no la única.",
+      "tags": ["when not to RAG", "architecture", "tool use", "hybrid systems"],
+      "tech": ["RAG", "tools", "long context", "prompt caching"],
+      "references": [
+        { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" }
+      ]
+    }
+  ]
+}

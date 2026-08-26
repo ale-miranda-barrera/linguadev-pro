@@ -1,0 +1,416 @@
+{
+  "id": "devops-sim-19-logging-elk-loki",
+  "trackId": "devops",
+  "order": 19,
+  "title": "Simulacro 19 — Logging: ELK y Loki",
+  "focus": "Structured logging JSON, correlation IDs, log levels, ELK stack (Elasticsearch, Logstash, Kibana), Loki (label-based), Fluentd vs Fluent Bit, retention strategies, cost management, PII redaction, log sampling.",
+  "areaCoverage": ["monitoring"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "monitoring",
+      "topic": "Structured logging vs plain text",
+      "difficulty": "junior",
+      "scenario": "App legacy loguea: '2026-01-15 14:32:11 ERROR User john@example.com failed to login from IP 1.2.3.4 with reason invalid_password'. Nuevo servicio loguea: '{\"ts\":\"2026-01-15T14:32:11Z\", \"level\":\"error\", \"event\":\"login_failed\", \"user_id\":\"12345\", \"ip\":\"1.2.3.4\", \"reason\":\"invalid_password\"}'.",
+      "question": "¿Cuál es la diferencia y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Structured logging: cada log es JSON (u otro formato structured — logfmt, protobuf) con campos discretos. Ventajas: (1) parseable por máquinas — filter/search por campos exactos (level='error' AND event='login_failed'); (2) agregables — count events por reason, avg latency by endpoint; (3) queryable en Elasticsearch/Loki con precision; (4) auto-completion en herramientas. Plain text requires regex fragile para extraer fields, queries slow, no aggregation. Regla moderna: SIEMPRE structured logging en producción.", "correct": true, "why": "Correcto. Es LA best practice moderna. Structured logging fue posible desde años pero adopción se aceleró con Kubernetes + JSON logging. Frameworks modernos (Zap Go, Serilog .NET, Winston Node) hacen fácil. Sin structured logging, tus logs son 'grep archives' — inspeccionable pero no analyzable." },
+        { "letter": "B", "text": "Plain text es más eficiente en espacio.", "correct": false, "why": "Marginal diferencia. Compresión de storage (gzip) hace la diferencia negligible. Ventajas de estructurados >> costos storage." },
+        { "letter": "C", "text": "Structured logs son ilegibles para humanos.", "correct": false, "why": "Falso. Tools like jq, Grafana Loki panels, Kibana Discover pretty-print JSON. Además, en desarrollo usas 'pretty printer' que formatea nice." },
+        { "letter": "D", "text": "Solo aplicable a apps nuevas.", "correct": false, "why": "Falso. Apps legacy pueden migrar gradualmente. Herramientas como Fluentd/Fluent Bit parsean plain-text a structured en pipeline si es necesario." }
+      ],
+      "explanation": "Common structured formats: (1) JSON — más popular (Elasticsearch, Loki, Datadog nativo); (2) logfmt (key=value key=value) — más liviano, popular en Go; (3) OpenTelemetry log format — emerging standard; (4) syslog RFC5424 — old-school structured. Fields esenciales: timestamp (ISO 8601 UTC), level (debug/info/warn/error/fatal), message, service_name, trace_id (para correlation con tracing), version, environment. Anti-patterns: log messages con string interpolation (perdés estructura), inconsistent field names across services, timestamps sin timezone. Libraries: Go (zap, zerolog), Node (winston, pino), Python (structlog, logging con JSON formatter), Java (Logback + Logstash encoder), .NET (Serilog).",
+      "realWorld": "Netflix, Uber, Airbnb, Google — todos structured logging. Los primeros papers de observability (Twitter Zipkin, Google Dapper) asumen structured. FluentBit and Fluentd fueron built para hacer log routing/parsing sensible. Empresas con plain text logs = tech debt operacional grande.",
+      "tags": ["structured logging", "JSON", "logfmt"],
+      "tech": ["Zap", "Winston", "Serilog"],
+      "references": [{ "title": "12factor.net — Logs" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "monitoring",
+      "topic": "Log levels: uso apropiado",
+      "difficulty": "junior",
+      "scenario": "Junior loguea todo como INFO 'porque quiero ver todo'. Producción genera 10TB/día de logs. Costo storage $10K/mes. Necesitas normalizar log levels.",
+      "question": "¿Cuál es el uso correcto de cada log level?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DEBUG: verbose, útil en dev/troubleshooting (variable states, execution flow). NO en producción por default (activar por flag/dynamic config). TRACE: aún más verbose, spans individuals. INFO: eventos normales importantes (service started, request completed, batch job finished). WARN: comportamiento anormal pero recuperable (retry, deprecation, high memory). ERROR: fallo real que impide operación (exception, request failed). FATAL: unrecoverable, service muere. Producción típica: INFO+ por default, DEBUG activable on-demand.", "correct": true, "why": "Correcto. Niveles bien usados reducen volumen 10-100x sin perder signal. DEBUG en prod = noise + costo. INFO debe ser para eventos que ayudan understanding del estado, no cada línea de código." },
+        { "letter": "B", "text": "Log todo como INFO para no perder nada.", "correct": false, "why": "Anti-patrón. Logs infinitos = imposible search, costo storage explota, alerts fatigue. Los niveles existen para filtrar signal from noise." },
+        { "letter": "C", "text": "Solo usa ERROR — el resto es debug.", "correct": false, "why": "Extremo opuesto. Sin INFO/DEBUG útil, cuando algo falla, no tienes contexto de qué pasó antes. WARN es importante para detectar tendencias." },
+        { "letter": "D", "text": "Los levels son opinión, no importan.", "correct": false, "why": "Importan mucho. Definen retention, alerting, ingestion cost. Empresas maduras tienen guidelines de logs por level." }
+      ],
+      "explanation": "Log level policies típicas: (1) DEBUG — off en prod, on en dev/staging; (2) INFO — sample-able (10% en high-traffic); (3) WARN — 100% capture, potential future issues; (4) ERROR — 100% capture, alertable; (5) FATAL — 100% capture, page immediate. Dynamic log levels: capacidad de subir DEBUG en producción para un servicio específico durante troubleshooting (Slack: /log-level api DEBUG 30min). Herramientas: Zap (Go) tiene AtomicLevel; Logback tiene JMX. Retention differentiated: DEBUG 7d, INFO 30d, ERROR 90d — reduce costo storage. Filter en ingestion pipeline (Fluent Bit): drop DEBUG a menos que env=dev.",
+      "realWorld": "Netflix publica sobre log volume management. Salesforce, Shopify tienen internal guidelines. Costos logs frecuentemente exceden compute — muchas empresas descubren esto tarde. Fixes: retention policy per level, sampling, drop verbose debug.",
+      "tags": ["log levels", "verbosity", "sampling"],
+      "tech": ["Zap", "Logback", "log4j"],
+      "references": [{ "title": "Log Level Best Practices" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "monitoring",
+      "topic": "Correlation IDs y trace context",
+      "difficulty": "mid",
+      "scenario": "Request llega a API gateway → auth service → user service → payment service → notification service. Error en payment. Logs de cada servicio no correlacionan — no puedes seguir el mismo request cross-service.",
+      "question": "¿Qué es correlation ID / trace ID y cómo implementarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Correlation ID (o trace_id): UUID único por request/session, generado en gateway o primer service. Se propaga en headers HTTP (X-Request-Id, X-Correlation-Id, o W3C traceparent) a cada service downstream. Cada servicio loguea con ese ID como field. En logs backend, filtras por trace_id → ves TODOS los logs de ese request en orden across services. Con OpenTelemetry es standard: traceparent header propaga trace_id + span_id automáticamente. Esencial para debugging distributed systems.", "correct": true, "why": "Correcto. Sin correlation IDs, logs son islands per-service. Con ellos, un request es reconstruible. OpenTelemetry / W3C Trace Context standardizó headers y propagation. Todo framework moderno incluye middleware para propagate. Es LA feature clave que hace tracing (Jaeger, Tempo) posible." },
+        { "letter": "B", "text": "Correlation ID es lo mismo que user_id.", "correct": false, "why": "Distintos. user_id identifica el user; correlation_id identifica el REQUEST individual. Un user puede hacer 1000 requests, cada uno con correlation_id distinto." },
+        { "letter": "C", "text": "Se genera automáticamente sin código.", "correct": false, "why": "Requires framework support (OpenTelemetry SDK, service mesh Envoy inject, o middleware manual). No automático en apps legacy sin instrumentation." },
+        { "letter": "D", "text": "Solo útil si tienes tracing backend.", "correct": false, "why": "Falso. Correlation IDs en logs son útiles SIN tracing backend. Trace backend es upgrade. Pero solo con logs + correlation ID, debugging distributed systems es 10x más fácil que sin." }
+      ],
+      "explanation": "Implementation patterns: (1) Ingress: API gateway/load balancer genera X-Request-Id si missing; (2) Propagation: middleware framework extrae header entrando, agrega al logger context, agrega header saliendo a downstream calls; (3) Logging: cada log incluye trace_id como field; (4) Backend: Loki/ES query {job=\"api\"} | json | trace_id=\"abc123\". W3C Trace Context (2020 standard): traceparent header con formato '00-<trace_id>-<span_id>-<flags>'. OpenTelemetry SDK maneja propagation automáticamente. Alternativas legacy: X-B3-TraceId (Zipkin), Uber-Trace-Id (Jaeger). Baggage: metadatos adicionales que viajan con el trace (baggage header) — para carry business context (user_id, region) sin que cada service reciba/setee.",
+      "realWorld": "Google Dapper paper (2010) fue precursor. Zipkin (Twitter 2012), Jaeger (Uber 2016) popularizaron. W3C standardizó 2020. OpenTelemetry hoy es standard. Empresas sin correlation IDs pierden horas en cada incident distributed system triaging.",
+      "tags": ["correlation ID", "trace ID", "W3C Trace Context", "distributed logging"],
+      "tech": ["OpenTelemetry"],
+      "references": [{ "title": "W3C — Trace Context spec" }, { "title": "opentelemetry.io" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "monitoring",
+      "topic": "ELK stack arquitectura",
+      "difficulty": "mid",
+      "scenario": "Team hereda ELK stack: Elasticsearch, Logstash, Kibana. Un nuevo dev pregunta '¿qué hace cada uno?'.",
+      "question": "¿Cuál es la arquitectura del ELK stack y el rol de cada componente?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Elasticsearch: search engine distribuido basado en Apache Lucene. Indexa CADA CAMPO de cada log (inverted index → full-text search rápido). Storage + query engine. Escala horizontal via shards + replicas. Logstash: ingestion pipeline — recibe logs de múltiples sources (syslog, file tail, HTTP, Kafka), aplica filters (parse JSON, grok patterns, geo enrichment, drop fields), outputs a Elasticsearch. Kibana: UI para query + dashboards + alerting sobre Elasticsearch. Beats (Filebeat, Metricbeat): shippers ligeros que reemplazan/preceden Logstash — read logs y ship a ES/Logstash. Stack completo: 'ELK' (histórico) o 'Elastic Stack' (marketing actual con Beats).", "correct": true, "why": "Correcto. Cada componente tiene rol definido. Elasticsearch = donde viven los datos. Logstash = pipeline processing. Kibana = UI. Beats = shippers agentless en cada host. Confusion común: llamar 'Elastic' a un solo componente (Elasticsearch)." },
+        { "letter": "B", "text": "Elasticsearch es la UI.", "correct": false, "why": "Falso. Elasticsearch es search engine + storage. Kibana es la UI." },
+        { "letter": "C", "text": "Los tres son opcionales — se puede usar cada uno independiente.", "correct": false, "why": "Parcial. Elasticsearch puede usarse solo (con app propia). Kibana requires Elasticsearch. Logstash puede ir a otros outputs, pero era diseñado con ES en mente." },
+        { "letter": "D", "text": "ELK es OSS puro sin issues comerciales.", "correct": false, "why": "Falso. Elastic (empresa) cambió license de Elasticsearch a SSPL en 2021 (no OSI-approved OSS). AWS forkeo → OpenSearch. Debate comunitario ongoing. En 2024 Elastic returned AGPLv3." }
+      ],
+      "explanation": "Componentes profundizados: (1) Elasticsearch — cluster con nodes (master, data, ingest), shards (primary + replica), indices (colecciones de documents), Lucene backend. Scale horizontal: add nodes; shards se rebalancean. (2) Logstash — JVM-based, heavy weight, potente pero costoso RAM. Beats más ligeros (Filebeat en Go). (3) Kibana — visualization + Discover (log search) + Alerting + Machine Learning (paid). (4) Ecosystem paid features: SIEM, ML, Reporting, cross-cluster search. (5) Alternatives: OpenSearch (AWS fork post-license change), Graylog (also on Elasticsearch/OpenSearch), Splunk (proprietary competitor). Kubernetes deployment: ECK operator para gestionar ES cluster in K8s.",
+      "realWorld": "Elastic (empresa, ex-Elasticsearch BV) valorada $10B+ pre-IPO. Adopción masiva mundialmente. License change 2021 controversial. Amazon forkeo → OpenSearch, ahora también popular. Muchas empresas evalúan alternativas (Loki para logs, Signoz, etc.) por costo o license concerns.",
+      "tags": ["ELK", "Elasticsearch", "Logstash", "Kibana", "Beats"],
+      "tech": ["Elasticsearch", "Logstash", "Kibana", "Beats"],
+      "references": [{ "title": "elastic.co — Elastic Stack" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "monitoring",
+      "topic": "Loki vs Elasticsearch",
+      "difficulty": "senior",
+      "scenario": "Team tiene ELK maduro pero costos escalan ($30K/mes). Considera migrar a Loki. Debate: '¿va a funcionar? ¿qué perdemos?'.",
+      "question": "¿Cuáles son los trade-offs concretos entre Loki y Elasticsearch?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Elasticsearch: full-text inverted index de TODO el contenido → search rápido pero storage/RAM caro. Ideal para: SIEM (security queries buscar patrones ad-hoc en TB), fraud detection, analytics complejos sobre logs. Loki: solo indexa LABELS (metadata) — contenido guardado como chunks comprimidos en object storage. Search full-text = grep-like sobre chunks selectos por labels. Ideal para: logs de aplicaciones típicas donde sabes 'de qué servicio' antes de buscar. Costo storage: 10-100x menor Loki. Costo compute query: similar o menor Loki (menos RAM). Trade-off: si tus queries siempre incluyen labels (job=x, namespace=y), Loki excelente. Si haces ad-hoc full-text sin filtros label, Elasticsearch mejor.", "correct": true, "why": "Correcto. Es la elección de arquitectura fundamental: index all vs index metadata. Cost implications 10-100x en storage es la razón principal de migration. Grafana Labs marketing 'Prometheus for logs' captures la filosofía." },
+        { "letter": "B", "text": "Loki es siempre superior.", "correct": false, "why": "No. Elasticsearch mantiene ventaja para full-text search sin labels precondition (SIEM, forensics). Elección depende de use case." },
+        { "letter": "C", "text": "Ambos hacen lo mismo con distinta UI.", "correct": false, "why": "Arquitectura fundamentalmente distinta impacts query patterns, storage costs, operational overhead." },
+        { "letter": "D", "text": "Loki solo funciona con Kubernetes.", "correct": false, "why": "Falso. Loki funciona en cualquier deployment. Sí es K8s-friendly (labels align con Kubernetes labels) pero no requerido." }
+      ],
+      "explanation": "Migration considerations: (1) Structured logging es prerequisite — Loki queries dependen de labels sanos; (2) Cardinality de labels — mismo problema que Prometheus, si labels tienen cardinality alta (user_id), Loki sufre; (3) Full-text search pattern — si queries siempre incluyen label filter, migration fácil; (4) Retention — chunks en S3 baratos, retention años es viable en Loki, expensivo en ES; (5) SIEM: Loki not designed para. Alternative: Grafana + OpenSearch, o mantener ES para security only. Hybrid pattern: Loki para app logs (cheap, high volume), ES para security/audit logs (SIEM, keep long-term).",
+      "realWorld": "GitLab migró parcialmente. Cloudflare uses Loki for many workloads. Empresas security-focused mantienen ES/Splunk. Grafana Labs claim 10-100x cheaper based on internal + customer data. Splunk sigue #1 SIEM (más caro por gran margen).",
+      "tags": ["Loki", "Elasticsearch", "costo", "labels", "full-text search"],
+      "tech": ["Loki", "Elasticsearch", "OpenSearch"],
+      "references": [{ "title": "grafana.com — Loki vs Elasticsearch" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "monitoring",
+      "topic": "Fluentd vs Fluent Bit",
+      "difficulty": "mid",
+      "scenario": "Team desplega Kubernetes cluster. Necesita ship logs de cada pod a Loki. Debate: Fluentd o Fluent Bit? Los nombres se parecen.",
+      "question": "¿Cuál es la diferencia entre Fluentd y Fluent Bit, y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fluentd (2011, Ruby + C): 'unified logging layer'. Pipeline potente con 1000+ plugins. Recibe logs de múltiples sources, aplica filters, envía a múltiples destinations. Overhead: ~40MB RAM, Ruby runtime. Fluent Bit (2015, C): 'edge shipper'. Ultra-liviano (~1MB RAM), C-only, menos plugins pero cubre casos comunes. Diseñado para edge deployment: sidecar/DaemonSet en cada nodo, ship a Fluentd aggregator o directo a backend. Patrón común en K8s: Fluent Bit en cada nodo (DaemonSet) → Fluentd central (StatefulSet) para processing pesado → backend (Loki/ES). O Fluent Bit directo si processing simple. Both mantenidos por CNCF (Fluent project).", "correct": true, "why": "Correcto. Complementary tools, no competitors. Fluent Bit es shipper edge; Fluentd es aggregator/processor. En Kubernetes moderno, muchos casos solo Fluent Bit basta (parse JSON, ship a Loki). Para transformations complejas, Fluentd." },
+        { "letter": "B", "text": "Son idénticos con distinto nombre.", "correct": false, "why": "Falso. Distinto lenguaje (Ruby vs C), footprint, plugin ecosystem." },
+        { "letter": "C", "text": "Fluent Bit es viejo; Fluentd es reemplazo moderno.", "correct": false, "why": "Al revés. Fluentd es más viejo (2011); Fluent Bit fue creado (2015) como lightweight alternative para edge." },
+        { "letter": "D", "text": "Solo funcionan en Kubernetes.", "correct": false, "why": "Falso. Ambos funcionan en cualquier entorno. K8s es use case popular pero no único." }
+      ],
+      "explanation": "Deployment patterns Kubernetes: (1) Fluent Bit DaemonSet — un pod por nodo, monta /var/log del nodo, tail container logs, parse, ship. (2) Sidecar — Fluent Bit en cada app pod (rare, más overhead). (3) Aggregator (Fluentd StatefulSet) — receives from Fluent Bits, applies heavy processing. Alternatives: Vector (Datadog, Rust, high performance), Grafana Alloy (unified agent, replaces Prometheus agent + Promtail + others), Promtail (Grafana Labs, Loki-specific, being deprecated in favor of Alloy). Config Fluent Bit: INPUT (tail /var/log/containers), FILTER (parse, add labels), OUTPUT (loki, elasticsearch, kafka, s3). Multi-destination: same log to multiple backends.",
+      "realWorld": "Fluentd creado en Treasure Data. Fluent Bit por Eduardo Silva (also Treasure Data). Both CNCF graduated projects. Massive adoption en K8s. Grafana Labs pushing Alloy como unified agent (2024). Vector (Timber then Datadog) también popular por performance.",
+      "tags": ["Fluentd", "Fluent Bit", "log shippers", "Kubernetes"],
+      "tech": ["Fluentd", "Fluent Bit", "Vector"],
+      "references": [{ "title": "fluentbit.io" }, { "title": "fluentd.org" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "monitoring",
+      "topic": "Log retention strategies",
+      "difficulty": "senior",
+      "scenario": "Empresa: 5TB logs/día, obligación compliance de retener 1 año security logs, 30d app logs. Costo storage con ES: $200K/año. CFO pregunta cómo reducir sin perder compliance.",
+      "question": "¿Qué estrategias de retention se pueden aplicar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Hot-warm-cold-frozen tier: logs recientes en storage rápido (SSD, ES hot), logs medianos en warm (HDD, ES warm), logs viejos en cold (S3 con Elasticsearch snapshot), archived en frozen (Glacier). Search más lento en cold/frozen pero mucho más cheap. Elasticsearch ILM (Index Lifecycle Management) automatiza transitions.", "correct": true, "why": "Correcto. Ratio costo/access speed. 90% de queries son sobre datos <7d — pagas storage rápido solo para esos. Datos históricos (compliance) en Glacier: costo mínimo, restore tarda horas pero OK para audit." },
+        { "letter": "B", "text": "Different retention por log type: debug/info 7d, warn 30d, error 90d, audit/security 7 años. Route logs a distintos indices por level/type, aplica retention policy per index.", "correct": true, "why": "Correcto. La regla 80/20: la mayoría de logs son DEBUG/INFO (bulk del volumen) — no necesitas 1 año. Compliance logs (auth, financial txn) sí. Diferenciar reduce storage 90%." },
+        { "letter": "C", "text": "Compress + move to object storage: post-retention en hot storage, comprime y move a S3/GCS con lifecycle rules. Access lento pero cheap. Restore on-demand.", "correct": true, "why": "Correcto. Compresión gzip/zstd typical 5-10x reduction. S3 Glacier Deep Archive: $0.00099/GB/mes vs SSD $0.10/GB/mes = 100x cheaper. Restore es lento pero acceptable para auditoría." },
+        { "letter": "D", "text": "Sampling en ingestion: log 100% de errors, 10% de INFO, 1% de DEBUG (con probability per log). Reduces volume dramatically para logs alto-volumen. Sample rate configurable per service.", "correct": true, "why": "Correcto. Sampling es válido para high-volume signals de bajo valor individual. Los stats (rate, distribution) siguen accurate con sampling; specific event queries pierden precision pero tolerable para info/debug." },
+        { "letter": "E", "text": "Delete todo tras 7 días.", "correct": false, "why": "Anti-patrón. Compliance requires retention (SOX 7yr, PCI 1yr, GDPR variable). Delete arbitrary = violación regulatoria." }
+      ],
+      "explanation": "Cost reduction techniques: (1) ILM en Elasticsearch — automated tier transitions; (2) drop verbose fields (kubernetes.pod.container.image_id largo) en ingestion; (3) retention por dataset (audit long, debug short); (4) archive to cold storage antes de delete; (5) sampling; (6) filter unnecessary logs en ingestion (health checks, monitoring probes). Governance: define policy explicit — 'app logs 30d, audit 7y, security 1y' — approved by legal/compliance. Tag logs con dataset field for routing. Some regulations require specific tools (SOC2, ISO 27001 audit trails).",
+      "realWorld": "Netflix publica sobre log management scale (petabytes/day). Google Chronicle (security logging) 1 year hot. Cloudflare compression + S3. Banking regs typically 7 years. GDPR balance: retain for legitimate business needs vs right to erasure. Post-Snowden, many companies compress + encrypt cold storage.",
+      "tags": ["retention", "cost management", "ILM", "compliance"],
+      "tech": ["Elasticsearch ILM", "S3 Glacier"],
+      "references": [{ "title": "elastic.co — ILM" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "monitoring",
+      "topic": "PII redaction",
+      "difficulty": "senior",
+      "scenario": "Devs loguean request payloads completos. En logs aparecen: emails, phone numbers, credit card numbers (test cards en dev pero real en prod), SSNs. Compliance officer descubre GDPR violation.",
+      "question": "¿Cómo se hace PII redaction en logs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-layer defense: (1) SHIFT LEFT — instruye devs a nunca loguear PII directamente (log user_id, no email); code review + linters detectan patterns. (2) SDK-level scrubbing — SDK/logging library con auto-redaction rules (Sentry, Datadog, custom): detect emails/phones/CC via regex, replace con REDACTED. (3) Ingestion pipeline (Fluentd/Fluent Bit/Vector) con filters para redact known fields o regex-match sensitive data before storage. (4) Storage-level: encrypt at rest, access control. (5) Log tokenization: reemplaza PII con reversible token guardado separate (advanced, para casos que necesitas PII pero not always). Sin redaction, tus logs son bomba legal (GDPR fines hasta 4% revenue).", "correct": true, "why": "Correcto. Defense in depth es la única approach robusta. Shift left es más efficient; ingestion filters como safety net; storage encryption como último layer. Ninguna sola es suficiente." },
+        { "letter": "B", "text": "Solo encrypt at rest — suficiente.", "correct": false, "why": "Encryption at rest protege contra breach de storage, pero devs y ops con access legítimo siguen viendo PII en logs. Compliance requires MASKING, not just encryption." },
+        { "letter": "C", "text": "PII redaction es opcional, solo si tienes compliance strict.", "correct": false, "why": "Falso. GDPR aplica en Europe; CCPA California; LGPD Brazil; muchas regulaciones. Incluso sin regs, PII in logs = riesgo si breach ocurre. Estándar moderno = siempre redact." },
+        { "letter": "D", "text": "Delete logs periódicamente.", "correct": false, "why": "Delete no es redaction. Durante retention (weeks/months), PII sigue exposed. Redaction desde ingestion es solución real." }
+      ],
+      "explanation": "PII types: names, emails, phones, SSN/tax IDs, credit cards (PCI mandate), IP addresses (GDPR), health info (HIPAA), passwords/tokens (definitely never log). Techniques: (1) Regex-based (email: [\\w.]+@\\w+\\.\\w+); (2) Format-preserving encryption (email → encrypted string but still looks like email for functionality); (3) Tokenization (replace with token, mapping in vault); (4) Deterministic hashing (SHA-256 with salt — same value maps to same hash, útil for correlation without PII); (5) Field-level allow list (only log approved fields). Tools: Datadog Sensitive Data Scanner, Elastic Ingest processors, Vector transforms, custom Fluent Bit Lua scripts. Detection: PII scanning tools (Nightfall, Datadog) alertan si detected in logs. Regulations: GDPR right to erasure — must ser able to purge logs by user_id.",
+      "realWorld": "Multiple massive fines por logs con PII: Amazon 746M€ (GDPR 2021, aunque broader), British Airways 20M£ (2020). Empresas modernas: allowlist approach — solo campos explicitamente approved son loggable. Sentry, Datadog venden 'sensitive data scrubbing' como feature core.",
+      "tags": ["PII", "redaction", "GDPR", "compliance"],
+      "tech": ["Datadog Sensitive Data Scanner", "Fluent Bit", "Vector"],
+      "references": [{ "title": "GDPR Article 32" }, { "title": "PCI DSS 3.4 — Log data protection" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "monitoring",
+      "topic": "Log sampling",
+      "difficulty": "senior",
+      "scenario": "API con 100k RPS. Cada request loguea INFO. 8.6 billion logs/día. Storage $50K/mes solo por INFO. Team considera sampling.",
+      "question": "¿Cómo implementar log sampling efectivamente sin perder observability?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Consistent sampling con probability per log: cada log tiene probability p de ser kept (p=0.01 → 1% sampled). Trade-off: mantiene stats agregados (rate, distribution) accurate pero specific event lookup pierde precision. Consistent hashing por trace_id: TODOS los logs del mismo trace kept juntos (o todos dropped) — importante para debugging distributed. Sample rate variable: 100% errors, 10% warns, 1% info. Adaptive sampling: baja rate en high traffic, alta en baja carga. Head-based (decide en ingest) vs Tail-based (colecta todo, decide post-hoc — requires buffer). Tail-based mejor calidad pero más overhead.", "correct": true, "why": "Correcto. Sampling es una vertiente clave de cost management. Consistent per-trace es crucial en distributed — sin consistency, ves log de un service pero no de sus dependencies, imposible reconstruir. Adaptive sampling responde a load automatically." },
+        { "letter": "B", "text": "Sampling arbitrario destruye observability.", "correct": false, "why": "Falso if done right. Statistics agregados (rate, latency distribution) mantienen accuracy con sampling. Individual event lookup sufre — trade-off knowingly." },
+        { "letter": "C", "text": "Solo aplicable a debug logs.", "correct": false, "why": "Cualquier level puede muestrear (excepto tal vez errors/critical). En high traffic INFO/DEBUG son bulk del volumen." },
+        { "letter": "D", "text": "Sampling debe hacerse random independiente per log.", "correct": false, "why": "Anti-patrón en distributed. Consistency per trace_id es esencial. Sin ella, un request tiene logs de service A pero no B — inútil." }
+      ],
+      "explanation": "Sampling strategies: (1) Head-based — decide sampling en start del request (client SDK), propaga decision downstream. Simple pero pierdes trace de anomalies raras. (2) Tail-based — collector buffers all spans/logs, decide post-hoc based on outcome (keep todo si error o high latency). Better quality, higher cost/complexity. (3) Adaptive — sample rate ajustable dinamically según volume o rules. Common: 100% errors, 10% success. (4) Deterministic hashing: hash(trace_id) mod 100 < sampling_rate → keep. Guaranteed consistency. OpenTelemetry Collector tail_sampling processor implementa esto. Trade-offs: sampling reduces detail but preserves aggregates. For alerting on symptoms, 1% sample is often enough (with statistical significance).",
+      "realWorld": "Uber tail-based sampling (paper). Grafana Cloud Adaptive Metrics reduces cardinality similarly. Datadog error-focused sampling. Chronosphere DIY tools. Empresas con budget limits tienen que sample o pagar mucho.",
+      "tags": ["sampling", "head-based", "tail-based", "consistency"],
+      "tech": ["OpenTelemetry Collector", "Vector"],
+      "references": [{ "title": "opentelemetry.io — Sampling" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "monitoring",
+      "topic": "Elasticsearch shards y replicas",
+      "difficulty": "mid",
+      "scenario": "Elasticsearch cluster crece. Team lead pregunta '¿cuántos shards por index? ¿cuántas replicas? Ni idea cómo tunear'.",
+      "question": "¿Cómo se estructura Elasticsearch para escalabilidad y HA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Shards: divisiones de un index. Cada shard es un Lucene index independiente. Distribuidas across nodes. Regla general: shard size 10-50GB (más grande = costoso rebalance; más pequeño = overhead). Number of primary shards fixed at index creation (cambio requires reindex). Replicas: copies de shards en OTROS nodes. Provides HA (if node dies, replica sirve queries) y throughput read (queries load-balanced entre primary + replicas). Default 1 replica = 2x storage. Cluster: multiple nodes con roles (master, data, ingest, coordinating). Best practice: primary shards = data volume / shard size target; replicas ≥ 1 para HA; 3 master-eligible nodes (odd number para quorum).", "correct": true, "why": "Correcto. Sharding + replicas son core scaling. Common mistakes: too many shards (overhead), demasiadas replicas (storage waste), shards muy grandes (slow rebalance). Elastic docs tiene calculadoras." },
+        { "letter": "B", "text": "Un solo shard por index es simpler.", "correct": false, "why": "Limita escalabilidad. Un index solo escala hasta el shard más grande que un nodo puede manejar (~50GB práctico). Más allá requires sharding." },
+        { "letter": "C", "text": "Más shards siempre = mejor.", "correct": false, "why": "Cada shard tiene overhead. Cluster con 10000 shards pequeños es slow para queries multi-shard, cluster state grande, rebalance lento." },
+        { "letter": "D", "text": "Replicas no son necesarias si tienes backups.", "correct": false, "why": "Falso. Replicas dan HA (uptime durante node failure). Backups dan DR (recover from catastrophe). Ambos necesarios." }
+      ],
+      "explanation": "Sizing formula: (1) total data volume = ingest rate × retention; (2) primary shards = total / target_shard_size (say 30GB); (3) replicas = 1 mínimo (2 para HA extra); (4) total shards = primary × (1 + replicas). Data nodes: cada nodo maneja ~200GB hot data comfortably. Master nodes: 3 dedicated en cluster grande (evitar split-brain). Ingest nodes: procesamiento de ingest pipelines. Coordinating: solo route queries (no data), útil en clusters muy grandes. Common issue: index-per-day pattern con 1 shard × 100 días = 100 shards, si por servicio y días fuerte × N services = miles de shards. Solución: index rollover con size threshold + retention policy. Rollover: cuando index alcanza tamaño target, nuevo index; alias 'logs-current' apunta al latest.",
+      "realWorld": "Elastic tiene guias 'Sizing Elasticsearch' oficiales. eBay, Netflix ejemplos escala grande (petabytes). Anti-patrón común: over-sharding (empresas queman recursos por default 5 primary shards × muchos indices).",
+      "tags": ["Elasticsearch", "shards", "replicas", "escalabilidad"],
+      "tech": ["Elasticsearch"],
+      "references": [{ "title": "elastic.co — Sizing Elasticsearch" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "monitoring",
+      "topic": "LogQL basics",
+      "difficulty": "mid",
+      "scenario": "Team migró a Loki. Necesita queries: (1) todos los errors de service 'api'; (2) count errors last hour por status code; (3) rate de errors por minuto.",
+      "question": "¿Cómo se escriben queries en LogQL?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Log stream selector: {service=\"api\"} selecciona todos logs del service (filtro por label). Filter expressions: {service=\"api\"} |= \"error\" busca líneas con 'error' (case-sensitive contains). Multi-filter: {service=\"api\"} |= \"error\" != \"timeout\" (contains error but not timeout).", "correct": true, "why": "Correcto. Modelo estructural: label selector primero (como PromQL), luego filter expressions con |=, !=, |~ (regex), !~ (negate regex). Filter después del selector minimiza contents scanned." },
+        { "letter": "B", "text": "Metric queries: count_over_time({service=\"api\"} |= \"error\" [1h]) cuenta líneas matching en última hora. rate({service=\"api\"} |= \"error\" [5m]) da errors por segundo. sum by (status) (count_over_time(...)) agrupa por label extraído.", "correct": true, "why": "Correcto. LogQL genera metrics from logs — puedes calcular rate/count/aggregate similar a PromQL. Powerful: sin necesidad de metric separada, calculas metrics on-demand desde logs." },
+        { "letter": "C", "text": "Parsers: {service=\"api\"} | json extrae campos JSON del message body. Luego puedes filter/aggregate por esos campos: {service=\"api\"} | json | user_id=\"12345\" | status_code >= 500. Similar parsers: | logfmt, | regexp, | pattern.", "correct": true, "why": "Correcto. Parsers extraen structure DEL contenido del log en query time (no en ingest — Loki no indexa content). Overhead per query pero flexibility total." },
+        { "letter": "D", "text": "Line format: | line_format \"{{.user}} did {{.action}}\" reformatea output. Label format similar para modificar labels antes de aggregation.", "correct": true, "why": "Correcto. Útil para presentation limpia. Puedes construir queries que muestren logs limpios sin JSON verbose original." },
+        { "letter": "E", "text": "LogQL es idéntico a PromQL.", "correct": false, "why": "Similar sintáctico pero LogQL trabaja sobre log streams (líneas), PromQL sobre time series (samples). Log stream selectors + filter expressions son distintos de metric selectors." }
+      ],
+      "explanation": "LogQL query anatomy: (1) log stream selector — {label=\"value\"}; (2) log pipeline — filters, parsers, formatters; (3) opcional metric operation — rate, count_over_time. Ejemplos: sum by (level) (count_over_time({app=\"api\"} | json [5m])) — errors por level en 5min. quantile_over_time(0.99, {app=\"api\"} | json | unwrap duration [5m]) — p99 latency desde logs. topk(5, sum by (endpoint) (rate({app=\"api\"} | json | status>=500 [1h]))) — top 5 endpoints con más 500s. Anti-pattern: no filter en selector, resulting en scan de TODOS los logs (slow, costoso). Best practice: siempre filter por labels primero (job, namespace, service).",
+      "realWorld": "grafana.com/docs/loki/latest/query tiene reference completa. Community shares complex queries en foros. GitLab, Grafana Labs escriben LogQL cookbook style. Learning curve: LogQL más simple que ES DSL para casos comunes.",
+      "tags": ["LogQL", "parsers", "metric queries"],
+      "tech": ["Loki"],
+      "references": [{ "title": "grafana.com — LogQL" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "monitoring",
+      "topic": "Loki label design",
+      "difficulty": "senior",
+      "scenario": "Team migró a Loki. Añaden como labels: service, namespace, pod_name, request_id, user_id. En una semana, Loki performance colapsa. Query 1-min tarda 30s.",
+      "question": "¿Qué principios rigen el label design en Loki?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Loki labels tienen las mismas leyes de cardinality que Prometheus. LOW cardinality labels: job, service, namespace, level, environment (~decenas de valores cada uno). HIGH cardinality NUNCA como label: request_id, user_id, session_id, IP, timestamp. Alta cardinality = millions de streams distintos = index massive = queries slow + storage costs high. Contenido dinámico va DENTRO del log message; extraes en query time con | json | user_id=X. Labels son 'coarse categorization' — describe QUÉ tipo de log; el CONTENIDO va en el message.", "correct": true, "why": "Correcto. Es LA lección crítica. Devs vienen de ES pensando 'index todo', crean stream explosion en Loki. Loki cost/performance scales con streams (label combinations), no con log volume." },
+        { "letter": "B", "text": "Más labels = mejor query performance.", "correct": false, "why": "Al revés. Más streams = mayor overhead por query, más chunks para read, más index. Regla: menos labels, más precisos." },
+        { "letter": "C", "text": "Request IDs deben ser labels para debugging.", "correct": false, "why": "Absolutamente NO. Request/user IDs son alta cardinality perfect storm. Van dentro del log message; búscalos con | json | request_id=X." },
+        { "letter": "D", "text": "Labels no importan en Loki, solo en Prometheus.", "correct": false, "why": "Loki INDEXA solo labels. Toda la performance del query depende del label design. Diseño malo = performance colapsa (como usuario del scenario)." }
+      ],
+      "explanation": "Streams: en Loki, un stream = una combinación única de labels + log content flows into. Loki indexa streams (label combinations), no line contents. Metric of health: prometheus_active_streams por tenant. Good label examples: {app=\"api\", namespace=\"prod\", level=\"error\", region=\"us-east-1\"} — ~1000 streams max. Bad: {app=\"api\", user_id=\"abc123\", request_id=\"xyz789\"} — infinite streams. Diagnóstico: si loki_ingester_streams_created_total sube rapid, cardinality problem. Fix: relabel_configs en Promtail/Fluent Bit para strip alta-cardinality labels antes de ingest. Chunk size limits, ingestion rate limits también protect (por tenant en Loki multi-tenant).",
+      "realWorld": "Grafana Labs bloguea sobre 'How to select labels'. GitLab publicó postmortem de over-labeling. Common story: dev adds label, chunks explode, ingester OOM. Fix: label discipline + code review de labels.",
+      "tags": ["Loki labels", "cardinality", "streams"],
+      "tech": ["Loki", "Promtail"],
+      "references": [{ "title": "grafana.com — How to select labels for Loki" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "monitoring",
+      "topic": "OpenSearch: fork y estado actual",
+      "difficulty": "mid",
+      "scenario": "Team considera Elasticsearch pero VP pregunta '¿qué pasa con OpenSearch? ¿Deberíamos usar ese?'.",
+      "question": "¿Qué es OpenSearch y cómo se compara con Elasticsearch actual?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenSearch: fork de Elasticsearch 7.10 (2021) por AWS + partners tras que Elastic cambió license de Elasticsearch a SSPL (no OSI-approved OSS). AWS necesitaba OSS pure para su managed service (antes 'Amazon Elasticsearch Service', ahora 'Amazon OpenSearch Service'). Fork mantiene compatibility inicial + development independiente. Governance: neutrally-owned via OpenSearch Foundation (Linux Foundation, 2024). Elastic returned to AGPLv3 en 2024, pero fork ya established. Trade-offs: OpenSearch tiene features distintos ahora (ML plugins, Anomaly Detection nativos gratis vs paid en Elastic), UI Dashboard similar Kibana, ecosystem overlapping. Elección: OpenSearch si vendor-neutral OSS preferido, AWS-managed conveniente; Elastic si tools comerciales avanzados (paid features, official plugins), migration path desde ES existente.", "correct": true, "why": "Correcto. License history es important context. AWS forkeo porque Elastic license blocked managed service resale. Comunidad split. OpenSearch adoption creciente. En 2024 governance moved to Linux Foundation-adjacent — más neutralidad." },
+        { "letter": "B", "text": "OpenSearch es solo AWS.", "correct": false, "why": "Falso. OSS, cualquiera puede self-host. Managed en AWS pero también otros clouds ofrecen." },
+        { "letter": "C", "text": "OpenSearch es idéntico a Elasticsearch en 2026.", "correct": false, "why": "Fork diverging cada release. APIs 90% compatibles pero features distintos. Migration entre ellos posible pero requires testing." },
+        { "letter": "D", "text": "OpenSearch es obsoleto después que Elastic returned to OSS.", "correct": false, "why": "Falso. OpenSearch continúa activamente developed con community propia. AWS invierte fuerte. No dead project." }
+      ],
+      "explanation": "License timeline: 2021 Elastic changed Elasticsearch + Kibana licenses to SSPL + Elastic License (source available, not OSI-approved). Rationale: prevent cloud providers (AWS) from monetizing without contribution. AWS response: fork ES 7.10 as OpenSearch (Apache 2.0). 2024 Elastic added AGPLv3 as third option. OpenSearch continues under Apache 2.0. Compatibility: OpenSearch clients backwards compat with ES ~7.10 API, distinguishing headers. Ecosystem: OpenSearch Dashboards (Kibana fork), OpenSearch Security (X-Pack Security equivalent), OpenSearch ML, OpenSearch Observability. Selection matrix: (a) if using AWS managed → OpenSearch Service by default; (b) self-hosted greenfield → either, similar capabilities; (c) migrating ES 7.x → Elastic (easier upgrade path); (d) commercial Elastic features (SIEM, ML paid) → Elastic; (e) strong OSS preference → OpenSearch.",
+      "realWorld": "AWS invierte heavily en OpenSearch. Airbnb, Adobe, ByteDance usan. Elastic pivoted product strategy post-2021 to focus on enterprise sales. Community forums sometimes tense. 2024 license return by Elastic didn't kill OpenSearch — already established.",
+      "tags": ["OpenSearch", "Elasticsearch", "license", "fork"],
+      "tech": ["OpenSearch", "Elasticsearch"],
+      "references": [{ "title": "opensearch.org" }, { "title": "elastic.co — Elastic License change" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "monitoring",
+      "topic": "Logs vs metrics vs traces",
+      "difficulty": "senior",
+      "scenario": "Team overhead con instrumentation. Cada dev debate: '¿esto debe ser un log, una metric, o un trace span?'. Filosofía inconsistente.",
+      "question": "¿Cuándo usar cada pilar de observability?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "METRICS: agregados numéricos low-cardinality (rate, gauge, histogram) — alerts, dashboards, SLO tracking. Cost: barato. Query: fast. LOGS: eventos discretos con contenido descriptivo, alta cardinality de contenido. Debugging, forensics, audit. Cost: medio-alto. Query: search-based. TRACES: relación causa-efecto entre operations across services, per-request timing/dependency. Distributed system debugging. Cost: variable (sampling). Query: por trace_id o filter. Regla: metrics para 'algo va mal' (alertar), logs para 'qué exactamente pasó' (contexto), traces para 'dónde en el flow' (causa raíz). Complementarios — no compiten.", "correct": true, "why": "Correcto. Es LA framework de observability moderna. Cada pilar tiene sweet spot. Sobre-instrumentar en logs cuando metric bastaría = costoso; poco tracing en distributed systems = ciegos ante issues cross-service. Cindy Sridharan escribió framework canónico." },
+        { "letter": "B", "text": "Usa solo logs — contienen todo.", "correct": false, "why": "Anti-patrón costoso. Logs son cheap para storage per event pero query slow y agregación costosa. Metrics pre-agregadas son 1000x más eficientes para alerting." },
+        { "letter": "C", "text": "Metrics son suficientes.", "correct": false, "why": "Metrics dan 'algo va mal' pero no 'qué exactamente'. Sin logs/traces, cada incident es adivinanza." },
+        { "letter": "D", "text": "Los tres son idénticos.", "correct": false, "why": "Fundamentalmente distintos data models, storage, cost profiles, use cases." }
+      ],
+      "explanation": "Detailed use cases: METRICS — SLO tracking (availability %, latency p99), infrastructure health (CPU/RAM), business KPIs (revenue/hour, signups). Alertable. LOGS — audit trail (who did what when), error diagnostics (stack traces), business events (transactions, user actions). Searchable. TRACES — request flow through microservices, latency attribution ('which service in checkout is slow?'), dependency mapping, root cause analysis. Investigation. Sweet spots complement: alert on metric → open dashboard → drill down to logs of period → drill to specific request via trace. Modern observability = all three correlated (exemplars in Prometheus point to traces; logs have trace_id linking to traces).",
+      "realWorld": "Charity Majors (Honeycomb) argues traces are king; Grafana Labs pushes 'unified'; New Relic markets 'full stack observability' (all three + more). Empresas maduras invierten en los tres. Startups start with metrics + logs, add traces as complexity grows.",
+      "tags": ["three pillars", "metrics", "logs", "traces", "observability"],
+      "tech": ["Prometheus", "Loki", "Tempo"],
+      "references": [{ "title": "Cindy Sridharan — Distributed Systems Observability" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "monitoring",
+      "topic": "Kubernetes logging arquitectura",
+      "difficulty": "senior",
+      "scenario": "Nuevo K8s cluster. Team debate cómo shipear logs de pods. Opciones: sidecar per pod, DaemonSet, application-direct.",
+      "question": "¿Cuál es la arquitectura recomendada de logging para Kubernetes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Node-level logging agent (DaemonSet): Fluent Bit/Vector/Alloy en cada nodo, monta /var/log/containers (kubelet writes container stdout/stderr allí), tail archivos, parse, ship a backend. Ventajas: (1) sin cambio en apps (apps escriben stdout como 12factor recomienda); (2) menor overhead que sidecar (1 agent per node vs 1 per pod); (3) enrichment con labels K8s (namespace, pod_name, labels). Alternativas: (1) sidecar per pod — más aislamiento pero más overhead; (2) app-direct-to-backend — deja cada app manejar shipping (fragmenta config, no recomendado); (3) sidecar solo para casos edge (app write a file no stdout).", "correct": true, "why": "Correcto. DaemonSet pattern es standard K8s logging. Fluent Bit líder en adoption (ligero). App escribe a stdout (kubernetes convention); kubelet writes to /var/log/containers/<pod>_<namespace>_<container>.log; agent tail's. Sin cambio de código." },
+        { "letter": "B", "text": "Cada pod debe shipear directamente al backend.", "correct": false, "why": "Anti-patrón. Fragmentation: cada app tiene su config shipping. Mala centralization; hard to change destination cross-cluster." },
+        { "letter": "C", "text": "Sidecar per pod es siempre mejor.", "correct": false, "why": "Overhead alto — 1 sidecar per pod × miles de pods = mucho waste. Válido solo para casos edge (log to files no stdout, o transformations muy específicas)." },
+        { "letter": "D", "text": "Kubernetes no soporta logging centralizado.", "correct": false, "why": "Falso. Es use case primary. Docs oficiales K8s tienen sección Logging Architecture completa." }
+      ],
+      "explanation": "K8s logging patterns: (1) Node-level agent (DaemonSet) — DOMINANT pattern; (2) Sidecar — para excepción (app writes to file en volume mount, sidecar tail); (3) Direct — anti-pattern. Enrichment: agent debe agregar labels K8s (namespace, pod, container, node, cluster). K8s metadata sidecar plugins hacen esto (Fluent Bit filter_kubernetes). Log rotation: kubelet handles con --container-log-max-size (default 10MB), --container-log-max-files (default 5). Sin rotation, disk fill. Structured logs: aplicación DEBE loggear JSON a stdout (parseable). Cluster-level: ES/Loki/CloudWatch como backend. Multi-tenant clusters: labels para tenant, quotas per tenant en ingestion.",
+      "realWorld": "kube-logging, fluent-bit-helm-chart, grafana/loki helm chart — todos assume DaemonSet pattern. AWS EKS + CloudWatch Logs, GKE + Cloud Logging, AKS + Log Analytics — patterns similares con managed backends. GitLab, Airbnb documented internal setups.",
+      "tags": ["Kubernetes logging", "DaemonSet", "Fluent Bit", "stdout"],
+      "tech": ["Fluent Bit", "Kubernetes", "Loki"],
+      "references": [{ "title": "kubernetes.io — Logging Architecture" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "monitoring",
+      "topic": "Grok patterns y parsing",
+      "difficulty": "senior",
+      "scenario": "App legacy loguea plain text: 'Jan 15 14:32:11 host1 apache[1234]: [error] client 1.2.3.4 failed request GET /api/users'. Team quiere structured querying pero no puede cambiar app.",
+      "question": "¿Cómo se parsean logs plain-text a structured en la ingest pipeline?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Grok patterns (Logstash-origin, ahora Fluent Bit, Vector, others): named regex patterns predefinidos para common formats. Ejemplo: %{SYSLOGTIMESTAMP:timestamp} %{HOSTNAME:host} %{WORD:program}\\[%{POSINT:pid}\\]: \\[%{WORD:level}\\] client %{IP:client_ip} .*. Cada named field se extrae. Bibliotecas de patrones predefined (100+): IP, EMAIL, HTTPDATE, USER, NUMBER, TIMESTAMP_ISO8601, etc. Alternativas modernas: regex simple (más flexible pero menos legible), Vector's VRL (Vector Remap Language, más potente), JSON parsing si logs son JSON. Best long-term: instrumenta apps con structured logging desde el inicio; grok es workaround para legacy.", "correct": true, "why": "Correcto. Grok es útil para legacy logs. Community mantiene grok pattern libraries. Trade-off: performance (regex expensive), maintenance (patterns break si log format cambia). Push for structured logging siempre que posible; grok como transición." },
+        { "letter": "B", "text": "Debes cambiar la aplicación — no hay alternativa.", "correct": false, "why": "Falso. Grok exists precisely para casos where no puedes cambiar app. Ingest pipeline parsing es workaround valid." },
+        { "letter": "C", "text": "Grok es solo Elasticsearch.", "correct": false, "why": "Falso. Origen Logstash pero adoptado por Fluent Bit (parser plugin), Vector, Grok Debugger tool, Prometheus (via mtail). Standard cross-tool." },
+        { "letter": "D", "text": "Grok reemplaza structured logging.", "correct": false, "why": "Falso. Structured logging siempre mejor. Grok es workaround transitorio para legacy." }
+      ],
+      "explanation": "Grok anatomy: %{PATTERN:field_name} extracts value matching PATTERN into field_name. Built-in patterns: NUMBER, WORD, DATA, GREEDYDATA, IP, EMAILADDRESS, HOSTNAME, TIMESTAMP_ISO8601, HTTPDATE, SYSLOGTIMESTAMP. Custom patterns en config. Tools: Grok Debugger (grokdebugger.com), Kibana Grok Debugger. Fluent Bit parser config: FLUENT_MULTILINE, FLUENT_PARSER como docker/json/regex/logfmt/apache/nginx. Performance considerations: regex expensive; simpler patterns preferred; JSON parsing much faster than regex (10-100x). Modern alternative: Vector's VRL (Vector Remap Language) — more expressive and performant than regex chains, DSL specifically for log transformation.",
+      "realWorld": "Massive adoption pre-2020 con ELK. Vector (Datadog acquired) pushed VRL as modern replacement. Grafana Alloy soporta grok. Muchas empresas modernizando: eliminate grok by adopting structured logging in apps.",
+      "tags": ["grok", "parsing", "regex", "legacy logs"],
+      "tech": ["Logstash", "Fluent Bit", "Vector"],
+      "references": [{ "title": "Elasticsearch — Grok patterns" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "monitoring",
+      "topic": "Log-based metrics",
+      "difficulty": "staff",
+      "scenario": "Necesitas alertar 'more than 10 login failures per minute per user' pero no tienes metric para login failures. Los datos existen en logs.",
+      "question": "¿Cómo se derivan metrics de logs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Múltiples approaches: (1) LogQL/Loki metric queries — count_over_time / rate sobre logs, alertable directamente en Grafana Alerting o Loki ruler. (2) Log-based metrics extraction en ingest pipeline — Fluentd/Fluent Bit/Vector extraen counter/gauge de logs y pushean a Prometheus/StatsD. (3) mtail (Google) — sidecar que lee logs y expone metrics /metrics endpoint. (4) Elasticsearch Watcher / Kibana alerts que evalúan search-based conditions. Trade-offs: LogQL query-time (flexibility, sin storage extra) vs ingest-time metrics (query fast, storage pre-computed). Regla: si consulta muy frecuente, extract; si ad-hoc, LogQL.", "correct": true, "why": "Correcto. Ambos patterns válidos. Ingest-time extraction es lo que Google Borgmon hacía originalmente. Modern approach favors LogQL (flexibility, less operational overhead). Prometheus users tradicionalmente prefer separate instrumentation (Counter directamente en app) pero logs-derived metrics útil para legacy o quick wins." },
+        { "letter": "B", "text": "Solo se puede alertar con metrics puros.", "correct": false, "why": "Falso. Grafana Alerting, Loki ruler, Kibana Watcher todos evalúan queries de logs y alertan." },
+        { "letter": "C", "text": "mtail y log-based metrics son obsoletos.", "correct": false, "why": "mtail sigue usado, especialmente para legacy apps. Vector, Fluent Bit tienen features similares embeded. Todavía relevantes." },
+        { "letter": "D", "text": "Debe re-instrumentar app para exponer metric directamente.", "correct": false, "why": "Ideal pero no siempre posible (legacy, third-party apps). Log-based metrics dan alternative." }
+      ],
+      "explanation": "Approaches detail: (1) Loki ruler — YAML config similar Prometheus ruler, evaluates LogQL queries periódicamente, generates alerts. Ejemplo: expr: sum by (user) (rate({app=\"auth\"} |= \"login_failed\" [1m])) > 10. (2) Fluent Bit built-in filters like stdout / counter. (3) mtail — Google project, DSL for regex + Counter/Gauge emission. Historic pero sigue viable. (4) Log analytics platforms (Splunk, Datadog Log Explorer) tienen 'metrics from logs'. Cost consideration: extracting at ingest cheaper than querying every alert eval. Anti-pattern: query logs for metrics every 10 seconds — expensive. Use recording rules o pre-aggregation.",
+      "realWorld": "Splunk 'metric indexes' es feature paid. Datadog Log Metrics común. Grafana Labs Loki ruler adopt increasingly. Cloudflare metrics-from-logs pipeline scaled to massive volumes.",
+      "tags": ["log-based metrics", "mtail", "Loki ruler"],
+      "tech": ["mtail", "Loki", "Fluent Bit"],
+      "references": [{ "title": "github.com/google/mtail" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "monitoring",
+      "topic": "Log ingestion backpressure",
+      "difficulty": "staff",
+      "scenario": "During incident, logs volume spikes 10x. Fluent Bit no puede shipear rápido enough. Buffers llenan. Aplicaciones bloqueadas escribiendo a stdout porque pipe is full. Cascade fails.",
+      "question": "¿Cómo se maneja backpressure en logging pipelines?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Buffering en agent: Fluent Bit tiene memory + filesystem buffers configurables. Memory buffer (fast, RAM-limited); filesystem buffer (slower, larger). Cuando backend slow, buffer grows. Config storage.max_chunks_up (memory limit) y storage.total_limit_size (disk buffer). Cuando full: descartar (data loss) o pause ingestion (backpressure hasta app).", "correct": true, "why": "Correcto. Buffering es primera línea. Balance: buffer grande = tolera más downtime backend, pero uses disk/RAM. Sin buffer = zero tolerance, immediate data loss on any hiccup." },
+        { "letter": "B", "text": "Rate limiting en pipeline: limit ingestion rate per source. Excess dropped o throttled. Loki y ES tienen rate limits per tenant. Fluent Bit puede rate limit per input. Prevents runaway sources from blocking others.", "correct": true, "why": "Correcto. Multi-tenant fairness. Un servicio noisy no debe romper logging de otros. Loki: ingestion_rate_mb, ingestion_burst_size_mb per tenant." },
+        { "letter": "C", "text": "Queue system entre agent y backend: Kafka/Kinesis buffer entre Fluent Bit y ES/Loki. Absorbs spikes, decouples producer/consumer speed. Cost: complejidad operacional Kafka. Standard para high-volume enterprise.", "correct": true, "why": "Correcto. Kafka como buffer es pattern maduro. Fluent Bit → Kafka → consumer (Logstash, Vector) → Elasticsearch. Handles massive spikes gracefully." },
+        { "letter": "D", "text": "Sampling adaptive: cuando load high, sample más aggressively (sample rate baja). Preserves signal en high traffic sin colapsar pipeline. Recovery cuando load normalize.", "correct": true, "why": "Correcto. Adaptive sampling responds to conditions dynamically. Trade-off: less detail durante incidents (when you need it most, ironically) — hence importance of tail-based sampling que retain errors 100%." },
+        { "letter": "E", "text": "Prevenir backpressure es imposible — solo aumenta capacity.", "correct": false, "why": "Falso. Multiple mechanisms para handle. Aumentar capacity es one lever pero solo linear scaling; buffers + queues + rate limits + sampling son more efficient." }
+      ],
+      "explanation": "Backpressure architecture: (1) source (app) → (2) local agent buffer → (3) transport (network) → (4) collector/aggregator → (5) backend storage. Bottleneck usually en 4 (aggregator) o 5 (backend ingest rate). Symptoms: high memory in agents, growing lag, disk filling. Monitoring: fluent_bit_output_dropped_records_total, elastic_ingest_pipeline_docs_missed. Design principles: (a) local buffers absorb short spikes; (b) queue system absorbs sustained; (c) rate limits prevent runaway; (d) drop policies decide data loss tolerable (usually drop DEBUG first, keep ERROR). Trade-off: durability (buffer to disk) vs cost. Kafka gives persistent buffer + replayability but ops complexity.",
+      "realWorld": "Cloudflare escribió sobre logging pipeline handling 100M+ msg/sec. Netflix Keystone (log pipeline platform interna). LinkedIn Kafka origins tied to logging use case. Anti-pattern común: no monitoring del propio logging pipeline — no ves cuando drops happen.",
+      "tags": ["backpressure", "buffering", "Kafka", "rate limiting"],
+      "tech": ["Fluent Bit", "Kafka", "Vector"],
+      "references": [{ "title": "docs.fluentbit.io — Buffering" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "monitoring",
+      "topic": "Splunk: cuándo tiene sentido",
+      "difficulty": "staff",
+      "scenario": "Empresa large enterprise. CISO quiere Splunk (SIEM líder). CTO dice 'demasiado caro, OSS es igual'. ¿Es Splunk el elección correcta?",
+      "question": "¿Cuándo Splunk vale su costo alto y cuándo no?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Splunk sweet spots: (1) SIEM (Security Information & Event Management) — correlacionar events, threat detection, compliance reports; features (Splunk Enterprise Security, UEBA) ahead of OSS. (2) Enterprise support required. (3) Business analytics from logs (BI queries). (4) Advanced ML on log data. (5) Regulated industries donde audit trail scrutiny matters. Costo alto — pricing basado en GB/day ingested (recientemente workload-based). Muchas empresas pagan $1M+/año. Alternatives OSS pueden funcionar: (a) ELK/OpenSearch + SIEM plugins (Elastic Security, OpenSearch Security) para SIEM básico; (b) Grafana Loki para app logs bulk (cost cheap); (c) Falco, Suricata para detection. Elección: si tienes budget + regulatory pressure → Splunk. Si presupuesto tight + team skilled → OSS stack.", "correct": true, "why": "Correcto. Splunk mantiene lead en SIEM enterprise. OSS gap ha cerrado significativamente pero Splunk features + support siguen premium. Ratio value/cost depende del use case y skills team." },
+        { "letter": "B", "text": "Splunk siempre es mejor que OSS.", "correct": false, "why": "Falso. Costo puede ser 5-10x OSS equivalent. Muchas empresas OSS-ROI mucho mejor." },
+        { "letter": "C", "text": "Splunk es obsoleto — todos migran a OSS.", "correct": false, "why": "Falso. Splunk mantiene position en enterprise. Cisco acquired Splunk 2024 for $28B — no compañía en decline. Sí competition creciente." },
+        { "letter": "D", "text": "Splunk y ELK son idénticos en features.", "correct": false, "why": "Splunk SIEM (Enterprise Security) más maduro. UEBA (User Entity Behavior Analytics) advanced. ML features paid en ES. Feature gap real pero cerrando." }
+      ],
+      "explanation": "Splunk landscape: Enterprise (self-hosted, GB-based pricing), Splunk Cloud (managed), Enterprise Security (SIEM add-on), Observability Cloud (SignalFx acquisition), User Behavior Analytics. Pricing histórico $/GB/day ingested — expensive at scale. New workload pricing more predictable. Alternatives escalating: (1) Elastic Security (Elastic Stack + SIEM features); (2) Grafana Cloud + Falco/others; (3) Chronicle (Google); (4) Sumo Logic; (5) Devo; (6) Datadog Cloud SIEM. Cost comparison: $1TB/day: Splunk $150K-$500K/year, ES self-hosted $30K-$100K/year (with SRE time), Loki $10K-$50K/year. Trade-offs beyond cost: features, ease of use, ecosystem, support quality.",
+      "realWorld": "Cisco acquired Splunk 2023 for $28B — validates Splunk value. Community de-emphasizes but enterprise happy customers persist. GDPR/HIPAA industries prefer Splunk. Startups/tech companies push OSS. Government defense = Splunk still king.",
+      "tags": ["Splunk", "SIEM", "enterprise", "costo"],
+      "tech": ["Splunk"],
+      "references": [{ "title": "splunk.com — SIEM" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "monitoring",
+      "topic": "Logging maturity model",
+      "difficulty": "staff",
+      "scenario": "Team tiene logs en distintos formatos, diferente severity conventions per service, no correlation IDs, retention aleatoria, no PII policy. CTO pregunta 'roadmap para mejorar logging maturity'.",
+      "question": "¿Cuál es un roadmap sensato de logging maturity?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Level 1 — Basic: (a) todos services log a stdout (12factor); (b) structured JSON logging; (c) standardized fields (timestamp, level, service, message); (d) centralized aggregation (ES/Loki); (e) basic search + dashboards.", "correct": true, "why": "Correcto. Foundation. Sin structured logging + centralization, nada más funciona. Este es 3-6 meses de trabajo típicamente en org mid-size migrando." },
+        { "letter": "B", "text": "Level 2 — Correlated: (a) correlation IDs / trace IDs propagated across services; (b) log levels usados apropiadamente (INFO+ default en prod); (c) retention policies por dataset/level; (d) linked con metrics via exemplars/dashboards; (e) basic PII scrubbing.", "correct": true, "why": "Correcto. Nivel operativo. Correlation IDs son la unlock para debugging distributed systems. PII scrubbing legal requirement." },
+        { "letter": "C", "text": "Level 3 — Actionable: (a) log-based metrics + alerting; (b) runbooks linked from alerts to logs queries; (c) sampling strategies para high-volume; (d) cost management (tier storage, retention discipline); (e) audit logs separated from app logs.", "correct": true, "why": "Correcto. Ops maturity. Cost containment es signature de teams con logs at scale. Runbooks con queries pre-canned aceleran incident response." },
+        { "letter": "D", "text": "Level 4 — Advanced: (a) tail-based sampling with error retention; (b) automated anomaly detection; (c) chaos engineering para test logging pipeline itself; (d) log analytics para business intelligence; (e) governance/policy as code para logging config.", "correct": true, "why": "Correcto. State of art. Tail-based sampling optimal signal/cost. Anomaly detection ML-based emerging. Chaos test the pipeline itself is meta but important." },
+        { "letter": "E", "text": "Todo simultáneamente en 1 semana.", "correct": false, "why": "Anti-patrón. Cada level informs the next; foundational work sin skip." }
+      ],
+      "explanation": "Maturity progression: (1) Basic — 3-6 meses; (2) Correlated — 6-12 meses; (3) Actionable — 12-18 meses; (4) Advanced — 18+ meses. Each level provides value; skipping means fragile foundations. Common blockers: (a) legacy apps hard to instrument (workaround: parsing pipelines); (b) organizational — silos preventing standardization; (c) budget para tooling; (d) skills learning curves. Champion pattern: appoint 'observability lead' who owns tooling + standards. Documentation: internal wiki con logging conventions, examples per language framework. Reviews: catch bad logging in PRs early.",
+      "realWorld": "Charity Majors escribe extensively sobre observability journey. Google SRE Book Ch. 12 details incident-response tied to logging maturity. Empresas modernas invierten heavy en logging; startups delay hasta scale hurts. Cost realization moment: usually around $10K/month bill in ES/Datadog triggers optimization.",
+      "tags": ["logging maturity", "roadmap", "governance"],
+      "tech": [],
+      "references": [{ "title": "Cindy Sridharan — Distributed Systems Observability" }, { "title": "Honeycomb — Observability Engineering (O'Reilly)" }]
+    }
+  ]
+}

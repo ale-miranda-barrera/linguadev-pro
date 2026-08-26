@@ -1,0 +1,471 @@
+{
+  "id": "ai-programming-sim-13-inference-cost-prompt-caching",
+  "trackId": "ai-programming",
+  "order": 13,
+  "title": "Simulacro 13 — Economía de inferencia: costo por token, prompt caching, batching",
+  "focus": "Cómo NO quemar dinero con LLMs: pricing por modelo, prompt caching (Anthropic/OpenAI/Google), batching, cost tracking por usuario/feature, kill-switches y semantic caching.",
+  "areaCoverage": ["cost-inference"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "cost-inference",
+      "topic": "Input vs output pricing",
+      "difficulty": "junior",
+      "scenario": "Tu junior mira la factura de Anthropic y dice: 'no entiendo, si mandamos prompts largos, ¿por qué el costo depende del output?'. En Claude Sonnet 4.5 (nov 2025) el precio publicado es aprox. $3/MTok input y $15/MTok output.",
+      "question": "¿Cuál es la afirmación CORRECTA sobre pricing de tokens en la mayoría de APIs LLM comerciales?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Input y output cuestan lo mismo, se cobra por total de tokens.", "correct": false, "why": "Falso. Casi todos los providers (Anthropic, OpenAI, Google, Mistral) cobran output 3-5x más caro que input porque la generación autoregresiva es la parte cara del cómputo." },
+        { "letter": "B", "text": "El output típicamente cuesta 3-5x más que el input. Optimizar longitud de respuestas suele tener más impacto que recortar el system prompt.", "correct": true, "why": "Correcto. Claude Sonnet: 3 vs 15 ($/MTok). GPT-4o: 2.5 vs 10. Gemini 1.5 Pro: 1.25 vs 5. El output domina el costo cuando las respuestas son largas. Pedir 'responde en <150 tokens', usar max_tokens, y estructurar con JSON schema para forzar brevedad tiene ROI directo." },
+        { "letter": "C", "text": "El output es gratis; solo se cobra el input.", "correct": false, "why": "Falso. Es al revés en impacto: el output es la parte más cara." },
+        { "letter": "D", "text": "El precio depende solo del número de mensajes, no de tokens.", "correct": false, "why": "Falso. Los providers listados cobran por tokens (input + output). Sólo algunas plataformas fixed-plan cobran por mensaje." }
+      ],
+      "explanation": "Regla mental: el costo de un LLM ~= (input_tokens * price_in + output_tokens * price_out). En modelos frontier, price_out ~= 4-5x price_in. Por eso las 3 palancas grandes son: (1) reducir output (max_tokens, prompt para respuestas cortas, structured output), (2) usar prompt caching en el input estable (system prompt, tools, docs), (3) elegir el modelo correcto por tarea (routing). Recortar system prompts es útil pero secundario si el output es largo.",
+      "realWorld": "Anthropic y OpenAI publican precios oficiales en anthropic.com/pricing y openai.com/pricing. Startups como Perplexity, Cursor y v0 discuten en blogs cómo el output cap y structured outputs redujeron su factura 30-50%.",
+      "tags": ["pricing", "tokens", "output cost", "cost basics"],
+      "tech": ["Anthropic API", "OpenAI API", "Gemini API"],
+      "references": [
+        { "title": "Anthropic — Pricing" },
+        { "title": "OpenAI — API pricing" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "cost-inference",
+      "topic": "Prompt caching de Anthropic",
+      "difficulty": "mid",
+      "scenario": "Tienes un agente RAG que en cada request manda: system prompt de 2k tokens + definición de 10 tools (~3k tokens) + 20k tokens de documentos recuperados que se repiten para el mismo usuario dentro de una sesión de 30 min. La consulta del usuario es solo ~100 tokens. Estás usando Claude Sonnet con la API de Anthropic.",
+      "question": "¿Qué comportamiento describe correctamente el prompt caching de Anthropic (feature GA desde 2024)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El primer request marca cache_control en los bloques estables (system, tools, docs); Anthropic cobra ~1.25x el precio de input por 'cache write' y luego los siguientes hits pagan ~0.1x del input normal. TTL default 5 min, opcional 1 hora con costo de write mayor.", "correct": true, "why": "Correcto. Con Sonnet: cache write ~$3.75/MTok, cache read ~$0.30/MTok (10% del input). TTL 5 min default, 1 hora con premium en el write. Los bloques cacheados deben marcarse con 'cache_control: { type: ephemeral }' y el orden system → tools → messages importa: solo el prefijo estable hasta ese punto se cachea." },
+        { "letter": "B", "text": "El cache es global entre todos los usuarios de Anthropic, así que si otra compañía tiene el mismo prompt lo pagas gratis.", "correct": false, "why": "Falso. El cache es por organización/API key, no compartido entre cuentas. Además hay aislamiento por región." },
+        { "letter": "C", "text": "El cache es automático y no requiere ningún cambio en el request.", "correct": false, "why": "Falso en Anthropic. Debes marcar explícitamente bloques con 'cache_control'. OpenAI sí tiene caching automático para prompts >1024 tokens; Google Gemini tiene implicit caching desde 2024, pero Anthropic requiere marcado explícito." },
+        { "letter": "D", "text": "El cache elimina el costo de output también.", "correct": false, "why": "Falso. Solo aplica al procesamiento del input cacheado. El output se cobra íntegro al precio normal cada vez." }
+      ],
+      "explanation": "Prompt caching de Anthropic: (a) marcas bloques con cache_control ephemeral; (b) primer request paga 1.25x input (write) para los tokens cacheados; (c) hits subsecuentes pagan ~0.1x input (read); (d) TTL 5 min o 1 hora; (e) el cache es per-prefix, así que cualquier cambio antes del bloque cacheado lo invalida. Estructura recomendada: system estable → tools → documentos grandes → mensajes del usuario. Con 25k tokens estables cacheados, el ahorro por request en escenarios chatty puede ser 80-90% del input.",
+      "realWorld": "Anthropic anunció prompt caching en agosto 2024 (blog 'Prompt caching with Claude'). Notion, Sourcegraph Cody y Cursor documentaron reducciones grandes de costo cuando movieron system + context repetido a bloques cacheados. OpenAI liberó cached input pricing (50% descuento sobre input) en octubre 2024 para GPT-4o y familia posterior.",
+      "tags": ["prompt caching", "Anthropic", "cache_control", "TTL"],
+      "tech": ["Anthropic API", "Claude Sonnet", "cache_control"],
+      "references": [
+        { "title": "Anthropic — Prompt caching (docs)" },
+        { "title": "Anthropic blog — Prompt caching with Claude (2024)" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "cost-inference",
+      "topic": "OpenAI cached input",
+      "difficulty": "junior",
+      "scenario": "Un dev migra de Anthropic a OpenAI (GPT-4o) y pregunta si hay que marcar bloques 'cacheables' como en Anthropic.",
+      "question": "¿Cómo funciona el prompt caching en OpenAI (feature liberada en octubre 2024)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Automático para prompts >=1024 tokens; el prefijo repetido se detecta y factura al 50% del precio de input normal. No requiere flags, pero cambios en el prefijo invalidan el cache.", "correct": true, "why": "Correcto. OpenAI aplica caching automático cuando el prompt supera 1024 tokens y el prefijo se repite. Descuento ~50% en input cacheado (varía por modelo). El TTL es corto (minutos) y no configurable. La usage response incluye 'prompt_tokens_details.cached_tokens' para medir hit rate." },
+        { "letter": "B", "text": "Debes marcar bloques con { cache: true } explícitamente igual que en Anthropic.", "correct": false, "why": "Falso. OpenAI no requiere marcado explícito. Es diferente a Anthropic en eso." },
+        { "letter": "C", "text": "El caching en OpenAI cobra igual que input normal pero mejora latencia.", "correct": false, "why": "Falso. Hay descuento real de ~50% en el precio de los tokens cacheados, además de mejora de TTFT." },
+        { "letter": "D", "text": "OpenAI no tiene prompt caching.", "correct": false, "why": "Falso. Liberado en octubre 2024 para gpt-4o, gpt-4o-mini y modelos siguientes." }
+      ],
+      "explanation": "Diferencias clave: Anthropic → explícito con cache_control, control fino de TTL, hasta 90% descuento. OpenAI → automático, sin control, 50% descuento. Google Gemini → 'implicit caching' automático desde mayo 2024 en Gemini 1.5/2.0, además de 'context caching' explícito con TTL configurable. En todos los casos, ordenar el prompt como 'estable-primero, variable-al-final' es prerrequisito para que haya cache hit.",
+      "realWorld": "OpenAI DevDay 2024 anunció Prompt Caching. Docs oficiales de platform.openai.com muestran ejemplos con cached_tokens en la usage. Vercel AI SDK y LangChain exponen métricas de cache hit para observabilidad.",
+      "tags": ["prompt caching", "OpenAI", "GPT-4o", "cached input"],
+      "tech": ["OpenAI API", "GPT-4o", "gpt-4o-mini"],
+      "references": [
+        { "title": "OpenAI — Prompt Caching (Platform docs)" },
+        { "title": "OpenAI DevDay 2024 announcements" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "cost-inference",
+      "topic": "Orden del prompt y cache invalidation",
+      "difficulty": "mid",
+      "scenario": "Tu equipo estructura el prompt así: [historial del usuario (variable)] → [system prompt estable de 2k tokens] → [tools estables] → [pregunta actual]. Reportan que el cache hit rate es 0% aunque las llamadas se hacen dentro de la misma sesión.",
+      "question": "¿Cuál es la causa más probable y cómo se arregla?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El historial variable está antes del bloque estable. El caching es por prefijo: cualquier cambio en un token temprano invalida todo lo posterior. Hay que reordenar a [system estable] → [tools estables] → [contexto por sesión] → [historial variable] → [pregunta].", "correct": true, "why": "Correcto. Todos los sistemas de prompt caching (Anthropic, OpenAI, Gemini) cachean por prefijo. Si el primer bloque cambia por request, no hay cache hit posible aunque el resto sea idéntico. La regla es: 'lo más estable primero, lo más variable al final'." },
+        { "letter": "B", "text": "El modelo no soporta caching y hay que cambiar de proveedor.", "correct": false, "why": "Falso. Los modelos frontier de Anthropic/OpenAI/Google soportan caching. El problema es el orden del prompt." },
+        { "letter": "C", "text": "El caching solo funciona con requests idénticos byte a byte, incluyendo la pregunta del usuario.", "correct": false, "why": "Falso. Sólo el prefijo estable necesita coincidir; el sufijo variable puede diferir. Ese es todo el punto del feature." },
+        { "letter": "D", "text": "El TTL es demasiado largo y por eso no funciona.", "correct": false, "why": "Falso. TTL más largo mejora hit rate. El problema es el prefijo cambiante." }
+      ],
+      "explanation": "Estructura óptima para maximizar cache hit: (1) system prompt largo y estable; (2) definiciones de tools; (3) documentos/knowledge por sesión (marcados como cacheables si superan 1k tokens); (4) historial de conversación en orden cronológico; (5) mensaje actual del usuario al final. En Anthropic marcas cache_control en los primeros 3 bloques. En OpenAI/Gemini el sistema detecta el prefijo automáticamente. Herramientas como LangSmith, Braintrust y Helicone muestran hit rate por request para diagnosticar.",
+      "realWorld": "El equipo de Cursor documentó en su blog cómo reestructuraron el prompt tras notar 0% hit rate. Braintrust y Helicone publicaron guías 'debugging prompt cache misses' en 2024-2025.",
+      "tags": ["prompt caching", "prefix", "cache invalidation", "prompt structure"],
+      "tech": ["Anthropic API", "OpenAI API", "Gemini API"],
+      "references": [
+        { "title": "Anthropic — Prompt caching best practices" },
+        { "title": "Helicone blog — Debugging cache misses" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "cost-inference",
+      "topic": "Batch API",
+      "difficulty": "mid",
+      "scenario": "Necesitas clasificar 5 millones de reviews de producto en 20 categorías. No hay usuario esperando; puedes tolerar hasta 24h de latencia. Con GPT-4o online serían ~$25k. Tu VP de ingeniería pregunta si hay forma más barata sin cambiar de modelo.",
+      "question": "¿Qué opción es correcta sobre las Batch APIs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OpenAI y Anthropic tienen Batch API con ~50% descuento sobre pricing normal. Subes un archivo JSONL con requests, ellos procesan en background con SLA de 24h, y descargas el resultado. Ideal para workloads offline: clasificación masiva, evaluaciones, backfills, embeddings.", "correct": true, "why": "Correcto. OpenAI Batch API (abril 2024) y Anthropic Message Batches API (octubre 2024): 50% off del pricing normal, ventana de completado hasta 24h. Google Gemini también ofrece Batch mode. Perfecto para trabajos donde la latencia no importa. Ahorro estimado en el escenario: $25k → ~$12.5k." },
+        { "letter": "B", "text": "Batch API significa mandar muchos mensajes en un solo request HTTP; no hay descuento.", "correct": false, "why": "Falso. No es batching de HTTP, es un modo asíncrono con precio reducido y SLA de 24h." },
+        { "letter": "C", "text": "Batch API es más rápida que la API normal porque se ejecuta en GPUs dedicadas.", "correct": false, "why": "Falso. Es lo opuesto: es más lenta (hasta 24h) porque corre en capacidad excedente cuando hay slot." },
+        { "letter": "D", "text": "El descuento aplica al output pero no al input.", "correct": false, "why": "Falso. Aplica a input y output; efectivamente 50% del precio normal en ambos." }
+      ],
+      "explanation": "Cuándo usar Batch: (1) no hay usuario esperando; (2) volumen alto; (3) tolerancia de horas. Cuándo NO usar: chatbots en vivo, agentes interactivos, cualquier request con SLA sub-minuto. Estructura: subir JSONL con { custom_id, method, url, body } por línea, crear batch job, polling de status, descargar output JSONL. Anthropic soporta hasta 100k requests o 256MB por batch; OpenAI, hasta 50k requests o 200MB. Los tokens sí cuentan contra rate limits diarios pero en un pool separado del online.",
+      "realWorld": "Startups como Julius, Cohere y muchos data pipelines de e-commerce (Shopify, Etsy) mueven clasificación/embeddings a Batch API. Anthropic blog 'Introducing Message Batches API' (oct 2024) documenta el flujo.",
+      "tags": ["batch API", "async", "50% discount", "offline workloads"],
+      "tech": ["OpenAI Batch API", "Anthropic Message Batches", "Gemini Batch"],
+      "references": [
+        { "title": "OpenAI — Batch API docs" },
+        { "title": "Anthropic — Message Batches API" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "cost-inference",
+      "topic": "Model tiers y elección",
+      "difficulty": "junior",
+      "scenario": "Un dev construye un feature de 'clasificar sentimiento del comentario' (positivo/negativo/neutral). Actualmente usa Claude Opus. La feature se ejecuta 500k veces al día.",
+      "question": "¿Qué recomendación tiene MÁS impacto en la factura sin sacrificar calidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cambiar a un modelo tier 'small/fast' (Claude Haiku, GPT-4o-mini, Gemini Flash) que resuelve clasificación trivial casi tan bien como frontier a 20-30x menos costo, y guardar Opus solo para tareas que lo requieran.", "correct": true, "why": "Correcto. Regla mental: 'usa el modelo más chico que resuelva la tarea'. Clasificación binaria/trinaria es tarea trivial para modelos small/fast. Claude Haiku 3.5 ~$0.80/MTok in / $4 out vs Opus 4 ~$15/$75. GPT-4o-mini ~$0.15/$0.60 vs Opus. Ahorro 20-100x sin degradar accuracy en tareas simples." },
+        { "letter": "B", "text": "Comprimir el input pasándolo por gzip antes de enviarlo.", "correct": false, "why": "Falso. Los tokens se cuentan sobre el texto plano, no bytes. gzip no reduce tokens." },
+        { "letter": "C", "text": "Añadir más ejemplos few-shot para 'ayudar' al modelo.", "correct": false, "why": "Contraproducente. Más few-shot = más tokens de input por request = más costo. Para clasificación simple, un buen prompt zero-shot es suficiente." },
+        { "letter": "D", "text": "Enviar todas las requests en paralelo en lugar de secuencial.", "correct": false, "why": "El paralelismo mejora throughput/latencia pero no reduce el costo por token." }
+      ],
+      "explanation": "Regla de oro económica: (1) Tarea trivial (clasificación, extracción, format) → modelo tier fast (Haiku, 4o-mini, Flash, Mistral small). (2) Tarea razonamiento estándar → tier medio (Sonnet, GPT-4o, Gemini Pro). (3) Tarea compleja / código / matemáticas hard → tier top (Opus, o1, o3, Gemini 2.0 Pro Thinking). El sobrecosto de usar el tier top cuando no hace falta es la principal fuente de gasto excesivo en producción.",
+      "realWorld": "Shopify Sidekick y Klarna's assistant documentaron migraciones de tier top → tier fast en subtareas y ahorros de 60-80% sin degradar métricas. Anthropic y OpenAI empujan explícitamente el uso de tiers 'mini/haiku' en docs de best practices.",
+      "tags": ["model tiers", "Haiku", "mini", "Flash", "right-sizing"],
+      "tech": ["Claude Haiku", "GPT-4o-mini", "Gemini Flash"],
+      "references": [
+        { "title": "Anthropic — Choose the right model" },
+        { "title": "OpenAI — Model selection guide" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "cost-inference",
+      "topic": "Semantic caching",
+      "difficulty": "mid",
+      "scenario": "Un chatbot de FAQ para un banco recibe muchas preguntas casi idénticas ('¿cómo cambio mi PIN?', 'quiero cambiar el PIN', 'olvidé mi PIN cómo lo cambio'). Cada request va al LLM. Piensas añadir una capa de caché.",
+      "question": "¿Qué es 'semantic caching' y cuándo tiene sentido?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cache por similitud semántica: se calcula un embedding de la pregunta entrante y se compara (cosine similarity) contra un índice de preguntas ya respondidas. Si sim > threshold (ej. 0.92) se devuelve la respuesta cacheada sin llamar al LLM. Requiere embeddings baratos, un store (Redis Vector, pgvector) y un threshold calibrado.", "correct": true, "why": "Correcto. Semantic caching (GPTCache, LangChain LLMCache, Redis Vector) evita pagar el LLM cuando la pregunta es semánticamente equivalente a una previa. Trade-off: falsos positivos si el threshold es bajo (retornas respuesta incorrecta). Se calibra con dataset propio. Para FAQ y contenido estable puede reducir 50-70% de llamadas." },
+        { "letter": "B", "text": "Semantic caching = memoizar el string exacto de la pregunta.", "correct": false, "why": "Eso es exact-match caching (útil pero pega poco porque los usuarios varían la redacción). Semantic caching opera sobre el significado, no la forma." },
+        { "letter": "C", "text": "Es una feature nativa de todos los LLMs; no requiere infraestructura adicional.", "correct": false, "why": "Falso. Es una capa que tú construyes/adquieres antes de llegar al LLM." },
+        { "letter": "D", "text": "Solo funciona con GPT-4.", "correct": false, "why": "Falso. Es model-agnóstico; solo necesita un modelo de embeddings (que puede ser el mismo o distinto al de generación)." }
+      ],
+      "explanation": "Arquitectura: (1) request llega; (2) generas embedding de la pregunta (ada-002, text-embedding-3-small, voyage, nomic); (3) busca top-k similares en vector store; (4) si sim > threshold → cache hit, retornas respuesta guardada; (5) si no → llamas al LLM, guardas (embedding, respuesta) para futuros hits. Riesgos: (a) invalidación cuando la respuesta 'correcta' cambia (política del banco); (b) falsos positivos con threshold laxo; (c) contexto por usuario que rompe la premisa (respuesta A para usuario 1 no sirve al usuario 2). Buenas prácticas: TTL, particionar cache por tenant, medir false positive rate.",
+      "realWorld": "GPTCache (Zilliz, 2023), Redis Vector Similarity, Portkey y Langfuse ofrecen semantic caching listo. Casos: chatbots de soporte L1, FAQ, docs internas. En chats abiertos con contexto por usuario suele ser peligroso.",
+      "tags": ["semantic caching", "GPTCache", "embeddings", "cache layer"],
+      "tech": ["GPTCache", "Redis Vector", "pgvector", "Portkey"],
+      "references": [
+        { "title": "GPTCache — docs" },
+        { "title": "Redis — Semantic caching guide" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "cost-inference",
+      "topic": "Cost tracking por feature/usuario",
+      "difficulty": "mid",
+      "scenario": "Tu startup tiene 5 features que usan LLM (chat, resumen, code assist, search, análisis). La factura mensual es $80k y no sabes qué feature cuesta cuánto. El CFO quiere saber cost per user para price el plan.",
+      "question": "¿Cuál es la práctica CORRECTA para atribuir costos de LLM por feature y por usuario?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Envolver toda llamada al LLM en un cliente instrumentado que capture usage (input_tokens, output_tokens, cached_tokens, model) + metadatos ({ feature, user_id, tenant, request_id }) y persistir en un data warehouse. Calcular costo derivando tokens x precio del modelo. Herramientas: Helicone, Langfuse, Portkey, OpenTelemetry GenAI semantic conventions.", "correct": true, "why": "Correcto. Los providers no atribuyen por defecto: solo dan tokens por request. La atribución la haces tú marcando cada request con dimensiones (feature, user, tenant). Frameworks maduros: Helicone (proxy), Langfuse (open source), Portkey (gateway). OpenTelemetry publicó GenAI semantic conventions (gen_ai.request.model, gen_ai.usage.input_tokens, etc.) en 2024 para estandarizar." },
+        { "letter": "B", "text": "El dashboard nativo de Anthropic/OpenAI muestra costo por feature automáticamente.", "correct": false, "why": "Falso. Los dashboards nativos muestran uso agregado por API key. Si tienes 1 key para todo, no puedes desagregar. Máximo: separar keys por feature (funciona pero no atribuye por user)." },
+        { "letter": "C", "text": "Basta con dividir la factura mensual entre número total de usuarios.", "correct": false, "why": "Da promedios engañosos. En apps LLM el 80% del costo lo generan 5-10% de heavy users. Sin instrumentación no detectas abuso ni ajustas pricing." },
+        { "letter": "D", "text": "Es imposible atribuir costos por usuario porque los modelos son cajas negras.", "correct": false, "why": "Falso. Los tokens de entrada/salida son conocidos exactos. Con instrumentación es trivial." }
+      ],
+      "explanation": "Blueprint: (1) capa de proxy o SDK wrapper que loga cada request con {feature, user, tenant, model, usage}; (2) tabla en Postgres/BigQuery/Snowflake con eventos; (3) view de rollup diaria con costo = usage * precio_modelo; (4) alerts por usuario que excede X$/día; (5) dashboards en Grafana/Metabase por feature y por tier de cliente. Con esto conoces: costo por feature, costo por tier de plan, top usuarios, tendencia. Es la base para pricing correcto (per-seat vs usage-based) y para negociar contratos.",
+      "realWorld": "Langfuse y Helicone son adoptados por Fireflies, Perplexity y muchas startups YC como observability por defecto. Vercel AI SDK integra OpenTelemetry desde 2024. Standard OTel GenAI: opentelemetry.io/docs/specs/semconv/gen-ai/.",
+      "tags": ["cost tracking", "attribution", "observability", "Langfuse", "Helicone"],
+      "tech": ["Helicone", "Langfuse", "Portkey", "OpenTelemetry"],
+      "references": [
+        { "title": "OpenTelemetry — GenAI semantic conventions" },
+        { "title": "Langfuse — Cost tracking docs" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "cost-inference",
+      "topic": "Rate limits económicos (budget kill-switch)",
+      "difficulty": "senior",
+      "scenario": "Un cliente enterprise firma contrato de $500/mes con cap explícito. La feature gastó $1800 en 3 días por un usuario que se conectó un bot al chat. Nadie se dio cuenta hasta que llegó la factura de Anthropic.",
+      "question": "¿Qué diseño previene este incidente en producción?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Implementar budget enforcement en el proxy/gateway: presupuesto por tenant y por usuario, contador en Redis con TTL, si supera threshold hard-block (429 con mensaje) y alert PagerDuty. Complementar con soft threshold (80%) que dispara notificación al admin del tenant.", "correct": true, "why": "Correcto. Nunca dependas solo de dashboards ex-post; necesitas enforcement en tiempo real en el path del request. Implementación: contador atómico Redis (INCRBY con TTL diario), verificación pre-request, bloqueo con 429 + mensaje amigable, alert automático. Portkey, Kong AI Gateway y LiteLLM Proxy tienen budget guards built-in." },
+        { "letter": "B", "text": "Confiar en AWS Budgets Alerts para detectar el gasto.", "correct": false, "why": "AWS Budgets solo aplica si estás en Bedrock y con delay de horas. No detiene el gasto; solo notifica. Y si usas Anthropic/OpenAI directo, no aplica en absoluto." },
+        { "letter": "C", "text": "Revisar la factura manualmente a fin de mes.", "correct": false, "why": "Reactivo. Ya se gastó el dinero y perdiste margen. Solo válido si el margen es enorme (no en enterprise con caps)." },
+        { "letter": "D", "text": "Configurar el rate limit del provider al mínimo para el API key.", "correct": false, "why": "Rate limits de provider son globales por org, no por tenant. Bloquear a todos por proteger a uno es peor cura que la enfermedad." }
+      ],
+      "explanation": "Patrón kill-switch: (1) presupuesto explícito por tenant/user/feature almacenado en config; (2) contador de gasto acumulado en Redis (o Dynamo) con TTL de la ventana (día/mes); (3) middleware antes del LLM call que hace GET + verifica + INCRBY después; (4) al llegar a 80%: notificación; al 100%: 429 con retry-after o mensaje UX; (5) circuit-breaker global si toda la org supera un límite. Esto es literalmente un feature flag económico. Frameworks: Portkey Budget Limits, LiteLLM Proxy Budget Manager, Kong AI Gateway.",
+      "realWorld": "Post-mortem público de Cursor (2024) sobre un bug que envió loops infinitos al LLM y disparó $10k+ en unas horas. Anthropic y OpenAI recomiendan explícitamente budget guards en su Trust & Safety docs. LiteLLM tiene 'budget_manager' documentado.",
+      "tags": ["budget", "kill-switch", "abuse prevention", "rate limits"],
+      "tech": ["Portkey", "LiteLLM", "Kong AI Gateway", "Redis"],
+      "references": [
+        { "title": "Portkey — Budget & Rate Limits" },
+        { "title": "LiteLLM — Budget Manager docs" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "cost-inference",
+      "topic": "Volume discounts y committed spend",
+      "difficulty": "mid",
+      "scenario": "Gastas $60k/mes en Anthropic y esperas crecer a $200k en 6 meses. Un account executive te ofrece 'Enterprise agreement' con committed spend anual.",
+      "question": "¿Qué palancas comerciales existen y cómo se evalúan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Volume discount (más tokens = mejor precio unitario), committed spend (comprometes $X anual a cambio de descuento adicional), y en AWS Bedrock 'Provisioned Throughput' (compras throughput dedicado con SLA a cambio de commitment 1 o 6 meses). Evaluar con proyección conservadora: si el uso real es <80% del commitment, pagas por capacidad no usada.", "correct": true, "why": "Correcto. Los grandes proveedores (Anthropic, OpenAI, Google, AWS Bedrock) negocian volumen a partir de $50-100k mensual. Bedrock Provisioned Throughput compra tokens/segundo dedicados con SLA y descuento (~30-50%) sobre on-demand para modelos como Claude, con commitment 1 o 6 meses. Riesgo: sobrecomprometer y pagar capacidad idle. Best practice: hedge conservador (60-70% del baseline)." },
+        { "letter": "B", "text": "El pricing publicado es siempre final; nunca hay negociación.", "correct": false, "why": "Falso. Sobre umbrales grandes hay descuentos negociados. Los AE de Anthropic/OpenAI/Google/AWS tienen playbooks." },
+        { "letter": "C", "text": "Comprometerse a 1 año siempre es mejor porque el pricing solo baja.", "correct": false, "why": "Falso. Los precios de LLMs han bajado agresivamente (2023-2025 caídas de 80-90% en algunos tiers). Commitment de 1 año puede quedarte por encima del pricing spot 6 meses después. Contratos con revisión trimestral son más seguros." },
+        { "letter": "D", "text": "AWS Bedrock no tiene descuentos por commitment.", "correct": false, "why": "Falso. Provisioned Throughput y contratos enterprise EDP (Enterprise Discount Program) aplican." }
+      ],
+      "explanation": "Menú de palancas: (1) volume discount escalonado (10-30%); (2) committed spend anual (adicional 10-20%); (3) Provisioned Throughput en Bedrock (SLA + descuento pero commitment); (4) OpenAI Scale Tier (SLA + capacidad reservada); (5) créditos de startup (Anthropic for Startups, OpenAI Startups, AWS Activate). Regla: no comprometas más que tu baseline sostenido. Usa hedging (múltiples providers con commit chico en cada uno) si tu roadmap es incierto.",
+      "realWorld": "AWS Bedrock Provisioned Throughput para Claude 3.5 Sonnet listado desde 2024. OpenAI Scale Tier anunciado 2024 con committed capacity. Contratos enterprise de Anthropic reportados en TechCrunch para clientes tipo Deloitte, Zoom.",
+      "tags": ["volume discount", "committed spend", "Provisioned Throughput", "enterprise"],
+      "tech": ["AWS Bedrock Provisioned Throughput", "OpenAI Scale Tier"],
+      "references": [
+        { "title": "AWS Bedrock — Provisioned Throughput" },
+        { "title": "OpenAI — Scale Tier" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "cost-inference",
+      "topic": "Fine-tune inference vs base model",
+      "difficulty": "senior",
+      "scenario": "Un equipo fine-tunea GPT-4o-mini con 5000 ejemplos para clasificación de tickets. Preguntan si la inferencia del fine-tune 'sale gratis' porque ya pagaron el training.",
+      "question": "¿Cómo funciona el pricing de un modelo fine-tuned en OpenAI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Se paga el training una sola vez ($/1M tokens de training data) + cada request de inferencia al modelo fine-tuned se cobra a un precio mayor que el base (típicamente 2-3x input/output). Puede compensar si el fine-tune permite bajar de tier (ej. fine-tuned mini reemplaza a un modelo grande) o reduce mucho el output/prompt.", "correct": true, "why": "Correcto. OpenAI: fine-tuning cobra tokens de training + inference con premium. GPT-4o-mini base ~$0.15/$0.60 in/out; el fine-tuned ~$0.30/$1.20 in/out aprox. El ROI existe si el fine-tune (a) reduce prompt (menos few-shot, system corto), (b) permite eliminar RAG, (c) sustituye a un modelo grande. Si simplemente 'mejora accuracy' de un mini con el mismo prompt, seguro pierdes dinero." },
+        { "letter": "B", "text": "El fine-tune tiene el mismo precio de inferencia que el base.", "correct": false, "why": "Falso. En la mayoría de providers, fine-tuned inference tiene premium." },
+        { "letter": "C", "text": "La inferencia del fine-tune es gratis después del training.", "correct": false, "why": "Falso. Se cobra por token cada request como cualquier otro modelo." },
+        { "letter": "D", "text": "Fine-tuning solo está disponible para modelos frontier grandes.", "correct": false, "why": "Falso. Es lo opuesto: los tiers small/mid (mini, Haiku, Flash, Mistral small) son los que más se fine-tunean por costo." }
+      ],
+      "explanation": "Modelo mental: fine-tune tiene sentido económico si (a) puedes bajar de tier de modelo, o (b) puedes recortar prompt significativamente (quitar few-shot, quitar system elaborado). Si el prompt queda igual y solo mejoras accuracy marginal, el premium de inferencia mata el ROI. Anthropic soporta fine-tuning custom en Bedrock. Google Vertex tiene supervised tuning y adapter tuning para Gemini. Alternativas open-source (LoRA sobre Llama/Mistral/Qwen self-hosted) tienen otra economía distinta.",
+      "realWorld": "OpenAI Fine-tuning UI muestra pricing con premium de inferencia visible. Blogs de Zapier, Notion y Character AI mencionan trade-offs de fine-tune vs prompt-engineering. Ver caso: 'When to fine-tune GPT-4o' del cookbook oficial.",
+      "tags": ["fine-tuning cost", "inference premium", "ROI"],
+      "tech": ["OpenAI Fine-tuning", "Bedrock Custom Models"],
+      "references": [
+        { "title": "OpenAI — Fine-tuning pricing & guide" },
+        { "title": "OpenAI Cookbook — Fine-tuning best practices" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "cost-inference",
+      "topic": "Embeddings pricing y escala",
+      "difficulty": "mid",
+      "scenario": "Vas a indexar 500M de documentos (chunks de ~300 tokens) para RAG. El PM asume que embeddings 'no cuestan casi nada'.",
+      "question": "¿Qué es CORRECTO sobre el costo de embeddings a escala?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los embeddings son ~50-100x más baratos que generación (text-embedding-3-small ~$0.02/MTok), pero a escala (500M docs x 300 tokens = 150B tokens) suma miles de dólares. Además hay costo de storage + query en el vector DB, y costo de re-embedding si cambias de modelo o versión.", "correct": true, "why": "Correcto. 150B tokens x $0.02/MTok = $3k solo el primer pass. Si añades re-embedding periódico, delta indexing y ~1M queries/día con embedding del query, la factura de embeddings sola puede llegar a $10-20k/mes. Y el storage/query en Pinecone/Weaviate/pgvector es separado y también escala." },
+        { "letter": "B", "text": "Los embeddings son literalmente gratis en todos los providers.", "correct": false, "why": "Falso. Todos los providers cobran por tokens embebidos. A gran escala es material." },
+        { "letter": "C", "text": "El costo de embeddings escala igual que generación.", "correct": false, "why": "Falso. Embeddings son 50-100x más baratos por token, pero el volumen suele ser 100-1000x mayor (indexar un corpus entero), así que el orden final puede acercarse." },
+        { "letter": "D", "text": "Basta con hacer embeddings una vez y nunca actualizarlos.", "correct": false, "why": "Falso. Cambios de contenido, nuevos docs, upgrades de modelo (v3 → v4), y experimentación con dimensionalidad requieren re-embedding periódico." }
+      ],
+      "explanation": "Estrategias para controlar costo de embeddings: (1) elegir modelo apropiado (text-embedding-3-small en OpenAI, Voyage-3, Cohere Embed v3, o modelos open-source Nomic/BGE/GTE); (2) chunking inteligente para no duplicar; (3) dimensionality reduction (OpenAI Matryoshka: puedes usar 512 dims en vez de 1536); (4) batch API para embeddings offline; (5) diff/delta indexing en vez de re-embed todo; (6) considerar embeddings self-hosted si el volumen es enorme (BGE-M3 sobre GPU propia puede ser 10x más barato a >100M/día).",
+      "realWorld": "Perplexity, Notion, GitHub Copilot search y muchos otros manejan re-embedding continuo. Casos públicos: 'How we reduced embedding costs' de Weaviate y Chroma. OpenAI text-embedding-3 permite dimensiones truncadas (256, 512, 1024).",
+      "tags": ["embeddings cost", "RAG", "vector DB", "dimensionality"],
+      "tech": ["text-embedding-3-small", "Voyage", "Cohere Embed", "BGE"],
+      "references": [
+        { "title": "OpenAI — Embeddings pricing" },
+        { "title": "Weaviate blog — Cost of embeddings at scale" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "cost-inference",
+      "topic": "Reasoning models y hidden tokens",
+      "difficulty": "senior",
+      "scenario": "Migras un feature a OpenAI o1 (reasoning model). Los prompts input son igual de largos que antes y las respuestas visibles son similares, pero la factura se triplicó.",
+      "question": "¿Qué explica el aumento y cómo se controla?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los reasoning models (o1, o3, o1-mini, Claude Extended Thinking, Gemini 2.0 Thinking) generan 'reasoning tokens' o 'thinking tokens' internos que NO se ven en la respuesta pero se cobran como output. Un turno puede quemar 5k-50k tokens de thinking. Se controla con max_completion_tokens/budget_tokens, usando el modelo solo cuando la tarea lo necesita, o desactivando el thinking en tareas triviales.", "correct": true, "why": "Correcto. OpenAI o1/o3 cobran 'reasoning_tokens' como output. Anthropic Extended Thinking (Claude 3.7 Sonnet, oct 2024) expone budget_tokens para limitar. Google Gemini 2.0 Flash Thinking similar. Un solo turno complejo puede quemar 20-50k tokens invisibles al usuario. Sin cap explícito el costo se dispara." },
+        { "letter": "B", "text": "Los reasoning models cuestan igual que los base models.", "correct": false, "why": "Falso. Pricing por token es más alto Y consumen más tokens por request por el thinking." },
+        { "letter": "C", "text": "Los thinking tokens son gratis porque no se envían al usuario.", "correct": false, "why": "Falso. Se facturan a precio de output porque el modelo los genera." },
+        { "letter": "D", "text": "El thinking se puede desactivar cambiando temperature a 0.", "correct": false, "why": "Falso. Temperature no controla thinking. Se controla con budget_tokens (Anthropic) o max_completion_tokens (OpenAI o-series), o eligiendo modelo no-reasoning para la tarea." }
+      ],
+      "explanation": "Reasoning models son caros por diseño: 'gastan más tokens para pensar mejor'. Buenas prácticas: (1) usa reasoning solo en tareas donde el planning/matemática/lógica lo justifica; (2) para clasificación/extracción/format usa modelos base; (3) fija budget_tokens/max_completion_tokens; (4) mide reasoning_tokens per request en tu observability; (5) considera Sonnet con thinking off vs o1: a veces Sonnet base resuelve la tarea a 1/10 del costo. Anthropic docs: 'Extended thinking' con budget_tokens. OpenAI docs: reasoning_tokens en usage.",
+      "realWorld": "Post de Simon Willison 'The cost of thinking tokens' (2024) analizó facturas concretas. Anthropic Extended Thinking launch (feb 2025) documenta budget_tokens. Discusiones en r/OpenAI sobre sorpresas de facturación con o1.",
+      "tags": ["reasoning models", "thinking tokens", "o1", "Extended Thinking", "budget_tokens"],
+      "tech": ["OpenAI o1", "OpenAI o3", "Claude Extended Thinking", "Gemini Thinking"],
+      "references": [
+        { "title": "Anthropic — Extended Thinking docs" },
+        { "title": "OpenAI — Reasoning models guide" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "cost-inference",
+      "topic": "Alertas por spike y cost anomaly",
+      "difficulty": "mid",
+      "scenario": "El costo diario de LLM promedia $400 con desviación típica. Un domingo saltó a $6000 sin razón obvia. Nadie miró hasta el lunes.",
+      "question": "¿Qué setup mínimo de alertas evita esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Alerts en 3 niveles: (1) hard cap diario absoluto (ej. $2000) que dispara pager; (2) anomaly detection (ej. costo > 3σ del promedio 7d) que dispara Slack; (3) por-tenant y por-usuario cap. Todo desde tu observability (Langfuse, Helicone, Datadog) o desde AWS Cost Anomaly Detection si usas Bedrock.", "correct": true, "why": "Correcto. Multi-nivel es la práctica correcta: cap absoluto para prevenir catástrofes, anomaly detection para catch de patrones, per-tenant/user para contener abuso. Datadog LLM Observability, Langfuse, Helicone y AWS Cost Anomaly Detection soportan estas alertas out-of-the-box. Un domingo sin alerta es un anti-pattern conocido." },
+        { "letter": "B", "text": "Basta con revisar el dashboard cada lunes.", "correct": false, "why": "Reactivo. Ya perdiste 24-48h. En LLMs las curvas de gasto explotan por bugs (loops, retries, abuse) en minutos." },
+        { "letter": "C", "text": "El dashboard de OpenAI ya envía alertas automáticas configuradas por default.", "correct": false, "why": "Falso. Los providers permiten configurar usage alerts, pero no vienen habilitadas por default y no son granulares por tenant." },
+        { "letter": "D", "text": "Alertar cada request supera $10 en costo individual.", "correct": false, "why": "Ruido excesivo. Un request de $10 es normal en tareas de análisis largo. Se alerta por patrones agregados (spike, anomalía, cap), no por request individual." }
+      ],
+      "explanation": "Recipe: (1) ingesta de eventos de uso a warehouse cada minuto; (2) job que computa gasto por hora/tenant/feature; (3) alertas: cap absoluto (paging), 3σ anomaly (slack), per-tenant cap; (4) runbook: cuando se dispara, saber quién revisa y cómo hacer rollback (feature flag off, kill switch por tenant); (5) dashboard visible en TV/monitor del equipo. Las alertas por email caen en spam; usa pager real para hard caps.",
+      "realWorld": "Historia pública: en 2023, un dev dejó un loop en un cron y quemó $50k en OpenAI en un weekend. Muchos post-mortems de startups en Twitter/X. AWS Cost Anomaly Detection tiene ML built-in para detectar spikes. Datadog LLM Observability GA en 2024.",
+      "tags": ["alerts", "anomaly detection", "cost spike", "runbook"],
+      "tech": ["Langfuse", "Helicone", "Datadog LLM Obs", "AWS Cost Anomaly Detection"],
+      "references": [
+        { "title": "AWS — Cost Anomaly Detection" },
+        { "title": "Datadog — LLM Observability" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "cost-inference",
+      "topic": "max_tokens y respuestas cortas",
+      "difficulty": "junior",
+      "scenario": "Un feature de generación devuelve respuestas de 800-1200 tokens cuando el UX solo muestra las primeras ~200. El resto se descarta.",
+      "question": "¿Qué acción tiene mayor impacto inmediato en costo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fijar max_tokens/max_output_tokens a ~250 y añadir en el prompt 'responde en máximo 200 tokens'. Ahorra ~75% del costo de output de esa feature.", "correct": true, "why": "Correcto. Si no muestras >200 tokens, generar 1000 es literalmente desperdicio de dinero. max_tokens actúa como hard cap; el prompt guía al modelo a terminar naturalmente antes. Combinar ambos: prompt + cap = ahorro directo sin degradar UX visible." },
+        { "letter": "B", "text": "Cambiar de modelo a uno más grande para que genere más rápido.", "correct": false, "why": "Contraproducente. Modelo más grande = más caro por token y no reduce el token count si el prompt no cambia." },
+        { "letter": "C", "text": "Bajar temperature a 0.", "correct": false, "why": "Determinismo, no brevedad. Puede ayudar marginalmente al style pero no reduce longitud." },
+        { "letter": "D", "text": "Poner top_p a 0.1.", "correct": false, "why": "Igual: cambia sampling, no longitud." }
+      ],
+      "explanation": "max_tokens es el control barato y efectivo que suelen olvidar los devs. Combinar con: (a) structured output (JSON schema con description acotada), (b) prompt explícito 'sé conciso, ≤N tokens', (c) UX que trunca visualmente. Complemento: stop sequences que corten cuando llega marca esperada. Para chat streaming se puede detectar cuando la generación excede el visible y abortar con controller.abort().",
+      "realWorld": "Vercel AI SDK expone maxTokens y stop sequences. Muchas startups (Perplexity, Consensus, Elicit) auditan output length como métrica de eficiencia. Regla común: 'no generes lo que no vas a mostrar'.",
+      "tags": ["max_tokens", "output length", "quick wins"],
+      "tech": ["max_tokens", "Vercel AI SDK", "structured outputs"],
+      "references": [
+        { "title": "OpenAI API — max_tokens" },
+        { "title": "Anthropic API — max_tokens" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "cost-inference",
+      "topic": "TTL de cache y trade-offs",
+      "difficulty": "senior",
+      "scenario": "Un asistente de código carga 40k tokens de codebase por sesión de dev. Estás usando Anthropic prompt caching. La sesión típica dura 45 min pero el TTL default es 5 min. Notas mucho re-write de cache.",
+      "question": "¿Cómo elegir entre 5 min y 1 hora TTL en Anthropic?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Modelo mental: write con 1h TTL cuesta ~2x el write de 5min. Vale la pena si esperas >=2-3 hits reales del mismo prefijo dentro de la hora. Si el uso es esporádico o el prefijo cambia por sesión, 5min es más barato. Medir hit rate real antes de decidir.", "correct": true, "why": "Correcto. Los precios de write son: 5min ~1.25x input normal; 1h ~2x input normal. Necesitas amortizarlo con hits. En un IDE con sesión de 45 min y consultas constantes, 1h TTL es clara win. En un chat esporádico, 5min basta o incluso no cacheas." },
+        { "letter": "B", "text": "1 hora siempre es mejor porque es más largo.", "correct": false, "why": "Falso. Si no hay hits dentro de la hora, pagas el write premium y no lo recuperas." },
+        { "letter": "C", "text": "5 minutos siempre es mejor porque es más barato el write.", "correct": false, "why": "Falso en sesiones largas. Si el prefijo se re-escribe 10 veces en 45 min, el 1h con un solo write es más barato." },
+        { "letter": "D", "text": "TTL no afecta el precio, solo la latencia.", "correct": false, "why": "Falso. El precio del write premium por TTL 1h es documentado por Anthropic." }
+      ],
+      "explanation": "Cálculo: si el bloque cacheado son 40k tokens de input, el break-even entre 5min y 1h es aprox. cuando esperas al menos ~2 hits adicionales dentro del rango de 1h que no hubieras logrado con 5min. Con instrumentación puedes A/B y elegir por sesión. Casos ideales de 1h: IDEs, agentes long-running, batch de eval. Casos ideales de 5min: chat típico, workflows cortos. Buenas librerías exponen métrica cache_hit_rate para decidir.",
+      "realWorld": "Cursor y Replit Agent documentaron uso de 1h TTL para sesiones largas de dev. Anthropic blog 'Prompt caching: 1 hour TTL' (2024) detalla el pricing.",
+      "tags": ["cache TTL", "Anthropic", "1h vs 5min", "break-even"],
+      "tech": ["Anthropic prompt caching", "cache_control"],
+      "references": [
+        { "title": "Anthropic — Prompt caching TTL options" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "cost-inference",
+      "topic": "Structured outputs y ahorro",
+      "difficulty": "mid",
+      "scenario": "Un feature usa el LLM para extraer 5 campos de un texto libre. La respuesta actual es prosa: 'El nombre del cliente es Juan; el monto es 5000; ...'.",
+      "question": "¿Cómo ayuda structured output (JSON schema) al costo además de a la calidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Fuerza al modelo a devolver solo las claves-valor del schema, eliminando texto de relleno. Típicamente reduce output tokens 40-60%. Además elimina parsing frágil, retries por output malformado y (en OpenAI structured outputs) garantiza validez del schema.", "correct": true, "why": "Correcto. Prosa: 30-80 tokens. JSON estricto: 15-30 tokens para los mismos 5 campos. OpenAI Structured Outputs (feature GA 2024) garantiza que la respuesta cumple el JSON schema, eliminando retries por parsing failure (que también cuestan). Anthropic tool use con schema y Gemini responseSchema equivalen." },
+        { "letter": "B", "text": "Estructurar la salida encarece porque hay overhead de tokens de sintaxis JSON.", "correct": false, "why": "Falso en la práctica. El overhead de llaves/comillas es <<< el ahorro de eliminar prosa explicativa. Retries por output malformado en prosa también encarecen." },
+        { "letter": "C", "text": "Estructurar solo mejora calidad, no costo.", "correct": false, "why": "Mejora ambos: menos tokens y menos retries." },
+        { "letter": "D", "text": "Es equivalente a bajar temperature.", "correct": false, "why": "No relacionado. Temperature afecta randomness; structured outputs cambia el formato del output." }
+      ],
+      "explanation": "Structured outputs: (1) OpenAI response_format={type: 'json_schema', schema: {...}, strict: true}; (2) Anthropic tool use con input_schema; (3) Gemini responseSchema; (4) frameworks: Instructor, Zod, Pydantic. Beneficios: costo menor, latencia menor, sin parse retries, integración typesafe. Casos: extracción de datos, function calling, clasificación multi-etiqueta, formularios auto-completados. Cuidado: schemas muy grandes suben input tokens; balancea.",
+      "realWorld": "OpenAI announcement 'Introducing Structured Outputs' (agosto 2024). Instructor lib de Jason Liu adoptada masivamente. Vercel AI SDK generateObject con Zod schema.",
+      "tags": ["structured outputs", "JSON schema", "Instructor", "cost reduction"],
+      "tech": ["OpenAI Structured Outputs", "Anthropic tool use", "Instructor", "Zod"],
+      "references": [
+        { "title": "OpenAI — Introducing Structured Outputs (blog)" },
+        { "title": "Instructor library — docs" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "cost-inference",
+      "topic": "Provider comparison a 2026",
+      "difficulty": "mid",
+      "scenario": "Un CTO pregunta cuál es el 'modelo más barato hoy' para clasificación masiva con calidad decente. Quiere una guía razonada.",
+      "question": "¿Cuál es la respuesta más completa y honesta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Depende de latencia, contexto, features. Como orden de magnitud a 2025-2026: Gemini 2.0 Flash-Lite, GPT-4o-mini, Claude Haiku 3.5, DeepSeek V3, Mistral small son opciones sub-dólar por MTok input. DeepSeek y open-source hosted vía Together/Fireworks pueden ser aún más baratos pero con trade-offs (jurisdicción, features de safety, tools). Benchmarks pueden variar 2-5x en la misma tarea entre modelos con precio similar; SIEMPRE evaluar en tu dataset.", "correct": true, "why": "Correcto. Los tiers 'small/fast' compiten agresivamente y bajan de precio cada trimestre. Nunca elijas solo por precio: (a) evalúa quality en tu dataset, (b) considera latencia, (c) considera geografía (donde reside el compute), (d) features (tool use, structured outputs, prompt cache). DeepSeek V3 muy barato pero jurisdicción china puede ser blocker; open-source self-hosted más barato a escala pero requiere ops." },
+        { "letter": "B", "text": "Siempre GPT-4o-mini, es el más barato del mercado.", "correct": false, "why": "Falso. Gemini Flash-Lite y DeepSeek V3 son a menudo más baratos por token. Y 'más barato' sin quality eval es engaño." },
+        { "letter": "C", "text": "Los modelos open-source siempre son más baratos que los propietarios.", "correct": false, "why": "Falso. Self-hosted requiere GPUs, ops y utilización alta para amortizar. Vía provider (Together, Fireworks, Groq) suelen ser competitivos pero no siempre más baratos que Haiku/mini/Flash." },
+        { "letter": "D", "text": "El precio no importa; solo la calidad.", "correct": false, "why": "Ambos importan. La decisión es Pareto: mejor precio para el nivel de calidad requerido." }
+      ],
+      "explanation": "Framework de decisión: (1) define nivel de calidad mínimo con eval offline (Langsmith, Braintrust, Ragas); (2) filtra modelos que lo cumplen; (3) entre los que cumplen, elige el más barato considerando latencia y features; (4) mide en producción y ajusta trimestralmente porque el pricing cambia rápido. Herramientas de comparación: artificialanalysis.ai, LMSys Arena, HELM. Ninguna reemplaza tu eval propio.",
+      "realWorld": "Artificial Analysis publica benchmarks precio/calidad actualizados. DeepSeek V3 disrupted pricing en dic 2024. Groq ofrece Llama con throughput ultra-alto a precios competitivos. Together AI y Fireworks compiten en open-source hosting.",
+      "tags": ["provider comparison", "Gemini Flash", "DeepSeek", "Haiku", "GPT-4o-mini"],
+      "tech": ["Gemini Flash-Lite", "GPT-4o-mini", "Claude Haiku 3.5", "DeepSeek V3", "Mistral small"],
+      "references": [
+        { "title": "Artificial Analysis — LLM benchmarks" },
+        { "title": "LMSys Chatbot Arena" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "cost-inference",
+      "topic": "Retries y costo oculto",
+      "difficulty": "mid",
+      "scenario": "El middleware del equipo tiene retry automático con backoff exponencial (max 5 intentos) para cualquier error 5xx o timeout. Notas que el 3% de requests generan 3-5 llamadas al LLM.",
+      "question": "¿Cuál es el problema económico y cuál la corrección?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Los retries duplican/triplican tokens facturados por request problemático. Además, si el error real es contexto demasiado largo (413) o rate limit sin retry-after adecuado, retries agravan. Corrección: retry solo en errores idempotentes específicos (5xx transient, 429 con jitter y respeto de retry-after), NO en 400/413/402/context length, y limitar max_retries a 2-3.", "correct": true, "why": "Correcto. Retries mal calibrados son fuente silenciosa de gasto. Anthropic y OpenAI documentan qué errores son retryables. Además, en streaming, un timeout puede haber generado ya tokens que se cobran igual (varía por provider). Best practice: retry policy explícita por código de error, telemetría de retries per request, alertas si retry rate >2%." },
+        { "letter": "B", "text": "Retries son gratis porque solo se cobra el request exitoso.", "correct": false, "why": "Falso. Cada llamada que produce tokens (parcial o total) se cobra. Retries multiplican gasto." },
+        { "letter": "C", "text": "Aumentar max_retries a 10 resuelve el problema mejorando disponibilidad.", "correct": false, "why": "Empeora. Amplifica costo y prolonga tiempo de fallo del request." },
+        { "letter": "D", "text": "Los timeouts no cuentan tokens.", "correct": false, "why": "Depende del provider y momento; muchos cobran tokens generados antes del timeout." }
+      ],
+      "explanation": "Retry policy correcta: (1) taxonomía explícita de errores {retryable: [502, 503, 504, 529, 429_with_retry_after], nonRetryable: [400, 401, 402, 413, 422]}; (2) exponential backoff con jitter; (3) max_retries 2-3; (4) circuit breaker si error rate >X%; (5) telemetría por request con retry_count, tokens_total, cost_total; (6) alarma si el promedio de retries > 1.1. Librerías: p-retry, tenacity, Portkey retry config.",
+      "realWorld": "Post-mortems en HackerNews de startups que descubrieron 20-30% del gasto era retries innecesarios. Anthropic docs 'Error handling' listan códigos retryables. OpenAI SDK oficial tiene retry policy configurable.",
+      "tags": ["retries", "hidden cost", "backoff", "idempotency"],
+      "tech": ["p-retry", "tenacity", "Portkey retry"],
+      "references": [
+        { "title": "Anthropic — Errors and retries" },
+        { "title": "OpenAI — Errors reference" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "cost-inference",
+      "topic": "Unit economics de un producto LLM",
+      "difficulty": "senior",
+      "scenario": "Un SaaS lanza una feature LLM a $20/mes por usuario. El uso promedio genera $8/mes de costo LLM. El P95 de usuarios genera $60/mes.",
+      "question": "¿Qué acción es CORRECTA como CTO responsable de las unit economics?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El promedio parece rentable pero el P95 pierde $40/usuario. Necesitas: (a) cap de uso justo (X requests/día) o modelo usage-based encima del plan flat, (b) analytics por usuario para identificar heavy users, (c) optimizaciones (routing a modelo barato, cache, structured outputs) para bajar el costo promedio, (d) rediseñar pricing (freemium con cap, tier premium para power users).", "correct": true, "why": "Correcto. Unit economics = promedio + distribución. El P95/P99 es lo que te mata. Sin caps ni tier de precio para power users, atraes usuarios pesados que destruyen el margen. Patterns comunes: free tier con cap chico, standard con cap medio, pro con usage-based. Ver Cursor, ChatGPT Plus, Notion AI, Perplexity Pro: todos tienen algún cap o tier." },
+        { "letter": "B", "text": "Como el promedio es rentable, todo está bien.", "correct": false, "why": "Falso. La distribución larga en LLMs (heavy users generan órdenes de magnitud más) hace que el promedio esconda la realidad." },
+        { "letter": "C", "text": "Subir el precio a $50 uniforme resuelve el problema.", "correct": false, "why": "Puede espantar a usuarios light rentables y no proteger contra heavy users que aún pierden margen." },
+        { "letter": "D", "text": "La optimización técnica no afecta unit economics.", "correct": false, "why": "Falso. Cada 20% de reducción de costo por request se traduce a márgenes o a mejor pricing competitivo." }
+      ],
+      "explanation": "Framework unit economics LLM: (1) mide COGS = tokens x precio + infra + soporte, por usuario y por request; (2) analiza distribución (P50/P90/P95/P99) — no solo promedio; (3) diseña plan de precios que capture rentabilidad en toda la distribución (cap, usage-based, tiers); (4) invierte en optimización técnica proporcional al gasto (cache, tier fast, structured); (5) revisa trimestralmente conforme pricing de modelos cambia. Un buen SaaS LLM apunta a margen bruto >60% después de todos los ajustes.",
+      "realWorld": "Anecdotarios públicos: Notion AI ajustó pricing tras heavy users; Cursor lanzó Pro con cap explícito; Perplexity Pro incluye 'daily limits'; ChatGPT introdujo Team con quotas. Blogs de a16z y Bessemer analizan unit economics de AI SaaS.",
+      "tags": ["unit economics", "COGS", "pricing strategy", "P95"],
+      "tech": ["pricing", "usage-based", "caps"],
+      "references": [
+        { "title": "a16z — The economics of AI apps" },
+        { "title": "Bessemer — State of AI 2024/2025" }
+      ]
+    }
+  ]
+}

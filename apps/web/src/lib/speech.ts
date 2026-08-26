@@ -7,41 +7,143 @@ export function hasTts(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
 }
 
-function loadVoices(): Promise<SpeechSynthesisVoice[]> {
-  return new Promise((resolve) => {
-    const now = window.speechSynthesis.getVoices();
-    if (now.length) return resolve(now);
-    const handler = () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', handler);
-      resolve(window.speechSynthesis.getVoices());
-    };
-    window.speechSynthesis.addEventListener('voiceschanged', handler);
-    setTimeout(() => resolve(window.speechSynthesis.getVoices()), 800);
-  });
+// Cache de voces. speechSynthesis.getVoices() a veces devuelve [] al arranque hasta que
+// el evento voiceschanged dispara. Pre-cargamos aquí y mantenemos la lista actualizada.
+let cachedVoices: SpeechSynthesisVoice[] = [];
+let voicesReady = false;
+
+function primeVoices() {
+  if (!hasTts()) return;
+  const now = window.speechSynthesis.getVoices();
+  if (now.length) {
+    cachedVoices = now;
+    voicesReady = true;
+    return;
+  }
+  const handler = () => {
+    cachedVoices = window.speechSynthesis.getVoices();
+    voicesReady = cachedVoices.length > 0;
+  };
+  window.speechSynthesis.addEventListener('voiceschanged', handler);
+  // Fallback: intentar de nuevo en 500ms por si voiceschanged nunca dispara (Safari a veces).
+  setTimeout(() => {
+    if (!voicesReady) {
+      cachedVoices = window.speechSynthesis.getVoices();
+      voicesReady = cachedVoices.length > 0;
+    }
+  }, 500);
+}
+if (typeof window !== 'undefined' && hasTts()) primeVoices();
+
+function pickVoice(targetLang: string): SpeechSynthesisVoice | undefined {
+  const voices = cachedVoices.length > 0 ? cachedVoices : (hasTts() ? window.speechSynthesis.getVoices() : []);
+  if (voices.length && !voicesReady) {
+    cachedVoices = voices;
+    voicesReady = true;
+  }
+  return (
+    voices.find((v) => v.lang === targetLang) ??
+    voices.find((v) => v.lang.replace('_', '-').toLowerCase() === targetLang.toLowerCase()) ??
+    voices.find((v) => v.lang.toLowerCase().startsWith(targetLang.slice(0, 2).toLowerCase())) ??
+    voices.find((v) => v.default) ??
+    voices[0]
+  );
 }
 
-export async function speak(text: string, opts: { rate?: number; lang?: string } = {}): Promise<void> {
-  if (!hasTts()) throw new Error('TTS_UNAVAILABLE');
-  const voices = await loadVoices();
+// speak SÍNCRONO: crea la utterance y llama speechSynthesis.speak() en el mismo tick del user gesture.
+// Esto es CRÍTICO en iOS Safari, que bloquea el TTS si se llama tras un await/setTimeout.
+// Devuelve una Promise que resuelve al terminar de hablar, pero speak() ya arrancó sync.
+export function speak(text: string, opts: { rate?: number; lang?: string } = {}): Promise<void> {
+  if (!hasTts()) return Promise.reject(new Error('TTS_UNAVAILABLE'));
   const targetLang = opts.lang ?? 'en-US';
-  const voice =
-    voices.find((v) => v.lang === targetLang) ??
-    voices.find((v) => v.lang.startsWith('en')) ??
-    voices[0];
-  return new Promise((resolve, reject) => {
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = opts.rate ?? 1;
-    u.lang = targetLang;
-    if (voice) u.voice = voice;
+  const synth = window.speechSynthesis;
+  // Algunas veces Chrome deja el synth 'pausado' tras cancel() previo. Resume por si acaso.
+  try {
+    if (synth.paused) synth.resume();
+  } catch {
+    // ignore
+  }
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = opts.rate ?? 1;
+  u.lang = targetLang;
+  const voice = pickVoice(targetLang);
+  if (voice) u.voice = voice;
+  const promise = new Promise<void>((resolve, reject) => {
     u.onend = () => resolve();
-    u.onerror = (e) => reject(new Error(`TTS_ERROR:${e.error}`));
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
+    u.onerror = (e) => {
+      // 'canceled' / 'interrupted' no son fallos reales — pasa cuando se llama cancel().
+      const err = (e as SpeechSynthesisErrorEvent).error;
+      if (err === 'canceled' || err === 'interrupted') return resolve();
+      // eslint-disable-next-line no-console
+      console.warn('[speak] TTS error:', err);
+      reject(new Error(`TTS_ERROR:${err}`));
+    };
   });
+  try {
+    synth.cancel();
+    synth.speak(u);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[speak] synth.speak threw:', err);
+    return Promise.reject(err as Error);
+  }
+  // Chrome bug: si el tab está inactivo un rato, speechSynthesis se congela tras ~15s.
+  // Workaround: pause/resume periódico. Solo activar mientras estamos speaking.
+  keepAliveWhileSpeaking();
+  return promise;
+}
+
+let keepAliveTimer: number | null = null;
+function keepAliveWhileSpeaking() {
+  if (!hasTts()) return;
+  if (keepAliveTimer !== null) return;
+  const synth = window.speechSynthesis;
+  keepAliveTimer = window.setInterval(() => {
+    if (!synth.speaking) {
+      if (keepAliveTimer !== null) {
+        window.clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
+      return;
+    }
+    // Truco conocido: pause+resume mantiene el thread vivo en Chrome/Edge.
+    try {
+      synth.pause();
+      synth.resume();
+    } catch {
+      // ignore
+    }
+  }, 10000);
 }
 
 export function stopSpeaking(): void {
   if (hasTts()) window.speechSynthesis.cancel();
+  if (keepAliveTimer !== null) {
+    window.clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+}
+
+// Diagnóstico útil para el usuario cuando el TTS no funciona.
+export function ttsStatus(): { supported: boolean; voicesLoaded: number; hint?: string } {
+  if (!hasTts()) return { supported: false, voicesLoaded: 0, hint: 'Tu navegador no soporta síntesis de voz.' };
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) {
+    return {
+      supported: true,
+      voicesLoaded: 0,
+      hint: 'Sistema aún cargando voces. Toca de nuevo en 1s.',
+    };
+  }
+  const en = voices.filter((v) => v.lang.toLowerCase().startsWith('en')).length;
+  if (en === 0) {
+    return {
+      supported: true,
+      voicesLoaded: voices.length,
+      hint: 'No hay voces en inglés instaladas. Se usará la voz por defecto.',
+    };
+  }
+  return { supported: true, voicesLoaded: voices.length };
 }
 
 // ─── SpeechRecognition ───
@@ -77,8 +179,30 @@ export interface RecordHandle {
   stop: () => void;
 }
 
+// Pide permiso de micrófono explícitamente. Devuelve true si granted, false si denegado.
+// Cierra el stream inmediatamente para no interferir con SpeechRecognition (que gestiona su propio mic interno).
+export async function ensureMicPermission(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices) return false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Cerrar inmediatamente — solo queríamos el permission prompt.
+    stream.getTracks().forEach((t) => t.stop());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isSecureContextForMic(): boolean {
+  if (typeof window === 'undefined') return false;
+  // getUserMedia y SpeechRecognition requieren secure context (HTTPS o localhost/127.0.0.1).
+  return window.isSecureContext ?? false;
+}
+
 export function recognizeOnce(opts: {
   lang?: string;
+  onStart?: () => void;
+  onSpeechStart?: () => void;
   onPartial?: (text: string) => void;
   onFinal: (text: string) => void;
   onError: (err: Error) => void;
@@ -86,6 +210,10 @@ export function recognizeOnce(opts: {
 }): RecordHandle {
   if (typeof window === 'undefined') {
     opts.onError(new Error('no-speech'));
+    return { stop: () => undefined };
+  }
+  if (!isSecureContextForMic()) {
+    opts.onError(new Error('insecure-context'));
     return { stop: () => undefined };
   }
   const w = window as unknown as {
@@ -101,12 +229,25 @@ export function recognizeOnce(opts: {
   r.lang = opts.lang ?? 'en-US';
   r.interimResults = true;
   r.continuous = false;
-  // Solicita más alternativas → toma la mejor y las muestra para debug si hace falta.
   r.maxAlternatives = 3;
 
   let stopped = false;
   let lastPartial = '';
   let sawFinal = false;
+
+  r.onstart = () => {
+    opts.onStart?.();
+  };
+
+  r.onaudiostart = () => {
+    // El micrófono empezó a capturar audio (permiso concedido y stream activo).
+    opts.onStart?.();
+  };
+
+  r.onspeechstart = () => {
+    // Se detectó habla — punto donde el usuario sabe que 'ya está grabando de verdad'.
+    opts.onSpeechStart?.();
+  };
 
   r.onresult = (e: SpeechRecognitionEventLike) => {
     let finalText = '';
@@ -130,13 +271,13 @@ export function recognizeOnce(opts: {
 
   r.onerror = (e: { error: string }) => {
     if (stopped) return;
+    // eslint-disable-next-line no-console
+    console.warn('[recognizeOnce] SR error:', e.error);
     opts.onError(new Error(e.error));
   };
 
   r.onend = () => {
-    // Safety net: si termina sin haber disparado result (silencio total), reporta como no-speech.
     if (!sawFinal && !stopped && lastPartial) {
-      // Al menos hubo texto interino: úsalo como resultado final.
       opts.onFinal(lastPartial.trim());
     }
     opts.onEnd?.();
@@ -145,6 +286,8 @@ export function recognizeOnce(opts: {
   try {
     r.start();
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[recognizeOnce] start threw:', err);
     opts.onError(err as Error);
   }
 
@@ -167,6 +310,9 @@ interface SpeechRecognitionInstance {
   maxAlternatives: number;
   start: () => void;
   stop: () => void;
+  onstart?: (() => void) | null;
+  onaudiostart?: (() => void) | null;
+  onspeechstart?: (() => void) | null;
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
   onend: (() => void) | null;

@@ -1,0 +1,423 @@
+{
+  "id": "devops-sim-25-policy-as-code-opa-kyverno",
+  "trackId": "devops",
+  "order": 25,
+  "title": "Simulacro 25 — Policy as Code con OPA y Kyverno",
+  "focus": "Policy as Code como disciplina: por qué escribir políticas en Rego/YAML en vez de wikis. OPA como motor general (K8s, Terraform, microservicios, CI/CD). Kyverno como alternativa K8s-nativa. Gatekeeper, mutation, bundle distribution, decision logs, testing y compliance auditables.",
+  "areaCoverage": ["security", "kubernetes"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "security",
+      "topic": "¿Qué es Policy as Code (PaC)?",
+      "difficulty": "junior",
+      "scenario": "Tu compliance officer mantiene en Confluence una wiki con 40 reglas: 'no usar :latest en producción', 'todos los pods deben tener resource limits', 'nunca hardcodear secretos'. Los devs las ignoran o las olvidan. En auditoría descubren 200+ violaciones y culpan al 'proceso'.",
+      "question": "¿Qué ES Policy as Code y por qué resuelve este problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Policy as Code es escribir las reglas de compliance/seguridad/gobernanza como CÓDIGO ejecutable (Rego, YAML, HCL) que un motor evalúa automáticamente contra recursos (K8s manifests, Terraform plans, API calls). Reemplaza wikis y checklists humanos por enforcement determinista, versionado en git, testeable con CI y auditable. La regla NO puede ser 'ignorada' porque el motor bloquea el request.", "correct": true, "why": "Correcto. PaC convierte políticas de intención (wiki) en enforcement (código). Wikis dependen de humanos disciplinados leyendo y aplicando; PaC bloquea el kubectl apply si viola la regla. Versionado en git = auditable (quién cambió qué regla y cuándo)." },
+        { "letter": "B", "text": "Policy as Code es escribir las políticas en Word y guardarlas en SharePoint.", "correct": false, "why": "Esa es la anti-tesis: policies as document. El punto de PaC es CÓDIGO EJECUTABLE que enforce automático, no documentos humanos." },
+        { "letter": "C", "text": "Policy as Code es hacer code reviews más estrictos.", "correct": false, "why": "Code reviews son manuales y no escalan. PaC automatiza el check para que la máquina lo haga en cada PR/apply, no un humano cansado a las 6PM." },
+        { "letter": "D", "text": "Policy as Code = usar OPA obligatoriamente.", "correct": false, "why": "OPA es UNA herramienta popular pero no la única. Kyverno, Sentinel (HashiCorp), Checkov, Conftest, tfsec, jsPolicy — todas implementan PaC. La disciplina es agnóstica de herramienta." }
+      ],
+      "explanation": "Policy as Code emergió ~2016 con el crecimiento de infraestructura declarativa (K8s manifests, Terraform HCL). Si tu infra es código, tus políticas también deberían serlo. Beneficios clave: (1) VERSIONADO — git blame te dice quién cambió la regla y por qué; (2) TESTABLE — puedes escribir tests unitarios para tus políticas antes de deployear; (3) DETERMINISTIC — el mismo input siempre da el mismo output; (4) AUDITABLE — decision logs muestran cada allow/deny con timestamp; (5) SHIFTED LEFT — el dev ve el error en su CI local, no en producción. Anti-patrón común: 'tenemos OPA' pero las políticas solo se aplican en producción — el dev descubre violaciones en el último momento.",
+      "realWorld": "Netflix construyó Titus (su orchestrator pre-K8s) con OPA integrado para admission policies. Chef InSpec (2015) fue pionero en compliance-as-code para servers. Styra (fundada por los creadores de OPA — Torin Sandall y Tim Hinrichs) comercializa OPA con DAS (Declarative Authorization Service). CNCF adoptó OPA como Graduated project en 2021, señal de madurez industrial.",
+      "tags": ["policy as code", "compliance", "governance", "shift left"],
+      "tech": ["OPA", "Kyverno", "Rego"],
+      "references": [{ "title": "CNCF — Open Policy Agent Graduated Project" }, { "title": "Styra — Policy as Code Explained" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "security",
+      "topic": "Arquitectura de OPA",
+      "difficulty": "junior",
+      "scenario": "Tu equipo quiere entender qué es OPA antes de adoptarlo. Alguien dice 'es una alternativa a Kubernetes RBAC', otro 'es un firewall', otro 'es un motor de reglas genérico'. Necesitas la definición precisa.",
+      "question": "¿Qué ES OPA arquitectónicamente y cómo se integra?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OPA (Open Policy Agent) es un motor de políticas GENERAL PURPOSE: recibe un input JSON (contexto de decisión) + un policy escrito en Rego, evalúa y responde allow/deny (o cualquier valor). Se ejecuta como sidecar, daemon o library. No sabe nada de K8s, AWS o HTTP — es agnóstico. La aplicación (Gatekeeper para K8s, Envoy para service mesh, Terraform Cloud, tu propio backend) llama a OPA con el contexto y OPA solo evalúa reglas.", "correct": true, "why": "Correcto. OPA es un DECISION ENGINE puro. La abstracción clave: 'separar policy DECISION de policy ENFORCEMENT'. Tu aplicación enforcea (bloquea el request), OPA decide (evalúa la regla). Esto permite reusar el mismo motor para K8s admission, HTTP authorization, Terraform plans, feature flags — cualquier decisión que sea 'input JSON → decision'." },
+        { "letter": "B", "text": "OPA es un plugin específico de Kubernetes RBAC.", "correct": false, "why": "OPA es agnóstico a K8s. Gatekeeper (basado en OPA) es lo que se integra a K8s admission, pero OPA solo se usa para K8s, Terraform, Envoy, CI/CD, backend authorization — cualquier decisión." },
+        { "letter": "C", "text": "OPA es una CLI para escanear vulnerabilidades.", "correct": false, "why": "Confusión con trivy/grype/checkov. OPA no escanea CVEs; evalúa políticas contra input JSON." },
+        { "letter": "D", "text": "OPA es un firewall de red.", "correct": false, "why": "Confusión con Cilium/Calico network policies. OPA es lógica de decisión, no packet filtering." }
+      ],
+      "explanation": "Arquitectura OPA: (1) tu APLICACIÓN (Gatekeeper, Envoy, tu API) tiene un query point donde necesita decidir algo (admit este pod? autorizar este HTTP request?); (2) construye un input JSON con el contexto (el pod, el user, el request); (3) llama a OPA (REST API en :8181/v1/data/... o vía SDK Go); (4) OPA evalúa los policies Rego cargados y devuelve una decisión JSON; (5) la aplicación enforce (allow/deny). OPA se puede ejecutar como sidecar (baja latencia, ~1ms), daemon centralizado (más simple pero network hop) o embed as library (Go/WASM). Modos de deployment: standalone binario, Docker container, K8s Deployment, sidecar via WASM en Envoy.",
+      "realWorld": "Netflix Titus integró OPA temprano (~2018) para authorization en su orchestrator. Chef InSpec migró conceptos a InSpec/Rego. Styra (empresa de los founders de OPA, Tim Hinrichs y Torin Sandall) comercializa control plane para OPA en escala enterprise. Cloudflare usa OPA en sus edges. La CNCF graduation en 2021 llegó tras adopción de Netflix, Pinterest, Chef, TripAdvisor, Goldman Sachs.",
+      "tags": ["OPA", "arquitectura", "decision engine", "Rego"],
+      "tech": ["OPA", "Gatekeeper"],
+      "references": [{ "title": "OPA Docs — Introduction" }, { "title": "CNCF — OPA Adoption Case Studies" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "security",
+      "topic": "Rego language basics",
+      "difficulty": "mid",
+      "scenario": "Necesitas escribir tu primer policy en Rego. Ves ejemplos con `package`, `default allow = false`, `allow { ... }`, `deny[msg] { ... }`. Vienes de Python/JS y todo parece revés. Un compañero dice 'Rego es declarativo, no imperativo'.",
+      "question": "¿Qué características fundamentales tiene Rego?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Rego es DECLARATIVO basado en Datalog: describes QUÉ hace verdadera una regla, no CÓMO calcularla paso a paso. `allow { input.user.role == \"admin\" }` significa 'allow es true SI existe una evaluación donde input.user.role sea admin'. No hay if/else imperativo — hay reglas que se cumplen o no.", "correct": true, "why": "Correcto. Rego viene de Datalog (subset de Prolog) — lenguaje de queries lógicas. Piensa en SQL: describes 'quiero filas donde X', no un loop. Esto hace las políticas COMPOSABLES: múltiples reglas allow se ORean automáticamente." },
+        { "letter": "B", "text": "Las reglas son 'partial': múltiples reglas con el mismo nombre se COMBINAN. `deny[msg] { ... }` con varias definiciones acumula todos los msgs en un set. `allow { A } allow { B }` = allow es true si A O B es true.", "correct": true, "why": "Correcto. Este es el concepto de 'incremental definition' de Rego. Puedes tener 50 reglas `deny[msg]` en tu policy y OPA las evalúa todas, devolviendo el set de todos los deny reasons que aplicaron. Ideal para reportar 'todas las razones por las que este manifest falla', no solo la primera." },
+        { "letter": "C", "text": "`input` es la entrada JSON del caller (el pod que Gatekeeper evalúa, el HTTP request, el Terraform plan). `data` son datos externos cargados (whitelists, catálogos, LDAP dumps). Puedes joinear ambos: `input.image` contra `data.approved_images`.", "correct": true, "why": "Correcto. Distinción crítica: input = contexto de esta decisión; data = conocimiento del sistema. `data` se puede cargar desde bundles (JSON/YAML files distribuidos periódicamente) o pushed via API. Ejemplo típico: `data.trusted_registries = [\"myco.com\", \"gcr.io/myco\"]`." },
+        { "letter": "D", "text": "`default allow = false` establece el valor cuando NINGUNA regla `allow` se cumple. Sin default, si ninguna regla matchea, `allow` es `undefined` (no false). Este pattern implementa 'deny by default' explícito.", "correct": true, "why": "Correcto. Sin `default`, evaluar `allow` cuando ninguna regla aplica devuelve `undefined`, no `false`. Muchos bugs de seguridad surgen de tratar undefined como falsy — mejor ser explícito con `default allow = false`." },
+        { "letter": "E", "text": "Rego es un DSL de JavaScript con async/await.", "correct": false, "why": "No. Rego no es JS, no tiene async, no tiene mutable state. Es Datalog-based declarativo. Todas las evaluaciones son puras y deterministas." }
+      ],
+      "explanation": "Rego es único: variables se BINDING una vez (como Prolog, no reasignación), evaluación es SET-BASED (una regla puede ser true para múltiples bindings simultáneos), y todo es puro (no side effects, no I/O durante evaluación). Sintaxis clave: `package foo.bar` (namespace), `import future.keywords` (para `if`, `in`, `contains` modernos), `some x in arr` (iteración), `[x | condition]` (list comprehension). Curva de aprendizaje empinada al inicio — la clave es pensar 'set of true bindings' no 'step by step'. Herramientas: OPA CLI (`opa eval`, `opa test`, `opa fmt`), Rego Playground (play.openpolicyagent.org), VSCode extension.",
+      "realWorld": "Styra construyó DAS (Declarative Authorization Service) como control plane comercial para gestionar Rego a escala en empresas grandes (Goldman Sachs, Capital One). El equipo de OPA publicó 'Rego style guide' con patterns idiomatic. Netflix, Pinterest y TripAdvisor han publicado talks sobre managing Rego en producción.",
+      "tags": ["Rego", "Datalog", "declarativo", "sintaxis"],
+      "tech": ["OPA", "Rego"],
+      "references": [{ "title": "OPA Docs — Policy Language" }, { "title": "Styra — Rego Style Guide" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "kubernetes",
+      "topic": "Gatekeeper para admission control",
+      "difficulty": "mid",
+      "scenario": "Tu cluster K8s recibe kubectl apply de 30 devs. Quieres enforcer políticas: 'no images con :latest', 'todo pod tiene resource limits', 'namespaces prod requieren label owner'. El API server debe RECHAZAR los manifests que violen.",
+      "question": "¿Qué es Gatekeeper y cómo funciona con K8s admission?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Gatekeeper es un ValidatingAdmissionWebhook (opcionalmente Mutating también) que integra OPA con K8s. Cuando llega un kubectl apply, el API server llama al webhook de Gatekeeper con el objeto propuesto. Gatekeeper convierte esto en input JSON, lo pasa a OPA con las policies (definidas como CRDs: ConstraintTemplate + Constraint) y responde admit/reject. Los devs ven el error en su terminal al aplicar. Está mantenido por CNCF/Microsoft/Google.", "correct": true, "why": "Correcto. Gatekeeper puentea OPA con K8s admission via el patrón estándar de admission webhooks. Uso de CRDs (ConstraintTemplate define el schema + Rego; Constraint es una instancia con parámetros) permite que las políticas sean K8s-native (kubectl get constraints). Distribuido como Helm chart y disponible en GKE, AKS, EKS como addon opcional." },
+        { "letter": "B", "text": "Gatekeeper es un CNI plugin.", "correct": false, "why": "CNI es networking (Calico, Cilium). Gatekeeper es admission control." },
+        { "letter": "C", "text": "Gatekeeper es un scanner de vulnerabilidades.", "correct": false, "why": "Confusión con trivy/kubesec. Gatekeeper enforce políticas, no escanea CVEs." },
+        { "letter": "D", "text": "Gatekeeper reemplaza el kube-scheduler.", "correct": false, "why": "El scheduler decide DÓNDE corren pods; Gatekeeper decide SI se admiten al cluster. Distintos." }
+      ],
+      "explanation": "Flujo Gatekeeper: (1) admin instala Gatekeeper (Deployment + webhook config); (2) define ConstraintTemplate (CRD que contiene Rego + schema de parámetros); (3) crea Constraint (instancia del template con params, e.g., `allowedRepos: [\"gcr.io/myco\"]`); (4) dev hace `kubectl apply -f pod.yaml`; (5) API server llama Gatekeeper webhook; (6) Gatekeeper evalúa policies; (7) responde admit/reject con motivo. Modos: enforcement (deny), dryrun (log only), warn (permite pero avisa). Audit: Gatekeeper también audita recursos EXISTENTES periódicamente para detectar violaciones que se colaron antes de instalar la policy.",
+      "realWorld": "Microsoft Azure lo integra en AKS como 'Azure Policy for AKS' (usa Gatekeeper bajo el capó). Google Anthos Config Management usa Gatekeeper. Gatekeeper Library (github.com/open-policy-agent/gatekeeper-library) publica templates listos: allowed-repos, block-nodeport, container-limits, required-labels — con Rego probado que puedes reusar en vez de escribir desde cero.",
+      "tags": ["Gatekeeper", "admission webhook", "CRD", "ConstraintTemplate"],
+      "tech": ["OPA", "Gatekeeper", "Kubernetes"],
+      "references": [{ "title": "Gatekeeper Docs — How Does Gatekeeper Work" }, { "title": "Gatekeeper Library — Reusable Templates" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "kubernetes",
+      "topic": "Kyverno vs OPA/Gatekeeper",
+      "difficulty": "senior",
+      "scenario": "Debes elegir entre Kyverno y Gatekeeper para tu cluster K8s. Un compañero dice 'Kyverno es más simple porque es YAML puro', otro dice 'OPA es más poderoso porque es Rego'. Necesitas la decisión informada.",
+      "question": "¿Cuáles son las diferencias reales entre Kyverno y OPA/Gatekeeper?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Kyverno es K8s-NATIVO: políticas en YAML que se sienten como K8s resources normales (kind: ClusterPolicy). No requiere aprender un lenguaje nuevo. Ideal para equipos K8s-only. Trade-off: menos expresivo para lógica compleja fuera de patterns predefinidos.", "correct": true, "why": "Correcto. Kyverno usa 'declarative YAML' con overlays estilo Kustomize. Un dev que ya sabe K8s puede escribir políticas de inmediato. Cero curva Rego. Trade-off real: para lógica muy compleja (data joins, multi-source rules) Rego es más expresivo." },
+        { "letter": "B", "text": "OPA/Gatekeeper usa Rego, lenguaje GENERAL PURPOSE: la misma policy engine sirve para K8s, Terraform, microservicios, CI/CD. Trade-off: curva de aprendizaje empinada de Rego. Ideal si necesitas policies unificadas cross-domain.", "correct": true, "why": "Correcto. La 'universalidad' de OPA es su ventaja estratégica: una empresa con K8s + Terraform + APIs internas puede tener un solo modelo mental (Rego) para todas las políticas. Kyverno solo hace K8s." },
+        { "letter": "C", "text": "Kyverno soporta MUTATION nativa (modifica manifests: añade labels, sidecar containers, imagePullSecrets) además de validation. Gatekeeper solo validation por default; Gatekeeper Mutation es más nuevo y menos maduro que Kyverno mutation.", "correct": true, "why": "Correcto. Kyverno mutation es first-class desde el inicio y muy usada (auto-inject sidecars, defaults). Gatekeeper añadió mutation después y es más limitada. Si tu use case incluye mucha mutación (defaults, patches), Kyverno gana." },
+        { "letter": "D", "text": "Kyverno soporta 'generate': crear recursos derivados automáticamente. Ej: cuando se crea un Namespace, generar NetworkPolicy default + ResourceQuota + LimitRange. OPA/Gatekeeper NO tiene esta capacidad nativa.", "correct": true, "why": "Correcto. La feature 'generate' de Kyverno es única y muy útil para provisionar infraestructura por namespace. Con OPA necesitarías un operator custom o Crossplane." },
+        { "letter": "E", "text": "OPA y Kyverno son idénticos; solo cambia el logo.", "correct": false, "why": "Diferencias fundamentales: lenguaje (Rego vs YAML), scope (multi-domain vs K8s-only), capabilities (mutation/generate en Kyverno)." }
+      ],
+      "explanation": "Regla práctica: (1) si solo usas K8s y tu equipo NO tiene apetito por Rego → Kyverno; (2) si necesitas policies cross-domain (K8s + Terraform + microservicios) → OPA (una skill, muchos targets); (3) si necesitas mutation/generate pesado → Kyverno; (4) si necesitas lógica muy compleja con joins de data externos → OPA (Rego); (5) muchas empresas usan AMBOS: Kyverno para K8s admission simple + OPA para Terraform y microservicios. Nirmata (empresa detrás de Kyverno) fue fundada por Jim Bugwadia; se donó a CNCF en 2020 y llegó a Incubating en 2022, Graduated en 2024.",
+      "realWorld": "Kyverno tiene tracción fuerte en el ecosistema K8s por su simplicidad — usado por VMware, Nirmata, GitLab. OPA tiene tracción en empresas grandes cross-domain — Netflix, Pinterest, Goldman Sachs, Capital One. La FinOps Foundation y muchos playbooks de compliance recomiendan uno o ambos. Google publicó comparativa técnica en su blog Anthos.",
+      "tags": ["Kyverno", "OPA", "comparación", "mutation", "generate"],
+      "tech": ["Kyverno", "OPA", "Gatekeeper"],
+      "references": [{ "title": "Kyverno Docs — Compared to OPA/Gatekeeper" }, { "title": "CNCF — Kyverno Graduation Blog" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "security",
+      "topic": "Ejemplo Rego — block :latest tag",
+      "difficulty": "mid",
+      "scenario": "Quieres escribir una policy que rechace pods con images terminando en `:latest`. Debes decidir entre múltiples patterns Rego.",
+      "question": "¿Qué pattern Rego es correcto y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "```\npackage kubernetes.admission\n\nimport future.keywords\n\ndeny[msg] {\n  input.request.kind.kind == \"Pod\"\n  some container in input.request.object.spec.containers\n  endswith(container.image, \":latest\")\n  msg := sprintf(\"container %v uses :latest tag\", [container.name])\n}\n``` — package correcto, itera con `some in`, chequea sufijo, devuelve msg descriptivo.", "correct": true, "why": "Correcto. Uso idiomatic de Rego moderno: `import future.keywords` para sintaxis nueva, `some x in arr` para iteración, `endswith` para el check, `sprintf` para msg útil. La regla es 'partial' (`deny[msg]`) — si hay múltiples containers con :latest, cada uno genera un msg y todos se acumulan en el set." },
+        { "letter": "B", "text": "```\nif (pod.image.endsWith(':latest')) { throw new Error() }\n```", "correct": false, "why": "Eso es JavaScript, no Rego. Rego no tiene if/throw imperativos ni sintaxis de puntos JS." },
+        { "letter": "C", "text": "```\ndeny = true where image LIKE '%:latest'\n```", "correct": false, "why": "SQL-ish syntax, no es Rego válido. `where` y `LIKE` no existen en Rego." },
+        { "letter": "D", "text": "```\ndeny { image ~ /latest/ }\n```", "correct": false, "why": "No es sintaxis Rego. Rego usa `regex.match(pattern, string)` para regex, no `~ /pattern/`." }
+      ],
+      "explanation": "Patterns Rego comunes: (1) `deny[msg]` como partial rule para acumular violaciones; (2) `default deny = []` para asegurar vacío cuando nada aplica; (3) usar `input.request.object` en Gatekeeper (accede al recurso propuesto) o `input.review.object` en versiones OPA-K8s legacy; (4) helpers: `startswith`, `endswith`, `contains`, `regex.match`, `count`, `sprintf`. Testing: `opa test policies/` corre tests unitarios (archivos `_test.rego` con reglas `test_...`). Buena práctica: cada regla `deny` retorna un msg útil ('container nginx uses :latest tag') no genérico ('violation') — el dev debe entender qué arreglar.",
+      "realWorld": "Gatekeeper Library publica templates production-ready para este exact use case: k8sallowedrepos, k8sblocknodeport, k8sdisallowedtags. Netflix comparte parte de sus policies internas via conference talks. El Rego Playground (play.openpolicyagent.org) es standard para iterate.",
+      "tags": ["Rego", "ejemplo", "deny", "syntax"],
+      "tech": ["OPA", "Rego"],
+      "references": [{ "title": "OPA Playground — Rego by Example" }, { "title": "Gatekeeper Library — Disallowed Tags" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "security",
+      "topic": "Ejemplo Kyverno YAML — mismo caso",
+      "difficulty": "mid",
+      "scenario": "Ahora escribes el equivalente en Kyverno para el mismo use case (block :latest). Comparas la sintaxis y complexity.",
+      "question": "¿Qué YAML Kyverno es correcto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "```yaml\napiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata: {name: disallow-latest}\nspec:\n  validationFailureAction: Enforce\n  rules:\n  - name: check-image-tag\n    match:\n      any:\n      - resources: {kinds: [Pod]}\n    validate:\n      message: 'image :latest not allowed'\n      pattern:\n        spec:\n          containers:\n          - image: '!*:latest'\n``` — usa pattern matching con `!*:latest` (negación de sufijo).", "correct": true, "why": "Correcto. Kyverno usa pattern matching estilo overlay: `!*:latest` = 'NOT any image ending in :latest'. Sintaxis declarativa, sin lenguaje custom. Un dev K8s la entiende de inmediato leyendo YAML. Compárese con Rego que requiere aprender el lenguaje." },
+        { "letter": "B", "text": "```yaml\napiVersion: v1\nkind: Pod\nspec: { policy: block-latest }\n```", "correct": false, "why": "Eso es un Pod, no una ClusterPolicy. Kyverno tiene sus propios kinds: ClusterPolicy, Policy." },
+        { "letter": "C", "text": "```yaml\nkind: NetworkPolicy\nspec: { block: 'latest' }\n```", "correct": false, "why": "NetworkPolicy es para networking (ingress/egress). No relacionado con image tags." },
+        { "letter": "D", "text": "```yaml\nrego: |\n  deny { endswith(image, ':latest') }\n```", "correct": false, "why": "Kyverno NO usa Rego. Todo su vocabulario es YAML puro (pattern, mutate, generate). Ese es OPA-style." }
+      ],
+      "explanation": "Kyverno primitives: (1) `validate` — rechaza si no cumple pattern (equivalente a validation); (2) `mutate` — modifica el recurso (añade labels, sidecar, defaults); (3) `generate` — crea nuevos recursos derivados; (4) `verifyImages` — verifica signatures Cosign/Notary; (5) `verifyManifests` — verifica firmas de manifests. `validationFailureAction: Enforce` bloquea; `Audit` solo loguea. `pattern` acepta overlays con operators `!` (not), `*` (wildcard), `?` (any char), `>`/`<` para comparaciones. Para lógica más compleja Kyverno tiene `deny` con `conditions` (equivalente a AND/OR/all/any) y `foreach` para iterar.",
+      "realWorld": "Kyverno Policies repo (github.com/kyverno/policies) publica 200+ policies production-ready categorizadas por PSS (Pod Security Standards baseline/restricted), best practices, multi-tenancy, verify-images. Nirmata lo mantiene comercialmente. Adoption por VMware Tanzu, GitLab (parte de su hardening K8s), StackRox/Red Hat ACS como alternativa a Gatekeeper.",
+      "tags": ["Kyverno", "ClusterPolicy", "YAML", "pattern"],
+      "tech": ["Kyverno"],
+      "references": [{ "title": "Kyverno Docs — Policy Syntax" }, { "title": "Kyverno Policies GitHub Repository" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "security",
+      "topic": "Mutating vs Validating policies",
+      "difficulty": "senior",
+      "scenario": "Un dev submite un manifest sin resource limits, sin securityContext, sin label owner. Tienes dos opciones: (a) rechazar el manifest y forzar al dev a arreglarlo; (b) modificar el manifest automáticamente añadiendo defaults sensatos.",
+      "question": "¿Cuándo usar mutation vs validation y qué riesgos tiene mutation?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "VALIDATION es correcta cuando la ausencia de X debe ser un ERROR consciente: 'no permito images con :latest', 'namespaces prod requieren label owner explícito'. El dev debe arreglarlo, no la política ocultar el problema. Enseña la regla.", "correct": true, "why": "Correcto. Validation forza aprendizaje. Si mutas automáticamente, el dev nunca aprende la regla y submitirá lo mismo mañana. Para regulatory compliance, validation también da audit trail claro ('el dev submitió con violación')." },
+        { "letter": "B", "text": "MUTATION es correcta para DEFAULTS sensatos que no cambian la intención del dev: añadir label environment=prod si namespace es prod, inyectar sidecar de service mesh (Istio, Linkerd), añadir imagePullSecrets desde config central, resource limits razonables cuando no se especifican.", "correct": true, "why": "Correcto. Mutation reduce boilerplate y estandariza. Ejemplo clásico: Istio automatic sidecar injection es mutation. Añadir topology spread constraints, node selectors — todo mutation apropiada." },
+        { "letter": "C", "text": "Riesgo de mutation: el manifest en git ya NO refleja lo que corre en cluster. Debugging se complica ('¿por qué mi pod tiene este sidecar? Yo no lo puse'). GitOps drift: Argo CD/Flux ven un manifest, cluster tiene otro (con mutations aplicadas) — pueden entrar en loop de sync.", "correct": true, "why": "Correcto. El problema del 'drift' es serio con mutation. Argo CD tiene `IgnoreDifferences` para skipear campos mutados, pero es fricción. Alternativa: usar `defaults` en Helm charts / Kustomize base en vez de mutation admission — el default queda en git." },
+        { "letter": "D", "text": "Mutation puede INTRODUCIR bugs subtly: mutas antes de validar (mutation webhooks corren antes de validating webhooks). Si un mutation añade un field que otra policy rechaza, el dev ve error confuso ('yo no puse eso'). Order matters.", "correct": true, "why": "Correcto. Admission control order: mutation webhooks primero, luego validating. Múltiples mutating webhooks corren en orden alfabético (aproximadamente). Un mutation que añade sidecar puede exceder resource quota luego validado. Debug tedioso." },
+        { "letter": "E", "text": "Mutation siempre es superior a validation.", "correct": false, "why": "Falso. Cada uno tiene su lugar. Muchos casos requieren validation estricta (compliance, PCI, security controls). Mutation excesiva causa 'magic policy' que confunde a devs." }
+      ],
+      "explanation": "Regla práctica: (1) para reglas de compliance/security no negociables → validation (falla ruidosa, obliga a corregir); (2) para defaults administrativos sin fricción → mutation (transparent para dev); (3) para sidecars/injection de infra transversal (mesh, observability agents) → mutation (dev no debería tener que saber); (4) siempre documenta qué muta y por qué. Kyverno permite mutation con overlays declarativos; Gatekeeper añadió mutation en v3.5+ pero con menos sugar syntactic. jsPolicy (Loft Labs) es alternativa que usa JavaScript en vez de Rego. La decisión mutación/validación afecta también el testing: mutas → debes testar que el output es correcto; validas → debes testar que allow/deny es correcto.",
+      "realWorld": "Istio usa mutating webhook para sidecar injection (auto-adds envoy proxy). Linkerd similar. AWS EKS Pod Identity mutation. Los mutating webhooks son la razón por la cual `kubectl apply -f` puede resultar en un objeto diferente al que enviaste — común source de confusión para juniors.",
+      "tags": ["mutation", "validation", "webhook", "sidecar", "drift"],
+      "tech": ["Gatekeeper", "Kyverno", "OPA"],
+      "references": [{ "title": "K8s Docs — Admission Controllers" }, { "title": "Istio — Automatic Sidecar Injection" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "security",
+      "topic": "Testing policies (opa test / kyverno test)",
+      "difficulty": "mid",
+      "scenario": "Escribes una policy que rechaza pods sin `runAsNonRoot: true`. Antes de deployearla al cluster de producción, debes tener confianza de que: (a) rechaza los casos malos; (b) NO rechaza los casos buenos; (c) no rompe workloads existentes que no aplicarían la nueva regla.",
+      "question": "¿Cómo testeas policies correctamente antes de producción?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "UNIT TESTS con `opa test` (Rego) o `kyverno test` (YAML): defines inputs de ejemplo (un pod bueno, uno malo, edge cases: sin securityContext, con securityContext vacío, etc) y assertions esperadas (allow o deny). Se ejecutan en CI en cada PR de policy.", "correct": true, "why": "Correcto. Testing unitario de políticas es tan importante como el de código. Un policy bug rechaza deploys legítimos = outage. `opa test` corre archivos `_test.rego`; Kyverno tiene `kyverno test` que evalúa policies contra manifests de fixture." },
+        { "letter": "B", "text": "DRY-RUN / AUDIT MODE: deployeas la policy en `enforcement: dryrun` (Gatekeeper) o `validationFailureAction: Audit` (Kyverno). No bloquea, solo LOGUEA violaciones. Corres 1-2 semanas y revisas los logs para ver qué se rompería antes de activar enforce.", "correct": true, "why": "Correcto. Best practice absoluta para policies en clusters con workloads existentes. Nunca deployes una policy nueva directamente en Enforce en prod sin dry-run — puedes bloquear el traffic legítimo si tu regla es demasiado agresiva o tenías legacy workloads que la violaban." },
+        { "letter": "C", "text": "CI PIPELINE: cada PR de policy corre (a) opa fmt (linter); (b) opa test (unit tests); (c) conftest o gatekeeper CLI contra un corpus de manifests reales del repo. Solo mergeando si todos pasan.", "correct": true, "why": "Correcto. Shift-left en policies: encuentras problemas antes de deployear. Herramientas como conftest (parte del proyecto OPA) permiten evaluar manifests locales con policies Rego en el CI. Esto atrapa problemas antes de que Gatekeeper los enforce en cluster." },
+        { "letter": "D", "text": "PROGRESSIVE ROLLOUT: aplica la policy a un namespace (dev) primero, valida, luego a staging, luego prod. Usa Constraint.spec.match.namespaces o Kyverno match para limitar scope inicial.", "correct": true, "why": "Correcto. No apliques policy new cluster-wide de golpe. Namespace por namespace o environment por environment permite detectar problemas con blast radius pequeño." },
+        { "letter": "E", "text": "Deployar directo a producción sin testing porque 'YAML no puede tener bugs'.", "correct": false, "why": "Ridículo. Policies son código; código tiene bugs. Un YAML mal formado puede bloquear deploys críticos (incident real en varias empresas)." }
+      ],
+      "explanation": "Anti-pattern histórico: 'aplicamos la policy y bloqueó al equipo de auth de deployar' — outage cliente-visible causado por policy incorrecta. Testing multi-nivel: (1) UNIT (Rego test) — probar la lógica pura; (2) INTEGRATION (contra manifests reales) — probar policy contra corpus del repo; (3) STAGING (dryrun) — observar violaciones sin bloquear; (4) PROD (enforce) — con rollback plan si algo sale mal. Herramientas: opa test, conftest, kyverno CLI (`kyverno apply/test`), gator (Gatekeeper CLI testing), OPA Playground para iteración rápida. Policies deben tener versionamiento semver: cambios breaking (nuevas reglas más estrictas) deben incrementar mayor.",
+      "realWorld": "Netflix publicó su approach de 'policy CI': cada policy tiene tests, se corren en Jenkins, deploy a Titus solo si pasa. Chef InSpec introduced compliance-as-code testing patterns antes de que OPA existiera. Styra DAS incluye policy simulator y impact analysis (te dice qué recursos actuales violarían tu nueva policy antes de aplicarla).",
+      "tags": ["testing", "dryrun", "audit mode", "CI", "conftest"],
+      "tech": ["OPA", "Kyverno", "Conftest"],
+      "references": [{ "title": "OPA Docs — Policy Testing" }, { "title": "Kyverno CLI — Test Command" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "security",
+      "topic": "Bundle distribution",
+      "difficulty": "senior",
+      "scenario": "Tienes 50 clusters K8s en 3 regiones + 20 microservicios que usan OPA para authorization + Terraform Cloud runs. Necesitas distribuir 200 policies actualizadas a todos ellos, con versioning y rollback.",
+      "question": "¿Qué es OPA bundle y cómo resuelve la distribución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OPA Bundle es un TAR.GZ con policies (.rego) + data (.json/.yaml) + manifest, servido desde un HTTP endpoint (S3, GCS, Nginx, Bundle Server especializado). Los OPA agents descargan el bundle periódicamente (default 60s), verifican firma opcional, y activan las policies atómicamente. Si el bundle nuevo falla parse, mantienen el anterior — no downtime. Versioning con `manifest.revision` (git SHA típicamente).", "correct": true, "why": "Correcto. Bundle API es la forma STANDARD de distribuir policies a fleet de OPA agents. Ventajas: (1) pull-based (no necesitas conectividad al control plane desde el agent); (2) firma HMAC opcional para autenticidad; (3) rollback trivial (publicas bundle anterior); (4) fetch incremental con etags; (5) status API reporta qué versión tiene cada agent." },
+        { "letter": "B", "text": "Cada dev copia y pegas policies en cada cluster manualmente.", "correct": false, "why": "No escala. Con 50 clusters seis meses después nadie sabe qué versión corre dónde. Anti-pattern." },
+        { "letter": "C", "text": "Bundle es un binary distribuido via apt-get.", "correct": false, "why": "Bundle es un tar.gz HTTP endpoint, no un package OS." },
+        { "letter": "D", "text": "Bundle son solo los binarios de OPA.", "correct": false, "why": "Bundle contiene POLICIES y DATA, no el binario OPA. El binario se distribuye separado (container image, download)." }
+      ],
+      "explanation": "Bundle structure: `/policy/authz.rego`, `/data/roles.json`, `/manifest.json` (con revision, roots). Servido por: (a) simple S3 + CloudFront (public bundle); (b) OPA Bundle Server como Nginx custom; (c) Styra DAS (comercial); (d) Anthos Config Sync. Configuración OPA: `services.acme.url = https://bundles.acme.com`; `bundles.authz.service = acme, resource = /bundles/authz.tar.gz, polling.min_delay_seconds = 60`. Firma con HMAC (`signing.key = my-hmac`) o con JWT (para provenance). Status API (`/v1/status`) reporta a un control plane qué bundle está activo — para observability en fleet grande.",
+      "realWorld": "Styra DAS es el control plane comercial de OPA (fundadores de OPA: Tim Hinrichs, Torin Sandall). Netflix construyó su propio bundle distribution interno pre-Styra. Empresas grandes suelen usar S3+CloudFront + Terraform para gestionar bundles con versionamiento git-driven. La adopción CNCF de OPA como Graduated fue en parte por la madurez del bundle model.",
+      "tags": ["bundle", "distribución", "S3", "versioning", "fleet"],
+      "tech": ["OPA", "Styra DAS"],
+      "references": [{ "title": "OPA Docs — Bundle API" }, { "title": "Styra DAS — Enterprise OPA Management" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "security",
+      "topic": "Decision logs",
+      "difficulty": "senior",
+      "scenario": "Auditoría te pregunta: '¿quién autorizó a este service account a leer los buckets S3 el 15 de octubre?' Tienes OPA como authz para tus microservicios. Debes poder responder.",
+      "question": "¿Qué son los decision logs y cómo se usan?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Decision logs son un registro estructurado (JSON) de CADA decisión que OPA emite: timestamp, input (contexto: user, resource, action), policy path, result (allow/deny), decision_id (UUID único), bundle revision. Son la fuente de verdad para compliance/audit forense.", "correct": true, "why": "Correcto. Sin decision logs no hay auditoría. Cada allow/deny queda registrado con qué policy version, qué input, qué decisión. Compliance frameworks (SOC2, PCI, HIPAA) requieren estos logs como evidence de que el enforcement funciona." },
+        { "letter": "B", "text": "Se pueden enviar a un HTTP endpoint (SIEM: Splunk, Datadog, Elastic), a un console log, o via plugin custom. Configuración: `decision_logs.service = splunk, reporting.min_delay_seconds = 5`. Con batching y retry.", "correct": true, "why": "Correcto. OPA soporta múltiples backends. En producción típico: batch cada 5-30s a un SIEM. Con backpressure y persistent buffer para no perder eventos si el SIEM está caído." },
+        { "letter": "C", "text": "Support para MASKING de fields sensibles antes del logging (passwords, tokens, PII). Configuración vía policy Rego que define qué paths mascar. Necesario para GDPR/PCI compliance.", "correct": true, "why": "Correcto. Un decision log puede contener PII (email de user, contenidos de request). OPA permite escribir policy Rego para redactar campos (`mask` package) antes de emitir el log. Esto es crítico para compliance." },
+        { "letter": "D", "text": "Use case: análisis de política. Los decision logs permiten responder 'esta policy nunca deniega — ¿es porque no aplica o porque la escribí mal?' o 'qué % de requests son denied por policy X'. Alimenta dashboards de posture.", "correct": true, "why": "Correcto. Decision logs son telemetría para EVOLVE políticas, no solo audit. Ver que una regla `deny` nunca dispara es red flag (o está mal escrita o el use case no ocurre)." },
+        { "letter": "E", "text": "Decision logs son opcionales y no importan en producción.", "correct": false, "why": "Sin decision logs no hay auditoría. Es requisito de SOC2, PCI-DSS y otras normas. Empresas maduras lo tienen ON siempre." }
+      ],
+      "explanation": "Formato de decision log JSON incluye: `decision_id`, `timestamp`, `path` (qué policy), `input` (contexto entero), `result` (decisión), `bundles.revision` (qué versión policy), `metrics`. Storage: SIEM es común (Splunk, Datadog, Elastic), pero también S3 para retención long-term barata. Retención: SOC2 típicamente 1 año hot + 7 años cold. Costo: fleet grande con millones de decisiones/día = TB de logs — sampling es opción (solo loggear denies o sample de allows). Alternativa: aggregated metrics (allow_count/deny_count por policy) para dashboards + full logs solo para denies + samples.",
+      "realWorld": "Styra DAS incluye decision log analytics out-of-the-box con dashboards de compliance posture. Netflix logea decisions a su platform de telemetría (Atlas). Financial institutions (Capital One, Goldman) usan decision logs como evidence en audits regulatorios — sin ellos, el enforcement no cuenta como control. Splunk publicó guides específicos para OPA logs.",
+      "tags": ["decision logs", "audit", "compliance", "SIEM"],
+      "tech": ["OPA", "Splunk"],
+      "references": [{ "title": "OPA Docs — Decision Logs" }, { "title": "Styra — Decision Logs for Audit" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "security",
+      "topic": "OPA en Terraform (pre-plan / pre-apply)",
+      "difficulty": "senior",
+      "scenario": "Tu equipo de infra usa Terraform. Un dev añade un S3 bucket sin encryption y sin public block. Quieres BLOQUEAR el `terraform apply` antes de que se cree el recurso, no en compliance scan post-facto.",
+      "question": "¿Cómo integrar OPA con Terraform para gate pre-apply?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "`terraform plan -out=tfplan; terraform show -json tfplan | opa eval -d policies/ -i - 'data.terraform.deny'`. El plan JSON contiene RESOURCE CHANGES propuestos. OPA evalúa policies contra ellos. Si `deny` no es vacío, el CI job falla antes del apply.", "correct": true, "why": "Correcto. El plan JSON es el input canónico para PaC en Terraform. Contiene diff completo de qué se creará/modificará/borrará con todos los atributos. OPA/Conftest evalúa reglas: `deny[msg] { rc := input.resource_changes[_]; rc.type == \"aws_s3_bucket\"; rc.change.after.server_side_encryption_configuration == null }`." },
+        { "letter": "B", "text": "Conftest (parte proyecto OPA) es un wrapper CLI que simplifica: `conftest test tfplan.json --policy policies/`. Formatea output para humanos y CI. Ampliamente usado en pipelines GitHub Actions.", "correct": true, "why": "Correcto. Conftest es la herramienta idiomatic para PaC en CI. Soporta Terraform, K8s YAML, Dockerfile, Rego. Salida en formato tabla o JUnit para integrar con GitLab/GitHub CI." },
+        { "letter": "C", "text": "HashiCorp Terraform Cloud/Enterprise tiene 'Sentinel' (Rego-like propietario) integrado nativamente para policy check entre plan y apply. Alternativa: usa 'OPA integration' de TFC (más nuevo) que corre policies OPA en el mismo hook.", "correct": true, "why": "Correcto. Sentinel fue la solución original de HashiCorp; TFC ahora también soporta OPA nativamente. Modelo: soft-mandatory (warn con override), hard-mandatory (block absoluto), advisory (log only). En TFC OSS puedes hacer lo mismo con checkov/opa en CI." },
+        { "letter": "D", "text": "Herramientas relacionadas: Checkov (Bridgecrew/Palo Alto) hace static analysis de Terraform con policies built-in (CIS benchmarks) + custom en Rego/Python. tfsec (Aqua) similar. Trivy también scan Terraform. Todos son 'policy as code' aplicado.", "correct": true, "why": "Correcto. Ecosistema PaC para Terraform es rico: Checkov, tfsec, Trivy, Terrascan, Regula. Muchos usan OPA/Rego debajo o formatos propios. Best practice: correr múltiples (defense in depth) — Checkov para CIS pattern known + OPA para reglas custom empresa." },
+        { "letter": "E", "text": "Terraform no puede integrarse con policy engines externos.", "correct": false, "why": "Falso. `terraform show -json` es la interfaz standard hace años; toda tool moderna la usa." }
+      ],
+      "explanation": "Flujo Terraform + OPA canónico en CI: (1) `terraform init`; (2) `terraform plan -out=tfplan`; (3) `terraform show -json tfplan > plan.json`; (4) `conftest test plan.json -p policies/`; (5) si passes → `terraform apply tfplan`; else → fail PR. Ventaja de policy contra PLAN (no source HCL): puedes ver el estado final después de módulos, defaults, computed values — HCL solo no lo sabe. Sentinel vs OPA: Sentinel es HashiCorp-propietario, integrado tightly con TFC pero solo TFC. OPA es open + universal (mismas skills sirven K8s, TF, microservicios) — recomendado si tu empresa quiere una skill única.",
+      "realWorld": "Bridgecrew (adquirido por Palo Alto Networks 2021) construyó Checkov + Prisma Cloud como comercialización de PaC para IaC. TFC comercializó Sentinel + OPA integration. Netflix, Uber, Airbnb tienen custom Rego policies para Terraform en interno. Chef InSpec introdujo compliance-as-code para servers years antes que existiera OPA para Terraform — inspiración directa.",
+      "tags": ["Terraform", "conftest", "Sentinel", "Checkov", "pre-apply"],
+      "tech": ["OPA", "Terraform", "Conftest", "Sentinel"],
+      "references": [{ "title": "OPA Docs — Terraform Integration" }, { "title": "HashiCorp Sentinel vs OPA" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "security",
+      "topic": "CI/CD gates con OPA",
+      "difficulty": "senior",
+      "scenario": "Quieres que el pipeline de CI rechace PRs que: contienen Dockerfiles con `USER root`, imágenes sin healthcheck, secretos en env vars, ConfigMaps con passwords en plain text, manifests K8s sin resource limits.",
+      "question": "¿Cómo implementas OPA gates en CI/CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Añades un step de conftest en el pipeline: (1) checkout code; (2) `conftest test Dockerfile k8s/ *.tf -p .policies/`; (3) si `deny` no vacío → CI falla con mensaje descriptivo. Se ejecuta en cada PR — el dev ve error en su PR sin merge. Combinar con status checks required en GitHub/GitLab para bloquear merge.", "correct": true, "why": "Correcto. Este es el patrón CANÓNICO de PaC en CI. Shift left: policy evaluada donde el cambio nace (PR), no en producción. Los devs iteran rápido; el ciclo de retroalimentación es minutos, no semanas. Combinar con branch protection = enforcement real." },
+        { "letter": "B", "text": "Dejar que producción rechace los manifests y esperar que el dev arregle después.", "correct": false, "why": "Anti-pattern shift-right. El dev descubre el error DESPUÉS de merge, DESPUÉS de deploy, causando outage o rollback. Fricción máxima, aprendizaje mínimo." },
+        { "letter": "C", "text": "Instalar OPA en cada laptop de dev y pedirles que corran policies manualmente.", "correct": false, "why": "No enforced — los devs olvidan/skippean. Enforcement debe ser automático en CI, no opcional en laptop. Ok para 'pre-commit local' como conveniencia, pero no sustituto de CI." },
+        { "letter": "D", "text": "OPA no se puede usar en CI, solo en cluster.", "correct": false, "why": "Falso. OPA/conftest son ideales para CI — dan feedback rápido a devs antes de merge. Es el use case principal de conftest." }
+      ],
+      "explanation": "PaC en CI stack típico: (1) local pre-commit hook (pre-commit framework) con conftest para feedback instantáneo; (2) CI GitHub Actions/GitLab CI corre conftest contra archivos changed; (3) required status check bloquea merge si conftest falla; (4) además, cluster tiene Gatekeeper/Kyverno como último enforcement (defense in depth: si alguien saltea CI con force push, el cluster todavía rechaza). Ejemplo GitHub Actions: `- uses: instrumenta/conftest-action; args: test k8s/ -p .policies/`. Policies pueden vivir en el mismo repo (co-located) o en repo central (bundle-distributed). Trade-off: local = fácil PR, central = reuse cross-team.",
+      "realWorld": "Chef InSpec pioneer del compliance-as-code en CI (2015+). Bridgecrew/Checkov llevó esto mainstream para IaC. Empresas como Shopify, Stripe, Cloudflare publican sus setups de OPA en CI. La FinOps Foundation recomienda gates de policy para cost control en CI (block Terraform que crearía recursos > $X/month).",
+      "tags": ["CI/CD", "gate", "shift left", "conftest", "GitHub Actions"],
+      "tech": ["OPA", "Conftest", "GitHub Actions"],
+      "references": [{ "title": "Conftest Docs — CI Integration" }, { "title": "Bridgecrew — Policy as Code in CI" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "security",
+      "topic": "OPA para authorization de microservicios",
+      "difficulty": "senior",
+      "scenario": "Tienes 30 microservicios. Cada uno tiene lógica de authorization hardcoded ('si user.role == admin OR user.groups contains billing then allow'). El CISO quiere policies centralizadas, auditables, uniformes. No hay estándar.",
+      "question": "¿Cómo se usa OPA para AuthZ de microservicios?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "OPA como sidecar por servicio: cada Pod tiene un container OPA junto al app. El app hace HTTP POST a http://localhost:8181/v1/data/authz/allow con input={user, action, resource} y recibe {result: true/false}. Latencia sub-ms (mismo host, no network hop). Policies actualizadas via bundle.", "correct": true, "why": "Correcto. Sidecar es el pattern más común para OPA authz. Latencia local trivial, cada service tiene su copia de OPA con las mismas policies (via bundle). Alternativa: OPA como daemon centralizado (menos deployments pero network hop y single point of failure)." },
+        { "letter": "B", "text": "OPA embebido como library: si tu app es Go, importas `github.com/open-policy-agent/opa/rego` y evalúas policies in-process. Cero latencia, sin sidecar. Trade-off: solo Go (o WASM para otros lenguajes) y policies bundle debes distribuir a cada app.", "correct": true, "why": "Correcto. Embed para máxima performance. WASM permite embed en Node/Rust/Python/JVM también compilando Rego a WASM. Ideal para funciones serverless o servicios donde sidecar añade overhead." },
+        { "letter": "C", "text": "Integración con Envoy/Istio: OPA como External Authorization service via envoy ext_authz filter. Cada HTTP request lo intercepta Envoy y consulta OPA antes de forwardearlo. Authz centralizada en el mesh, sin cambiar los apps.", "correct": true, "why": "Correcto. Ext_authz es feature standard de Envoy. Istio + OPA es combo común: policies uniformes cross-service sin modificar código de app. Bookinfo tutorial de Istio incluye ejemplos OPA." },
+        { "letter": "D", "text": "Los apps deben CONSTRUIR el input JSON correcto: user identity (desde JWT), action (HTTP method + path), resource (path params, body si necesario), context (time, IP). Sin el input correcto, la policy no puede decidir bien. Ownership del input es del app team.", "correct": true, "why": "Correcto. GIGO — garbage in, garbage out. Si tu app no pasa el user_id en input, OPA no puede evaluar 'user_id == owner_id'. Input schema debe estar documentado y versionado como contrato entre app y policy team." },
+        { "letter": "E", "text": "OPA no es para authorization de apps, solo para K8s admission.", "correct": false, "why": "Falso. Authorization es use case PRIMARIO de OPA. Netflix, Chef, TripAdvisor lo usan para authz en microservicios. K8s admission (via Gatekeeper) es solo UNO de los use cases." }
+      ],
+      "explanation": "Pattern authz completo: (1) app recibe HTTP request; (2) valida JWT/session, extrae user identity; (3) construye input JSON: {user: {id, roles, groups}, action: 'read', resource: {type: 'invoice', id: 'inv-123', owner_id: 'user-456'}, context: {ip, time}}; (4) POST a OPA local; (5) OPA evalúa policies como `allow { input.user.id == input.resource.owner_id }` o `allow { \"admin\" in input.user.roles }`; (6) responde true/false; (7) app enforce. Latencia: sidecar HTTP ~1-3ms, embed ~0.1ms. Beneficios: policies fuera de código (auditable), cambios sin redeploy de app, uniformidad cross-service. Challenge: coordinar input schemas entre teams (input contracts).",
+      "realWorld": "Netflix usa OPA para authz en Titus (su platform pre-K8s). Chef InSpec y luego Chef Automate usaron patrones similares. Pinterest publicó case study 'From RBAC to ABAC with OPA'. Styra vende DAS (Declarative Authorization Service) como control plane para OPA authz en empresas grandes — clientes incluyen Goldman Sachs, Atlassian.",
+      "tags": ["authorization", "microservicios", "sidecar", "Envoy", "ext_authz"],
+      "tech": ["OPA", "Envoy", "Istio"],
+      "references": [{ "title": "OPA Docs — Envoy Integration" }, { "title": "Netflix Tech Blog — OPA at Titus" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "security",
+      "topic": "Compliance as code — CIS benchmarks",
+      "difficulty": "senior",
+      "scenario": "Tu empresa debe cumplir con CIS Kubernetes Benchmark (100+ controls). Auditoría anual verifica manualmente sample de clusters. Es lento, caro y encuentran drift entre auditorías.",
+      "question": "¿Cómo transformar compliance manual en compliance-as-code?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Traduce cada control CIS a policy (Rego, Kyverno, Chef InSpec profile). Ejecuta continuamente (Gatekeeper audit mode + reportes) contra el cluster. Genera evidence auditable (decision logs + reports) — la 'auditoría' se vuelve un query de compliance posture en cualquier momento. Ya no muestreas anualmente; enforceas continuamente.", "correct": true, "why": "Correcto. Compliance-as-code invierte el modelo: en vez de auditar sample una vez al año, enforceas continuo con evidencia automática. Reduces drift a cero (violaciones se bloquean o se reportan minutes después de introducirse). Auditor mira dashboards + logs, no entra manualmente al cluster." },
+        { "letter": "B", "text": "Contratar más auditores para cubrir más clusters manualmente.", "correct": false, "why": "No escala. Con cientos de clusters humanamente imposible. Además la auditoría manual es 'point in time' — al día siguiente el estado puede haber drifteado." },
+        { "letter": "C", "text": "Confiar en que los devs sigan la wiki de CIS.", "correct": false, "why": "Ya vimos que fallan (el escenario). Wikis + human discipline no funcionan a escala. La única alternativa es enforcement automático." },
+        { "letter": "D", "text": "Compliance no se puede automatizar.", "correct": false, "why": "Falso. CIS Kubernetes Benchmark, PCI-DSS, HIPAA, SOC2 tienen implementaciones completas en OPA/Kyverno/Chef InSpec disponibles como open source." }
+      ],
+      "explanation": "Standards con implementación PaC lista: (1) CIS Kubernetes Benchmark — Gatekeeper Library y Kyverno Policies repo tienen implementaciones; (2) NSA/CISA Kubernetes Hardening Guidance; (3) Pod Security Standards (baseline/restricted) — Kyverno tiene el catalogue completo; (4) NIST 800-53 controls; (5) PCI-DSS. Chef InSpec fue pionero — sus 'profiles' son policy-as-code para CIS server hardening, DoD STIGs. Aqua trivy incluye compliance scans (CIS Docker, CIS K8s). Compliance officer moderno mira DASHBOARDS de posture (% de controls passing), no clusters directo.",
+      "realWorld": "Chef InSpec (2015+) inventó compliance-as-code moderno — sus profiles para CIS/PCI son referencia. Chef fue adquirida por Progress. Anchore Enterprise, Aqua Security, Prisma Cloud comercializan compliance scans continuos. StackRox (Red Hat ACS) tiene compliance dashboards para K8s. La CNCF publica el 'Cloud Native Security Whitepaper' con recomendaciones incluyendo PaC.",
+      "tags": ["compliance", "CIS", "audit", "SOC2", "PCI"],
+      "tech": ["OPA", "Kyverno", "Chef InSpec"],
+      "references": [{ "title": "CIS Kubernetes Benchmark" }, { "title": "Chef InSpec — Compliance as Code" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "security",
+      "topic": "Standards cross-teams a escala",
+      "difficulty": "staff",
+      "scenario": "Tu empresa tiene 20 equipos, cada uno con su propia definición de 'un deploy correcto'. Uno usa dev, staging, prod; otro usa qa, uat, prod. Uno pone imageTag: env-specific; otro usa git SHA. Compliance y observability sufren.",
+      "question": "¿Cómo usa una empresa PaC para enforcer standards cross-team sin frenar a los equipos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Platform team define policies 'GOLDEN PATH': todo Deployment debe tener label owner/env/app; todo Service debe tener readinessProbe; imágenes solo desde registries approved. Policies distribuidas via bundle a todos los clusters. Los equipos pueden hacer lo que quieran DENTRO de esas guardrails.", "correct": true, "why": "Correcto. Guardrails vs gates: guardrails (Golden Path) permiten libertad dentro de límites vs gates (aprobación caso por caso) que frenan. La platform define QUÉ debe ser cierto (labels, probes, registries), no CÓMO los equipos lo logren — team autonomy dentro del framework." },
+        { "letter": "B", "text": "Progressive enforcement: nueva policy → dryrun 2 semanas (avisa a equipos) → warn 2 semanas (bloquea nuevos, permite existing) → enforce full. Runbook claro: 'esta policy va a enforcear el 15 de nov, aquí está cómo cumplir con ella'.", "correct": true, "why": "Correcto. Sin runway, una policy nueva rompe equipos y genera rebeldía. Con 4-6 semanas de dryrun + comms + docs, la adopción es smooth. Nunca sorprendas a equipos con nuevas policies enforce de golpe." },
+        { "letter": "C", "text": "Ownership descentralizada: cada team puede escribir SUS propias policies (namespaced) para sus needs específicos (data teams: no PII sin encryption; ML teams: GPU quotas). Platform enforce policies globales, teams enforce las suyas. Kyverno soporta esto con `Policy` (namespace scope) vs `ClusterPolicy` (global).", "correct": true, "why": "Correcto. Separación de concerns: policies globales de platform + policies locales de team. Los teams no dependen de platform para innovar en sus policies. Kyverno Policy CRD y OPA con multiple bundles soportan este federated model." },
+        { "letter": "D", "text": "Documentación: cada policy debe tener rationale ('por qué existe'), owner, cómo cumplir, exception process. Sin esto, los devs frustrados harán workarounds. Un archivo README junto al policy es best practice.", "correct": true, "why": "Correcto. Policy sin rationale = policy odiada. Docs deben explicar el WHY, exceptions process (qué hacer si legítimamente necesitas violarla), contact del owner. Sin esto los devs 'chequean' con security en Slack y todo es fricción." },
+        { "letter": "E", "text": "Enforce todas las policies de golpe cluster-wide sin avisar a nadie.", "correct": false, "why": "Recipe para outage y rebeldía. Genera 'shadow IT' — equipos rodean el sistema porque no confían en él." }
+      ],
+      "explanation": "Concepto 'Golden Paths' popularizado por Spotify: platform team define un happy path bien documentado, con guardrails via PaC. Los equipos que siguen el path son productivos rápido; los que se salen tienen fricción proporcional al desvío. NO es 'un talla única' — hay Golden Paths para web services, batch jobs, data pipelines. Exception process: escribir un exemption CRD (Kyverno permite `PolicyException`) para casos legítimos, con expiration date y ticket asociado. Cross-team coordination via 'policy council' quinceal donde teams proponen policies nuevas. Enemy: 'policy sprawl' — 500 policies inconsistentes, nadie sabe qué aplica dónde. Regular audit y sunset de policies obsoletas.",
+      "realWorld": "Spotify Golden Paths (published 2020) es referencia. Netflix Paved Path similar. Airbnb, Uber, Stripe tienen internal platforms con PaC embebido. Chef InSpec profiles diseñados para compartirse cross-team desde el inicio. Backstage (Spotify open-source developer portal) integra policies via checks para exponer compliance posture a devs.",
+      "tags": ["golden path", "guardrails", "cross-team", "governance"],
+      "tech": ["OPA", "Kyverno"],
+      "references": [{ "title": "Spotify Engineering — Golden Paths" }, { "title": "Team Topologies — Platform as Product" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "kubernetes",
+      "topic": "Pod Security Standards con Kyverno",
+      "difficulty": "mid",
+      "scenario": "K8s deprecó PodSecurityPolicy (PSP) en 1.21 y lo removió en 1.25. Ahora hay Pod Security Admission (PSA) built-in pero limitado. Necesitas enforcement más granular. Kyverno Policies repo tiene ready-to-use policies para PSS baseline/restricted.",
+      "question": "¿Qué son Pod Security Standards (PSS) y cómo enforce con Kyverno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PSS son 3 niveles definidos por K8s: (1) PRIVILEGED — sin restricciones; (2) BASELINE — bloquea privileges obvias (hostNetwork, hostPID, privileged containers); (3) RESTRICTED — mucho más strict (runAsNonRoot obligatorio, allowPrivilegeEscalation false, drop ALL capabilities, seccomp RuntimeDefault). Pod Security Admission built-in aplica un level por namespace vía labels. Kyverno Policies repo tiene el catálogo completo de policies que enforceean BASELINE y RESTRICTED con mensajes útiles y algunas mutaciones (auto-set runAsNonRoot).", "correct": true, "why": "Correcto. PSS es el reemplazo curado de PSP. PSA built-in solo aplica los 3 niveles como bloque; Kyverno Policies (github.com/kyverno/policies/tree/main/pod-security) permite enforcement selectivo por regla + mensajes claros + mutations. Best practice: aplicar RESTRICTED en namespaces prod, BASELINE en dev." },
+        { "letter": "B", "text": "PSS son 3 secretos que se rotan diariamente.", "correct": false, "why": "Confusión con secrets management. PSS son standards de security para pods." },
+        { "letter": "C", "text": "PSS son NetworkPolicies.", "correct": false, "why": "NetworkPolicies son para networking (ingress/egress). PSS es para pod security context." },
+        { "letter": "D", "text": "PSS solo se aplica en Openshift.", "correct": false, "why": "PSS es standard upstream de Kubernetes, disponible en todos los distributions." }
+      ],
+      "explanation": "PSA built-in modes: `enforce` (rechaza), `audit` (log), `warn` (avisa al submit). Aplicado con label en namespace: `pod-security.kubernetes.io/enforce=restricted`. Limitaciones PSA: 3 niveles fijos, no puedes personalizar reglas individuales (todo restricted o nada). Kyverno flexibility: cada rule granular, exceptions per workload, mutations que ajustan (add runAsNonRoot: true), mensajes localizados. Migration de PSP → PSA → Kyverno/Gatekeeper es proyecto multi-mes en empresas grandes. Recomendación: PSA para baseline global + Kyverno para reglas custom encima.",
+      "realWorld": "K8s 1.25 removió PSP causando migration mass. VMware Tanzu, Red Hat OpenShift, Rancher tienen guides oficiales para migrar a PSA/Kyverno. Kyverno Policies repo mantiene los templates versionados con contribs de la comunidad. NSA/CISA Kubernetes Hardening Guidance recomienda Pod Security Standards restricted en producción.",
+      "tags": ["Pod Security Standards", "PSA", "Kyverno", "PSP migration"],
+      "tech": ["Kyverno", "Kubernetes"],
+      "references": [{ "title": "K8s Docs — Pod Security Standards" }, { "title": "Kyverno Policies — Pod Security Repository" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "security",
+      "topic": "Performance y escalabilidad",
+      "difficulty": "staff",
+      "scenario": "Tu OPA sidecar en un microservicio de high-traffic (10k req/s) empieza a saturar CPU. Latencia p99 subió de 50ms a 200ms. El SRE team dice 'OPA es el bottleneck'.",
+      "question": "¿Cómo se optimiza OPA para performance en producción?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Partial Evaluation: OPA puede pre-computar policies parcialmente cuando parte del input es conocido en advance (config del servicio). El result es una policy 'residual' más simple, evaluada más rápido en runtime. Reduce cold-eval time significativamente.", "correct": true, "why": "Correcto. Partial evaluation es feature avanzada de OPA — evalúa lo que se puede pre-compute (dado config estático) dejando solo la lógica que necesita input dinámico. Ideal para authz donde roles/permissions raras veces cambian." },
+        { "letter": "B", "text": "Indexing: `data.` grande (lista de 100k users con roles) debe estar indexada para lookups O(1). OPA construye índices automáticos si escribes rules idiomatic. Cuidado con full-scan patterns (`some x; data.users[x].role == \"admin\"; data.users[x].id == input.user_id` — mejor `data.users[input.user_id].role == \"admin\"`).", "correct": true, "why": "Correcto. Cómo escribes Rego afecta performance. Rule indexing es transparente pero requiere patterns idiomatic. `opa profile` te muestra qué reglas son slow. Evita nested iterations sobre datasets grandes." },
+        { "letter": "C", "text": "Compile a WASM: `opa build -t wasm` compila policies a WebAssembly. Evaluación ~10x más rápida que interpreter para hot paths. Se puede embed en cualquier runtime WASM (Envoy, Node.js, Go). Trade-off: build extra step, no todas las features Rego soportadas.", "correct": true, "why": "Correcto. WASM es la opción para máximo throughput. Envoy proxy-wasm integra OPA vía WASM sin sidecar overhead. Netflix y otros han medido 5-10x speedup." },
+        { "letter": "D", "text": "Cache decisiones idempotentes: si el mismo input JSON se ve muchas veces (usuarios haciendo la misma request), cachea el result. Cuidado con TTL correcto (cambios en `data` deben invalidar). Envoy ext_authz tiene cache TTL configurable.", "correct": true, "why": "Correcto. Caching authz decisions es común. TTL corto (seconds) evita stale + reduce carga. No cachear si input contiene fields time-sensitive." },
+        { "letter": "E", "text": "OPA no se puede optimizar, siempre es lento.", "correct": false, "why": "Falso. OPA está diseñado para producción en scale (Netflix miles req/s, Chef fleet management). Con tuning correcto p99 < 5ms." }
+      ],
+      "explanation": "Perf toolkit OPA: (1) `opa eval --profile` — muestra tiempo por rule; (2) `opa test --bench` — benchmarks; (3) `opa build -t wasm` — compile para speed; (4) partial evaluation — pre-compute; (5) proper indexing (patterns idiomatic); (6) data structure — arrays lineales lentos, dicts fast; (7) bundle size — bundles enormes tardan en load; (8) memory — cada OPA instance carga data en memoria, watch RAM. Anti-patterns: iterar arrays grandes, regex costoso en hot path, deeply nested rules. Monitoring: OPA expone métricas Prometheus (`/metrics`), decision logs para spot slow decisions.",
+      "realWorld": "Netflix optimizó su OPA fleet a p99 <2ms para authz. Chef InSpec fue pionero en compliance-at-scale con miles de servers. Styra publica performance guides based en clientes enterprise. La adopción CNCF Graduated en 2021 requirió performance benchmarks probados en escala.",
+      "tags": ["performance", "WASM", "partial evaluation", "indexing"],
+      "tech": ["OPA", "WASM"],
+      "references": [{ "title": "OPA Docs — Performance" }, { "title": "OPA Docs — Compiling to WASM" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "security",
+      "topic": "Anti-patterns comunes",
+      "difficulty": "staff",
+      "scenario": "Equipos que adoptan PaC caen en trampas: policies hardcoded con business logic mezclada con security, policies que nadie entiende porque no tienen docs, tests skippeados, dry-run permanente.",
+      "question": "¿Cuáles son los anti-patrones más comunes en Policy as Code?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "POLICIES SIN TESTS: se merge una policy nueva sin unit tests. Un cambio inocuo la rompe. Deploy a prod → outage porque bloquea lo que no debía. Solución: CI requerido con `opa test` / `kyverno test`.", "correct": true, "why": "Correcto. Policies son código; código sin tests es debt. `opa test` es free — no hay excusa. Toda PR de policy debe tener test que demuestre la regla funciona para inputs esperados (allow, deny, edge)." },
+        { "letter": "B", "text": "DRY-RUN PERMANENTE: policies deployeadas en warn/audit mode 'temporariamente' que nunca pasa a enforce. Los devs las ignoran (no bloquean nada), no hay enforcement real. Solución: fecha límite en cada policy dryrun ('audit hasta 30 nov, luego enforce').", "correct": true, "why": "Correcto. Dryrun es para RUNWAY, no state permanente. Muchas empresas tienen 'security theater' — políticas activas pero en warn mode ignoradas. Sin enforce no hay policy real." },
+        { "letter": "C", "text": "BUSINESS LOGIC MEZCLADA: policy que hace 'if user in tenant X, allow custom feature Y' — es business rules, no security. Escala mal (policy engine se llena de excepciones per-customer). Solución: separar security policies (uniformes) de authorization/feature flags (per-tenant).", "correct": true, "why": "Correcto. Confusión clásica. Policy engine debe enforcear SECURITY/COMPLIANCE (uniforme, raro cambia); business rules cambian frecuentemente y son per-customer — merecen su propio sistema (feature flags, config)." },
+        { "letter": "D", "text": "POLICIES SIN DOCS: rules Rego crípticos sin comments explicando por qué. 6 meses después nadie entiende qué hace o si sigue siendo relevante. Devs frustrados hacen exceptions en vez de aprender la regla. Solución: header comment con rationale + owner + link a ticket que motivó.", "correct": true, "why": "Correcto. Sin docs, policies se vuelven 'code no-touch' — todos temen tocarlas por miedo. Con docs, evolucionar es seguro. Include owner porque sin owner nadie es responsable." },
+        { "letter": "E", "text": "POLICY SPRAWL: 500 policies acumuladas, muchas obsoletas o duplicadas. Nadie sabe qué aplica dónde. Cluster admission tarda 500ms por policy stack. Solución: audit quinceanal, sunset policies obsoletas, deduplicate.", "correct": true, "why": "Correcto. Como cualquier código, policies necesitan maintenance. Empresas maduras tienen review process para policies (creation + retirement). Sin gardening, el garden se cubre de weeds." }
+      ],
+      "explanation": "Otros anti-patterns: (1) 'god policy' — un archivo Rego de 5000 líneas que hace todo (imposible mantener); (2) copy-paste de Gatekeeper Library sin entender qué hace; (3) exceptions permanentes sin expiration (comienzan siendo temporary, quedan forever); (4) no versionamiento de policies (rollback imposible); (5) no metrics/observability (¿está siendo effective la policy?); (6) shadow policies aplicadas por platform sin comunicar a devs (surprise!); (7) usar OPA cuando K8s built-in es suficiente (over-engineering); (8) usar policies para performance/routing (no es su job). Regla clave: policies son INFRASTRUCTURE — deben tratarse con mismo rigor: tests, review, docs, monitoring.",
+      "realWorld": "Empresas grandes que adoptaron PaC (Netflix, Uber, Airbnb) tienen policy governance equipos dedicados. Chef Community publicó lecciones aprendidas en 10+ años de compliance-as-code. Styra publica case studies con failures (dry-run permanente es tema recurrente). CNCF's Cloud Native Security whitepaper menciona anti-patterns.",
+      "tags": ["anti-patterns", "dry-run", "sprawl", "governance"],
+      "tech": ["OPA", "Kyverno"],
+      "references": [{ "title": "Styra — Common OPA Pitfalls" }, { "title": "CNCF Cloud Native Security Whitepaper" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "security",
+      "topic": "El futuro de Policy as Code",
+      "difficulty": "staff",
+      "scenario": "Como staff engineer, debes proyectar dónde va Policy as Code: qué convergencias hay, qué ecosistema emerge, qué debes evaluar hoy para prepararte 2-3 años.",
+      "question": "¿Qué tendencias definen el futuro de Policy as Code?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Convergencia PaC + SUPPLY CHAIN SECURITY: policies que verifican provenance (SLSA), signatures Cosign, SBOM completeness. Kyverno ya integra Cosign verifyImages. OPA + Sigstore para artifact provenance. El policy engine se vuelve el punto de enforcement para toda la supply chain.", "correct": true, "why": "Correcto. Post-SolarWinds y Log4Shell, supply chain security es prioridad. PaC es donde verify signatures, SBOM, provenance se enforce. Cosign + Kyverno / OPA + Sigstore son integraciones estándar emergentes." },
+        { "letter": "B", "text": "GENERATIVE AI para policy writing: LLMs que traducen 'quiero bloquear images sin scan de vuln' a Rego/Kyverno YAML válido. Reducirá barrera de entry para Rego. Ya hay Copilot-style tools para OPA (Styra Copilot, Kyverno playground con AI hints).", "correct": true, "why": "Correcto. AI-assisted policy writing es tendencia real. La curva Rego es la principal barrera de OPA adoption; AI puede aplanarla. Trade-off: policies generadas por AI necesitan review humano riguroso (hallucinations = security bugs)." },
+        { "letter": "C", "text": "GRAPH-BASED policy engines: analizan RELACIONES entre resources (este SA tiene acceso a este bucket que contiene PII → alert). SpiceDB, OpenFGA, Cerbos son alternativas emergentes a OPA para authz con modelos graph-based (inspirados en Google Zanzibar).", "correct": true, "why": "Correcto. Para authz de aplicaciones con relaciones complejas (documents, sharing, ownership), OPA solo con data flat es limitado. Zanzibar-style (SpiceDB, OpenFGA) modelan relaciones (user→group→org→document) naturalmente. Coexisten con OPA (usan OPA para gross-level policies, SpiceDB para fine-grained authz)." },
+        { "letter": "D", "text": "PaC integrado con IDE: linter en VSCode que highlight violaciones al escribir Kubernetes manifest o Terraform, sin esperar CI. Feedback loop de segundos. Backstage/Idp extensions con policies embebidas. Shift left EXTREMO — el policy check pasa al momento de tipear.", "correct": true, "why": "Correcto. VSCode extensions para OPA/Kyverno ya existen. Nirmata, Styra publican integraciones IDE. Tendencia: el dev NUNCA envía policy-violating code porque ve el error al tipear." },
+        { "letter": "E", "text": "PaC va a desaparecer porque los LLMs escribirán código sin bugs.", "correct": false, "why": "Fantasy. Aunque AI mejora quality, compliance/security policies existirán mientras haya regulación. PaC evolucionará con AI, no reemplazado." }
+      ],
+      "explanation": "Trends adicionales staff-level: (1) MULTI-CLOUD PaC: unified policy across AWS/GCP/Azure — evita policy silos por cloud; (2) FINOPS gates: policies bloquean Terraform que crearía recursos > $X/month (Vantage, Infracost integran); (3) COMPLIANCE FRAMEWORKS AS PACKAGES: SOC2, HIPAA, PCI empaquetados como Rego bundles listos para import; (4) POLICY MARKETPLACE: comunity-driven policies (like npm) — Kyverno Policies repo es primer paso; (5) DYNAMIC policies: policies que reactúan a threat intel (CVE nueva → block immediately); (6) CUE lang y otros DSLs emergiendo como alternativas a Rego (mismo problem, diferente sintaxis). Staff engineer decisions: (a) invertir en OPA/Kyverno skills es safe bet (CNCF Graduated); (b) evaluate Zanzibar-style para authz complex; (c) integrate supply chain signing en policies hoy; (d) build platform team con PaC como pillar.",
+      "realWorld": "Netflix, Uber, Airbnb tienen roadmaps públicos hacia unified policy. Styra DAS enterprise adoption Growth es proxy. Sigstore + Cosign + Kyverno adoption por SLSA compliance. Google Zanzibar (published 2019) inspiró SpiceDB (Authzed), OpenFGA (Okta), Cerbos — nuevo ecosistema authz. CNCF Policy Working Group coordina cross-project standards. Chef InSpec sigue evolucionando post-Progress acquisition — compliance-as-code sigue mainstream.",
+      "tags": ["futuro", "supply chain", "Zanzibar", "AI", "SLSA"],
+      "tech": ["OPA", "Kyverno", "SpiceDB", "OpenFGA", "Cosign"],
+      "references": [{ "title": "Google Zanzibar — Consistent Global Authorization" }, { "title": "CNCF — Policy Working Group" }]
+    }
+  ]
+}

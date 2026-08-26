@@ -1,0 +1,467 @@
+{
+  "id": "ai-programming-sim-19-data-pipelines-pii-eu-ai-act",
+  "trackId": "ai-programming",
+  "order": 19,
+  "title": "Simulacro 19 — Datos y gobernanza: pipelines, PII, EU AI Act, compliance",
+  "focus": "Cómo gestionar datos para sistemas IA sin meterte en problemas: pipelines de datos, PII, versionado de datasets, EU AI Act, compliance.",
+  "areaCoverage": ["data-governance", "security"],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "data-governance",
+      "topic": "Pipeline canónico ingest → clean → chunk → embed → index",
+      "difficulty": "junior",
+      "scenario": "Un jr te pregunta: 'quiero hacer RAG sobre nuestros docs internos. Bajo los PDFs, los meto en Pinecone, y ya está'. Pides que te describa el pipeline completo.",
+      "question": "¿Cuáles son las fases canónicas de un pipeline de datos para RAG y qué pasa si saltas alguna?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Solo ingest → embed → index. Chunking es opcional.", "correct": false, "why": "Chunking NO es opcional para docs largos. Embeddings tienen límite de tokens (típicamente 8k); PDFs de 50 páginas no caben. Y sin chunking, la relevancia baja porque el embedding representa 'promedio' del doc." },
+        { "letter": "B", "text": "Ingest (extraer texto de fuentes) → Clean (dedup, filter noise, normalize) → Chunk (dividir por semantic units con overlap) → Embed (vectorizar con modelo apropiado) → Index (guardar en vector DB con metadata). Cada fase resuelve un problema distinto; saltarla genera calidad de recuperación pobre.", "correct": true, "why": "Correcto. Es el pipeline canónico. Ingest sin clean = ruido en el índice; sin chunk = embeddings pobres; sin metadata = imposible filtrar (por fecha, tenant, doc type). Cada fase tiene decisiones (chunk size, embedding model, DB choice) que impactan calidad final." },
+        { "letter": "C", "text": "Solo hace falta usar OpenAI embeddings y Pinecone; el pipeline es implícito.", "correct": false, "why": "Herramientas no eliminan las fases; solo las implementan. Sin decisiones explícitas (cómo chunkeas, qué metadata, cómo detectas duplicados), la calidad es aleatoria." },
+        { "letter": "D", "text": "Todo el pipeline debe ser real-time (streaming).", "correct": false, "why": "Falso. La mayoría de pipelines RAG son batch (nightly ingest o event-driven en updates). Real-time añade complejidad; se justifica solo si los datos cambian minuto a minuto." }
+      ],
+      "explanation": "Pipeline RAG canónico y decisiones por fase: (1) INGEST — parsers por formato (PDF/HTML/DOCX con Unstructured, LlamaParse), OCR para escaneos, respeto de estructura (headers, tablas); (2) CLEAN — dedup (hash exacto y near-dup con MinHash/SimHash), remove boilerplate (headers/footers), PII redaction, filter noise; (3) CHUNK — semantic chunking (por sección/párrafo, no por N tokens), overlap 10-20%, preservar contexto (título del doc en cada chunk); (4) EMBED — elegir modelo (text-embedding-3-large, bge-large, cohere-v3), dimensionality, batch size; (5) INDEX — vector DB (Pinecone/Qdrant/pgvector/Chroma) con metadata (source, date, tenant, permissions). Orquestación: Airflow/Prefect/Dagster/Argo Workflows para dependencias, retries, backfills.",
+      "realWorld": "Notion AI, Perplexity, y ChatGPT (search) tienen pipelines con estas 5 fases documentadas. Los fracasos comunes en RAG (respuestas irrelevantes) suelen deberse a chunking pobre (splitting en el medio de una oración) o falta de metadata (no puedes filtrar por permisos, así que RAG expone datos privados).",
+      "tags": ["RAG", "pipeline", "data-engineering", "chunking"],
+      "tech": ["Airflow", "Prefect", "Pinecone", "Qdrant", "LangChain"],
+      "references": [
+        { "title": "LangChain — Data Ingestion" }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "data-governance",
+      "topic": "Orquestadores: Airflow vs Prefect vs Dagster vs Argo",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate qué orquestador usar para el pipeline de datos ML. Airflow (legacy, batch, popular), Prefect (moderno, dynamic), Dagster (data-aware, asset-based), Argo Workflows (K8s-native, container-per-step).",
+      "question": "¿Cómo elegir entre ellos para un pipeline de datos IA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ejes de decisión: (1) Airflow — batch tradicional, ecosistema masivo, DAG estático, verboso pero probado; (2) Prefect — DAGs dinámicos, workflows Pythonic, buen para pipelines cambiantes; (3) Dagster — asset-based (piensa en datasets, no en tasks), lineage nativo, ideal para ML data; (4) Argo Workflows — K8s-native, un contenedor por step, ideal si ya estás en K8s con Kubeflow. Ninguno es 'mejor'; depende de tu stack y modelo mental.", "correct": true, "why": "Correcto. Cada orquestador tiene un modelo mental distinto (tasks vs assets vs steps). Airflow domina en enterprises tradicionales; Prefect/Dagster crecen en ML; Argo Workflows domina donde ya hay Kubernetes." },
+        { "letter": "B", "text": "Airflow siempre; es el estándar.", "correct": false, "why": "Falso en 2026. Airflow domina en instalaciones legacy pero para pipelines ML modernos Dagster tiene mejores primitives (asset lineage, materializations). Y para K8s-native, Argo Workflows es superior." },
+        { "letter": "C", "text": "Da igual; todos hacen lo mismo.", "correct": false, "why": "Falso. Los modelos mentales son diferentes y el fit con tu arquitectura importa. Un equipo puede sufrir 6 meses con la elección equivocada." },
+        { "letter": "D", "text": "Dagster porque es el más moderno.", "correct": false, "why": "'Más moderno' no es criterio de decisión. Si tu equipo ya conoce Airflow, y tu pipeline es estable, la migración a Dagster puede no valer el costo." }
+      ],
+      "explanation": "Modelo mental por orquestador: (1) Airflow — 'DAG de tasks Python, cron scheduled, ejecutados por workers'; (2) Prefect — 'flows dinámicos, buen developer experience, cloud-first'; (3) Dagster — 'assets (datasets) con lineage nativo, materializations, mejor para ML'; (4) Argo Workflows — 'DAG de containers K8s, cada step es un pod, ideal para heterogeneidad de runtime'. Decisión pragmática: (a) ya tienes Airflow y funciona → no migres; (b) empiezas ML pipeline nuevo → considera Dagster para asset lineage; (c) todo en K8s → Argo; (d) equipo pequeño, workflows cambiantes → Prefect. Para RAG específicamente, Airflow + custom operators sigue siendo la mayoría.",
+      "realWorld": "Airbnb creó Airflow y lo usa. Uber usa Piper (interno) + Airflow. Elementl (Dagster) reporta 8000+ empresas en 2025. Kubeflow (basado en Argo) domina en organizaciones K8s-native. Muchas empresas mezclan (Airflow para batch legacy + Dagster para ML nuevo).",
+      "tags": ["orquestación", "Airflow", "Dagster", "Prefect", "Argo"],
+      "tech": ["Apache Airflow", "Prefect", "Dagster", "Argo Workflows"],
+      "references": [
+        { "title": "Airflow Docs", "url": "https://airflow.apache.org" },
+        { "title": "Dagster Docs", "url": "https://docs.dagster.io" }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "data-governance",
+      "topic": "Deduplicación y calidad de datos",
+      "difficulty": "mid",
+      "scenario": "Estás construyendo un dataset de 5M documentos internos para RAG. Un sample muestra 30% duplicados exactos (copia-pega interna) y otros 15% 'near duplicates' (versión ligeramente actualizada del mismo doc). Un jr propone hacer `hash(doc)` para dedup.",
+      "question": "¿Cuál es la estrategia correcta de dedup?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Dedup en 2 niveles: (1) EXACT dup con hash (SHA256 del contenido normalizado) — rápido, elimina 30%; (2) NEAR dup con MinHash + LSH o SimHash — captura duplicados con diferencias mínimas (typos, timestamps). Requiere threshold (típicamente Jaccard ≥ 0.8). Sin near dup, tu RAG devuelve 5 versiones del mismo doc como respuestas 'distintas'.", "correct": true, "why": "Correcto. Hash exacto es necesario pero insuficiente. Near dup con MinHash/LSH es standard industry para large scale. LSH permite comparar 5M docs en tiempo razonable (naive sería O(n²) = 25 trillion comparaciones). Cuidado: la elección de threshold es empírica, y borrar el 'wrong version' pierde info reciente." },
+        { "letter": "B", "text": "Solo hash exacto es suficiente.", "correct": false, "why": "Deja 15% de near dups que degradarán el RAG (repite información con leves variaciones). Los usuarios ven 'la misma respuesta 5 veces'." },
+        { "letter": "C", "text": "No dedup — el modelo debe tolerar duplicados.", "correct": false, "why": "Falso económicamente y semánticamente. Duplicados aumentan storage, embedding cost, latency de retrieval, y confunden ranking. También pueden causar overfitting si son datos de training." },
+        { "letter": "D", "text": "Usar embeddings para dedup: si dos docs tienen embedding coseno > 0.95, son duplicados.", "correct": false, "why": "Costoso (calcular embeddings de 5M para dedup) y falso positive-prone (dos docs sobre el mismo tema tienen alta similaridad sin ser dup). MinHash/SimHash son más eficientes y precisos para el caso." }
+      ],
+      "explanation": "Estrategias de dedup por escala: (1) hash exacto (SHA256, MD5) para dup literal — O(n), trivial; (2) MinHash + LSH (Locality Sensitive Hashing) para near-dup — O(n) con parámetros ajustables (k-shingles, bands); (3) SimHash para semantic similarity a bajo costo; (4) embedding-based solo para dedup semántico fino (caro). Threshold empírico: Jaccard 0.8-0.9 para near-dup. Al deduplicar: (a) preserva versión MÁS RECIENTE, (b) preserva metadata de las eliminadas para audit, (c) considera 'canonical URL' para casos donde la misma info está en múltiples ubicaciones. Librerías: datasketch (Python), Spark MinHashLSH.",
+      "realWorld": "Common Crawl publica su dedup pipeline: MinHash + LSH sobre TB de datos. HuggingFace usa el mismo enfoque para training datasets. Para RAG interno, empresas como Perplexity, Notion documentan tener near-dup detection porque sin ella el UX cae dramáticamente.",
+      "tags": ["dedup", "MinHash", "LSH", "data-quality"],
+      "tech": ["datasketch", "Spark MinHashLSH"],
+      "references": [
+        { "title": "Rajaraman & Ullman — Mining of Massive Datasets, Chapter 3 (LSH)" }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "security",
+      "topic": "PII detection y redaction",
+      "difficulty": "mid",
+      "scenario": "Vas a ingerir 100k documents de customer support (chats, emails) en tu RAG. Contienen: nombres, emails, teléfonos, direcciones, credit cards, SSN. Legal te dice: 'sin PII en el índice, y si escapa hay que borrarlo bajo GDPR right to erasure'.",
+      "question": "¿Cuáles son las herramientas y estrategia correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estrategia: (1) detection con Microsoft Presidio (open source, extensible), AWS Comprehend (managed, cubre 30+ tipos), o Google Cloud DLP; (2) redaction en ingest (reemplazar con tokens tipo [EMAIL], [PHONE]); (3) mantener mapping seguro solo si NECESITAS reversar (pseudonimización); (4) validation en CI (nunca commitear datasets con PII detectada); (5) auditoría de retrieval (log de qué se recupera); (6) implementar right-to-erasure workflow (borrar embeddings + chunks + originales asociados al user).", "correct": true, "why": "Correcto. Es defense-in-depth: detection + redaction + validation + audit + erasure workflow. Ninguna herramienta detecta 100% (edge cases: nombres poco comunes, formatos raros de números). El workflow debe asumir false negatives y tener respuesta." },
+        { "letter": "B", "text": "Regex casero para email/phone es suficiente.", "correct": false, "why": "Regex captura formatos comunes pero falla en: nombres, direcciones no estructuradas, IDs corporativos, contextos que revelan identidad. Falla en múltiples idiomas. Presidio/Comprehend usan NER (Named Entity Recognition) que captura más." },
+        { "letter": "C", "text": "El modelo LLM 'no debería usar PII' — instruction en system prompt basta.", "correct": false, "why": "Falso. Instrucciones son advisory al modelo; no eliminan PII del contexto expuesto ni del índice. Además, prompt injection puede extraer PII. La defensa debe ser data-level, no prompt-level." },
+        { "letter": "D", "text": "Sin PII detection; encriptar el vector DB y ya.", "correct": false, "why": "Encryption at rest no ayuda: la query recupera plaintext al contexto del LLM, que puede leakear al output. Encryption es capa complementaria pero no sustituto de redaction." }
+      ],
+      "explanation": "PII: Personally Identifiable Information — datos que identifican a una persona (nombre, email, phone, SSN, address, biometrics, IP en algunos contextos, etc.). Herramientas: (1) Microsoft Presidio (open source, custom recognizers, deidentification); (2) AWS Comprehend + Comprehend Medical (PHI); (3) Google Cloud DLP (100+ info types); (4) Azure AI Language PII; (5) BigID, OneTrust, Immuta para enterprise. Estrategia standard: DETECT en ingest → REDACT (replace o mask) → VALIDATE en tests → AUDIT en runtime. Para PII regulada (SSN, PHI, credit cards): tokenization con vault + strict access controls. Para right-to-erasure (GDPR Art. 17): mantener mapping user_id → chunks/embeddings para poder borrar cascade.",
+      "realWorld": "OpenAI ChatGPT tuvo incidents (marzo 2023) donde titles de conversaciones de otros users se leakearon — reforzaron PII handling. Samsung prohibió ChatGPT internamente tras leak de código. Muchas empresas construyen 'AI gateway' con PII detection obligatoria antes de enviar prompts a vendor LLMs.",
+      "tags": ["PII", "Presidio", "GDPR", "redaction"],
+      "tech": ["Microsoft Presidio", "AWS Comprehend", "Google Cloud DLP"],
+      "references": [
+        { "title": "Microsoft Presidio", "url": "https://microsoft.github.io/presidio/" },
+        { "title": "GDPR Article 17 — Right to erasure" }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "security",
+      "topic": "PII en training vs PII en RAG",
+      "difficulty": "senior",
+      "scenario": "Un stakeholder dice: 'como no entrenamos el modelo con nuestros datos (usamos Claude vía API + RAG), no tenemos riesgo de PII'. Otro responde: 'aún así hay exposure'.",
+      "question": "¿Cuál es la diferencia real entre PII en training vs PII en RAG y por qué RAG puede exfiltrarla?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PII en TRAINING: entra en pesos del modelo, imposible borrar (right to erasure inviable). PII en RAG: no entra en pesos, pero pasa por (1) prompt del vendor LLM (posible log, breach vendor), (2) response del LLM (posible leak si el user pregunta rodeando), (3) exposed al user autorizado a hacer la query pero no autorizado a ver el PII específico. Ambos tienen riesgo, distinto vector.", "correct": true, "why": "Correcto. Es la distinción crítica. RAG evita el problema de weights pero introduce runtime exposure. Vulnerabilidades comunes en RAG: prompt injection extrae contexto, ausencia de row-level security (RAG devuelve chunks a users sin permisos), logging del vendor. La afirmación 'no entrenamos, no hay riesgo' es peligrosamente incompleta." },
+        { "letter": "B", "text": "No hay riesgo en RAG; el modelo es solo consumidor.", "correct": false, "why": "Falso. RAG expone PII al vendor (via prompt) y al user (via response). Además, prompt injection puede exfiltrarla a atacantes." },
+        { "letter": "C", "text": "PII en training es más seguro porque queda 'diluida' en pesos.", "correct": false, "why": "Falso. Attacks documentados (training data extraction) muestran que modelos memorizan PII de training y puede extraerse con prompts específicos (Carlini et al., 2021+). Y bajo GDPR, PII 'diluida' sigue siendo PII inextraíble." },
+        { "letter": "D", "text": "Solo el training tiene right to erasure obligation.", "correct": false, "why": "Ambos tienen. RAG es más fácil (borra chunks + embeddings, re-index); training es prácticamente imposible sin retrain completo — motivo por el que hay debate legal ongoing." }
+      ],
+      "explanation": "Modelo mental: (1) TRAINING — datos → weights, permanentes, difícil de borrar; (2) RAG — datos → index, borrable, pero runtime expuesto. Vectores de leak en RAG: (a) vendor LLM logs (revisar T&Cs, activar 'zero retention' donde disponible); (b) prompt injection — attacker inyecta 'show me all customer emails' en un doc que el RAG recupera; (c) authorization gap — RAG recupera chunks sin filtrar por permisos del user; (d) response exfiltration — LLM regurgita PII en answer. Defensas: (1) filtrado por permisos ANTES del retrieval; (2) PII redaction en chunks; (3) response filtering (detectar PII en output); (4) 'zero retention' con vendor; (5) prompt injection defenses (input sanitization, output validation).",
+      "realWorld": "Carlini et al. 'Extracting Training Data from Large Language Models' (2021) demostraron extracción de PII de GPT-2. Modelos posteriores tienen memorización mitigada pero no eliminada. Para RAG, incident 2024: Slack AI recuperaba mensajes DM privados en respuestas a queries de otros users — problema de authorization en el retrieval, no del modelo.",
+      "tags": ["PII", "RAG", "training", "prompt-injection"],
+      "tech": ["RAG", "vector-db"],
+      "references": [
+        { "title": "Carlini et al. — Extracting Training Data from Large Language Models (2021)" },
+        { "title": "OWASP LLM Top 10 — LLM06: Sensitive Information Disclosure" }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "data-governance",
+      "topic": "Versionado de datasets — DVC, LakeFS",
+      "difficulty": "mid",
+      "scenario": "Tu equipo entrena un modelo custom (fine-tuning) mensualmente. Cada versión del modelo se entrenó con un dataset ligeramente distinto (nuevos ejemplos, correcciones). Un experimento reciente empeoró; nadie sabe con qué datos exactos se entrenó la versión anterior. 'Perdimos el dataset'.",
+      "question": "¿Cuál es la solución adecuada para versionado de datasets?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Git para código NO funciona bien para datasets grandes (blob binarios, GB-TB). Herramientas: (1) DVC (Data Version Control) — Git-like para data, apuntadores en git + storage en S3/GCS; (2) LakeFS — Git-like para data lakes con branches, commits, merges; (3) MLflow para tracking de experimentos con datasets asociados; (4) Weights & Biases con artifact versioning; (5) para embeddings, Pinecone/Qdrant tienen namespaces versionables. La clave: reproducibilidad de entrenamiento.", "correct": true, "why": "Correcto. Datasets como código requiere herramientas específicas. Sin versionado, no puedes: (a) reproducir un experimento, (b) rollback un modelo, (c) diff datasets entre versiones, (d) cumplir compliance de auditoría. DVC es el estándar para ML; LakeFS para data lakes." },
+        { "letter": "B", "text": "Snapshots en S3 con timestamp son suficientes.", "correct": false, "why": "Snapshots te dan versiones pero no lineage, no diff, no branches, no reproducibilidad de pipeline. Es la versión mínima; DVC/LakeFS añaden semántica de VCS." },
+        { "letter": "C", "text": "Guardar datasets en git con Git LFS.", "correct": false, "why": "Git LFS funciona para archivos <100MB, no para datasets multi-GB. Además, LFS no tiene semántica de data (schemas, lineage). DVC es más apropiado." },
+        { "letter": "D", "text": "No importa versionar datasets si el modelo se puede regenerar.", "correct": false, "why": "Sin dataset versionado NO puedes regenerar el modelo exactamente. Y auditorías (SOC2, EU AI Act) exigen trazabilidad de datos de training." }
+      ],
+      "explanation": "Herramientas de data versioning: (1) DVC — 'Git for data', usa git para metadata + S3/GCS/Azure para blobs, integración con MLflow, popular en ML; (2) LakeFS — 'Git for data lakes', branches sobre S3, atomic commits, ideal para pipeline data; (3) Delta Lake / Apache Iceberg / Apache Hudi — table format con time travel, más para analytics; (4) MLflow — tracking de runs + params + datasets, útil para experimentos; (5) W&B Artifacts — versioning + lineage de datasets, models, evaluations. Para RAG específicamente: versiona el corpus source + parámetros de chunking + modelo de embedding + snapshot del índice. Sin esto, 'quiero volver al RAG de hace 2 meses' es imposible.",
+      "realWorld": "OpenAI, Anthropic, Google DeepMind tienen sistemas internos de data versioning más sofisticados que DVC. Iterative.ai (creators de DVC) reporta 10k+ empresas en 2025. LakeFS es adoptado por Wix, Similarweb. Sin data versioning, EU AI Act art. 12 (logging obligations) es imposible de cumplir para modelos entrenados o fine-tuned.",
+      "tags": ["data-versioning", "DVC", "LakeFS", "reproducibility"],
+      "tech": ["DVC", "LakeFS", "MLflow", "W&B"],
+      "references": [
+        { "title": "DVC Docs", "url": "https://dvc.org" },
+        { "title": "LakeFS Docs", "url": "https://lakefs.io" }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "data-governance",
+      "topic": "Data lineage",
+      "difficulty": "senior",
+      "scenario": "Un customer pregunta al chatbot: '¿cuánto pagué en marzo?'. El bot responde $1247. El customer dice: 'eso está mal'. Team debug: ¿el dato vino de qué DB, qué view, qué transformación, qué chunk, qué RAG? Nadie lo puede reconstruir.",
+      "question": "¿Qué es data lineage y por qué es crítico en sistemas IA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Data lineage: el trazo desde 'dato de origen' hasta 'dato usado en decision/response', incluyendo transformaciones. Crítico para IA porque: (1) debugging (¿de dónde vino este número?), (2) compliance (auditoría exige trazabilidad), (3) confianza (poder mostrar 'esta respuesta viene de este documento'), (4) impact analysis (si borro este source, qué se rompe?), (5) right-to-erasure (dónde vive el dato del user X). Herramientas: OpenLineage, Marquez, DataHub, Amundsen; en RAG: guardar source_id en cada chunk y citar en response.", "correct": true, "why": "Correcto. Data lineage es un requisito de sistemas ML/IA maduros y de compliance (SOC2, EU AI Act, GDPR). Sin lineage, cada bug es 'misterio' y auditorías fallan. En RAG específicamente, la respuesta debe incluir citations con lineage al source original." },
+        { "letter": "B", "text": "Solo importa el resultado final; el lineage es overhead.", "correct": false, "why": "Falso. Sin lineage, bugs son irreproducibles y compliance imposible. Es un multiplicador silencioso de costo." },
+        { "letter": "C", "text": "Los orquestadores como Airflow ya hacen lineage automáticamente.", "correct": false, "why": "Airflow trackea task dependencies, no data lineage semántico. Requiere integración con OpenLineage u otro tool." },
+        { "letter": "D", "text": "Lineage solo importa para batch, no para real-time.", "correct": false, "why": "Falso. Real-time necesita lineage tanto o más — un pipeline de features en real-time con bug puede degradar predicciones en producción y hay que rastrear origen." }
+      ],
+      "explanation": "Data lineage capas: (1) TABLE LINEAGE — tabla A alimenta tabla B; (2) COLUMN LINEAGE — columna x deriva de x1+x2; (3) TRANSFORM LINEAGE — qué código transformó (SQL, Python); (4) RUN LINEAGE — qué corrida específica produjo un dato. Herramientas: OpenLineage (spec), Marquez (implementación), DataHub (LinkedIn, catálogo + lineage), Amundsen (Lyft), Apache Atlas. Para IA/RAG: (a) cada chunk lleva source_id + doc_hash + ingestion_run_id; (b) cada response incluye citations con estos IDs; (c) cada training run registra dataset version. Auditoría EU AI Act art. 12 requiere logs de sistema high-risk — lineage es la infraestructura para cumplirlo.",
+      "realWorld": "Airbnb, Netflix, Uber tienen sistemas de lineage propietarios (Dataportal, DataHub, Databook). OpenLineage es esfuerzo estándar (Astronomer, Marquez). Incident 2024: un banco europeo fue multado por no poder demostrar lineage de decisiones de crédito automatizadas — cae bajo high-risk AI de EU AI Act.",
+      "tags": ["data-lineage", "OpenLineage", "DataHub", "compliance"],
+      "tech": ["OpenLineage", "Marquez", "DataHub", "Amundsen"],
+      "references": [
+        { "title": "OpenLineage Spec", "url": "https://openlineage.io" }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "data-governance",
+      "topic": "EU AI Act — categorías de riesgo",
+      "difficulty": "mid",
+      "scenario": "Tu empresa lanza en EU: (a) un chatbot de FAQ que resume documentos internos; (b) un sistema que scoring de risk crediticio para préstamos; (c) un juguete que 'habla' con niños; (d) un feature de mejora de imágenes en la app.",
+      "question": "¿Bajo qué categorías del EU AI Act cae cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El EU AI Act define 4 categorías por riesgo: (1) UNACCEPTABLE (prohibido — social scoring, manipulation subliminal, exploitation de vulnerabilidades); (2) HIGH-RISK (obligaciones estrictas — biometrics, credit scoring, hiring, law enforcement, safety-critical); (3) LIMITED (transparency obligations — chatbots, deepfakes, emotion recognition); (4) MINIMAL (best-effort code of conduct — spam filter, image enhancement). Casos: (a) LIMITED (chatbot obliga a disclosure); (b) HIGH-RISK (credit scoring, Annex III); (c) UNACCEPTABLE-adjacent o HIGH-RISK (targeting children, safety); (d) MINIMAL.", "correct": true, "why": "Correcto. Estas son las 4 categorías del EU AI Act. Credit scoring está explícitamente en Annex III como high-risk. Chatbots caen en Article 50 (transparency). Juguetes que interactúan con niños tienen consideraciones especiales de safety. Image enhancement típicamente minimal." },
+        { "letter": "B", "text": "Solo 2 categorías: prohibido y permitido.", "correct": false, "why": "Falso. Son 4 categorías con obligaciones graduadas. Simplificar a binario ignora los requisitos de high-risk (documentation, human oversight, transparency) y limited (disclosure)." },
+        { "letter": "C", "text": "Solo aplica a proveedores de modelos foundation, no a apps.", "correct": false, "why": "Falso. Aplica a PROVIDERS (quien pone en mercado) y DEPLOYERS (quien usa). Una empresa que integra Claude en un scoring crediticio es 'provider del sistema high-risk' aunque el modelo base sea de Anthropic." },
+        { "letter": "D", "text": "Aplica solo a productos vendidos a consumidores.", "correct": false, "why": "Falso. Aplica también B2B, government, education. La distinción es riesgo, no consumer/enterprise." }
+      ],
+      "explanation": "EU AI Act (Reg. 2024/1689) — 4 categorías de riesgo: (1) UNACCEPTABLE (Art. 5) — practicas prohibidas: social scoring, manipulation, biometric categorization de raza/religión, real-time remote biometric ID en espacios públicos (excepciones ley enforcement); (2) HIGH-RISK (Annex III) — biometrics, critical infra, education, employment, essential services (credit, insurance), law enforcement, migration, justice, democratic processes → obligations: risk mgmt system, data governance, technical documentation, logging, transparency, human oversight, accuracy/robustness/cybersecurity, quality mgmt; (3) LIMITED (Art. 50) — transparency obligations: chatbots must disclose 'I'm AI', deepfakes must be labeled, emotion recognition must inform users; (4) MINIMAL — code of conduct voluntario. Provider vs Deployer: PROVIDER pone en mercado (may be non-EU, still applies if used in EU); DEPLOYER usa profesionalmente.",
+      "realWorld": "EU AI Act publicado en OJ julio 2024, en vigor agosto 2024. Fases: Feb 2025 (prohibited practices), Aug 2025 (GPAI + penalties), Aug 2026 (high-risk enforcement + transparency, Article 50 chatbot disclosure), Aug 2027 (models placed before Aug 2025). Fines: hasta 7% revenue global o €35M (whichever higher) para violations de Art. 5.",
+      "tags": ["EU-AI-Act", "risk-categories", "compliance"],
+      "tech": ["EU regulation"],
+      "references": [
+        { "title": "Regulation (EU) 2024/1689 — AI Act text", "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689" },
+        { "title": "EU AI Act — Annex III (high-risk systems)" }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "data-governance",
+      "topic": "EU AI Act — fechas de enforcement",
+      "difficulty": "mid",
+      "scenario": "Estamos en agosto 2026. Tu abogado interno pregunta: '¿qué obligaciones del EU AI Act están en vigor HOY, cuáles vienen y cuándo?'.",
+      "question": "¿Cuál es el timeline correcto de las fases del EU AI Act?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El Act entró en vigor Aug 2024. Fases: Feb 2025 (Chapter II — prohibited practices Art. 5 + AI literacy); Aug 2025 (Chapter V — GPAI obligations + penalties + national authorities); Aug 2026 (Chapter III — high-risk systems obligations + Article 50 transparency + AI Office enforcement powers activated); Aug 2027 (obligations para modelos GPAI colocados antes de Aug 2025).", "correct": true, "why": "Correcto. Estas son las fechas oficiales según el texto del Regulation 2024/1689. Aug 2, 2026 es la fecha clave: es cuando AI Office obtiene powers formales de enforcement + Article 50 transparency requirements (chatbot disclosure, deepfake labeling, AI-content marking) entran en vigor." },
+        { "letter": "B", "text": "El Act aplica todo desde Aug 2024.", "correct": false, "why": "Falso. La entrada en vigor total es gradual precisamente para dar tiempo de adaptación. Todo-a-la-vez habría sido inviable operativamente." },
+        { "letter": "C", "text": "El Act se implementará completamente en 2030.", "correct": false, "why": "Falso. Las fases principales están entre 2024-2027. Después habrá refinamientos vía delegated acts y guidelines pero el core enforcement es en este período." },
+        { "letter": "D", "text": "Las fechas fueron postponed en 2025.", "correct": false, "why": "Falso. Aunque hubo lobby para posponer (especialmente por parte de industria US), la Commission mantuvo el calendar. Algunos plazos secundarios pueden ajustarse via guidelines pero las fechas principales están firmes en 2026." }
+      ],
+      "explanation": "Timeline EU AI Act (Regulation 2024/1689): (1) 1 Aug 2024 — Act en vigor; (2) 2 Feb 2025 — Chapter II (prohibited practices Art. 5) + AI literacy obligations aplicables; (3) 2 Aug 2025 — Chapter V (GPAI providers), penalties framework, national competent authorities, Codes of Practice for GPAI (voluntary); (4) 2 Aug 2026 — Enforcement powers de AI Office plenamente activos, Chapter III (high-risk obligations), Article 50 transparency (chatbot disclosure, deepfake labels, AI content marking); (5) 2 Aug 2027 — GPAI models colocados antes de Aug 2025 deben cumplir. Fines Art. 99: prohibited practices hasta €35M o 7% turnover global; other obligations hasta €15M o 3%; misleading info hasta €7.5M o 1%.",
+      "realWorld": "European Commission publicó guidance July 2025 sobre GPAI obligations. Code of Practice publicado 2024 (voluntary, prep for Aug 2026). Aug 2, 2026 fue llamado 'the deadline' por muchos vendors (Anthropic, OpenAI, Google publicaron docs específicas). AI Office establecido en 2024 dentro de DG CNECT de la Commission.",
+      "tags": ["EU-AI-Act", "timeline", "enforcement", "GPAI"],
+      "tech": ["EU regulation"],
+      "references": [
+        { "title": "EU AI Act — Enforcement timeline (artificialintelligenceact.eu)", "url": "https://artificialintelligenceact.eu" },
+        { "title": "European Commission — AI Act Q&A" }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "data-governance",
+      "topic": "High-risk requirements",
+      "difficulty": "senior",
+      "scenario": "Confirmas que tu sistema de scoring crediticio es HIGH-RISK bajo Annex III. Legal pide lista de obligaciones concretas.",
+      "question": "¿Cuáles son las obligaciones clave para providers de sistemas high-risk?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chapter III obligations (Arts. 8-21): (1) Risk management system — identifica, evalúa, mitiga riesgos; (2) Data governance — quality of training/validation/test data, bias mitigation; (3) Technical documentation (Annex IV) — architecture, algorithms, training data, limitations; (4) Record-keeping / logs — auditabilidad; (5) Transparency & instructions of use — deployers deben entender el sistema; (6) Human oversight — humans can intervene/override; (7) Accuracy, robustness, cybersecurity — cyber en Art. 15; (8) Quality management system — internal processes; (9) Conformity assessment ANTES de mercado + registro en EU database; (10) Post-market monitoring.", "correct": true, "why": "Correcto. Estas son las obligaciones textuales de Chapter III. No es 'una policy'; es un sistema completo con documentación, gestión, y evaluación de conformidad. Fines por non-compliance van hasta €15M o 3% turnover global." },
+        { "letter": "B", "text": "Solo hay que registrar el sistema y hacer un modelcard.", "correct": false, "why": "Insuficiente. Las obligaciones incluyen risk mgmt, data governance, logging, human oversight, y CONFORMITY ASSESSMENT (evaluación de terceros para algunos casos)." },
+        { "letter": "C", "text": "Basta con seguir GDPR.", "correct": false, "why": "GDPR cubre data protection general; AI Act añade obligaciones específicas del sistema AI (risk, data quality, human oversight). Son complementarios, no sustitutos." },
+        { "letter": "D", "text": "Las obligaciones solo aplican tras un incident.", "correct": false, "why": "Falso. Son ex-ante (antes de colocar en mercado). Conformity assessment se hace pre-market, no post-hoc." }
+      ],
+      "explanation": "Chapter III de EU AI Act define obligaciones para high-risk AI. Los 10 pilares (Arts. 8-21): (1) Risk mgmt system (ISO 31000-like); (2) Data governance (quality, representativeness, bias testing); (3) Technical documentation (Annex IV: purpose, integration, versioning, architecture, training data, computational resources, metrics, foreseeable misuse); (4) Automatic logging; (5) Transparency + instructions for deployers; (6) Human oversight (Art. 14 — a human must be able to override); (7) Accuracy, robustness, cybersecurity metrics; (8) Quality management system (like ISO 9001); (9) Conformity assessment (internal for most, third-party for biometrics); (10) Post-market monitoring + reporting serious incidents. Registro obligatorio en EU database (Art. 71) antes de colocar en mercado. Providers no-EU deben appointar representative en EU (Art. 22).",
+      "realWorld": "Compliance con Chapter III cuesta cientos de miles a millones (auditoría, doc, procesos). Algunos vendors ya publican 'EU AI Act compliance kits' (IBM, Microsoft). NIST AI RMF (US) es voluntary pero mapea bien a Chapter III y ayuda a estructurar. ISO 42001 (AI Management System, 2023) es la norma técnica standard para el 'quality management system' requerido.",
+      "tags": ["EU-AI-Act", "high-risk", "obligations", "compliance"],
+      "tech": ["EU regulation", "NIST AI RMF", "ISO 42001"],
+      "references": [
+        { "title": "EU AI Act — Chapter III text", "url": "https://eur-lex.europa.eu/eli/reg/2024/1689/oj" },
+        { "title": "NIST AI RMF 1.0" }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "data-governance",
+      "topic": "GPAI obligations",
+      "difficulty": "senior",
+      "scenario": "Trabajas en un provider de modelo GPAI (General Purpose AI) que se colocó en mercado en Sept 2025 (post cutoff). El modelo se entrena con 10^25 FLOPs. Legal pregunta qué obligaciones aplican.",
+      "question": "¿Cuáles son las obligaciones GPAI y cuál es la distinción de 'systemic risk'?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chapter V (Art. 53-55): TODOS los GPAI providers deben: (1) technical documentation del modelo (Annex XI); (2) info + docs para downstream providers (Annex XII); (3) policy de copyright compliance (respeto de opt-outs texto y data mining); (4) resumen público del training data (template Commission). Adicional para GPAI con SYSTEMIC RISK (>10^25 FLOPs, ~Art. 51): (5) model evaluation con adversarial testing; (6) risk assessment y mitigation; (7) serious incidents reporting; (8) cybersecurity protection para modelo y infra. Sistema de 10^25 FLOPs entra en sistemic risk.", "correct": true, "why": "Correcto. Chapter V separa GPAI general (obligaciones básicas) de GPAI systemic risk (obligaciones adicionales). El threshold de 10^25 FLOPs (equivalente aprox a GPT-4 class) es el marker. Notification a Commission dentro de 2 semanas de alcanzar el threshold. Cumplir con Code of Practice = presunción de conformidad." },
+        { "letter": "B", "text": "GPAI providers están exentos por defecto.", "correct": false, "why": "Falso. GPAI providers tienen obligations específicas (Chapter V). Este es uno de los aspectos más debatidos del Act." },
+        { "letter": "C", "text": "Los GPAI providers solo deben cumplir con GDPR.", "correct": false, "why": "Falso. GDPR aplica pero AI Act añade obligations específicas de AI (docs, copyright, systemic risk assessment)." },
+        { "letter": "D", "text": "GPAI providers son exempt si el modelo es open source.", "correct": false, "why": "Semi-cierto. Open source models tienen EXENCIÓN PARCIAL (Art. 53(2)) de algunas obligations (docs, info downstream) SI son released free y open — pero NO exención de systemic risk obligations si califican, ni de copyright compliance ni resumen training data." }
+      ],
+      "explanation": "GPAI (General Purpose AI) definition (Art. 3(63)): modelo que exhibe generalidad significativa y puede realizar tareas distintas. Obligaciones base (Art. 53): (1) technical documentation (Annex XI); (2) downstream info + documentation (Annex XII); (3) copyright policy respetando opt-outs (Directive (EU) 2019/790 art. 4(3)); (4) resumen public de training data (Commission template). GPAI con systemic risk (Art. 51): threshold 10^25 FLOPs (or Commission designation). Obligaciones adicionales (Art. 55): (a) model evaluations con adversarial testing (red teaming); (b) risk assessment + mitigation; (c) tracking + reporting serious incidents; (d) cybersecurity. Code of Practice: voluntary, publicado 2024, cumplir = presunción de conformidad. Open source exemption parcial (Art. 53(2)).",
+      "realWorld": "Anthropic, OpenAI, Google, Meta han signed Code of Practice (2024-2025). Los modelos frontier (GPT-4, Claude 3.5, Gemini 1.5) todos superan 10^25 FLOPs threshold. Meta rechazó firmar por 'over-reach'. El threshold de 10^25 se debate — algunos argumentan que es arbitrario. Enforcement de Chapter V comenzó Aug 2, 2026 con AI Office plenamente empoderada.",
+      "tags": ["GPAI", "systemic-risk", "Chapter-V", "EU-AI-Act"],
+      "tech": ["EU regulation"],
+      "references": [
+        { "title": "EU AI Act — Chapter V (GPAI)", "url": "https://eur-lex.europa.eu/eli/reg/2024/1689/oj" }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "data-governance",
+      "topic": "Providers vs Deployers",
+      "difficulty": "mid",
+      "scenario": "Tu SaaS usa Claude API para dar 'sales insights' a HR teams. ¿Eres provider o deployer bajo EU AI Act? ¿Y Anthropic? ¿Y tu customer que usa las insights para decisiones de hiring?",
+      "question": "¿Cómo se determinan las categorías provider/deployer y qué obligaciones tiene cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Categorías por rol: (1) PROVIDER — quien desarrolla o hace desarrollar Y coloca en mercado (Anthropic para Claude, TÚ para tu sales insights product); (2) DEPLOYER (formerly 'user') — quien usa un sistema AI en su actividad profesional (tu customer HR team); (3) IMPORTER, DISTRIBUTOR, AUTHORISED REPRESENTATIVE para actores no-EU. Un actor puede ser MULTIPLE roles: Anthropic es provider del GPAI; TU eres deployer de Claude Y provider de tu producto; tu customer es deployer de tu producto (si es hiring, entra high-risk). Cada rol tiene obligaciones distintas.", "correct": true, "why": "Correcto. Es la distinción clave. Un actor puede acumular roles a lo largo de la cadena. Las obligaciones difieren: providers tienen la carga técnica principal (Chapter III si es high-risk); deployers tienen Art. 26 (usar según instrucciones, human oversight, log-keeping, DPIA). Fine chain: entender tu rol es primer paso de compliance." },
+        { "letter": "B", "text": "Solo el provider del modelo base (Anthropic) tiene obligaciones.", "correct": false, "why": "Falso. Cada actor que aporta 'substantial modification' (fine-tuning significativo, cambio de intended purpose) puede convertirse en provider del sistema modificado (Art. 25). Y deployers tienen obligaciones propias." },
+        { "letter": "C", "text": "Provider y deployer son sinónimos.", "correct": false, "why": "Falso. Provider = coloca en mercado; Deployer = usa. Roles y obligaciones distintos." },
+        { "letter": "D", "text": "Solo aplica al provider EU-based.", "correct": false, "why": "Falso. Extraterritorial application — cualquier provider (aunque no EU-based) que coloque en mercado EU o cuyo output se use en EU está sujeto. Providers no-EU deben appointar authorized representative." }
+      ],
+      "explanation": "Roles EU AI Act: (1) PROVIDER (Art. 3(3)) — dev + puesta en mercado. Obligaciones dependen de risk category (Chapter III si high-risk, Chapter V si GPAI); (2) DEPLOYER (Art. 3(4)) — uso profesional. Obligaciones Art. 26: seguir instrucciones del provider, human oversight, monitor performance, log-keeping (6 meses min), DPIA si processes personal data, inform workers si en workplace, transparency a affected persons; (3) IMPORTER (Art. 23) — coloca sistema no-EU; (4) DISTRIBUTOR (Art. 24) — makes available on market. Art. 25 SUBSTANTIAL MODIFICATION: quien modifica sistema high-risk sustantivamente ASUME rol de provider — importante para fine-tuners. Chain accountability: cada actor responde por su parte.",
+      "realWorld": "OpenAI, Anthropic, Google — providers de GPAI. Empresas que fine-tunean (Cohere for enterprise) — providers del sistema resultante. Salesforce, Workday, SAP — deployers/providers de sistemas HR (high-risk si affect hiring). La complejidad: una startup que envuelve Claude en un producto HR es SIMULTÁNEAMENTE deployer de Claude y provider de su producto — obligaciones dobles.",
+      "tags": ["provider", "deployer", "EU-AI-Act", "roles"],
+      "tech": ["EU regulation"],
+      "references": [
+        { "title": "EU AI Act — Art. 3 (definitions)" },
+        { "title": "EU AI Act — Art. 26 (deployer obligations)" }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "data-governance",
+      "topic": "Fines del EU AI Act",
+      "difficulty": "mid",
+      "scenario": "Tu compliance team pregunta: '¿cuánto podríamos ser multados si violamos el AI Act?'. Alguien menciona '4% como GDPR', otro '7%', otro '€35M flat'.",
+      "question": "¿Cuál es la estructura correcta de fines?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Art. 99 gradúa fines por severidad: (1) violaciones de prohibited practices (Art. 5) — hasta €35M o 7% del turnover anual global (whichever higher); (2) non-compliance con obligations de high-risk, GPAI, transparency — hasta €15M o 3%; (3) supply of incorrect/incomplete/misleading info a authorities — hasta €7.5M o 1%. SMEs y startups: se aplica la lower amount (menor entre flat y percentage). Additional national fines pueden acumularse.", "correct": true, "why": "Correcto. Estructura textual del Art. 99. El 7% de turnover global lo hace one of the harshest fines regulatorios (más que GDPR's 4%). Para BigTech, 7% de $200B+ = decenas de miles de millones potenciales. Para SMEs, aplica la 'lower amount' para evitar destruction of business." },
+        { "letter": "B", "text": "Igual que GDPR, hasta 4% turnover.", "correct": false, "why": "Falso. AI Act es más severo (7% para violations más graves). Refleja intención regulatoria de máxima disuasión." },
+        { "letter": "C", "text": "Flat €35M sin componente de turnover.", "correct": false, "why": "Falso. Es €35M O 7% turnover, whichever HIGHER. Para grandes corps el % turnover domina; para small es el flat." },
+        { "letter": "D", "text": "Solo warnings; no hay fines financieros.", "correct": false, "why": "Falso. Fines financieros están explícitamente en Art. 99. Aunque el primer approach de authorities suele ser guidance y remediation." }
+      ],
+      "explanation": "Estructura fines Art. 99 (por severidad): TIER 1 — €35M o 7% turnover (whichever higher) — para violation de Art. 5 (prohibited practices). TIER 2 — €15M o 3% — non-compliance con obligations de Chapter III (high-risk), Chapter V (GPAI Art. 53, 54), Chapter IV (transparency Art. 50). TIER 3 — €7.5M o 1% — misleading info a competent authorities. SMEs adjustment: 'whichever is lower' aplica. GPAI providers específicos: Art. 101 permite hasta 3% turnover o €15M por non-cooperation. Enforcement: national competent authorities primary; AI Office (EU-level) para GPAI. Multi-jurisdictional — un breach afecta múltiples países EU.",
+      "realWorld": "Aug 2, 2026 marcó activación de enforcement powers plenos del AI Office. Los primeros casos probables: chatbots sin disclosure (Art. 50), deepfakes sin labeling. Los mercados spéculan sobre casos test — probablemente empresas mid-size antes de BigTech. GDPR patterns: primeros años foco en small violations para setup precedent, luego escalation.",
+      "tags": ["fines", "penalties", "EU-AI-Act", "Art-99"],
+      "tech": ["EU regulation"],
+      "references": [
+        { "title": "EU AI Act — Art. 99 (Penalties)" }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "data-governance",
+      "topic": "GDPR + AI — right to erasure imposible en modelos entrenados",
+      "difficulty": "senior",
+      "scenario": "Un customer EU pide bajo GDPR Art. 17 (right to erasure): 'quiero que borren mis datos de sus modelos'. Tu modelo se entrenó con esos datos hace 6 meses. Legal pregunta: '¿podemos cumplir?'.",
+      "question": "¿Cuál es el estado real de right to erasure sobre modelos ya entrenados?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Técnicamente casi imposible: los weights han memorizado (imperfectamente) los datos; no hay 'delete row' en pesos. Opciones: (1) MACHINE UNLEARNING — técnicas emergentes (SISA, influence functions, gradient ascent) pero no probadas a escala; (2) RETRAIN sin los datos — costoso pero definitivo; (3) FILTERING — bloquear outputs que contengan el PII (paliativo); (4) ARGUE 'derecho no es absoluto' — GDPR Art. 17(3) tiene exceptions (research, freedom of expression). Estado 2026: unlearning es área activa de research; legalmente ambiguous; EU AI Act Art. 10 obliga a data governance en TRAINING para minimizar el problema.", "correct": true, "why": "Correcto. Es la tensión conocida entre GDPR y ML. Machine unlearning es research vivo (Bourtoule et al. 2021 SISA, Google Machine Unlearning Challenge 2023). En producción, la mayoría de providers dependen de retraining o filtering + argumentos legales. EU AI Act Art. 10 empuja a prevención (data governance en training) para evitar el problema." },
+        { "letter": "B", "text": "Simplemente borrar los datos del training set futuros; el modelo actual no cambia.", "correct": false, "why": "No cumple con la solicitud del user (sus datos siguen 'en' el modelo). Los reguladores lo tratan como non-compliance con Art. 17." },
+        { "letter": "C", "text": "Machine unlearning es tecnología mature; aplica sin fricción.", "correct": false, "why": "Falso a 2026. Machine unlearning es research area con avances pero no producto listo. Aplicar en producción sin validación puede degradar el modelo o dejar residuos." },
+        { "letter": "D", "text": "GDPR no aplica a modelos ML.", "correct": false, "why": "Falso. GDPR aplica cuando hay personal data. Si el modelo memorizó datos personales, GDPR aplica. Múltiples DPAs europeos han opinado sobre esto (Italia bloqueó ChatGPT temporalmente en 2023 por preocupaciones GDPR)." }
+      ],
+      "explanation": "Machine unlearning: campo que busca 'eliminar influence' de datos específicos sin retrain completo. Técnicas: (1) SISA (Sharded, Isolated, Sliced, Aggregated) — training en shards permite retrain solo del shard afectado; (2) Influence functions — estimar impacto de un ejemplo específico; (3) Gradient ascent en los datos a olvidar; (4) Knowledge distillation con dataset filtered. Limitaciones: caro, no garantiza olvido completo, puede degradar performance. Estado legal: ambiguo, DPAs europeos evaluando. Aproach industry: (1) minimize PII in training (Art. 10 EU AI Act obliga); (2) use RAG for user-specific data (borrable); (3) tener retrain schedule; (4) legal argumentation Art. 17(3) exceptions. EDPB Guidelines on GenAI (2024-2025) elaboran expectativas.",
+      "realWorld": "Italia bloqueó ChatGPT en marzo 2023 por preocupaciones GDPR; OpenAI implementó controls (opt-out from training, delete conversation) para reanudar. Google Machine Unlearning Challenge 2023 mostró que unlearning es factible pero costoso. NYT vs OpenAI (2024+) sigue debatiendo si el training con copyrighted content es fair use — issue relacionado.",
+      "tags": ["GDPR", "right-to-erasure", "machine-unlearning", "Art-17"],
+      "tech": ["Machine unlearning", "SISA"],
+      "references": [
+        { "title": "Bourtoule et al. — Machine Unlearning (SISA, 2021)" },
+        { "title": "EDPB — Opinion 28/2024 on AI models" }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "data-governance",
+      "topic": "Model cards y datasheets",
+      "difficulty": "mid",
+      "scenario": "Tu equipo de IA lanza un nuevo modelo interno. El PM pregunta '¿por qué tenemos que escribir un model card? Es solo doc'. El data scientist responde 'porque compliance lo pide, pero también es útil'.",
+      "question": "¿Qué son model cards y datasheets for datasets, y qué valor añaden?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MODEL CARDS (Mitchell et al., Google 2019): documento estándar que declara — intended use, out-of-scope uses, training data, evaluation metrics por grupo demográfico, ethical considerations, caveats. DATASHEETS FOR DATASETS (Gebru et al. 2018): equivalente para datasets — motivation, composition, collection process, preprocessing, uses, distribution, maintenance. Valor: (1) transparencia y accountability; (2) evita misuse; (3) requerido de facto por EU AI Act (Annex IV technical documentation); (4) apoya auditoría; (5) educación de usuarios downstream.", "correct": true, "why": "Correcto. Model cards y datasheets son artefactos standard de responsible AI. Model cards fueron introducidas por Mitchell et al. (Google) 2019 y adoptadas por HuggingFace como default template. Datasheets por Gebru et al. 2018. Ambos son requeridos de facto por regulation (EU AI Act Art. 11 + Annex IV, NIST AI RMF)." },
+        { "letter": "B", "text": "Model cards son marketing.", "correct": false, "why": "Falso. Son documentación técnica structured. Aunque tengan value comunicativo, su propósito es transparency, no PR." },
+        { "letter": "C", "text": "Solo relevantes para modelos open source.", "correct": false, "why": "Falso. Aplican a proprietary también. EU AI Act obliga a technical documentation similar a model cards para cualquier high-risk system." },
+        { "letter": "D", "text": "Un README es equivalente.", "correct": false, "why": "README es informal, no estructurado. Model cards tienen sections definidos (intended use, limitations, evaluation, ethical considerations) — facilitan compliance y auditoría." }
+      ],
+      "explanation": "Model Card structure (template Mitchell et al. 2019): (1) Model details — name, version, date, type, paper, license; (2) Intended use — primary uses, primary users, out-of-scope uses; (3) Factors — relevant factors (demographic, environmental); (4) Metrics — evaluation, by group; (5) Evaluation data — datasets used; (6) Training data; (7) Quantitative analyses — unitary + intersectional; (8) Ethical considerations; (9) Caveats + recommendations. Datasheet for Datasets structure (Gebru et al. 2018): motivation, composition, collection, preprocessing, uses, distribution, maintenance. HuggingFace enforce model card en model uploads. EU AI Act Annex IV es basicamente extended model card. NIST AI RMF también recomienda.",
+      "realWorld": "HuggingFace requires model cards para all uploaded models. Anthropic, OpenAI, Google, Meta publican system cards para sus modelos frontier (Claude 3.5 System Card, GPT-4 System Card). Datasheets menos adoptadas pero creciendo (BigScience BLOOM tuvo datasheet elaborado). EU AI Act empuja adoption formal.",
+      "tags": ["model-cards", "datasheets", "documentation", "responsible-AI"],
+      "tech": ["HuggingFace", "Mitchell et al."],
+      "references": [
+        { "title": "Mitchell et al. — Model Cards for Model Reporting (2019)" },
+        { "title": "Gebru et al. — Datasheets for Datasets (2018)" }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "data-governance",
+      "topic": "NIST AI RMF vs ISO 42001",
+      "difficulty": "senior",
+      "scenario": "Tu CTO US pregunta: 'no operamos en EU, pero queremos framework de AI governance. ¿NIST AI RMF, ISO 42001, o EU AI Act?'.",
+      "question": "¿Cuáles son las diferencias y cuándo usar cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "(1) NIST AI RMF (US, 2023, voluntary) — framework de 4 functions (GOVERN, MAP, MEASURE, MANAGE), practical para org-level AI governance, voluntario pero de facto standard en US y para federal contractors; (2) ISO 42001 (2023) — AI Management System standard, certifiable (auditable third-party), estructura similar a ISO 27001/9001, útil para demostrar madurez; (3) EU AI Act — legal binding en EU, con obligations concretas. Combinable: NIST RMF como framework operacional + ISO 42001 para certification + EU AI Act si opera en EU. NIST y ISO son complementarios; EU AI Act añade obligación legal.", "correct": true, "why": "Correcto. Los tres son complementarios, no alternativos. NIST AI RMF da la 'how-to' operacional. ISO 42001 da certification. EU AI Act da the law. Muchas empresas US adopt NIST RMF como baseline y añaden ISO 42001 para credibility. Empresas globales usan los tres." },
+        { "letter": "B", "text": "Solo NIST RMF es suficiente.", "correct": false, "why": "Bueno como framework operacional pero no da certification (ISO) ni compliance legal (EU). Deja gaps si tienes ambitions más allá." },
+        { "letter": "C", "text": "Solo importa EU AI Act.", "correct": false, "why": "Falso si no operas en EU. Y aún operando en EU, NIST/ISO ayudan a implementar los requisitos de forma estructurada." },
+        { "letter": "D", "text": "ISO 42001 hace obsoletos los otros.", "correct": false, "why": "Falso. ISO 42001 es un standard de management system; no reemplaza framework operacional (NIST) ni regulation (EU). Cumplir ISO no garantiza compliance con EU AI Act." }
+      ],
+      "explanation": "Framework mapping: (1) NIST AI RMF 1.0 (Jan 2023) — 4 functions: GOVERN (culture, policies, roles), MAP (context, impacts), MEASURE (evaluation), MANAGE (prioritize, respond). Playbook + AI RMF Generative AI Profile. Voluntary but referenced by US Executive Order 14110 (2023) and Federal contracts; (2) ISO/IEC 42001:2023 — Information Technology — Artificial Intelligence — Management System — first ISO standard for AI, certifiable via accredited body, structure similar ISO 27001 (Annex A controls); (3) EU AI Act — binding law, specific obligations. Complementary: EU AI Act tells you WHAT to do (obligations), NIST tells you HOW (operational framework), ISO 42001 gives you PROOF (certification). Big-Tech tienden a implement all three.",
+      "realWorld": "Microsoft, IBM, Google publicaron sus mappings NIST RMF → interno. First ISO 42001 certifications en 2024-2025 (companies incluyendo AWS, Accenture). US executive orders (Biden 14110 en 2023, Trump replaced parts 2025) mantienen NIST como referencia. Muchos vendors venden 'compliance kits' que mapean entre frameworks.",
+      "tags": ["NIST-AI-RMF", "ISO-42001", "governance-frameworks"],
+      "tech": ["NIST AI RMF", "ISO 42001"],
+      "references": [
+        { "title": "NIST AI Risk Management Framework 1.0", "url": "https://www.nist.gov/itl/ai-risk-management-framework" },
+        { "title": "ISO/IEC 42001:2023" }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "data-governance",
+      "topic": "US executive orders sobre AI",
+      "difficulty": "mid",
+      "scenario": "Un stakeholder US pregunta: 'después de que Trump revocó la Biden executive order en 2025, ¿tenemos regulation federal en US?'.",
+      "question": "¿Cuál es el estado real de AI regulation federal en US en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "US NO tiene federal AI law comprehensive tipo EU AI Act. Estado 2026: (1) Biden EO 14110 (Oct 2023) fue rescinded por Trump en enero 2025; (2) Trump EO enfocado en 'AI leadership' + remove regulatory barriers; (3) NIST AI RMF continúa como referencia voluntary; (4) sector-specific regulation (FDA para medical AI, EEOC para hiring AI, FTC para consumer protection); (5) STATE laws: Colorado AI Act (2024, high-risk framework similar to EU), NYC Local Law 144 (bias audits for hiring AI), California multiple bills; (6) fragmentation es la característica US.", "correct": true, "why": "Correcto. US = fragmentación regulatoria. No hay federal comprehensive law. State laws (Colorado, NYC) llenan huecos. Sector-specific agencies (FDA, EEOC, FTC) aplican su authority existente. Comparativamente, EU AI Act ofrece más certainty pero más burden; US ofrece más flexibility pero more state-by-state complexity." },
+        { "letter": "B", "text": "US tiene un federal AI law similar a EU AI Act.", "correct": false, "why": "Falso. Debates en Congress pero ninguna ley federal comprehensive aprobada. State laws + sector-specific." },
+        { "letter": "C", "text": "Sin Biden EO, US no tiene AI regulation.", "correct": false, "why": "Falso. Regulation via existing authority (FTC, EEOC, FDA), state laws, y NIST voluntary continue." },
+        { "letter": "D", "text": "US regulation es más strict que EU.", "correct": false, "why": "Falso. Es lo contrario en scope y specificity — EU es más strict y comprehensive; US es más targeted y sector-specific." }
+      ],
+      "explanation": "US AI regulatory landscape 2026: FEDERAL — no comprehensive law. Biden EO 14110 (Oct 2023) established many initiatives (NIST safety testing, watermarking, dual-use foundation models) — rescinded early 2025 by Trump. Trump EOs foco en promoting AI leadership + removing perceived regulatory barriers. AGENCY-BY-AGENCY: FDA (medical devices), EEOC (hiring bias), FTC (consumer protection, unfair practices), SEC (financial), NHTSA (autonomous vehicles), CFPB (credit). STATE: Colorado AI Act (2024, effective 2026) — Consumer Protection in Interactions with AI Act, similar to EU AI Act for high-risk; NYC Local Law 144 — bias audits obligatorios para automated employment decision tools; California — múltiples bills incluyendo SB 1047 (vetoed 2024, similar propuestas continúan). Impact: US companies operating multi-state face patchwork. Federal preemption debate ongoing.",
+      "realWorld": "Colorado AI Act firmada mayo 2024 por Gov. Polis, effective Feb 2026 — first US comprehensive state AI law. NYC Local Law 144 en efecto since July 2023 — HR vendors report audits. SB 1047 (California, Wiener) vetoed Sept 2024 por Newsom — argued innovation stifling; similar bills 2025-2026. Federal legislation stalled — Senator Schumer's AI framework 2024 no advanced.",
+      "tags": ["US-AI-regulation", "executive-orders", "state-laws"],
+      "tech": ["NIST AI RMF"],
+      "references": [
+        { "title": "Colorado AI Act (SB24-205)" },
+        { "title": "NIST AI Risk Management Framework" }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "data-governance",
+      "topic": "Copyright y training data — NYT vs OpenAI",
+      "difficulty": "senior",
+      "scenario": "Tu equipo va a fine-tunear un modelo con contenido web crawled. Legal pregunta: '¿qué riesgos copyright hay?'.",
+      "question": "¿Cuál es el landscape legal de copyright + AI training en 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Landscape unresolved. Casos activos: (1) NYT vs OpenAI (2023+) — infringement por training + output regurgitation; (2) Getty vs Stability AI — imagen; (3) authors class actions vs OpenAI, Meta; (4) music publishers vs Suno, Udio. Argumentos: providers dicen 'fair use' (US) / 'text and data mining exception' (EU DSM Directive); rights holders dicen infringement. EU AI Act (Art. 53) obliga a GPAI providers a policy de copyright respetando opt-outs (Directive (EU) 2019/790 Art. 4(3) — robots.txt / TDM opt-out signals). Prácticas seguras: (a) usar datasets con licencia (Common Corpus, PD data); (b) respect opt-outs; (c) mantener detailed provenance; (d) considerar licensing con publishers; (e) tener strategy si demanda llega.", "correct": true, "why": "Correcto. Es el estado real 2026 — legal issues unresolved, múltiples casos activos, distintos frameworks (US fair use vs EU TDM). EU AI Act empuja transparency (public summary training data). Los providers grandes están licensing content (OpenAI + AP, Axel Springer, News Corp; Anthropic litigation con publishers)." },
+        { "letter": "B", "text": "Training con web crawled content es siempre legal (fair use).", "correct": false, "why": "Falso. NYT vs OpenAI y otros están litigando exactamente esto. No hay ruling definitivo que establezca fair use general para training." },
+        { "letter": "C", "text": "Training con web content es siempre illegal.", "correct": false, "why": "También falso. Depende de jurisdiction, licensing, tipo de content, y case law en desarrollo." },
+        { "letter": "D", "text": "Solo importa evitar regurgitation, no el training source.", "correct": false, "why": "Insuficiente. El training source ES el issue legal principal (unauthorized reproduction), independientemente de regurgitation." }
+      ],
+      "explanation": "Copyright + AI training key issues: (1) TRAINING — es 'reproduction' bajo copyright? US: fair use argument (transformative use). EU: TDM exception (Art. 4 DSM Directive 2019/790) permits text/data mining SI no hay opt-out (via robots.txt, terms of service, machine-readable signals); (2) OUTPUT — regurgitation de copyrighted training data (memorization); (3) STYLE/VOICE — mimicking artist style (not copyrightable per se pero ethics/moral rights). Casos: NYT vs OpenAI (filed Dec 2023, discovery ongoing); Getty vs Stability AI (UK + US); Authors Guild vs OpenAI; Perplexity casos con multiple publishers; Suno/Udio vs RIAA. EU AI Act Art. 53(1)(c): GPAI providers must have copyright policy respect opt-outs. Prácticas: (a) opt-out honored (robots.txt with GPTBot/ClaudeBot); (b) licensed data preferred; (c) provenance tracked; (d) public summary of training data (EU obligation).",
+      "realWorld": "NYT vs OpenAI + Microsoft filed Dec 2023, discovery ongoing 2026. Getty vs Stability AI UK trial 2024. OpenAI licensed AP, Axel Springer, News Corp, Financial Times (2023-2024). Anthropic settled some music publishers cases 2024. Perplexity received letters from NYT, Wall Street Journal 2024. Uncertainty makes lawyering critical.",
+      "tags": ["copyright", "training-data", "NYT-vs-OpenAI", "fair-use"],
+      "tech": ["EU DSM Directive"],
+      "references": [
+        { "title": "NYT vs OpenAI complaint (2023)" },
+        { "title": "EU DSM Directive 2019/790 — Art. 4 (TDM exception)" }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "data-governance",
+      "topic": "Bias en datasets y evaluación",
+      "difficulty": "senior",
+      "scenario": "Tu modelo de credit scoring rechaza a minorías étnicas al doble de tasa vs mayoría. Un data scientist propone 'eliminar la columna race'. Otro 'balancear el training set'. Un tercero 'aplicar fairness constraints'.",
+      "question": "¿Cuál es el approach correcto para mitigar bias?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Approach multi-nivel: (1) MEASURE — auditar disparities entre grupos (equal opportunity, demographic parity, equalized odds) con herramientas (Fairlearn, AI Fairness 360, What-If Tool); (2) DATA — investigar bias en training data (historical bias, sampling bias, measurement bias) — 'eliminar columna race' NO funciona porque otros features son proxies (ZIP code); (3) ALGORITHM — fairness constraints (adversarial debiasing, reweighing, calibrated equalized odds) — trade-offs entre metrics; (4) POST-PROCESSING — threshold optimization por grupo; (5) HUMAN OVERSIGHT — humans review edge cases; (6) DOCUMENT — model card con fairness metrics disclosed; (7) MONITOR — ongoing en producción. EU AI Act Art. 10 obliga data governance para bias mitigation en high-risk.", "correct": true, "why": "Correcto. Bias mitigation es multi-nivel. Removing 'race' column no funciona (proxies existen). Balancing puede sesgar en otro sentido. Fairness constraints tienen trade-offs matemáticos (imposibilidad de satisfacer todas las fairness metrics simultáneamente — Chouldechova, Kleinberg). El approach real requiere measurement continuo, transparency, y decisión ética informada." },
+        { "letter": "B", "text": "Simplemente remover 'race' column es suficiente ('fairness through unawareness').", "correct": false, "why": "Falso. 'Fairness through unawareness' es documented anti-pattern. Otros features (ZIP code, name) son proxies. El modelo aprende bias igualmente pero ahora invisible." },
+        { "letter": "C", "text": "Bias es solo problema en training data; el modelo aprende neutral.", "correct": false, "why": "Falso. Bias entra por (a) historical data (decisiones pasadas biased), (b) sampling (grupos under-represented), (c) measurement (features definidos differently for groups), (d) algorithm (choice of loss function), (e) deployment (feedback loops)." },
+        { "letter": "D", "text": "No hay solución técnica; solo policy.", "correct": false, "why": "Extremo. Hay técnicas (measure, constraints, post-processing) genuinamente útiles. La lección es que son COMPLEMENTO a policy y transparency, no sustituto." }
+      ],
+      "explanation": "Bias mitigation framework: (1) MEASURE con multiple fairness metrics — demographic parity (equal rates across groups), equal opportunity (equal TPR), equalized odds (equal TPR+FPR), calibration; NOTE: mathematically impossible to satisfy all simultaneously (Chouldechova 2017, Kleinberg 2016); (2) DATA fixes — collect more representative data, reweigh samples, synthetic minority samples; (3) MODEL fixes — fairness constraints (adversarial debiasing, reduction to constrained optimization), regularizers; (4) POST-PROCESS — threshold tuning per group (controversial legally in US disparate treatment); (5) MONITOR post-deployment con dashboards de fairness; (6) DOCUMENT en model card. Tools: Fairlearn (Microsoft), AI Fairness 360 (IBM), Google What-If Tool. Legal: EU AI Act Art. 10 obliga data quality; US Title VII, EEOC guidance; NYC LL144 obliga audit.",
+      "realWorld": "Apple Card (2019) — disparities entre men/women in credit limits, investigation by NY DFS. Amazon abandonó hiring AI (2018) porque discriminated against women. UnitedHealth algorithm (Obermeyer et al. 2019 Science) — racial bias in healthcare recommendations. NYC LL144 audits ongoing con many vendors. EU AI Act Art. 10 empuja documentation formal.",
+      "tags": ["fairness", "bias", "Fairlearn", "AIF360"],
+      "tech": ["Fairlearn", "AI Fairness 360", "What-If Tool"],
+      "references": [
+        { "title": "Fairlearn Docs", "url": "https://fairlearn.org" },
+        { "title": "Chouldechova — Fair prediction with disparate impact (2017)" }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "data-governance",
+      "topic": "Data governance operativa — quién hace qué",
+      "difficulty": "staff",
+      "scenario": "Tu startup crece: 30 devs, 5 data scientists, 2 legal, 1 CISO. Nadie owns 'data governance para IA'. Bugs de compliance emergen ad-hoc. CEO pide 'establece governance'.",
+      "question": "¿Qué estructura organizacional y procesos son mínimos para AI data governance?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estructura mínima: (1) AI GOVERNANCE COMMITTEE — cross-functional (Eng, Data Sci, Legal, CISO, Product) reunión mensual, decisiones documentadas; (2) DATA STEWARD por dominio (customer data, employee data, telemetry) — ownership de calidad y compliance del dominio; (3) DPO (Data Protection Officer) requerido bajo GDPR si processing large-scale personal data; (4) POLICIES escritas — data classification, retention, PII handling, model deployment, incident response; (5) TOOLING — data catalog (DataHub/Amundsen), lineage (OpenLineage), PII scanning; (6) TRAINING — mandatory onboarding + annual; (7) INCIDENT RESPONSE — playbook para data breaches, model failures; (8) REVIEWS — pre-deployment review para high-risk features; (9) AUDIT LOG — retention 12+ months.", "correct": true, "why": "Correcto. Governance real requiere structure (committee + stewards + DPO), process (policies, reviews, incident response), y tooling (catalog, lineage, scanning). Sin cualquier pieza, hay gaps. La ambición es proporcional a la etapa — startup puede start light (committee + policies + basic tooling) y escalar." },
+        { "letter": "B", "text": "Un solo 'Head of AI Compliance' es suficiente.", "correct": false, "why": "Insuficiente para org de 40+. Governance requires distributed ownership (stewards) + cross-functional decision-making (committee) + specialized roles (DPO)." },
+        { "letter": "C", "text": "Buy compliance software y todo se resuelve.", "correct": false, "why": "Tooling ayuda pero no reemplaza governance (decision-making, ownership, culture). Muchas empresas compran tools y no los usan bien porque no hay proceso." },
+        { "letter": "D", "text": "Governance solo importa post-IPO.", "correct": false, "why": "Falso. Startups fail investors DD, get sued, o get fined mientras crecen. Setup ligero temprano evita crisis después." }
+      ],
+      "explanation": "AI Governance operativa: (1) ROLES — AI Governance Committee (leadership cross-functional), Data Stewards (por dominio), DPO (obligatorio GDPR en algunos casos), AI Ethics Board si scale; (2) POLICIES — data classification (public/internal/confidential/restricted), retention (period, disposal), acceptable use de AI tools, model deployment approval, incident response, third-party AI vendors approval; (3) PROCESSES — pre-deployment review de high-risk features, quarterly audits, incident response playbook, breach notification workflow (GDPR 72h obligation); (4) TOOLING — data catalog (DataHub, Alation, Collibra), lineage (OpenLineage, Marquez), PII discovery (BigID, OneTrust), AI observability (Fiddler, Arize); (5) TRAINING — annual mandatory, role-specific deeper training; (6) METRICS — dashboards de compliance, audit findings, incident MTTR. Startup approach: start light (1 policy doc, monthly committee), escalate as grows.",
+      "realWorld": "Anthropic, OpenAI publicaron governance frameworks (Constitutional AI process, Preparedness Framework). Google AI Principles + reviews. Microsoft Responsible AI Standard v2. Airbnb, Uber tienen VP-level AI Ethics roles. NIST AI RMF 'GOVERN' function elabora este layer específicamente. ISO 42001 certifiable como proof.",
+      "tags": ["governance", "org-structure", "DPO", "policies"],
+      "tech": ["DataHub", "OpenLineage", "BigID"],
+      "references": [
+        { "title": "NIST AI RMF — GOVERN function" },
+        { "title": "ISO/IEC 42001:2023" }
+      ]
+    }
+  ]
+}

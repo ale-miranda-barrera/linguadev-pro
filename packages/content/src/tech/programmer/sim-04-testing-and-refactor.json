@@ -1,0 +1,414 @@
+{
+  "id": "programmer-sim-04-testing-and-refactor",
+  "trackId": "programmer",
+  "order": 4,
+  "title": "Simulacro 04 — Testing, refactor y code smells",
+  "focus": "Tests que aportan valor real vs frágiles, TDD real, mocks vs stubs vs fakes, code smells, refactor seguro con red de tests.",
+  "areaCoverage": ["testing", "refactor"],
+  "timeLimitMin": 22,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "testing",
+      "topic": "Pirámide de tests — estructura sana",
+      "difficulty": "junior",
+      "scenario": "Un equipo tiene: 500 tests E2E (Selenium), 20 tests de integración, 0 tests unitarios. La suite tarda 4 horas y falla intermitentemente en 30% de runs.",
+      "question": "¿Cuál es el diagnóstico y cuál es la estructura sana?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ice-cream cone anti-pattern: tests concentrados en E2E (lentos, frágiles) y pocos unit tests (rápidos, estables). Pirámide sana: MUCHOS unit tests (base), MENOS integration, POCOS E2E (cima). Rápido, cubre bien, feedback en segundos.", "correct": true, "why": "Correcto. Cohn (2009) formalizó la 'Test Pyramid'. Invertirla (ice-cream cone) es anti-patrón conocido. Unit tests: rápidos, aíslan, feedback inmediato, permiten TDD. E2E: lentos, frágiles (dependencias externas), útiles para paths críticos pero no como base. La suite de 4h + 30% flakiness es signature de mala pirámide." },
+        { "letter": "B", "text": "Está bien: E2E prueba 'como usuario real', es la métrica correcta.", "correct": false, "why": "Esta idea (el 'testing trophy' de Kent C. Dodds, u similar) tiene mérito para frontend integration tests, pero llevada al extremo (500 E2E, 0 unit) rompe: no aíslan bugs, no dan feedback rápido, son flaky." },
+        { "letter": "C", "text": "Añadir más E2E — cobertura total.", "correct": false, "why": "Empeora el problema. Más tests lentos y frágiles = suite más lenta y más flaky." },
+        { "letter": "D", "text": "Ejecutar E2E en paralelo. Reduce tiempo.", "correct": false, "why": "Ayuda con tiempo pero no con flakiness ni con feedback rápido para el desarrollador. Y ejecutar 500 E2E en paralelo requiere infraestructura pesada." }
+      ],
+      "explanation": "Test Pyramid (Cohn): base ancha de unit tests (rápidos, deterministas, muchos), capa intermedia de integration (algunos), cima de E2E (pocos, paths críticos). Ratios típicos: 70/20/10 o 80/15/5. Beneficios: (1) feedback rápido (unit tests en segundos); (2) menos flakiness; (3) bugs localizados (unit test rojo apunta al método). Anti-patterns: (a) ice-cream cone (muchos E2E, pocos unit); (b) hourglass (unit + E2E, poca integration). Variantes modernas: 'Testing Trophy' de Dodds enfatiza integration para frontend — pero unit tests siguen siendo base.",
+      "realWorld": "Google publicó 'Test Sizes' interno (small, medium, large) con proporciones similares. Netflix, Twitter — todos favorecen unit tests como base. Un famoso incidente en Salesforce: 8h de test suite bloqueaba deploys — refactorizaron a pirámide sana y bajaron a 20 min.",
+      "tags": ["test pyramid", "E2E", "unit tests", "flakiness"],
+      "tech": ["Selenium", "JUnit"],
+      "references": [{ "title": "Mike Cohn — 'Succeeding with Agile' (Test Pyramid)" }, { "title": "Martin Fowler — 'The Practical Test Pyramid'" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "testing",
+      "topic": "Mock vs Stub vs Fake",
+      "difficulty": "junior",
+      "scenario": "En code review discuten: '¿esto es un mock, un stub o un fake?'. Es un `EmailSender` que guarda emails en una lista y permite verificar 'se envió el email X'.",
+      "question": "¿Cuál es la clasificación correcta según Fowler?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Es un mock — permite verificación.", "correct": false, "why": "Cercano pero no exacto. Mocks son objetos con expectations pre-programadas y verifican interacciones. Aquí no hay expectations pre-programadas — guarda todo pasivamente para revisión posterior." },
+        { "letter": "B", "text": "Es un fake — implementación real pero simplificada del contrato (guarda en memoria en vez de enviar SMTP). Cumple el contrato de EmailSender. Los test pueden verificar el efecto (email en la lista) sin acoplar al método exacto.", "correct": true, "why": "Correcto según taxonomía Fowler ('Mocks Aren't Stubs'). Fakes: implementación funcional pero simplificada (in-memory DB, in-memory queue, in-memory email sender). Stubs: retornan valores canned. Mocks: verifican interacciones con expectations." },
+        { "letter": "C", "text": "Es un stub — devuelve respuesta hardcodeada.", "correct": false, "why": "Stubs devuelven valores fijos ante llamadas. Este objeto tiene comportamiento (guardar en lista) — es más que stub." },
+        { "letter": "D", "text": "Todos son sinónimos.", "correct": false, "why": "Falso. Distinción importante. Confundirlos lleva a testing anti-patterns." }
+      ],
+      "explanation": "Taxonomía de test doubles (Meszaros, Fowler): (1) Dummy — se pasa pero no se usa; (2) Stub — respuestas canned; (3) Fake — implementación funcional simplificada (in-memory DB, filesystem, email); (4) Spy — stub + graba llamadas; (5) Mock — verificación de interacciones con expectations pre-set. Uso: fakes son PREFERIBLES para colaboradores internos (más robustos al refactor). Mocks para bordes externos donde quieres verificar la interacción específica. Herramientas como Mockito hacen que sea fácil crear mocks; pero fakes hechos a mano suelen dar tests más robustos.",
+      "realWorld": "Google internamente favorece fakes sobre mocks — 'Prefer Fakes Over Mocks' es guideline. Testcontainers proporciona fakes reales (Postgres, Kafka, Redis en Docker) para integration tests. InMemoryDatabase de Spring Boot es fake canonical.",
+      "tags": ["mock", "stub", "fake", "test doubles"],
+      "tech": ["Mockito", "Testcontainers"],
+      "references": [{ "title": "Martin Fowler — 'Mocks Aren't Stubs' (2007)" }, { "title": "Gerard Meszaros — 'xUnit Test Patterns'" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "testing",
+      "topic": "Tests frágiles vs tests robustos",
+      "difficulty": "mid",
+      "scenario": "Un compañero muestra este test:\n\n```java\n@Test\nvoid createsInvoice() {\n    Invoice inv = service.createInvoice(user);\n    verify(pdfRenderer).render(argThat(i -> i.getTotal() == 100));\n    verify(emailSender).send(eq(user), argThat(s -> s.contains('$100')));\n    verify(db).save(any(Invoice.class));\n    verify(auditLog).write(argThat(l -> l.startsWith('INVOICE:')));\n}\n```\n\nDice: 'ya cubre todos los casos'. Un mes después, un cambio pequeño rompe 20 tests como éste sin cambiar comportamiento observable.",
+      "question": "¿Cuál es el diagnóstico y solución correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sobre-verificación con mocks (over-specification). El test verifica DETALLES DE IMPLEMENTACIÓN (a quién llama y con qué argumentos exactos) en lugar de RESULTADOS OBSERVABLES. Refactor: reemplaza mocks por fakes/DB en memoria y verifica el resultado (invoice guardada, email enviado — no CÓMO se llamó al mock).", "correct": true, "why": "Correcto. 'Test the behavior, not the implementation'. Cuando verificas cada llamada a un colaborador, cualquier refactor interno rompe tests — aunque el output sea idéntico. Los mocks son útiles para BORDES de sistema (HTTP, tiempo), no para colaboradores internos. Fakes (in-memory Repository, ficticio EmailSender que graba emails a una lista) sobreviven al refactor y siguen siendo rápidos." },
+        { "letter": "B", "text": "Los tests están bien. Que un pequeño cambio rompa 20 tests significa que los tests hacen su trabajo.", "correct": false, "why": "Confunde 'romper tests' con 'detectar regresiones'. Si cambia el comportamiento observable, sí quieres que rompa. Si cambia el orden de llamadas internas pero el resultado es igual, NO quieres que rompa (es cero valor y frena refactors)." },
+        { "letter": "C", "text": "Aumentar cobertura al 100% para prevenir que futuros cambios rompan tests.", "correct": false, "why": "Coverage no es la métrica correcta. 100% coverage con tests malos no protege de nada. La calidad del test se mide por su capacidad de detectar bugs SIN generar falsos positivos en refactor." },
+        { "letter": "D", "text": "Eliminar los verify() y solo hacer assertThat en la Invoice devuelta.", "correct": false, "why": "Simplifica demasiado: si el service tiene side-effects críticos (guardar en DB, enviar email), verificar que 'llamó al método' es válido, pero mejor con FAKES que capturan el efecto sin acoplar al orden y argumentos exactos." }
+      ],
+      "explanation": "La regla más importante de testing (Kent Beck, Michael Feathers): 'un test debe ser resistente al refactor y sensible al cambio de comportamiento'. Los mocks sobre-específicos rompen esta regla — son sensibles al refactor. Alternativas: (1) fakes: implementaciones ligeras del contrato (InMemoryRepository); (2) contract tests: verifican comportamiento vía interfaz pública. Mocks son adecuados para: bordes externos (HTTP, time, filesystem), verificar que ALGO se envió (sin ser estricto sobre cómo).",
+      "realWorld": "Google publicó 'Testing on the Toilet' con este tema recurrente. Ian Cooper dio la charla 'TDD Where Did It All Go Wrong' explicando cómo el uso excesivo de mocks arruinó el testing en muchos proyectos, alejándose de la visión original de Kent Beck (test behavior, not implementation).",
+      "tags": ["testing", "mocks", "fakes", "over-specification", "TDD"],
+      "tech": ["Mockito", "JUnit"],
+      "references": [{ "title": "Ian Cooper — 'TDD, Where Did It All Go Wrong'" }, { "title": "Michael Feathers — 'Working Effectively with Legacy Code'" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "refactor",
+      "topic": "Refactor seguro sobre código legacy",
+      "difficulty": "senior",
+      "scenario": "Heredaste un módulo Java sin tests que hace cálculo de comisiones. Tiene 2000 líneas, muchos if/else anidados, magic numbers. El equipo pide 'refactorizarlo' porque hay bugs frecuentes. Tienes 2 opciones: (a) reescribir desde cero con el nuevo diseño; (b) característica por característica, con tests.",
+      "question": "¿Qué estrategia recomienda Michael Feathers para código legacy sin tests?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Reescribir desde cero. Es más rápido y evita cargar deuda.", "correct": false, "why": "El 'segundo sistema' (Fred Brooks) es siempre peor: sobreestimas tu conocimiento del comportamiento actual (documentado en el legacy), subestimas edge cases no documentados, y el nuevo sistema tarda 3x más de lo estimado en llegar a paridad. La razón por la que Netscape colapsó en el rewrite del navegador." },
+        { "letter": "B", "text": "Escribir 'characterization tests': tests que capturan el COMPORTAMIENTO ACTUAL (incluso si es raro) como red de seguridad. Luego refactorizar con confianza, un cambio pequeño a la vez. Cuando cambies deliberadamente el comportamiento, actualizas los tests correspondientes.", "correct": true, "why": "Correcto. Es el patrón canónico de 'Working Effectively with Legacy Code'. Characterization tests documentan lo que el código HACE (no lo que 'debería'). Te dan feedback rápido si un refactor rompe algo. Luego aplicas Refactoring de Fowler (Extract Method, Rename, Introduce Parameter) con confianza incremental." },
+        { "letter": "C", "text": "Escribir tests unitarios TDD sobre la interfaz externa y refactorizar por dentro.", "correct": false, "why": "Cercano pero incompleto. TDD requiere que sepas qué DEBE hacer el código; con legacy, no lo sabes con certeza. Characterization tests parten de 'qué HACE' (observable) — más humilde y más seguro." },
+        { "letter": "D", "text": "No tocar. Cambio de código legacy siempre introduce más bugs.", "correct": false, "why": "Es la actitud que perpetúa el problema. El refactor DEBE hacerse cuando el código bloquea features. La pregunta es CÓMO hacerlo seguro." }
+      ],
+      "explanation": "Legacy code (definición de Feathers) = 'código sin tests'. Sin tests, no hay red de seguridad → cada cambio es apostar. Solución: crear la red PRIMERO. Characterization tests son test snapshots del comportamiento actual: llama al método con inputs típicos y guarda outputs. Luego cualquier cambio te muestra diff. Herramientas: Approvaltests, Verify (unit tests que aprueban outputs); en Ruby/Rails, use of VCR cassettes. Estrategias adicionales: Seam (Feathers), Strangler Fig Pattern (Fowler) para reemplazar sistemas grandes gradualmente.",
+      "realWorld": "Amazon rewriteó su sistema de checkout con Strangler Fig durante años. Twitter migró de Ruby a Scala módulo por módulo. Netflix reemplazó su monolito con microservicios en 7 años, no de un big-bang.",
+      "tags": ["legacy code", "characterization tests", "strangler fig", "refactor"],
+      "tech": ["Approvaltests", "Verify"],
+      "references": [{ "title": "Michael Feathers — 'Working Effectively with Legacy Code'" }, { "title": "Fowler — 'Strangler Fig Application'" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "refactor",
+      "topic": "Code smells — primitive obsession",
+      "difficulty": "mid",
+      "scenario": "Ves este método en tu codebase:\n\n```java\nvoid transferMoney(String fromAccount, String toAccount, double amount, String currency, String reason)\n```\n\nY este uso: `transferMoney('EUR', '12345', 100.0, 'ES6621000418401234567891', 'Rent payment');`\n\nBug: alguien invirtió argumentos y la app transfirió 100 desde una cuenta con nombre 'EUR'.",
+      "question": "¿Qué code smell es y cuál es la mejor solución?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Primitive Obsession. Los IDs de cuenta, monedas y montos NO son strings/doubles — son conceptos del dominio con validaciones propias. Solución: types de dominio (AccountId, Money, Currency, Iban). El compiler previene invertir args porque los tipos no encajan.", "correct": true, "why": "Correcto. 'Primitive Obsession' es usar strings/ints/doubles para representar conceptos ricos del dominio. Ventajas de types del dominio: (1) el compiler detecta bugs de tipo; (2) validación en el constructor (Iban.of('bad') lanza IllegalArgument, no queda un string inválido navegando el sistema); (3) documentación viva (Money vs double aclara semántica). Es el patrón 'value object' del DDD." },
+        { "letter": "B", "text": "Long Parameter List. Envolver todo en un DTO `TransferRequest`.", "correct": false, "why": "Diagnóstico secundario. Envolver en DTO evita el problema de orden (nombres explícitos), pero NO evita meter 'EUR' como accountId — sigue siendo string. La solución radical es tipar." },
+        { "letter": "C", "text": "Es un error del programador, no un code smell.", "correct": false, "why": "El código está siendo el habilitador del error: acepta strings sin validar, sin distinción semántica. Un buen diseño hace 'imposible representar estados inválidos' (Yaron Minsky). Culpar al humano y no al diseño perpetúa el bug." },
+        { "letter": "D", "text": "Feature Envy: el método debería estar en la clase Account.", "correct": false, "why": "Ese es otro smell (real) pero no explica el bug de argumentos intercambiados." }
+      ],
+      "explanation": "Value Objects (DDD, Eric Evans): tipos inmutables que representan conceptos con identidad por valor. En Java se hacen con records (Java 14+) o con clases finales. En Kotlin con data class + inline value class. En TypeScript con branded types (`type AccountId = string & { __brand: 'AccountId' }`). El compiler te fuerza a construir el tipo correcto explícitamente, y a nivel de código, `transferMoney(iban, iban2, money, reason)` es ambiguo pero al menos protege contra intercambio de monedas y cuentas.",
+      "realWorld": "La compañía Knight Capital perdió $440M en 45 minutos por un bug de tipos débiles: un flag de trading se activó accidentalmente. Con tipos ricos, el compilador hubiera detectado la ambigüedad. En 2012, uno de los peores bugs de la historia de trading.",
+      "tags": ["primitive obsession", "value object", "DDD", "tipos"],
+      "tech": ["Java records", "Kotlin data class", "TypeScript branded types"],
+      "references": [{ "title": "Eric Evans — 'Domain-Driven Design'" }, { "title": "Fowler — 'Refactoring', Ch. 3 Bad Smells" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "testing",
+      "topic": "Test coverage — el KPI engañoso",
+      "difficulty": "mid",
+      "scenario": "El equipo de calidad exige 90% de coverage. Un desarrollador escribe un test:\n\n```java\n@Test\nvoid coversAllCode() {\n    service.doEverything();  // ejecuta todas las branches\n    // sin asserts\n}\n```\n\nCoverage: 95%. Bugs en producción: sin cambios.",
+      "question": "¿Cuál es la lección sobre coverage como KPI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Coverage mide EJECUCIÓN, no VERIFICACIÓN. Un test que ejecuta código sin asserts no prueba nada. 100% coverage con tests malos es cero protección. Métricas mejores: mutation testing (Pitest), tests que fallan cuando introduces bugs deliberados, calidad de asserts.", "correct": true, "why": "Correcto. Coverage es indicador NEGATIVO útil (0% coverage = no hay tests) pero no positivo (95% no significa 'bien testeado'). Mutation testing (Pitest en Java, Stryker en JS): introduce bugs deliberados (mutar operadores, retornos) y verifica que ALGÚN test falla. Si no falla ningún test → coverage sin efecto. Es la métrica que Google usa internamente para test quality." },
+        { "letter": "B", "text": "Coverage es la métrica correcta — más coverage = mejor.", "correct": false, "why": "Es la métrica popular pero engañosa. Goodhart's Law: 'cuando una métrica se convierte en objetivo, deja de ser buena métrica'. Los devs escriben tests para pasar coverage, no para prevenir bugs." },
+        { "letter": "C", "text": "Bajar el requerimiento a 80% arregla el problema.", "correct": false, "why": "El problema no es el número — es que la métrica no mide lo que se pretende. Cambiar el % no arregla." },
+        { "letter": "D", "text": "Añadir un assert al final: `assertTrue(true)`.", "correct": false, "why": "Broma con fondo real: es exactamente el tipo de 'workaround' que hace que coverage sea inútil. Los tests deben verificar OUTPUT/COMPORTAMIENTO significativo." }
+      ],
+      "explanation": "Coverage tiene tipos: (1) line — líneas ejecutadas; (2) branch — cada if/else visitado; (3) path — combinaciones. Todos miden ejecución, no correctness. Herramientas de mejor calidad: (1) Mutation testing (Pitest, Stryker) — introduce bugs y verifica detección; (2) Property-based testing (QuickCheck, Hypothesis) — genera muchos inputs; (3) Fuzz testing — inputs aleatorios extremos. Regla profesional: coverage es señal, no meta. 100% coverage sin asserts útiles = teatro de calidad.",
+      "realWorld": "Google internamente usa mutation testing como validador de test quality. LinkedIn adoptó Pitest después de descubrir que 40% de tests no detectaban mutations. El famoso paper 'Are Mutants a Valid Substitute for Real Faults?' (Just et al, FSE 2014) validó empíricamente la métrica.",
+      "tags": ["coverage", "mutation testing", "KPI", "Goodhart"],
+      "tech": ["JaCoCo", "Pitest", "Stryker"],
+      "references": [{ "title": "Andrew Trenk — 'Testing on the Toilet: Don't Overuse Mocks'" }, { "title": "Just et al. — 'Are Mutants a Valid Substitute for Real Faults?'" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "testing",
+      "topic": "TDD — Red/Green/Refactor real",
+      "difficulty": "senior",
+      "scenario": "Un compañero que 'hace TDD' te muestra su workflow: (1) escribe la clase completa; (2) escribe tests después; (3) refactoriza para pasar coverage. Dice 'es TDD porque tengo tests'.",
+      "question": "¿Cuál es la definición correcta de TDD (Kent Beck) y por qué el orden importa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "TDD = Red → Green → Refactor. (1) escribes un test que FALLA (rojo); (2) escribes el código MÍNIMO para pasar (verde); (3) refactorizas manteniendo tests verdes. El orden importa porque: (a) diseña la interfaz desde uso (no desde implementación); (b) garantiza que el test detecta la ausencia del código; (c) refactor con red de seguridad.", "correct": true, "why": "Correcto. Kent Beck ('Test-Driven Development: By Example', 2002). Escribir código primero y tests después es 'Test-After', no TDD. TDD influye en DISEÑO — al escribir el test primero, decides cómo la API debe usarse. Si es difícil de testear, es difícil de usar. También previene el bug 'test que siempre pasa' (si nunca vio rojo, no sabes si detectaría bugs)." },
+        { "letter": "B", "text": "TDD y test-after son equivalentes — el resultado es el mismo.", "correct": false, "why": "Falso. Diferencia: TDD guía diseño e independencia de implementación. Test-after acopla test a implementación (ya existe cuando escribes el test)." },
+        { "letter": "C", "text": "TDD es solo escribir muchos tests.", "correct": false, "why": "Cantidad no es la esencia. Ordenamiento y ciclo pequeño son la esencia." },
+        { "letter": "D", "text": "TDD está obsoleto en 2026.", "correct": false, "why": "Continúa practicándose y enseñándose. DHH criticó TDD extremo, pero el ciclo Red/Green/Refactor sigue siendo herramienta útil para muchos casos." }
+      ],
+      "explanation": "TDD ciclo: (1) Red — test específico que falla; (2) Green — código mínimo que lo hace pasar (feo si hace falta); (3) Refactor — mejora código con tests como red. Beneficios: (a) diseño desde consumo (API sale limpia); (b) 100% del código tiene test que lo justifica; (c) refactor confidence. Cuándo TDD funciona bien: nuevos features con requisitos claros. Cuándo cuesta: exploración (spike), UI difícil de aislar, integración compleja. TDD extremista puede llevar a over-mocking — Kent Beck y Ian Cooper han matizado la práctica.",
+      "realWorld": "Kent Beck popularizó TDD como parte de Extreme Programming (XP) en los 90s. Uncle Bob evangeliza TDD desde hace décadas. DHH publicó 'TDD is Dead. Long live testing' argumentando pragmatismo. El consenso 2020s: TDD útil pero no dogma; combinar con integration tests y exploratory testing.",
+      "tags": ["TDD", "red green refactor", "Kent Beck", "test-first"],
+      "tech": ["JUnit", "pytest"],
+      "references": [{ "title": "Kent Beck — 'Test-Driven Development: By Example', 2002" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "testing",
+      "topic": "Flaky tests — causas y fixes",
+      "difficulty": "senior",
+      "scenario": "Un test falla 1 de cada 10 runs. Los devs le ponen `@Retry(3)` y siguen. Al cabo de meses, 30 tests son flaky y CI falla constantemente. Nadie sabe qué es real bug y qué es flakiness.",
+      "question": "¿Cuáles son causas TÍPICAS de flakiness y estrategias correctas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Time-dependency: `Thread.sleep(100)` esperando que algo async ocurra. Fix: use awaitility, polling explícito, o hooks del sistema para saber cuándo está listo — no timeouts arbitrarios.", "correct": true, "why": "Correcto. Sleep-based tests son la primera causa de flakiness. CI machines son variables — 100ms puede ser suficiente hoy y no mañana. Awaitility (Java) o waitFor patterns permiten esperar condición REAL con timeout de seguridad." },
+        { "letter": "B", "text": "Shared state entre tests: variables globales, estado en singleton, DB no reseteada. Fix: aislamiento total, setup/teardown que garantiza estado limpio, evitar globals.", "correct": true, "why": "Correcto. Tests que dependen del orden son frágiles. En parallel test running (común hoy), el orden es aleatorio → tests fallan random. Isolation: cada test debe ser autosuficiente." },
+        { "letter": "C", "text": "External dependencies (red, DB externa, APIs). Fix: usar fakes/mocks para tests unitarios; para integration usar Testcontainers (Docker efímero).", "correct": true, "why": "Correcto. Red y APIs externas son inestables. Testcontainers arranca Postgres/Kafka/Redis en Docker para cada test — determinista, aislado, real behavior." },
+        { "letter": "D", "text": "Retry automático (@Retry) es la solución preferida.", "correct": false, "why": "Es un anti-patrón. Esconde el bug (real o de test), permite acumular flakiness, y engaña sobre estabilidad real. Fix: DIAGNOSTICAR la causa raíz." },
+        { "letter": "E", "text": "Non-determinism en el código (uso de random, current time). Fix: inyectar Clock/Random para poder controlar en tests.", "correct": true, "why": "Correcto. Código que usa `new Date()` directo es difícil de testear. Solución: inyectar dependencia Clock (Java 8+ `java.time.Clock`, mockeable con fixed clock)." }
+      ],
+      "explanation": "Flaky tests son epidemia moderna. Google publicó 'Flaky Tests at Google' (2016): ~1.5% de tests fallan intermitentemente, causando ~16% de builds rojos falsos. Costo enorme en productividad. Estrategias: (1) quarantine — mover flakies fuera de CI hasta arreglar; (2) reproducir localmente con seed determinista; (3) detectar patterns (time, order, external deps); (4) NO retry automático — enmascara. Cultura sana: 'no test flaky merge to main'. Herramientas: pytest-randomly (aleatoriza orden para detectar order dependencies), test detectors.",
+      "realWorld": "Google publicó papers y tools sobre flakiness. Meta invirtió millones en 'Test Isolation' para reducir flakes. Twitter tuvo una época donde CI era inútil por flakies acumuladas — reset con política 'no flaky merges'. Es un tema de disciplina de equipo, no solo técnico.",
+      "tags": ["flaky tests", "CI", "isolation", "determinism"],
+      "tech": ["Testcontainers", "Awaitility", "pytest-randomly"],
+      "references": [{ "title": "Google Testing Blog — 'Flaky Tests at Google'" }, { "title": "Martin Fowler — 'Eradicating Non-Determinism in Tests'" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "refactor",
+      "topic": "Extract Method — el refactor más común",
+      "difficulty": "mid",
+      "scenario": "Método de 100 líneas con 3 secciones lógicas: validation, computation, formatting. Un comentario dice `// Validation:` antes del primer bloque.",
+      "question": "¿Cuál es el refactor MÁS IDIOMÁTICO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Extract Method: cada bloque comentado se convierte en un método con nombre descriptivo. `validate()`, `compute()`, `format()`. El método principal queda como orquestador de alto nivel legible.", "correct": true, "why": "Correcto. Es el refactor más frecuente de Fowler (Refactoring, 1st y 2nd ed). Regla mental de Fowler: 'si sientes que necesitas escribir un comentario para explicar un bloque, considera extraerlo — el nombre del método será tu comentario'. Ventajas: legibilidad, testabilidad de cada parte, reusabilidad." },
+        { "letter": "B", "text": "Añadir más comentarios para explicar cada línea.", "correct": false, "why": "Comentarios que explican QUÉ hace el código son un smell — el código autoexplicativo es mejor. Extract Method + nombre descriptivo elimina la necesidad." },
+        { "letter": "C", "text": "Reescribir todo el método desde cero con mejor diseño.", "correct": false, "why": "Cambio grande, riesgo alto, sin necesidad. Extract Method es un cambio pequeño y seguro que mejora incrementalmente." },
+        { "letter": "D", "text": "Convertir en una clase con métodos privados.", "correct": false, "why": "Cambio arquitectural grande. Extract Method dentro de la misma clase es el primer paso — luego, si emerge una nueva responsabilidad, considera Extract Class." }
+      ],
+      "explanation": "Extract Method: (1) crea nuevo método con nombre que describe INTENCIÓN (no HOW); (2) copia código; (3) pasa variables usadas como parámetros; (4) captura returns; (5) reemplaza bloque original con llamada. Modern IDEs (IntelliJ, VSCode) automatizan con 'Refactor > Extract Method'. Es la base de refactor incremental — cambios pequeños, seguros, con tests verdes en cada paso. Composición de refactors pequeños puede llevar a rediseños grandes sin big-bang risk. Fowler dice: 'refactor en pasos tan pequeños que si algo se rompe, deshacer es trivial'.",
+      "realWorld": "Todos los IDEs modernos tienen Extract Method. Es el primer refactor que se enseña. Michael Feathers en Legacy Code lo describe como 'sprout method' cuando extraes para poder añadir test. En Kotlin/Scala, funciones locales facilitan aún más el extract.",
+      "tags": ["extract method", "refactor", "Fowler", "legibilidad"],
+      "tech": ["IntelliJ", "VSCode"],
+      "references": [{ "title": "Martin Fowler — 'Refactoring' 2nd ed. Ch. 6" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "refactor",
+      "topic": "Rule of Three — extraer abstracción",
+      "difficulty": "mid",
+      "scenario": "Ves este patrón:\n\n```java\n// service A\nlogger.info('Started A'); tryLock(); doA(); unlock(); logger.info('Ended A');\n// service B\nlogger.info('Started B'); tryLock(); doB(); unlock(); logger.info('Ended B');\n// service C: someone adds\nlogger.info('Started C'); tryLock(); doC(); unlock(); logger.info('Ended C');\n```",
+      "question": "¿Cuándo es el momento correcto de refactorizar y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Ahora. Rule of Three (Fowler): duplica una vez, extrae en la tercera. Con tres casos ves el patrón real (envolver acción en logging + lock). Extract Method o template method: `withLoggedLock(name, action)`. Elimina duplicación futura y hace explícito el patrón.", "correct": true, "why": "Correcto. Rule of Three es criterio pragmático para balance entre DRY y YAGNI. Con 1 caso, no sabes si es patrón o singularidad. Con 2, puede ser coincidencia. Con 3, es un patrón que vale extraer. Fowler prefiere esto sobre 'DRY estricto' que puede llevar a abstracciones prematuras." },
+        { "letter": "B", "text": "Nunca. Duplicación es preferible a abstracciones equivocadas.", "correct": false, "why": "Extremo. Duplicación tiene costos: mantenimiento (bug en un lugar no se propaga a los otros dos), evolución (cambiar el pattern en 3 sitios). Con 3+ casos claros, extraer gana." },
+        { "letter": "C", "text": "En el segundo caso, siguiendo DRY estricto.", "correct": false, "why": "Prematuro según Rule of Three. Con solo 2 casos puedes elegir mal la abstracción — cuando llegue el tercero puede no encajar." },
+        { "letter": "D", "text": "Cuando el equipo se queje.", "correct": false, "why": "Reactive, no proactive. Los ingenieros senior aplican refactors preventivos como parte de su trabajo cotidiano." }
+      ],
+      "explanation": "Rule of Three balancea DRY vs YAGNI: (1) primer caso: escríbelo simple; (2) segundo caso: nota la duplicación, tolerala por ahora; (3) tercer caso: extrae. Ventaja: con 3 casos ves la variabilidad real (¿cuáles partes son iguales? ¿cuáles varían?), la abstracción es más acertada. Contra: 'Don't Repeat Yourself' llevado al extremo genera abstracciones prematuras que a menudo NO encajan cuando aparece el segundo caso (porque diseñaste con uno). En equipos disciplinados: extraer en el tercer caso es punto de sanidad y consenso.",
+      "realWorld": "Sandi Metz tiene la charla 'The Wrong Abstraction' (2016) — argumenta que 'duplication is far cheaper than the wrong abstraction'. Combined with Rule of Three, este es el consenso moderno: no DRY prematuro. En equipos, 'aparece tercer caso' es trigger natural de refactor.",
+      "tags": ["rule of three", "DRY", "YAGNI", "abstracción"],
+      "tech": [],
+      "references": [{ "title": "Fowler — 'Refactoring' Ch. Introduction" }, { "title": "Sandi Metz — 'The Wrong Abstraction'" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "testing",
+      "topic": "Given-When-Then / AAA pattern",
+      "difficulty": "junior",
+      "scenario": "Un compañero muestra este test:\n\n```java\n@Test\nvoid test() {\n    var r = svc.calc(inp, cfg, opt); assert r == 42; var r2 = svc.calc(inp2, cfg, opt); assert r2 == 100; svc.reset();\n}\n```\n\nPasa pero es imposible de leer.",
+      "question": "¿Cuál es la estructura sana para tests unitarios?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "AAA (Arrange-Act-Assert) o Given-When-Then. Cada test: (1) setup del contexto; (2) UNA acción; (3) verificación. Un test por comportamiento — evita mezclar múltiples casos en el mismo test.", "correct": true, "why": "Correcto. AAA (unittest.org) o Given-When-Then (BDD, Cucumber) son estructuras equivalentes. Beneficios: (1) legibilidad — cualquiera puede leer el intent; (2) diagnóstico — cuando falla, sabes qué fase falló; (3) un test por comportamiento — split del test multi-caso en varios. Anti-patrón: 'God Test' que verifica muchas cosas mezcladas." },
+        { "letter": "B", "text": "Un solo test grande cubre todo — menos boilerplate.", "correct": false, "why": "Contra-productivo. Cuando falla, no sabes cuál assertion falló. Y hace difícil localizar la causa. Prefiere muchos tests pequeños." },
+        { "letter": "C", "text": "Tests deben tener asserts contadas — 1 assert por test estricto.", "correct": false, "why": "Regla exagerada. Un test puede tener múltiples asserts si verifican el mismo comportamiento (ej. varias propiedades del mismo resultado). La regla real es 'un test por concepto/comportamiento', no 'un assert'." },
+        { "letter": "D", "text": "Los nombres de test no importan si están bien estructurados.", "correct": false, "why": "Falso. Un buen nombre (should_return_zero_when_input_is_empty) documenta el comportamiento esperado y facilita el debugging." }
+      ],
+      "explanation": "AAA / Given-When-Then estructura tests como narrativa: setup → acción → verificación. Ventajas: (1) legibilidad como documentación; (2) failure diagnosis claro; (3) educabilidad para nuevos devs. Nombres de test: convenciones como `methodName_scenario_expectedResult` o BDD-style `should_return_x_when_y`. En muchos frameworks (Jest, pytest), fixtures reducen boilerplate del Arrange. Regla mental: si un test es difícil de leer, es difícil de mantener — y probablemente el código bajo test también tiene problemas de diseño.",
+      "realWorld": "Kent Beck popularizó AAA. BDD (Behavior-Driven Development, Dan North) formalizó Given-When-Then con Cucumber. Jest, JUnit, pytest — todos favorecen esta estructura. Herramientas como AssertJ (Java) o Hamcrest hacen asserts legibles: `assertThat(user.age()).isEqualTo(30)`.",
+      "tags": ["AAA", "Given-When-Then", "BDD", "estructura test"],
+      "tech": ["JUnit", "AssertJ", "Cucumber"],
+      "references": [{ "title": "Kent Beck — 'Test-Driven Development: By Example'" }, { "title": "Dan North — 'Introducing BDD' (2006)" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "refactor",
+      "topic": "Feature Envy — método en el lugar equivocado",
+      "difficulty": "mid",
+      "scenario": "Ves:\n\n```java\nclass OrderPrinter {\n    void print(Order o) {\n        var total = o.getItems().stream().mapToDouble(i -> i.getPrice() * i.getQuantity()).sum();\n        var discount = o.getCustomer().getLoyaltyLevel() > 2 ? 0.1 : 0;\n        System.out.println('TOTAL: ' + total * (1-discount));\n    }\n}\n```",
+      "question": "¿Qué code smell hay y cuál es la refactorización correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Feature Envy: OrderPrinter accede excesivamente a datos de Order y Customer. La lógica de calcular total y descuento pertenece a Order (o Customer). Fix: `order.calculateFinalTotal()` que internamente sabe el descuento. Printer solo formatea.", "correct": true, "why": "Correcto. Feature Envy (Fowler): un método que envía muchas más consultas a otra clase que a la suya propia. Solución: 'Move Method' — trasladar el método a la clase envidiada. OrderPrinter debería solo IMPRIMIR (SRP), no calcular. Order.calculateFinalTotal() encapsula la lógica de negocio dentro del dominio." },
+        { "letter": "B", "text": "Está bien: OrderPrinter es su clase, hace su trabajo.", "correct": false, "why": "Superficialmente sí. Pero: (1) lógica de cálculo (dominio) está en un renderer (presentación); (2) cambios de reglas de descuento requieren cambiar OrderPrinter; (3) violación de layered architecture." },
+        { "letter": "C", "text": "Extract Method para clarificar.", "correct": false, "why": "Extract Method dentro de OrderPrinter mejora legibilidad pero NO mueve la responsabilidad a la clase correcta. Sigue habiendo Feature Envy." },
+        { "letter": "D", "text": "Añadir comentarios explicando la lógica.", "correct": false, "why": "Comentarios no arreglan diseño." }
+      ],
+      "explanation": "Feature Envy indica que un método pertenece a otra clase. Solución: Move Method (Fowler). Regla mental: 'un método debe interesarse más por su propia clase que por otras'. Beneficios de mover: (1) encapsulamiento (Tell Don't Ask); (2) coherencia (lógica de Order en Order); (3) reusabilidad (si otro componente necesita finalTotal, ya está listo). Excepciones: fórmulas complejas que involucran múltiples entidades pueden vivir en un domain service (DDD).",
+      "realWorld": "Es uno de los smells más frecuentes en codebases con Anemic Domain Model (ver sim-02). Fowler lo cataloga como smell obvio, pero requiere disciplina para detectar en review. Herramientas: SonarQube, IntelliJ inspection detectan patterns.",
+      "tags": ["feature envy", "move method", "tell don't ask", "smells"],
+      "tech": ["Java"],
+      "references": [{ "title": "Fowler — 'Refactoring' Ch. 3 Bad Smells" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "testing",
+      "topic": "Contract tests y consumer-driven contracts",
+      "difficulty": "senior",
+      "scenario": "Microservicios: OrderService llama a PaymentService. Cuando PaymentService cambia su API, OrderService se rompe en producción. Los integration tests son lentos y no siempre se corren.",
+      "question": "¿Qué estrategia previene romper consumidores sin tests E2E cross-service?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Consumer-Driven Contracts (Pact). El consumidor (OrderService) DEFINE qué espera del provider (PaymentService) — un contrato. Pact ejecuta esto contra el provider: si el provider ya no cumple, falla el test del PROVIDER en su CI antes de deploy. Rápido, sin necesidad de E2E, catch de breaking changes.", "correct": true, "why": "Correcto. Pact (herramienta líder) implementa Consumer-Driven Contracts. Flujo: (1) OrderService escribe test 'espero POST /pay con {amount} y responde {id}'; (2) Pact genera contract file; (3) PaymentService CI verifica que su implementación cumple el contract. Si PaymentService cambia y rompe el contract, falla ANTES de deploy. Ventajas vs E2E: rápido, aislado, contract explícito." },
+        { "letter": "B", "text": "Añadir más integration tests E2E.", "correct": false, "why": "Lentos, frágiles, requieren infraestructura completa. Y a menudo no cubren todos los contracts." },
+        { "letter": "C", "text": "Versionar la API con /v1, /v2 permitiría breaking changes.", "correct": false, "why": "Versioning ayuda con evolución, pero no previene bugs no intencionados. Y añadir /v2 sin comunicar aún puede afectar clientes existentes que llaman /v1 asumiendo formato específico." },
+        { "letter": "D", "text": "Documentación exhaustiva con OpenAPI.", "correct": false, "why": "Documentación es útil pero no se ejecuta — no detecta cuando la implementación divergió de la doc." }
+      ],
+      "explanation": "Contract Testing es paradigma para verificar compatibilidad entre servicios sin necesitar los dos corriendo. Consumer-Driven: el consumidor define el contract → alinea contract con USO real. Provider-Verified: el provider verifica su implementación cumple. Pact es la herramienta canónica (Ruby original, hoy multi-lenguaje). Alternativas: OpenAPI + Schemathesis (schema-driven), Spring Cloud Contract. Beneficios: (1) tests rápidos (no arranca servicios completos); (2) breaks caught antes de deploy; (3) contract sirve de documentación viva. En microservicios modernos, contract testing es tan importante como unit tests.",
+      "realWorld": "Netflix fue temprano adopter de contract testing entre sus 800+ microservicios. Pact fue creado por REA Group (real estate Australia) y hoy usado por miles de empresas. Kafka schema registry hace contract testing para events. En 2018, un incidente de Facebook fue causado por cambio de API downstream sin contract test.",
+      "tags": ["contract testing", "Pact", "consumer-driven", "microservicios"],
+      "tech": ["Pact", "OpenAPI", "Spring Cloud Contract"],
+      "references": [{ "title": "Ian Robinson — 'Consumer-Driven Contracts: A Service Evolution Pattern'" }, { "title": "Pact Documentation" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "testing",
+      "topic": "Property-based testing",
+      "difficulty": "senior",
+      "scenario": "Un desarrollador tiene un método `reverse(list)` con 5 tests: lista vacía, un elemento, dos elementos, tres elementos, con duplicados. Un compañero dice 'esto no cubre todos los edge cases'.",
+      "question": "¿Qué técnica cubre más exhaustivamente y cómo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Property-Based Testing: en lugar de casos concretos, defines PROPIEDADES universales. Ej: reverse(reverse(l)) == l; len(reverse(l)) == len(l). El framework (QuickCheck, Hypothesis, jqwik) GENERA cientos de inputs random y verifica las propiedades. Encuentra edge cases que no habrías imaginado.", "correct": true, "why": "Correcto. Property-based testing (originado en Haskell QuickCheck, 2000) es cambio de paradigma: no listas casos, listas invariantes. El framework genera inputs (incluyendo edge cases como null, empty, huge, unicode) y busca contraejemplos. Cuando encuentra fallo, hace 'shrinking' — reduce el input al MÍNIMO que reproduce el bug. Encuentra bugs que humanos nunca pensarían." },
+        { "letter": "B", "text": "Añadir 20 tests más manualmente.", "correct": false, "why": "Difícil cubrir todos los edge cases pensando. Y no escalable — cada método nuevo requiere pensar 20 casos." },
+        { "letter": "C", "text": "Cobertura 100%.", "correct": false, "why": "Coverage no es exhaustividad — cubre líneas, no espacio de inputs." },
+        { "letter": "D", "text": "Fuzz testing.", "correct": false, "why": "Cercano pero distinto: fuzz genera inputs random buscando crashes/exceptions (bugs de seguridad). Property-based verifica propiedades LÓGICAS. Ambos son útiles complementarios." }
+      ],
+      "explanation": "Property-based testing: (1) piensa qué debe SIEMPRE ser cierto (invariantes); (2) framework genera inputs; (3) shrinking encuentra el input mínimo que falla. Ejemplos de properties: (a) reversibilidad — decode(encode(x)) == x; (b) idempotency — sort(sort(x)) == sort(x); (c) commutativity — a+b == b+a; (d) monotonicity. Herramientas: QuickCheck (Haskell), Hypothesis (Python), jqwik (Java), fast-check (JS), Proptest (Rust). Cuándo aplicar: código puramente funcional, algoritmos, parsers, serializers, compressors. Complementa (no reemplaza) unit tests.",
+      "realWorld": "AWS S3 usó property-based testing extensivamente en su reescritura del ChunkedEncoding. Volvo Trucks lo usa en firmware de vehículos. Twitter reportó encontrar bugs no vistos en años con Hypothesis. La comunidad Haskell/OCaml/Rust normaliza property-based en libraries.",
+      "tags": ["property-based", "QuickCheck", "Hypothesis", "testing"],
+      "tech": ["Hypothesis", "QuickCheck", "jqwik", "fast-check"],
+      "references": [{ "title": "Koen Claessen & John Hughes — 'QuickCheck: A Lightweight Tool for Random Testing of Haskell Programs', ICFP 2000" }, { "title": "Hypothesis Documentation" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "refactor",
+      "topic": "Refactor de Long Method",
+      "difficulty": "mid",
+      "scenario": "Método `processOrder(order)` de 300 líneas. Hace validation, pricing, inventory check, shipping calculation, payment, notification. Difícil de leer y testear.",
+      "question": "¿Cuál es la estrategia correcta de refactor?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Extract Method secuencialmente para cada bloque lógico. Luego, si emergen responsabilidades que no pertenecen a Order, Extract Class (PriceCalculator, InventoryChecker, ShippingService). Refactor incremental con tests después de cada paso.", "correct": true, "why": "Correcto. Estrategia de Fowler: refactor pequeños en secuencia. (1) primero extraer métodos (visible immediate improvement); (2) analizar cohesión: métodos que 'quieren' vivir juntos son candidatos a Extract Class; (3) mover responsabilidades a clases apropiadas. Cada paso es pequeño, seguro, con tests verdes." },
+        { "letter": "B", "text": "Rewrite completo desde cero.", "correct": false, "why": "Big-bang rewrite es arriesgado — pierdes edge cases documentados en el legacy, tarda 3x lo estimado. Refactor incremental es el standard." },
+        { "letter": "C", "text": "Dejar como está — 'if it ain't broke, don't fix it'.", "correct": false, "why": "Si el método bloquea nuevos features o tests, ya está broken. La deuda técnica es costo futuro." },
+        { "letter": "D", "text": "Añadir comentarios detallados.", "correct": false, "why": "Comentarios no arreglan long method — solo lo hacen 'documentado' pero sigue siendo inmantenible." }
+      ],
+      "explanation": "Long Method es de los code smells más comunes. Fowler enseña 'métodos deben caber en una pantalla' (idealmente <20 líneas). Estrategia: (1) Extract Method por bloques lógicos; (2) elegir nombres que documenten INTENCIÓN; (3) el método principal queda como orquestador leíble; (4) si emergen responsabilidades separadas, Extract Class. Herramientas: IDEs automatizan Extract Method. Métricas: cyclomatic complexity (McCabe), method LOC. Regla: cualquier método > 50 líneas es candidato de refactor.",
+      "realWorld": "Uncle Bob en 'Clean Code' propone métodos aún más cortos (<10 líneas). El estilo funcional (Kotlin, Scala, F#) favorece composición de funciones pequeñas. Sonar y linters flag long methods automáticamente. Es lucha constante en codebases legacy.",
+      "tags": ["long method", "extract method", "refactor", "clean code"],
+      "tech": ["Sonar", "IntelliJ"],
+      "references": [{ "title": "Fowler — 'Refactoring' Ch. 6" }, { "title": "Robert C. Martin — 'Clean Code'" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "testing",
+      "topic": "Snapshot testing — cuándo sí y cuándo no",
+      "difficulty": "senior",
+      "scenario": "Equipo React usa Jest snapshot tests para todos los componentes. Cada refactor menor genera 50 snapshots cambiados. Los devs los aprueban automáticamente sin revisar.",
+      "question": "¿Cuál es el trade-off de snapshot testing?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Snapshots son útiles para OUTPUT ESTRUCTURAL que quieres capturar (JSON API responses, HTML rendered) y detectar cambios no intencionados. Riesgo: se convierten en 'ceremonial approval' — devs aprueban sin leer, perdiendo el valor. Regla: solo úsalos donde el output esperado es difícil de expresar como assertion manual y tiene poca frecuencia de cambio LEGÍTIMO.", "correct": true, "why": "Correcto y matizado. Snapshot testing es una herramienta con casos legítimos: (1) serializers/formatters — verify output byte-exact; (2) generated code/config; (3) rendered HTML complejo. Anti-uso: componentes UI que cambian frecuentemente por decisiones de diseño — genera 'snapshot fatigue' y los devs aprueban ciegamente. Mejor: assertions específicas sobre estructuras clave, o visual regression testing (Percy, Chromatic)." },
+        { "letter": "B", "text": "Son siempre superiores a assertions manuales — menos código.", "correct": false, "why": "'Menos código' es engañoso. Sin discernimiento, el valor cae a cero. Cuando todos los snapshots se aprueban ciegamente, ya no detectan regresiones." },
+        { "letter": "C", "text": "Nunca usar snapshots — son un anti-patrón.", "correct": false, "why": "Extremo. Tienen casos válidos. La cuestión es dónde y cómo." },
+        { "letter": "D", "text": "Snapshots reemplazan a integration tests.", "correct": false, "why": "Falso. Testean output textual — no interacciones, comportamientos, side-effects." }
+      ],
+      "explanation": "Snapshot testing (popularizado por Jest, ~2016): (1) primera ejecución guarda output; (2) siguientes ejecuciones comparan; (3) si difiere, falla — dev decide si aceptar (update snapshot) o corregir código. Ventaja: fácil captura de outputs complejos. Peligros: (1) approval fatigue — aprobar sin leer; (2) no clarifica INTENT — un snapshot dice 'era esto', no 'debería ser esto por X razón'; (3) rompe con cambios cosméticos irrelevantes. Buenas prácticas: (a) snapshots pequeños y enfocados; (b) revisar CADA cambio de snapshot en code review; (c) preferir assertions explícitas cuando puedas.",
+      "realWorld": "Kent C. Dodds (React expert) escribió 'Effective Snapshot Testing' criticando su sobre-uso. Jest lo mantiene como feature pero recomienda uso judicioso. React Testing Library favorece assertions explícitas. Alternative moderna para UI: visual regression testing (Percy, Chromatic) — compara screenshots.",
+      "tags": ["snapshot testing", "Jest", "approval testing", "UI"],
+      "tech": ["Jest", "React Testing Library", "Percy"],
+      "references": [{ "title": "Kent C. Dodds — 'Effective Snapshot Testing'" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "refactor",
+      "topic": "Strangler Fig Pattern",
+      "difficulty": "staff",
+      "scenario": "Sistema monolítico Rails legacy de 200k líneas, DB compartida, sin tests. Necesitas migrarlo a microservicios. 'Reescribir desde cero' fracasó en un intento anterior.",
+      "question": "¿Cuál es la estrategia MÁS ROBUSTA (Fowler) y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Strangler Fig Pattern: interceptar tráfico con un proxy/API gateway. Nuevas features se implementan en microservicios; features legacy se migran una a una. El monolito 'muere' gradualmente mientras el nuevo sistema crece alrededor (como la higuera estranguladora que crece sobre un árbol antiguo). Zero big-bang, migrado en producción, siempre revertible.", "correct": true, "why": "Correcto. Nombre inspirado en la higuera estranguladora (Fowler, 2004). Ventajas: (1) risk mínimo — un endpoint a la vez, revertible; (2) valor incremental desde día 1; (3) los tests emergen naturalmente; (4) el equipo aprende el dominio migrando. AWS, Netflix, Shopify migraron monolitos con esta estrategia durante años." },
+        { "letter": "B", "text": "Rewrite completo en paralelo con feature parity y luego switch big-bang.", "correct": false, "why": "El intento fracasado ya lo demostró. Netscape colapsó reescribiendo el navegador. Second System Effect (Fred Brooks) — el nuevo sistema tarda más de lo estimado, pierde momentum, el negocio no puede esperar." },
+        { "letter": "C", "text": "Congelar features y migrar durante 2 años.", "correct": false, "why": "Empresas rara vez pueden congelar 2 años. Y el sistema legacy sigue teniendo bugs a arreglar. Strangler Fig permite features NUEVAS en el nuevo sistema mientras migras el legacy." },
+        { "letter": "D", "text": "Mantener monolito para siempre.", "correct": false, "why": "Si el monolito ya no puede evolucionar/escalar, es problema. La respuesta es migrar responsablemente, no ignorar." }
+      ],
+      "explanation": "Strangler Fig: (1) poner API gateway/proxy delante del monolito; (2) implementar nuevo endpoint en microservicio nuevo; (3) redirigir tráfico de ese endpoint al nuevo; (4) el código legacy queda huérfano y se elimina cuando ya no hay tráfico. Herramientas: API Gateway (Kong, AWS API Gateway, nginx), feature flags para gradual rollout. Complementarios: Change Data Capture (Debezium) para sincronizar DB legacy y nueva. Es paradigma dominante para 'digital transformation' en enterprise.",
+      "realWorld": "Amazon migró de monolito a microservicios en años (2001-2005 era pico) con Strangler Fig. Netflix hizo lo mismo (7 años). Shopify sigue en el proceso incluso hoy — enorme monolito Rails que gradualmente extrae. Fowler acuñó término (2004) tras verlo en múltiples clientes. Es la ESTRATEGIA canónica para modernización.",
+      "tags": ["strangler fig", "migration", "monolith", "microservices"],
+      "tech": ["API Gateway", "Debezium"],
+      "references": [{ "title": "Martin Fowler — 'StranglerFigApplication' (2004)" }, { "title": "Sam Newman — 'Monolith to Microservices'" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "testing",
+      "topic": "Test Data Builders y Object Mother",
+      "difficulty": "senior",
+      "scenario": "Tests con setup verboso:\n\n```java\nvar user = new User();\nuser.setName('X'); user.setAge(30); user.setEmail('x@y'); user.setAddress(new Address(...));\nuser.setPayment(new Payment(...));\n// repite en 40 tests\n```\n\nCuando User cambia (nuevo campo required), 40 tests rompen.",
+      "question": "¿Qué patrón resuelve esto?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Test Data Builder / Object Mother. Builder con defaults sensatos: `UserBuilder.aUser().withName('X').build()`. Cambios en User se centralizan en el builder — los tests solo especifican lo RELEVANTE al caso.", "correct": true, "why": "Correcto. Test Data Builder (Steve Freeman, Nat Pryce) o Object Mother (Peter Schuh): factory con defaults. Tests solo overriden lo relevante — DRY y self-documenting. Cambios en el modelo se propagan solo al builder. Frameworks: Instancio (Java), factory_bot (Ruby), factory-boy (Python), Faker + custom builders." },
+        { "letter": "B", "text": "Herencia de tests: BaseTest con @Before que crea el user.", "correct": false, "why": "Herencia entre tests es un anti-patrón que dificulta lectura — hay que ver 3 clases para entender un test. Compositions vía builders es preferible." },
+        { "letter": "C", "text": "Copy-paste setup en cada test.", "correct": false, "why": "El estado actual del problema. Genera mantenimiento inmanejable." },
+        { "letter": "D", "text": "Usar reflection para crear User automáticamente.", "correct": false, "why": "Frágil, difícil de leer, y el test pierde intent (¿qué user es este?). Reflection-based approaches como AutoFixture son útiles pero no reemplazan builders con defaults." }
+      ],
+      "explanation": "Test Data Builder centraliza construcción de objetos complejos para tests. Ventajas: (1) DRY — un lugar para defaults; (2) evolvable — cambio de modelo se centraliza; (3) legible — tests muestran solo lo relevante ('aUser().withName(X)' vs 15 setters); (4) fluent API. Alternativas: Object Mother (métodos estáticos con casos típicos: `Users.premiumUser()`), Factory pattern con randomization (factory_bot, faker). Regla mental: si tests tienen mucho setup boilerplate, hay smell de diseño (posiblemente Long Parameter List, o clase con demasiadas dependencias).",
+      "realWorld": "Steve Freeman & Nat Pryce en 'Growing Object-Oriented Software Guided by Tests' (GOOS, 2009) formalizaron Test Data Builder. Ruby community adoptó factory_bot (originalmente factory_girl) — casi ubicuo en Rails. Python: factory_boy. Java: Instancio, o builders con Lombok @Builder + defaults.",
+      "tags": ["test data builder", "object mother", "factory", "DRY"],
+      "tech": ["factory_bot", "Instancio", "Lombok"],
+      "references": [{ "title": "Freeman & Pryce — 'Growing Object-Oriented Software Guided by Tests'" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "refactor",
+      "topic": "Deuda técnica — decisión estratégica",
+      "difficulty": "staff",
+      "scenario": "El equipo debate: PM presiona features. Devs quieren refactor. Un ingeniero pregunta '¿cuándo justifica refactor vs feature?'.",
+      "question": "¿Cuáles principios son CIERTOS sobre deuda técnica?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ward Cunningham (el que acuñó el término) enfatizaba: deuda técnica es un TRADE-OFF consciente, no una excusa para código malo. Como deuda financiera: útil si el valor generado supera los intereses.", "correct": true, "why": "Correcto. Cunningham (1992, OOPSLA) usó la metáfora para explicar a stakeholders no técnicos por qué a veces enviamos código imperfecto para llegar al mercado. La clave: consciente y planeada. Código malo por ignorancia NO es deuda — es solo código malo." },
+        { "letter": "B", "text": "Boy Scout Rule (Uncle Bob): 'deja el código un poco mejor de lo que lo encontraste'. Refactor incremental durante features, no en sprints dedicados aparte.", "correct": true, "why": "Correcto. En vez de negociar 'sprints de deuda' (raramente ganados), integrar refactor pequeño en cada feature. Al tocar código legacy para añadir feature, mejora un poco: extract method, rename, extract class. La calidad crece continuamente." },
+        { "letter": "C", "text": "Ignorar deuda es apostar contra el futuro — genera intereses. Bugs, cambios lentos, incapacidad de agregar features. Eventualmente el sistema colapsa (Twitter 2010, Netflix pre-microservices).", "correct": true, "why": "Correcto. La deuda no se queda estática — crece. Feature velocity cae, bugs aumentan, morale baja, equipo se va. Muchas empresas han tenido momentos de crisis por deuda ignorada." },
+        { "letter": "D", "text": "El refactor debe hacerse siempre con tests como red — o es apostar sin protección.", "correct": true, "why": "Correcto. Sin tests, refactor introduce bugs. Estrategia: si legacy sin tests, añadir characterization tests PRIMERO, luego refactor. Michael Feathers en 'Working Effectively with Legacy Code'." },
+        { "letter": "E", "text": "'Deuda técnica' es excusa de devs perfeccionistas — la lógica de negocio siempre gana.", "correct": false, "why": "Falso e infantil. Empresas que ignoraron esto (Twitter Fail Whale era, Netflix DVD era) pagaron caro. Deuda técnica es real y medible." }
+      ],
+      "explanation": "Deuda técnica es concepto CULTURAL, no solo técnico. Requiere que negocio entienda que 'ir rápido' hoy puede costar 3x mañana. Herramientas: (1) etiquetas en backlog para trackear deuda; (2) métricas visibles (build time, bug rate, feature velocity); (3) 'engineering excellence' como valor explícito. Cuadrante de Fowler (Technical Debt Quadrant): reckless vs prudent × deliberate vs inadvertent. Deuda 'prudent+deliberate' es OK; 'reckless+inadvertent' es catastrófica.",
+      "realWorld": "Twitter Fail Whale era (~2010): deuda arquitectural (monolito Rails) causaba caídas visibles al mundo. Twitter migró a Scala/microservicios durante años. Facebook, Instagram, Airbnb — todos han tenido eras de refactor masivo. En 2019, Boeing 737 MAX crashes fueron parcialmente causados por deuda técnica en el software MCAS.",
+      "tags": ["technical debt", "boy scout rule", "estrategia", "cultura"],
+      "tech": [],
+      "references": [{ "title": "Ward Cunningham — 'The WyCash Portfolio Management System' (1992)" }, { "title": "Martin Fowler — 'TechnicalDebtQuadrant'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "testing",
+      "topic": "Chaos engineering — testear failure modes",
+      "difficulty": "staff",
+      "scenario": "Sistema distribuido con 50 microservicios. Todo funciona en dev. En producción, ocasionalmente hay outages cascading (un servicio se degrada, propaga a otros). Los tests unitarios y integration pasan.",
+      "question": "¿Qué disciplina resuelve testear failure modes en sistemas complejos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Chaos Engineering: inyectar failures deliberadamente en producción (o staging realista) para descubrir dependencies ocultas, retry storms, missing timeouts. Netflix Chaos Monkey (2011) mata instancias random. Herramientas: Gremlin, Litmus, AWS Fault Injection Simulator.", "correct": true, "why": "Correcto. Chaos engineering (Casey Rosenthal et al., Netflix): 'la única forma de saber si tu sistema es resiliente a X es hacer X ocurrir'. Inicia con hipótesis ('si mato el servicio A, B debería degradar graciosamente'), inyecta failure, observa, aprende. Escala desde experimentos pequeños a Chaos Monkey en producción. Es la evolución natural del testing en sistemas distribuidos donde el behavior emergent no puede predecirse de unit tests." },
+        { "letter": "B", "text": "Más unit tests.", "correct": false, "why": "Unit tests no detectan issues emergentes de la interacción entre servicios (retry storms, thundering herds, cascading failures). Necesitas ejercitar el SISTEMA entero." },
+        { "letter": "C", "text": "Documentación exhaustiva de failure modes.", "correct": false, "why": "Doc que nunca se ejecuta es solo teoría. Casey Rosenthal: 'if you're not testing it, it doesn't work'." },
+        { "letter": "D", "text": "Prohibir deploys hasta que haya cero bugs.", "correct": false, "why": "Imposible en sistemas complejos. La estrategia moderna es asumir failures y hacer el sistema RESILIENTE a ellos, no eliminarlos." }
+      ],
+      "explanation": "Chaos Engineering se basa en: (1) los sistemas complejos tienen behaviors emergentes; (2) failures son inevitables; (3) es mejor descubrirlas en experimentos controlados que en outages reales. Principios de Chaos Engineering (principlesofchaos.org): (a) hypothesis about steady state; (b) vary real-world events; (c) run in production; (d) automate to run continuously; (e) minimize blast radius. Netflix Chaos Monkey mata instancias EC2. Chaos Kong mata regiones enteras. AWS FIS ofrece framework managed. Preparación: circuit breakers (Hystrix, Resilience4j), timeouts, bulkheads, graceful degradation.",
+      "realWorld": "Netflix Chaos Monkey (2011) → Simian Army (Latency Monkey, Chaos Gorilla, Chaos Kong). Amazon, Microsoft, Google, LinkedIn — todos practican chaos engineering. Un famoso ejercicio de Netflix: intencionalmente cortar toda AWS us-east-1 en producción para verificar failover — funcionó. En 2019, Slack tuvo outages cascading que hubieran podido detectarse con chaos engineering previo.",
+      "tags": ["chaos engineering", "resilience", "failure testing", "distributed"],
+      "tech": ["Chaos Monkey", "Gremlin", "Litmus"],
+      "references": [{ "title": "Rosenthal, Jones — 'Chaos Engineering' (O'Reilly, 2020)" }, { "title": "principlesofchaos.org" }]
+    }
+  ]
+}

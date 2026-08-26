@@ -1,0 +1,417 @@
+{
+  "id": "devops-sim-05-docker-fundamentals",
+  "trackId": "devops",
+  "order": 5,
+  "title": "Simulacro 05 — Docker fundamentals y best practices",
+  "focus": "Dockerfile best practices. Layer caching order. Multi-stage builds. Distroless images. Non-root user. ENTRYPOINT vs CMD (exec vs shell form). .dockerignore. Health checks. Image size optimization. Docker compose. Los DETALLES que separan producción de tutorial.",
+  "areaCoverage": ["containers"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "containers",
+      "topic": "¿Qué ES un container?",
+      "difficulty": "junior",
+      "scenario": "Un dev jr pregunta: '¿qué es un container? ¿Es una VM chiquita?'.",
+      "question": "¿Qué es realmente un container y cómo difiere de una VM?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Container: proceso Linux aislado usando namespaces (aislamiento de PID, network, filesystem, users) + cgroups (limits de CPU, memory). NO tiene su propio kernel — comparte el kernel del host. Startup en milliseconds. VM: OS completo con su propio kernel corriendo en un hypervisor. Startup en seconds/minutos. Aislamiento más fuerte pero overhead mayor.", "correct": true, "why": "Correcto. La distinción KERNEL es la clave. Containers = procesos aislados compartiendo kernel host. VMs = OS completos aislados por hypervisor. Trade-off: containers rápidos y ligeros, VMs más seguros y flexibles." },
+        { "letter": "B", "text": "Un container es una VM más pequeña.", "correct": false, "why": "Falso — containers NO tienen su propio kernel. Es aislamiento a nivel de proceso, no de OS." },
+        { "letter": "C", "text": "Un container es un archivo comprimido.", "correct": false, "why": "Falso — una IMAGE es un archivo (tar+layers), un CONTAINER es un proceso corriendo desde esa image." },
+        { "letter": "D", "text": "Un container es lo mismo que un chroot.", "correct": false, "why": "Chroot es filesystem isolation (subset de container). Containers son MÁS que chroot — namespaces (PID, net, user, IPC, UTS, mount), cgroups, capabilities." }
+      ],
+      "explanation": "Container internals: (1) NAMESPACES — Linux kernel feature (2002+) que aísla resources por proceso. Tipos: pid (procesos no ven otros), net (network stack propio), mnt (filesystem propio), uts (hostname propio), ipc (interprocess communication), user (mapea usuarios), cgroup (cgroup view). (2) CGROUPS — control groups, limit y measure resource usage (CPU, memory, IO). (3) UNION FILESYSTEMS — overlayfs, aufs — layers stacked. (4) CAPABILITIES — fine-grained privileges (root split en muchos capabilities).\n\nImage vs container: (a) IMAGE — read-only template, layers apilados. Guardado en registry. (b) CONTAINER — running instance de una image + writable layer. Se crea con 'docker run', destruido con 'docker rm'.\n\nRuntimes: (a) Docker Engine (dockerd) — original, más popular. (b) containerd — CNCF Graduated, extraído de Docker, usado por K8s, Docker. (c) CRI-O — K8s-focused runtime. (d) Podman — daemonless, rootless-first, Red Hat.\n\nVM vs Container comparison: (1) Startup: VM ~30-60s, Container ~1s. (2) Overhead: VM ~1-2GB RAM base, Container ~50MB. (3) Density: docenas de VMs vs cientos de containers en mismo host. (4) Isolation: VM hardware-level (very strong), Container process-level (strong pero shared kernel). (5) Boot time: VM boots OS, Container starts process. (6) Portability: VM has full OS, Container more portable (just app + deps).",
+      "realWorld": "cgroups + namespaces existían pre-Docker. Docker (2013, Solomon Hykes) los packageó con UX simple + image format + hub. Popularity explosion 2014-2016. Container market después dividido: K8s + containerd stack dominant. Rise de containerd, CRI-O, Podman como alternatives to Docker Engine.",
+      "tags": ["containers", "namespaces", "cgroups", "VM"],
+      "tech": ["Docker", "containerd"],
+      "references": [{ "title": "Docker Docs — What is a Container?" }, { "title": "Julia Evans — What Even Is a Container?" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "containers",
+      "topic": "Dockerfile basics",
+      "difficulty": "junior",
+      "scenario": "Un dev jr abre un Dockerfile y ve: FROM, WORKDIR, COPY, RUN, EXPOSE, CMD. No sabe qué hace cada uno.",
+      "question": "¿Qué hace cada instrucción básica de Dockerfile?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "FROM: base image (ej. FROM node:20-alpine). WORKDIR: setea el working directory (ej. WORKDIR /app). COPY: copia files del build context al image (ej. COPY package.json .). RUN: ejecuta comando durante el BUILD (ej. RUN npm install). EXPOSE: documenta que el container escucha en un puerto (no expone realmente — solo docs). CMD: comando default que corre al iniciar el container (ej. CMD [\"node\", \"server.js\"]).", "correct": true, "why": "Correcto. Anatomía básica. Cada instrucción crea (usualmente) una LAYER en la image. EXPOSE es un common misunderstanding — es solo metadata, no publica el puerto (para eso: -p flag en docker run)." },
+        { "letter": "B", "text": "Todas las instrucciones son equivalentes.", "correct": false, "why": "Falso — cada una tiene propósito distinto: base, setup, copy, execute-at-build, execute-at-run, etc." },
+        { "letter": "C", "text": "RUN y CMD son lo mismo.", "correct": false, "why": "Diferentes. RUN ejecuta durante BUILD (crea layer). CMD ejecuta cuando el container STARTS (runtime)." },
+        { "letter": "D", "text": "EXPOSE publica el puerto al host.", "correct": false, "why": "Falso — EXPOSE es solo metadata/docs. Para publicar puerto al host: 'docker run -p 8080:80'." }
+      ],
+      "explanation": "Instrucciones completas: (1) FROM — base image. Debe ser primera (excepto ARG antes de FROM ok). (2) LABEL — metadata (author, version). (3) ARG — build-time variable. (4) ENV — env var en runtime + build. (5) WORKDIR — cd equivalent. Auto-crea directorio. (6) COPY — files desde build context (más recomendado). ADD — copy + extract tar + fetch URL (más features, más peligroso). (7) RUN — ejecuta comando en shell durante build. Crea layer. (8) EXPOSE — documenta puerto. (9) VOLUME — declara mount point para volumes. (10) USER — cambia user context. (11) ENTRYPOINT — comando fijo. (12) CMD — argumentos default (a ENTRYPOINT) o comando (si no hay ENTRYPOINT). (13) HEALTHCHECK — verifica health del container.\n\nLayer model: cada instrucción (usualmente) crea una layer. Layers son cacheable — si nada cambió, layer se reusa. Layers se apilan (union filesystem). Deletes en layers upper solo hide, no remove — files están en layer previa.\n\nBuild context: 'docker build .' — el '.' es build context. TODO archivo en ese directorio se envía al Docker daemon. .dockerignore excluye archivos (equivalente a .gitignore). Sin dockerignore, node_modules va al context (lento, wasteful).\n\nInstruction ordering matters: COPY package.json (rarely changes) → RUN npm install → COPY app/ (changes often). Si copy app/ primero + install después, TODA install rebuiids con cada code change.",
+      "realWorld": "Docker (2013) definió Dockerfile format. Reference amplia en Docker docs. Common pattern seen en millones de repos. En 2020s, alternativas emergen — Nix, Buildpacks (Cloud Native), ko (Go-specific) — pero Dockerfile sigue siendo dominant.",
+      "tags": ["dockerfile", "basics", "layers"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — Dockerfile reference" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "containers",
+      "topic": "Layer caching order",
+      "difficulty": "mid",
+      "scenario": "Tu Dockerfile: COPY . . → RUN npm install → CMD node app.js. Cada cambio de código = 'npm install' completo (5 min). ¿Por qué?",
+      "question": "¿Cómo optimizar el orden de instrucciones para maximizar layer cache?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Regla: cosas que CAMBIAN MENOS frecuentemente van PRIMERO. Copy solo package.json + install ANTES de copy code. Ejemplo optimizado: COPY package.json package-lock.json . → RUN npm ci → COPY . . → CMD node app.js. Cambio de código NO invalida el layer del install (package.json no cambió). Cache HIT en install layer.", "correct": true, "why": "Correcto. Docker layer cache es content-based — si input a una instrucción es idéntico al último build, layer se reusa. Al copy TODO el código primero, cualquier code change invalida el cache de la siguiente instrucción (install)." },
+        { "letter": "B", "text": "Poner RUN npm install antes de COPY package.json.", "correct": false, "why": "No funciona — sin package.json en el image, npm install no sabe qué instalar. Order matters logically." },
+        { "letter": "C", "text": "El orden no importa.", "correct": false, "why": "Falso — el orden es CRÍTICO para cache efficacia. Wrong order = slow builds always." },
+        { "letter": "D", "text": "Usar '--no-cache' en cada build.", "correct": false, "why": "Anti-solución — obliga rebuild completo cada vez. Máximo waste." }
+      ],
+      "explanation": "Docker cache invalidation: cuando build encounters una instrucción, Docker chequea si el 'input' (previous layers + instruction) matches un cached layer. Si sí: reuse. Si no: rebuild + invalidate ALL subsequent layers.\n\nOptimized Dockerfile pattern:\n```dockerfile\nFROM node:20-alpine\nWORKDIR /app\n# Copy solo dep files primero\nCOPY package.json package-lock.json ./\nRUN npm ci --only=production\n# Copy code después\nCOPY . .\nRUN npm run build\nCMD [\"node\", \"dist/server.js\"]\n```\n\nCambios de código → cache miss solo desde 'COPY . .'. Deps layer (usually the slowest) stays cached.\n\nMulti-project: si tu monorepo tiene múltiples package.json (root + workspaces), copy TODOS antes de install. 'COPY package.json packages/*/package.json ./' (with careful path handling).\n\nCommon cache invalidators (ordered by frequency): (1) Code files — cambian todo el tiempo. Copy last. (2) Dependency files — cambian con updates. Copy antes. (3) Config files — moderadamente estable. Middle. (4) Base image — cambian raramente. FROM.\n\nCache locations: (1) Local (~/.docker/buildx) — during build. (2) Remote (registry) — 'docker build --cache-from image:tag'. Between machines. (3) GHA cache backend — 'cache-from type=gha' para CI.\n\nBuildKit adds: mount caches for pkg managers ('RUN --mount=type=cache,target=/root/.npm npm ci'). Persistent between builds even if source changes.",
+      "realWorld": "Docker layer caching model desde day 1 (2013). BuildKit (2018+) mejora dramaticamente con parallel + mount caches. Reddit's DevOps subreddit has miles de posts sobre 'my docker build is slow, help' — usually caching order wrong. Google 'Docker layer caching' returns tutorials porque es tema common.",
+      "tags": ["layer cache", "dockerfile order", "build performance"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — Best practices for writing Dockerfiles" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "containers",
+      "topic": "Multi-stage builds",
+      "difficulty": "mid",
+      "scenario": "Tu image final tiene 2GB porque incluye compilador Go, dev deps, source code. En producción solo necesitas el binary. ¿Cómo reducir?",
+      "question": "¿Qué son multi-stage builds y cómo funcionan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-stage build: múltiples FROM en el mismo Dockerfile. Cada FROM es un STAGE independiente. El último stage es el image final; los previous son 'builders' que se descartan. Puedes 'COPY --from=builder' para traer solo artefactos necesarios (binary, dist/) al final image. Runtime image final es minimal — solo lo necesario para correr. Ejemplo: builder tiene Go compiler + source; runtime solo tiene el binary compilado + Alpine.", "correct": true, "why": "Correcto. Introducido en Docker 17.05 (2017). Transformador — permite images super small sin sacrificar el build environment. Best practice universal desde 2018." },
+        { "letter": "B", "text": "Multi-stage significa múltiples containers corriendo.", "correct": false, "why": "Confusión con docker-compose (múltiples services). Multi-stage es sobre BUILD (múltiples stages en el Dockerfile), no runtime." },
+        { "letter": "C", "text": "Multi-stage requiere Docker Enterprise.", "correct": false, "why": "Falso — feature de Docker CE gratis desde 17.05." },
+        { "letter": "D", "text": "Multi-stage duplica el image size.", "correct": false, "why": "Opuesto — REDUCE tamaño al descartar el builder stage. Solo el último stage entra al image final." }
+      ],
+      "explanation": "Ejemplo Go:\n```dockerfile\n# Stage 1: builder\nFROM golang:1.22 AS builder\nWORKDIR /app\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY . .\nRUN CGO_ENABLED=0 go build -o /server ./cmd/server\n\n# Stage 2: runtime\nFROM alpine:3.19\nRUN apk add --no-cache ca-certificates\nCOPY --from=builder /server /server\nUSER 1000\nCMD [\"/server\"]\n```\nBuilder stage: 800MB (Go compiler + build). Runtime: 15MB (Alpine + binary). Descartas 785MB.\n\nOtro ejemplo Node:\n```dockerfile\nFROM node:20 AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\nRUN npm prune --production\n\nFROM node:20-alpine\nWORKDIR /app\nCOPY --from=builder /app/dist ./dist\nCOPY --from=builder /app/node_modules ./node_modules\nCOPY --from=builder /app/package.json ./\nUSER node\nCMD [\"node\", \"dist/server.js\"]\n```\n\nPatterns avanzados: (1) COPY desde stage arbitrario — 'COPY --from=nginx:latest /etc/nginx/nginx.conf ./'. (2) Multiple runtime stages — dev, prod, test. Build only necessary con '--target'. (3) Cache stages — 'FROM base AS deps ... FROM base AS builder' — reusa deps stage. (4) Scratch — 'FROM scratch' final stage para binaries Go/Rust static — image de 5MB.\n\nBuild targets: 'docker build --target builder' solo hasta el builder stage. Útil para debug (correr shell en builder).\n\nAnti-patrones: (1) Copiar todo del builder al runtime — pierdes el punto. (2) Instalar dev deps en runtime stage. (3) No especificar AS names — reference by index (más frágil).",
+      "realWorld": "Multi-stage introduced Docker 17.05 (May 2017). Transformador — todo Dockerfile moderno usa multi-stage. Google 'distroless' images assume multi-stage (build → distroless runtime). Rust binaries ~5MB usan 'FROM scratch' con multi-stage. Kubernetes ecosystem heavily uses multi-stage.",
+      "tags": ["multi-stage", "image size", "optimization"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — Multi-stage builds" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "containers",
+      "topic": "Distroless y Alpine",
+      "difficulty": "mid",
+      "scenario": "Tu runtime image es Ubuntu (400MB). Alternativas: Alpine (5MB base), distroless (~20MB Node runtime). ¿Cuál elegir?",
+      "question": "¿Qué son Alpine y distroless, y cuáles son sus tradeoffs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Alpine Linux: distro minimal (5MB) basado en musl libc + BusyBox. Tiene package manager (apk), shell, ideal como base minimal. Distroless (Google): images con SOLO el runtime necesario (lang runtime + tu app) — sin shell, sin apk, sin bash. Aún más pequeña, más segura (menor attack surface). Tradeoff: distroless imposible debug interactivo (no shell); Alpine may have musl incompatibilities (glibc-compiled binaries fail).", "correct": true, "why": "Correcto. Ambas legítimas. Alpine popular para muchos casos. Distroless para máxima security (workloads production con requisitos altos). musl vs glibc issue es real — algunas Node native modules fail en Alpine." },
+        { "letter": "B", "text": "Distroless y Alpine son idénticos.", "correct": false, "why": "Distintos. Distroless MÁS minimal — no shell, no package manager. Alpine tiene ambos." },
+        { "letter": "C", "text": "Siempre usar Ubuntu para 'compatibility'.", "correct": false, "why": "Ubuntu (400MB) waste enorme en producción. Fine para desarrollo/debug, waste en runtime images." },
+        { "letter": "D", "text": "Distroless solo funciona con Go.", "correct": false, "why": "Falso — Google distroless offers images para Java, Python, Node.js, .NET, static (para Go/Rust). Multi-language support." }
+      ],
+      "explanation": "Distroless (gcr.io/distroless/*): (1) Solo lang runtime + app + ca-certs. (2) No shell (no 'docker exec sh'). (3) No package manager. (4) Non-root default. (5) Static + dynamic versions.\n\nVariants: (a) distroless/static — para static binaries (Go, Rust). Absolutamente minimal. (b) distroless/base — glibc + tzdata + ca-certs. Dynamic binaries. (c) distroless/cc — + libgcc. (d) distroless/nodejs — Node.js runtime. (e) distroless/java, distroless/python.\n\nAlpine: (1) musl libc (not glibc). (2) BusyBox (shell + utilities). (3) apk package manager. (4) 5MB base. (5) Popular base para many images.\n\nAlpine vs Distroless comparison: (1) SIZE — distroless ~20MB (Node), Alpine + Node ~50MB, Ubuntu + Node ~250MB. (2) DEBUG — Alpine has shell (docker exec sh); distroless no. (3) SECURITY — distroless smallest attack surface. (4) COMPATIBILITY — Alpine musl issues con some native modules. Distroless usually glibc, better compat.\n\nCómo debug distroless: (1) 'debug' variants tienen busybox shell. (2) K8s ephemeral containers (2022+) — attach debug container to running pod. (3) Best debug en dev images, run distroless in prod.\n\nAlpine caveat: (1) DNS resolution differences (musl vs glibc). (2) getaddrinfo threading en musl no siempre thread-safe. (3) Native Node modules with glibc-only compilation fail. (4) Some pip wheels no Alpine-compat (usa pip install --no-binary o similar).\n\nDecision matrix: (1) Static Go/Rust binary → 'FROM scratch' or distroless/static (smallest, safest). (2) Node.js/Python — Alpine works usually, distroless if security critical. (3) Complex apps with debugging needs — Alpine or Debian slim.",
+      "realWorld": "Alpine Linux started 2005, ganó popularidad post-2015 con Docker. Distroless launched by Google 2017. Kubernetes core images use distroless. Many CNCF projects (etcd, Envoy) use distroless. Chainguard Images (2022+) es evolución — signed, SLSA-compliant, minimal.",
+      "tags": ["alpine", "distroless", "image size"],
+      "tech": ["Alpine Linux", "Distroless"],
+      "references": [{ "title": "Google — Distroless containers" }, { "title": "Alpine Linux Docs" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "containers",
+      "topic": "Non-root user",
+      "difficulty": "mid",
+      "scenario": "Tu container corre como root. Un pentester señala esto como vulnerabilidad. Si el container es exploit, attacker tiene root.",
+      "question": "¿Por qué correr containers como non-root y cómo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Por default, containers corren como root (UID 0) — si un container escape (kernel exploit) o un vuln en la app permite arbitrary command execution, attacker tiene root ON THE HOST. Solución: crear un user en el Dockerfile ('RUN adduser -u 1000 -D appuser') y setear 'USER appuser' antes de CMD. El proceso corre como UID 1000, no root. Reduces blast radius de exploits significativamente.", "correct": true, "why": "Correcto. Baseline security. K8s security policies (PSA, PSP) enforce non-root by default en cluster serios. Escaping container as non-root is much harder." },
+        { "letter": "B", "text": "Root en containers es completamente seguro.", "correct": false, "why": "Falso — root en container tiene MENOS privileges que root en host (namespaces), pero múltiples exploits históricos han demostrado container escape con root privileges. Non-root es defense-in-depth." },
+        { "letter": "C", "text": "Non-root user rompe todas las apps.", "correct": false, "why": "Falso — la mayoría de apps funcionan fine como non-root. Excepciones: apps que bind a puertos <1024 (fix: bind a >1024, expose via port mapping) o requieren acceso a specific system files." },
+        { "letter": "D", "text": "USER es solo para debug.", "correct": false, "why": "Falso — USER es setting de production. Debug puede requerir root (RUN commands), producción requires non-root." }
+      ],
+      "explanation": "Dockerfile pattern:\n```dockerfile\nFROM node:20-alpine\n# Install deps as root (needs privileges)\nRUN apk add --no-cache tini\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --only=production\nCOPY . .\n# Non-root user for runtime\nRUN addgroup -g 1001 nodejs && \\\n    adduser -u 1001 -G nodejs -s /bin/sh -D nodejs && \\\n    chown -R nodejs:nodejs /app\nUSER nodejs\nCMD [\"node\", \"server.js\"]\n```\n\nMuchas images oficiales tienen non-root user pre-created: (a) node images tiene 'node' user (UID 1000). Use 'USER node'. (b) postgres tiene 'postgres'. (c) nginx tiene 'nginx'. Verify con 'docker inspect image | grep User'.\n\nRootless containers: Podman + rootless Docker permiten correr Docker daemon como non-root. Aún más security. K8s con rootless containerd cada vez más popular.\n\nCapabilities: Linux capabilities dividen root en granular privileges. Container debe DROP unused capabilities: '--cap-drop=all --cap-add=net_bind_service'. Fine-grained security.\n\nRead-only root filesystem: containers usualmente pueden write anywhere. Con '--read-only', filesystem is immutable. Emergency writes use volumes/tmpfs. Kubernetes 'readOnlyRootFilesystem: true' en securityContext.\n\nAnti-patterns: (1) Corre como root para 'convenience'. (2) chmod 777 files en Dockerfile — reduce security. (3) Bind al port 80 — requires root, workaround: bind :8080, use K8s Service o iptables. (4) sudo dentro del container — usually bad sign, use USER correcto.",
+      "realWorld": "In 2019, runc CVE-2019-5736 permitted container escape as root. Non-root containers were unaffected. Docker best practices explicitly recommend non-root. Kubernetes Pod Security Standards (2022+) enforce non-root en Restricted profile. Distroless images default non-root.",
+      "tags": ["security", "non-root", "USER"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — Best practices: USER" }, { "title": "OWASP — Docker Security" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "containers",
+      "topic": "ENTRYPOINT vs CMD",
+      "difficulty": "mid",
+      "scenario": "Ves un Dockerfile con ENTRYPOINT ['/app']. Otro con CMD ['/app']. Un tercero tiene ambos. ¿Cuál es la diferencia?",
+      "question": "¿Qué diferencia ENTRYPOINT de CMD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ENTRYPOINT: el ejecutable FIJO del container. No se sobreescribe con args de 'docker run image'. CMD: argumentos DEFAULT al ENTRYPOINT (o comando default si no hay ENTRYPOINT). Args de docker run REEMPLAZAN CMD, no ENTRYPOINT. Ejemplo: ENTRYPOINT ['/app'] + CMD ['--port', '8080']. 'docker run image' → /app --port 8080. 'docker run image --port 9000' → /app --port 9000 (CMD reemplazado). 'docker run image bash' → /app bash (¡NO ejecuta bash, lo pasa como arg a /app!).", "correct": true, "why": "Correcto. ENTRYPOINT = fixed executable. CMD = default arguments. Un command 'docker run image cmd' overrides CMD but not ENTRYPOINT. Para override ENTRYPOINT: '--entrypoint' flag." },
+        { "letter": "B", "text": "ENTRYPOINT y CMD son sinónimos.", "correct": false, "why": "Diferentes semanticamente. ENTRYPOINT fixed, CMD default overridable." },
+        { "letter": "C", "text": "Un Dockerfile no puede tener ambos.", "correct": false, "why": "Falso — común tener ambos. ENTRYPOINT ['prog'] + CMD ['--default-args'] = pattern estándar." },
+        { "letter": "D", "text": "CMD siempre corre después de ENTRYPOINT.", "correct": false, "why": "Confuso. CMD es argumentos AL ENTRYPOINT, no un segundo comando. Se combinan en un solo command line: [ENTRYPOINT] [CMD args]." }
+      ],
+      "explanation": "Patterns comunes:\n\n(1) Solo CMD (más simple):\n```dockerfile\nCMD [\"node\", \"server.js\"]\n```\n'docker run image' → node server.js. 'docker run image bash' → bash (override).\n\n(2) Solo ENTRYPOINT (executable fijo):\n```dockerfile\nENTRYPOINT [\"/usr/local/bin/myapp\"]\n```\n'docker run image --port 8080' → myapp --port 8080. Args pasados al app.\n\n(3) Ambos (executable + default args):\n```dockerfile\nENTRYPOINT [\"/usr/local/bin/myapp\"]\nCMD [\"--port\", \"8080\", \"--verbose\"]\n```\n'docker run image' → myapp --port 8080 --verbose (defaults). 'docker run image --port 9000' → myapp --port 9000 (CMD overridden).\n\nEXEC vs SHELL form: (1) Exec form (array): ENTRYPOINT [\"/app\", \"--flag\"]. Es preferido — signals passed correctly. PID 1 es el binary. (2) Shell form (string): ENTRYPOINT /app --flag. Se ejecuta as 'sh -c /app --flag'. PID 1 es sh, no /app. Signals (SIGTERM) NO llegan al binary correctamente.\n\nSignal handling: PID 1 en un container es especial — no default handlers. Si tu app es PID 1, DEBE handle signals (SIGTERM para graceful shutdown). Usar exec form o 'init system' como tini ('ENTRYPOINT [\"/tini\", \"--\", \"/app\"]').\n\nOverride: (a) docker run image CMD_args — overrides CMD. (b) docker run --entrypoint bash image — overrides ENTRYPOINT (interactive debug). Combined: docker run --entrypoint bash image -c 'echo hello'.\n\nSHELL form gotchas: (1) Env var expansion — CMD /app $VAR works with shell form, not exec form. Fix: CMD [\"sh\", \"-c\", \"/app $VAR\"] con exec form. (2) Wildcards, pipes, redirects — need shell form o wrap en sh -c.",
+      "realWorld": "The 'PID 1 problem' well-documented. Node.js docs recomiendan tini o dumb-init. Docker itself changed default behavior in 1.13 to add --init flag (adds tini automatically). Kubernetes handles SIGTERM correctly to PID 1 — apps must respond.",
+      "tags": ["ENTRYPOINT", "CMD", "signals", "PID 1"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — ENTRYPOINT" }, { "title": "Docker Docs — CMD" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "containers",
+      "topic": ".dockerignore",
+      "difficulty": "senior",
+      "scenario": "'docker build .' tarda 2 minutos solo en 'Sending build context to Docker daemon' — 500MB. Investigas: node_modules, .git, coverage/ están yendo al build context.",
+      "question": "¿Qué es .dockerignore y por qué es crítico?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": ".dockerignore: file (like .gitignore) que excluye archivos/directorios del BUILD CONTEXT — el conjunto de files que se envía al Docker daemon al iniciar 'docker build'. Sin .dockerignore, files inútiles (node_modules, .git, .env, coverage/, dist/, IDE files) van al daemon → slow builds + bloated context + potential secrets leak. Best practice: siempre incluir .dockerignore.", "correct": true, "why": "Correcto. Baseline. Un buen .dockerignore reduce build context de 500MB a 5MB. Además, previene secrets accidentales en image (si .env va al context y COPY . . lo copia)." },
+        { "letter": "B", "text": ".dockerignore es opcional y no importa.", "correct": false, "why": "Falso — sin él, builds slow y potentially insecure. Esencial." },
+        { "letter": "C", "text": ".dockerignore es lo mismo que .gitignore.", "correct": false, "why": "Sintaxis similar pero contextos distintos. Un archivo puede estar en Git (versionable) pero no querer que vaya al image (build artifacts, tests)." },
+        { "letter": "D", "text": ".dockerignore va dentro del Dockerfile.", "correct": false, "why": "Falso — es archivo separado en el root del build context, nombrado exactamente '.dockerignore'." }
+      ],
+      "explanation": "Ejemplo .dockerignore típico:\n```\nnode_modules\n.git\n.gitignore\n.dockerignore\nDockerfile*\n*.md\n.env*\n.vscode\n.idea\ncoverage\ndist\nbuild\n.next\n*.log\n.DS_Store\ntest\ntests\n__tests__\n*.test.ts\n*.spec.ts\n```\n\nSyntax (like .gitignore): (a) glob patterns. (b) '!' para exclude from ignore (include back). (c) '#' para comments. (d) '**' matches nested directories.\n\nBenefits: (1) Faster builds — smaller context = faster daemon transfer. (2) Smaller images — files excluded no ir al image (unless COPY explicit path). (3) Security — no accidentally copy .env or .git. (4) Cleaner — no dev-only files en runtime image.\n\nGotchas: (1) '.dockerignore' vs '.gitignore' — different purposes. Docker + Git usually similar but nested. Ejemplo: dist/ en .gitignore (build artifact), pero puede querer estar en Docker context (if you build en CI + copy). (2) Multi-stage: builder stage may need files that runtime doesn't. Structure .dockerignore for the strictest stage. (3) Case sensitivity — file names.\n\nAdvanced: (1) Different .dockerignore por Dockerfile — '.dockerignore.prod' vs '.dockerignore.dev' — but not natively. Workaround: multiple Dockerfiles con diferentes COPY patterns. (2) BuildKit: 'DOCKER_BUILDKIT=1' plus 'RUN --mount=type=bind' for selective mounting.",
+      "realWorld": "En 2020, un dev en Facebook accidentally leaked SSH keys por no tener .dockerignore — .ssh directory quedó en build context, someone dumped image, extracted. Miles de casos similares. Docker docs always emphasize this. Real-world .dockerignore templates existen en GitHub topic 'dockerignore-templates'.",
+      "tags": [".dockerignore", "build context", "security"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — .dockerignore file" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "containers",
+      "topic": "HEALTHCHECK",
+      "difficulty": "senior",
+      "scenario": "Tu container está 'corriendo' pero la app dentro crashed. Docker/K8s no lo sabe — 'docker ps' shows healthy. K8s no restarts.",
+      "question": "¿Qué es HEALTHCHECK y cómo implementarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "HEALTHCHECK: instrucción Dockerfile que define un comando para verificar health del container periódicamente. Ejemplo: 'HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD curl -f http://localhost:8080/health || exit 1'. Docker corre el comando cada 30s. Exit 0 = healthy, exit 1 = unhealthy. Después de N retries fallidos, container marked unhealthy. En K8s: usar liveness/readiness probes (más flexibles), pero HEALTHCHECK sigue útil para Docker standalone y compose.", "correct": true, "why": "Correcto. HEALTHCHECK bridge la brecha entre 'process running' y 'app responding correctly'. Sin ella, el orchestrator no puede reaccionar a bad state." },
+        { "letter": "B", "text": "HEALTHCHECK es lo mismo que 'ps' — verifica que el process está corriendo.", "correct": false, "why": "No — HEALTHCHECK es application-level. Un process puede estar running pero deadlocked/hung. HEALTHCHECK verifica funcionalidad real (ej. HTTP endpoint responde 200)." },
+        { "letter": "C", "text": "HEALTHCHECK no es necesario en Docker.", "correct": false, "why": "Falso — sin él, no hay detection de app-level failures. Restart policies + healthcheck = self-healing containers." },
+        { "letter": "D", "text": "HEALTHCHECK solo funciona en Kubernetes.", "correct": false, "why": "Falso — es feature de Docker Engine desde 1.12. Funciona en Docker standalone, docker-compose, Swarm. K8s tiene su own probes (más flexibles)." }
+      ],
+      "explanation": "HEALTHCHECK options: (1) --interval=30s — cuánto entre chequeos. (2) --timeout=3s — max wait para response. (3) --start-period=10s — grace period initial (health failures no cuentan). (4) --retries=3 — cuántas fails seguidas antes 'unhealthy'.\n\nStates: (1) starting — durante start-period. (2) healthy — pasa el check. (3) unhealthy — fails > retries.\n\nEjemplo apps:\n```dockerfile\n# HTTP service\nHEALTHCHECK --interval=30s --timeout=3s --retries=3 \\\n  CMD curl -f http://localhost:8080/health || exit 1\n\n# Database\nHEALTHCHECK --interval=30s --timeout=5s --retries=3 \\\n  CMD pg_isready -U postgres || exit 1\n\n# Kafka consumer\nHEALTHCHECK --interval=30s --timeout=5s --retries=3 \\\n  CMD /app/check-consumer-lag.sh\n```\n\nHealth endpoint design: (1) /health — basic (app started, can respond). (2) /health/live — liveness — process alive? (3) /health/ready — readiness — accepting traffic? DB connected, dependencies healthy? (4) /health/deep — deep — todas deps healthy?\n\nKubernetes probes (mejor que HEALTHCHECK): (1) livenessProbe — restart si fails. (2) readinessProbe — remove from service if fails (not restart). (3) startupProbe — durante initial start, distinct de liveness. Configurable con HTTP GET, TCP socket, exec command.\n\nCommon mistakes: (1) Health check demasiado expensive — hits DB en cada check, DB gets hammered. Fix: cache DB status, check every 30s. (2) Deep dependency check en liveness — dep down → all pods restart → thundering herd. Use readiness instead. (3) No start-period — new containers marked unhealthy while warming up. (4) Timeout demasiado short — slow health check causes false negatives.",
+      "realWorld": "HEALTHCHECK added Docker 1.12 (2016). Kubernetes probes existed since v1. En 2017, Netflix documented cascade failure caused por buggy healthcheck triggering mass restarts. Envoy has sophisticated health check config. Consul health checks similar.",
+      "tags": ["healthcheck", "monitoring", "self-healing"],
+      "tech": ["Docker", "Kubernetes"],
+      "references": [{ "title": "Docker Docs — HEALTHCHECK" }, { "title": "Kubernetes Docs — Liveness, Readiness and Startup Probes" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "containers",
+      "topic": "Image size optimization",
+      "difficulty": "senior",
+      "scenario": "Tu image final es 1.5GB. Deploys lentos, storage caro, security team quejosa por attack surface. ¿Cómo reducir a <100MB?",
+      "question": "¿Qué técnicas reducen image size significativamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Base image minimal: FROM node:20-alpine (150MB) vs FROM node:20 (1GB). Ahorro inmediato. Distroless (~50MB Node) o scratch (para static binaries) — aún más.", "correct": true, "why": "Correcto. Cambio de 1 línea, huge impact. Ubuntu 22 base = 80MB, Alpine = 5MB, distroless static = 2MB." },
+        { "letter": "B", "text": "Multi-stage builds: builder stage con toolchain (compilers, dev deps), runtime stage con solo binary + minimal deps. Descarta el builder al build final. Reduces 5-10x en muchos casos.", "correct": true, "why": "Correcto. Ya discutido — patrón fundamental. Builder con Go compiler (400MB) + runtime distroless (2MB) = huge diff." },
+        { "letter": "C", "text": "Combinar RUN commands: 'RUN apt-get update && apt-get install -y x && apt-get clean && rm -rf /var/lib/apt/lists/*' en UNA línea. Cada RUN es una layer — cleanup en misma layer que install, sino files removed ocupan espacio en layer previa aunque no visibles.", "correct": true, "why": "Correcto. Layer cache internals. 'RUN apt install X' + 'RUN apt clean' en 2 layers separadas = X sigue en layer 1, layer 2 solo hide. Same layer con && = X truly deleted." },
+        { "letter": "D", "text": "Minimize deps: en Node, 'npm ci --only=production' skips devDependencies. En Python, no cache pip. En Go/Rust, static binaries no requieren runtime libs.", "correct": true, "why": "Correcto. Dev deps (webpack, jest, etc.) en runtime image = waste. Production install saves significantly. --no-cache-dir en pip, --production npm." },
+        { "letter": "E", "text": "El tamaño de la image no importa nunca.", "correct": false, "why": "Falso — image size affects: deploy speed (network transfer), storage cost (registry, K8s nodes), attack surface (más libs = más CVEs), cold start (K8s pull). Todo escala con el tamaño." }
+      ],
+      "explanation": "Size optimization stack (biggest impact first): (1) Multi-stage build. Non-negotiable. (2) Minimal base image (Alpine, distroless, scratch). (3) Production-only deps (npm ci --only=production, pip --no-cache-dir). (4) Combine RUN commands + cleanup en misma layer. (5) .dockerignore para excluir junk. (6) Squash layers si necesario ('docker build --squash') — controversial, breaks cache. (7) Remove unnecessary files (docs, examples, tests) from packages.\n\nSize breakdown typical Node.js app: (a) Ubuntu + Node 20 + app = 1.2GB. (b) Alpine + Node 20 + app = 250MB. (c) Distroless Node + app (multi-stage) = 80MB. (d) Static binary compiled Node (Vercel/Node compile) — future. Reductions cumulative.\n\nTools para analizar: (1) 'docker history image' — muestra layers y sizes. (2) 'dive' — TUI para explorar layer contents. (3) 'docker-slim' — analyzes runtime + strips unused files. (4) trivy — security scan también reports sizes.\n\nCommon offenders: (1) Package manager cache — apt lists, npm cache, pip cache. Delete post-install. (2) Compilation tools left in runtime — gcc, make, python-dev. Move to builder stage. (3) Test data — sample datasets included por error. (4) Multiple copies — install deps, then copy again. (5) Docs — man pages, LICENSE files, README (some in packages).\n\nSecurity dimension: smaller image = smaller CVE surface. Distroless has 0 CVEs typically because no shell, no old deps. Chainguard signs images + no CVEs guarantee.",
+      "realWorld": "Chainguard Images (2022+) — signed, minimal, zero-CVE at time of build. Popular en high-security environments. Docker itself reduced Docker Desktop image size dramatically 2020-2023. Netflix documented internal image size reduction 5x with distroless migration.",
+      "tags": ["image size", "optimization", "multi-stage"],
+      "tech": ["Docker", "Alpine"],
+      "references": [{ "title": "Docker Docs — Best practices" }, { "title": "Chainguard — Minimal Images" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "containers",
+      "topic": "Docker volumes vs bind mounts",
+      "difficulty": "senior",
+      "scenario": "Tu container necesita persist data (DB, uploads). Un dev usa bind mount ('-v /host/path:/container/path'). Otro usa named volume ('-v mydata:/container/path'). ¿Cuál es mejor?",
+      "question": "¿Cuáles son las diferencias entre volumes y bind mounts?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Bind mount ('-v /host/path:/container/path'): monta un DIRECTORIO ESPECÍFICO del host en el container. Direct path mapping. Útil para dev (mount source code para hot reload). Downside: portable (host debe tener el path), permission issues (host UID != container UID), no gestionable por Docker. Named volume ('-v mydata:/container/path'): Docker maneja el storage (en /var/lib/docker/volumes/mydata). Portable across hosts (Docker crea si no existe), gestionable via docker volume commands, mejor performance en Docker Desktop (sin FS translation), permisos manejados. Recomendado para production data.", "correct": true, "why": "Correcto. Volumes managed by Docker = better production. Bind mounts = better dev. Ambos válidos en contexto correcto." },
+        { "letter": "B", "text": "Son idénticos.", "correct": false, "why": "Diferentes en ownership, portability, features." },
+        { "letter": "C", "text": "Bind mounts son siempre mejores.", "correct": false, "why": "Depende del use case. Producción típicamente prefiere volumes." },
+        { "letter": "D", "text": "Volumes solo funcionan en Docker Enterprise.", "correct": false, "why": "Falso — feature core de Docker Engine gratis." }
+      ],
+      "explanation": "Mount types: (1) VOLUMES — Docker-managed storage. Docker knows about them, backups, migration, permissions. Usa 'docker volume ls', 'docker volume create'. (2) BIND MOUNTS — host filesystem path directly mapped. Docker doesn't manage. (3) TMPFS mounts — en memoria RAM. Data lost on stop. Useful for sensitive temp data.\n\nWhen volumes: (a) Production databases (mysql, postgres). (b) Persistent app data (uploads, cache que sobrevive restart). (c) Data que debe ser gestionable independiente de containers.\n\nWhen bind mounts: (a) Dev: mount source code para hot reload ('-v $(pwd)/src:/app/src'). (b) Sharing config files con host ('-v /host/config.json:/etc/app/config.json:ro'). (c) Access to host resources (Docker socket, logs).\n\nVolume drivers: (a) local (default) — local disk. (b) nfs — network filesystem. (c) cloud storage (AWS EBS, GCE PD via plugins). (d) rex-ray, portworx — multi-host volumes.\n\nDocker Compose syntax:\n```yaml\nservices:\n  db:\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\nvolumes:\n  postgres-data:\n```\n\nBackup strategies: (1) Volumes — 'docker run --rm -v mydata:/data alpine tar czf - /data > backup.tar.gz'. (2) Volume snapshots on cloud volumes. (3) App-level (pg_dump para postgres).\n\nCommon issues: (1) Bind mount permission — host user vs container user UID mismatch. Fix: 'chown' o run container como matching UID. (2) Bind mount performance on Docker Desktop (Mac/Win) — FS translation slow. Use volumes for hot paths. (3) Volume corruption if two containers write simultaneously.",
+      "realWorld": "Docker Desktop (Mac/Win) has famously slow bind mount performance due to virtualization. VirtioFS (2023+) improves. Named volumes 10x faster. Kubernetes has similar concepts — PersistentVolumes, PersistentVolumeClaims — analogous to Docker volumes. Docker Compose widely used en dev.",
+      "tags": ["volumes", "bind mounts", "storage"],
+      "tech": ["Docker"],
+      "references": [{ "title": "Docker Docs — Manage data in Docker" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "containers",
+      "topic": "Docker networking",
+      "difficulty": "senior",
+      "scenario": "Tienes 3 containers: web, api, db. Web debe llamar a api, api debe llamar a db. Localhost no funciona (containers son isolated). ¿Cómo networking?",
+      "question": "¿Cómo funciona el networking entre containers Docker?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Docker networks: containers en el MISMO network pueden reachar cada otro por NOMBRE (DNS resolution built-in). 'docker network create mynet' + 'docker run --network mynet --name db postgres' + 'docker run --network mynet --name api api-image'. Ahora api puede 'connect to db:5432' — Docker resolves 'db' a la IP del container. Network aislado del default bridge. Docker Compose auto-creates network para todo el compose file.", "correct": true, "why": "Correcto. User-defined networks son el pattern estándar. DNS resolution por container name. Aislamiento entre networks (containers en net A no ven containers en net B)." },
+        { "letter": "B", "text": "Containers deben usar la IP física del host para hablar.", "correct": false, "why": "Ugly workaround. IPs cambian con restart. Nombres son estables via Docker DNS." },
+        { "letter": "C", "text": "No hay networking en Docker.", "correct": false, "why": "Falso — Docker tiene rich networking model. Bridge (default), user-defined bridge, host, overlay (Swarm/multi-host), macvlan, none." },
+        { "letter": "D", "text": "Cada container tiene su propio Wi-Fi.", "correct": false, "why": "Falso — networking es virtual (bridge/overlay), no wireless." }
+      ],
+      "explanation": "Docker network types: (1) BRIDGE (default) — 'docker0' bridge en el host. Containers get IPs en 172.17.0.0/16. No DNS entre containers en default bridge (solo IPs). (2) USER-DEFINED BRIDGE — 'docker network create'. DNS resolution automática por container name. Preferido. (3) HOST — container comparte network namespace con host. No isolation. (4) OVERLAY — multi-host networking en Swarm/K8s. VxLAN encapsulation. (5) MACVLAN — container tiene MAC address on physical network. Legacy support.\n\nDocker Compose networking:\n```yaml\nservices:\n  web:\n    depends_on: [api]\n  api:\n    depends_on: [db]\n  db:\n    image: postgres\n```\nCompose auto-crea network 'projectname_default'. Todo services en él. Services pueden hablar por nombre: 'api' can connect to 'db:5432'.\n\nPort mapping: '-p 8080:80' publica port 80 del container en port 8080 del host. Sin ella, port solo accesible dentro del Docker network. Común confusion — publicar todos los ports vs solo el needed (security).\n\nDNS: (1) Container name — resolvable. (2) Service name en compose — resolvable. (3) Aliases con --network-alias. (4) Custom DNS con --dns.\n\nCross-network: containers necesitan estar en el mismo network para talk. Multi-tier apps: 'frontend-net' (web + api), 'backend-net' (api + db). API en both networks. Isolation between frontend/backend.\n\nSecurity: (1) Bridge networks son NATed — outbound OK, inbound requires explicit port mapping. (2) User-defined bridges aislados de default bridge. (3) --internal flag para networks sin internet access. (4) Docker socket exposure via network = full host takeover, never expose.",
+      "realWorld": "Docker Compose (originally Fig, 2014) revolutionized multi-container apps. Kubernetes networking model (CNI) is more sophisticated but similar concepts. Service mesh (Istio, Linkerd) adds encryption, observability on top. K3s, Minikube for local Docker-ish K8s.",
+      "tags": ["networking", "DNS", "compose"],
+      "tech": ["Docker", "Docker Compose"],
+      "references": [{ "title": "Docker Docs — Networking overview" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "containers",
+      "topic": "Docker Compose",
+      "difficulty": "senior",
+      "scenario": "Tu app tiene 5 services: web, api, db, redis, worker. Correr manualmente con docker run es tedioso. Un ingeniero sugiere docker-compose.",
+      "question": "¿Qué es Docker Compose y cuándo usarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Docker Compose: tool para definir y correr multi-container apps con UN archivo YAML (docker-compose.yml o compose.yaml). Define services, networks, volumes, env vars, dependencies. 'docker compose up' inicia todo. Ideal para: dev environments locales, integration tests, staging simple, small production deployments. NO para producción K8s-scale — falta orchestration features (auto-scaling, self-healing multi-host).", "correct": true, "why": "Correcto. Compose es 'docker run' orquestado. Excelente para dev y test. En producción, K8s toma over para orchestration serio. Docker Swarm es alternative pero perdió mindshare vs K8s." },
+        { "letter": "B", "text": "Docker Compose es lo mismo que Kubernetes.", "correct": false, "why": "Falso — Compose es single-host, no orquestación distributed. K8s multi-host, orchestration, scaling, healing." },
+        { "letter": "C", "text": "Compose solo funciona en Linux.", "correct": false, "why": "Falso — cross-platform. Docker Desktop incluye Compose en Mac, Win, Linux." },
+        { "letter": "D", "text": "Compose es paid feature.", "correct": false, "why": "Falso — open source, free." }
+      ],
+      "explanation": "Ejemplo compose.yaml:\n```yaml\nservices:\n  web:\n    build: ./web\n    ports:\n      - '3000:3000'\n    environment:\n      API_URL: http://api:8080\n    depends_on:\n      api:\n        condition: service_healthy\n  api:\n    build: ./api\n    environment:\n      DB_URL: postgres://db:5432/myapp\n    depends_on:\n      db:\n        condition: service_healthy\n    healthcheck:\n      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']\n      interval: 30s\n      timeout: 3s\n      retries: 3\n  db:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n      test: ['CMD', 'pg_isready', '-U', 'postgres']\n\nvolumes:\n  postgres-data:\n```\n\nComandos: (1) 'docker compose up' — start all, foreground. Ctrl+C stops. (2) 'docker compose up -d' — detached (background). (3) 'docker compose down' — stop + remove containers, networks. Add '-v' para also remove volumes. (4) 'docker compose logs -f service' — tail logs. (5) 'docker compose exec service bash' — shell into. (6) 'docker compose ps' — status.\n\nFeatures: (1) Automatic network — services can talk by name. (2) depends_on with health conditions — start order. (3) Environment files (.env) — 'DB_PASSWORD' interpolated. (4) Overrides — docker-compose.override.yml auto-loaded for dev customizations. (5) Profiles — activate subset of services ('docker compose --profile debug up').\n\nCompose vs Swarm vs K8s: (1) Compose — single host, dev-friendly. (2) Swarm — multi-host, Docker's own orchestrator. Simpler than K8s but limited adoption. (3) K8s — multi-host, production-grade, complex.",
+      "realWorld": "Compose was 'Fig' originally (2013), acquired by Docker. Widely used en dev. Docker Desktop bundles Compose v2 (Go binary, faster). Kubernetes has 'kompose' tool que translates Compose → K8s manifests (imperfect but useful).",
+      "tags": ["compose", "multi-container", "dev"],
+      "tech": ["Docker Compose"],
+      "references": [{ "title": "Docker Docs — Docker Compose overview" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "containers",
+      "topic": "Docker secrets",
+      "difficulty": "senior",
+      "scenario": "Tu container necesita API keys. Un dev usa '-e API_KEY=xxx' (env var). Un ingeniero senior dice 'nunca env vars para secrets'.",
+      "question": "¿Cómo manejar secrets en Docker de forma segura?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Env vars son visibles en: 'docker inspect', /proc/PID/environ (any process en el container), logs (if app prints env), crashes (env in stack traces). No use env vars para SECRETS. Use env vars para NON-SECRET config (DB_HOST, LOG_LEVEL).", "correct": true, "why": "Correcto. Env vars son de facto public dentro del container y visible en Docker metadata. Best practices docs específicamente warn." },
+        { "letter": "B", "text": "Bind mount secret files: '-v /host/secret.txt:/run/secrets/secret.txt:ro'. App reads del filesystem. File permissions restringen access.", "correct": true, "why": "Correcto. Mejor que env vars — al menos permissions matter. Downside: managing files por host is tedious, no rotation." },
+        { "letter": "C", "text": "Docker secrets (Swarm mode): 'docker secret create' + reference en service. Secrets injected como file en /run/secrets/. Not visible en env, not in image layers, encrypted at rest. Kubernetes has similar Secret resource.", "correct": true, "why": "Correcto. Docker Swarm secrets (2016+). K8s Secrets similar concepto. Injected como files, no env vars. Better than plain env vars pero K8s Secrets base64 encoded (not encrypted) por default." },
+        { "letter": "D", "text": "External secret managers: HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager. App fetches secrets on startup usando IAM role (no static credentials en container). Rotation centralized.", "correct": true, "why": "Correcto. Production best practice. External vault, fetched at runtime via workload identity. Zero secrets en image, en env, en filesystem. Init container o app-level SDK." },
+        { "letter": "E", "text": "Hard-code secrets en Dockerfile es la mejor práctica.", "correct": false, "why": "Peor solución. Secrets en Dockerfile → en image → en registry → public. Never." }
+      ],
+      "explanation": "Anti-patterns: (1) Secrets en Dockerfile — permanent en image layer. Anyone con pull access lees. (2) Secrets en env vars — visible en docker inspect, /proc, potentially logs. (3) Secrets en git — obvious no-no. (4) Secrets en shared volume — file permissions may leak. (5) Secrets pasados en command line — visible en 'ps'.\n\nBest patterns: (1) External vault + IAM — best. AWS Secrets Manager + IAM role, container fetches at start. (2) K8s Secrets injected como files — good. (3) Docker Swarm secrets — good for Swarm. (4) BuildKit --mount=type=secret — para secrets needed at BUILD time (not run). File mounted temporarily during RUN, no layer.\n\nBuildKit secrets example:\n```dockerfile\n# syntax=docker/dockerfile:1.4\nRUN --mount=type=secret,id=npmrc,target=/root/.npmrc \\\n    npm ci\n```\nBuild con: 'docker build --secret id=npmrc,src=$HOME/.npmrc .'. NPM tokens no persistem en image.\n\nRuntime secret fetch pattern: (1) Container start. (2) Init container (or app entrypoint) authenticates via workload identity (K8s ServiceAccount, EC2 IAM role, GCP metadata). (3) Fetches secrets del vault. (4) Writes to /run/secrets/ tmpfs. (5) App reads del filesystem. (6) On restart, fetches fresh (rotation).\n\nRotation: (a) External vault rotates automatically. (b) App has to re-fetch periodically or on SIGHUP. (c) Or restart container (K8s deployment rolling restart) to pull new.",
+      "realWorld": "Vault en producción común en enterprise. AWS Secrets Manager + IAM Roles for Service Accounts (IRSA) en EKS. GCP Secret Manager + Workload Identity. Sealed Secrets (Bitnami) para GitOps — secrets encrypted, safely stored en Git. External Secrets Operator para K8s bridge to vaults.",
+      "tags": ["secrets", "security", "vault"],
+      "tech": ["Docker", "HashiCorp Vault"],
+      "references": [{ "title": "Docker Docs — Secrets management" }, { "title": "12 Factor App — Config" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "containers",
+      "topic": "Docker logging",
+      "difficulty": "senior",
+      "scenario": "Tu container escribe logs a /var/log/app.log DENTRO del container. Al restart, logs perdidos. Además, no puedes tailar desde el host fácilmente.",
+      "question": "¿Cómo debe una app en container manejar logs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "12-factor: LOGS ES UN STREAM. App escribe a stdout/stderr, NUNCA a files. El orchestrator (Docker, K8s) captura los streams, los envía a logging driver (json-file default, syslog, fluentd, aws logs, gcp logs, journald). Rotación, retention, aggregation, search — todo se maneja EN el logging infrastructure, no en la app.", "correct": true, "why": "Correcto. Fundamento 12-factor app methodology. Separa app de logging concerns. Trabajo bien hecho: app logs to stdout, Docker driver ships to Datadog/CloudWatch/ELK. Elegante." },
+        { "letter": "B", "text": "Escribir logs a files dentro del container.", "correct": false, "why": "Anti-patrón. Files se pierden al restart. Files ocupan disco del container. Rotación custom needed. No aggregation across containers." },
+        { "letter": "C", "text": "Bind mount /var/log al host.", "correct": false, "why": "Funciona pero: host filesystem specific, permission issues, no aggregation across hosts, no cloud-native." },
+        { "letter": "D", "text": "No hay una forma correcta.", "correct": false, "why": "Falso — stdout/stderr es el standard universal para 12-factor + cloud-native." }
+      ],
+      "explanation": "Docker logging drivers: (1) json-file (default) — Docker captures stdout to /var/lib/docker/containers/*/xxx-json.log. 'docker logs container' reads this. (2) syslog — sends to syslog server. (3) journald — systemd journal. (4) fluentd — to Fluentd daemon (aggregation). (5) awslogs — CloudWatch. (6) gcplogs — Cloud Logging. (7) splunk. (8) local — like json but more efficient.\n\nConfig: 'docker run --log-driver=fluentd --log-opt fluentd-address=...'. Global default en /etc/docker/daemon.json.\n\nLog rotation: (1) json-file por default NO rotates — infinite disk grow. Config 'max-size' + 'max-file'. Ejemplo: '{\"max-size\":\"10m\",\"max-file\":\"3\"}'. (2) Some drivers manage own rotation (CloudWatch, etc.).\n\nStructured logging: (1) Log JSON, not plain text. Fields (timestamp, level, message, context) parseable. (2) Include correlation IDs (trace_id) for distributed tracing. (3) Log level filterable.\n\nApp patterns: (1) Node — console.log/console.error to stdout/stderr. Or Winston/Pino logging library con transport 'console'. (2) Python — logging module con StreamHandler to sys.stdout. (3) Go — log package writes stdout default. Or Zap/Zerolog for structured. (4) Java — Logback/Log4j2 ConsoleAppender.\n\nAggregation stack: (1) EFK (Elasticsearch + Fluentd + Kibana) — self-hosted. (2) ELK (E + Logstash + K). (3) Loki + Grafana — Prometheus-style, cheaper storage. (4) SaaS: Datadog, Splunk, Sumo Logic, Papertrail. (5) Cloud native: CloudWatch, Cloud Logging, Azure Monitor.\n\nGotchas: (1) Multi-line logs (stack traces) — logging driver may treat as multiple entries. Solve: log JSON. (2) High log volume — 100k/sec containers hit driver limits. (3) Container has stdout blocking, container hangs — always use non-blocking log.",
+      "realWorld": "12-factor app manifest (Heroku, 2011) formalized stdout logging. Kubernetes DaemonSet fluentd/fluent-bit pattern es standard. Loki (Grafana Labs, 2018+) popular para K8s. Datadog CloudWatch enterprise. En 2018, one Kubernetes cluster had node crashes from log volume filling disk — config max-size.",
+      "tags": ["logging", "12-factor", "observability"],
+      "tech": ["Docker", "Fluentd"],
+      "references": [{ "title": "12-Factor App — Logs" }, { "title": "Docker Docs — Configure logging drivers" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "containers",
+      "topic": "PID 1 signal handling",
+      "difficulty": "senior",
+      "scenario": "Tu container Node.js no responds a 'docker stop' — timeout de 10s, force killed. Devs notice logs cut off mid-write. ¿Qué pasa?",
+      "question": "¿Qué es el 'PID 1 problem' y cómo resolverlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PID 1 (init process) en Linux no tiene DEFAULT SIGNAL HANDLERS. Cuando 'docker stop' envía SIGTERM al PID 1, si la app no maneja explícitamente el signal, se IGNORA. Después de 10s, Docker envía SIGKILL (forced). Problem: (a) apps no do graceful shutdown; (b) zombie processes (PID 1 debe reap children, apps normales no lo hacen). Solutions: (1) app maneja SIGTERM explícitamente; (2) usar init system pequeño como 'tini' o 'dumb-init' como PID 1 — hace signal forwarding + zombie reaping; (3) 'docker run --init' auto-inserta tini.", "correct": true, "why": "Correcto. PID 1 problem well-documented. Node.js, Python apps affected commonly. tini es <1MB binary, resuelve todo. K8s docs advise on this." },
+        { "letter": "B", "text": "Todos los procesos Linux manejan signals iguales.", "correct": false, "why": "Falso — PID 1 es especial. Kernel treats PID 1 differently — no default handlers." },
+        { "letter": "C", "text": "'docker stop' siempre force-kills.", "correct": false, "why": "Falso — sends SIGTERM first, waits (default 10s), then SIGKILL. La app tiene oportunidad de graceful shutdown si maneja signals." },
+        { "letter": "D", "text": "Sin solución posible.", "correct": false, "why": "Falso — tini, dumb-init, o app-level signal handling resuelve." }
+      ],
+      "explanation": "Signal flow: (1) 'docker stop container' → daemon sends SIGTERM to PID 1 del container. (2) Wait 'stop grace period' (default 10s, configurable con --time). (3) Send SIGKILL if still running. Same en K8s ('terminationGracePeriodSeconds').\n\nApp-level signal handling (Node.js example):\n```js\nprocess.on('SIGTERM', async () => {\n  console.log('SIGTERM received, closing gracefully');\n  await server.close();  // stop accepting new connections\n  await db.disconnect();  // close DB pool\n  process.exit(0);\n});\n```\n\nPython example:\n```python\nimport signal\ndef handler(signum, frame):\n    server.stop()\n    sys.exit(0)\nsignal.signal(signal.SIGTERM, handler)\n```\n\ntini pattern:\n```dockerfile\nRUN apk add --no-cache tini\nENTRYPOINT [\"/sbin/tini\", \"--\"]\nCMD [\"node\", \"server.js\"]\n```\ntini is PID 1, forwards signals a node, reaps zombies.\n\n'docker run --init': automatic tini insertion. K8s 'shareProcessNamespace: true' complications — different init story.\n\nZombie processes: si tu app spawns child processes y no reaps them (waitpid), zombies accumulate. Init system reaps. Not usually issue para simple servers, big issue para orchestrators, exec'd children.\n\nExec form vs shell form (recall): (1) 'CMD [\"node\", \"server.js\"]' — exec form. node is PID 1. Signals go to node directly. (2) 'CMD node server.js' — shell form. sh is PID 1, node es child. Signals go to sh (not forwarded). Docker docs prefer exec form.\n\nK8s preStop hook: complements SIGTERM. Runs command BEFORE SIGTERM sent. Useful for: LB deregistration, drain connections. 'sleep 15' preStop es common — allows LB to see 'not ready' before pod killed.",
+      "realWorld": "tini created 2015 by Yelp engineer. dumb-init similar (2014, Yelp again). Adopted by many bases. Kubernetes docs cover extensively — 'terminationGracePeriodSeconds' setting. Node.js docs recomiendan graceful shutdown. En 2019, un famous outage caused por not handling SIGTERM — apps died mid-request, users saw errors.",
+      "tags": ["PID 1", "signals", "graceful shutdown"],
+      "tech": ["Docker", "tini"],
+      "references": [{ "title": "tini GitHub" }, { "title": "Docker Docs — Best practices" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "containers",
+      "topic": "OCI standards",
+      "difficulty": "senior",
+      "scenario": "Un ingeniero senior menciona 'OCI images' y 'OCI runtime' — ¿por qué existe si Docker ya funcionaba?",
+      "question": "¿Qué es OCI y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OCI (Open Container Initiative, 2015): standards abiertos para: (1) Image format (OCI Image Spec) — cómo se estructura una container image. (2) Runtime spec (OCI Runtime Spec) — cómo se ejecuta un container. (3) Distribution spec (OCI Distribution Spec) — cómo registries entregan images. Nace para evitar 'Docker vendor lock-in' — antes de OCI, Docker Inc controlaba el format. Ahora Docker, containerd, CRI-O, Podman todos implement OCI. Runtimes intercambiables. Images portable across runtimes.", "correct": true, "why": "Correcto. OCI fue crítico para que el ecosystem madurara. K8s adopted CRI (Container Runtime Interface) → containerd → OCI. Docker Inc perdió control absoluto pero el ecosystem creció." },
+        { "letter": "B", "text": "OCI es un producto de Docker.", "correct": false, "why": "Falso — OCI es una foundation independiente. Docker es miembro pero no controla." },
+        { "letter": "C", "text": "OCI es solo para Kubernetes.", "correct": false, "why": "Falso — OCI standards son runtime-agnostic. Docker Engine, Podman, K8s CRI implementations todos usan." },
+        { "letter": "D", "text": "OCI reemplazó a Docker.", "correct": false, "why": "Falso — Docker sigue usable. OCI es un standard que Docker (y otros) implementan." }
+      ],
+      "explanation": "OCI ecosystem: (1) OCI Runtime Spec — cómo un runtime debe crear/run containers. runc es reference implementation. (2) OCI Image Spec — image format (config, layers, manifest). (3) OCI Distribution Spec — HTTP API para registries. Docker Registry v2 API es basically OCI Distribution.\n\nHistory: Docker (2013) — proprietary format y runtime. K8s (2014) — usó Docker inicialmente. 2015 — OCI founded para standardize. 2017 — Docker donated containerd + runc to OCI/CNCF. 2020 — K8s deprecated dockershim (removed 2022). K8s uses containerd o CRI-O now.\n\nRuntimes: (a) runc — low-level, reference OCI runtime. Actually creates containers. (b) crun — alternative en C, más rápido. (c) youki — Rust, memory-safe. (d) kata-containers — VMs disfrazadas de containers (extra security). (e) gVisor — user-space kernel (Google, sandbox).\n\nContainer engines (high-level): (a) Docker Engine — includes dockerd, containerd, runc. (b) containerd — daemon, K8s CRI provider. (c) CRI-O — K8s-focused. (d) Podman — daemonless, rootless-first.\n\nImage compatibility: (1) OCI images compatible con todos runtimes/tools. (2) 'buildah' builds OCI images sin Docker. (3) 'skopeo' copies images entre registries. (4) 'crane' similar.\n\nWhy it matters: (1) Portability — image from Docker runs on containerd unchanged. (2) Innovation — competing runtimes (kata, gVisor) push forward. (3) K8s independence — K8s not Docker-tied. (4) Registry choice — any OCI registry works (Docker Hub, ECR, Harbor, GHCR, etc.).",
+      "realWorld": "OCI founded 2015 by Docker + CoreOS + others. K8s dockershim deprecated 2020, removed 1.24 (2022). Docker Desktop still popular en dev, but containerd dominant en production K8s. Podman gained traction en RHEL ecosystem. buildah/skopeo/podman together en Fedora/RHEL replaces docker cli.",
+      "tags": ["OCI", "containerd", "standards"],
+      "tech": ["Docker", "containerd", "runc"],
+      "references": [{ "title": "opencontainers.org" }, { "title": "CNCF — Container Runtime Interface" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "containers",
+      "topic": "Debugging containers",
+      "difficulty": "staff",
+      "scenario": "Container en prod se comporta raro. Logs inconclusivos. Necesitas debug ADENTRO del container, pero: (a) es distroless (no shell), (b) es K8s pod (no direct docker access), (c) production (no restart).",
+      "question": "¿Cómo debug un container en producción sin restart y sin shell?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ephemeral containers (K8s 1.23+): 'kubectl debug -it pod-name --image=busybox --target=container-name'. Attach un debug container al pod running. Shares network + PID namespace. Tienes shell, tools, y ves los procesos del target. No restart. Ideal para distroless.", "correct": true, "why": "Correcto. Feature diseñada para exactamente este caso. Non-invasive. Multiple debug containers OK." },
+        { "letter": "B", "text": "kubectl cp: copiar archivos desde el container al local. 'kubectl cp pod:/path/to/file ./file'. Útil para extraer logs, dumps, config actual. También reverse — copy tool binary IN.", "correct": true, "why": "Correcto. Simple pero poderoso para extraer state. También reverse — 'kubectl cp busybox pod:/tmp/' — copy binary in y ejecutar via exec." },
+        { "letter": "C", "text": "kubectl exec: ejecutar comando en container running. 'kubectl exec pod -- ps aux'. Requires binary presente en el container (bash, ps, etc.). Fails con distroless (no ps). Combinar con ephemeral containers para full toolkit.", "correct": true, "why": "Correcto. Basic. Limited por lo que hay en el image. Distroless = no tools. Solution: ephemeral containers." },
+        { "letter": "D", "text": "Process attach con nsenter: si tienes SSH al node, nsenter (o crictl exec) attach al namespace del container. Ultimate power tool. Requires node access + root — powerful pero riesgoso.", "correct": true, "why": "Correcto. Break-glass option. En K8s: SSH to node, 'crictl ps' find container, 'crictl exec -it xxx bash' o 'nsenter --target PID --mount --uts --ipc --net --pid'. Requires elevated access." },
+        { "letter": "E", "text": "La única forma de debug es restart con debug image.", "correct": false, "why": "Falso — restart pierde state (memoria, connections, current problem). Debug in-place es preferable." }
+      ],
+      "explanation": "Debug hierarchy (least invasive first): (1) kubectl logs — logs del container. Always first. (2) kubectl describe pod — status, events. (3) kubectl exec — if shell available. (4) kubectl cp — extract state. (5) Ephemeral containers — attach debug container. (6) Restart with different image (debug variant) — if all else fails.\n\nEphemeral containers detail: (1) K8s 1.23+ GA. (2) 'kubectl debug' interface. (3) Shares network namespace (see localhost, ports). (4) Shares PID namespace (see processes). (5) Multiple ephemeral OK. (6) Auto-removed with pod. (7) Cannot be added to Pod spec (only via kubectl debug).\n\nEjemplo command: 'kubectl debug -it my-pod --image=nicolaka/netshoot --target=app-container'. 'netshoot' is famous debug image con tcpdump, dig, nmap, curl, etc.\n\nnsenter approach (host): Si SSH to K8s node possible: (1) 'crictl ps' — list containers. (2) 'crictl inspect ID | jq .info.pid' — get PID. (3) 'nsenter --target PID -a bash' — enter namespaces. Now inside the container. Powerful but requires cluster node access + root.\n\nProfiling: (a) go tool pprof for Go apps — need /debug/pprof endpoint. (b) Java async-profiler. (c) py-spy for Python — attach to running process. (d) BPF tools (bpftrace, bcc) para kernel-level tracing.\n\nDistributed tracing: OpenTelemetry, Jaeger, Zipkin. Trace requests across services — much of 'debugging' es understanding flow across services, not just one container.\n\nMemory dumps: 'gcore PID' generates core. Analyze with gdb. Alternatively Java heap dumps con jmap. Trigger antes que app dies (OOM kill).",
+      "realWorld": "Ephemeral containers K8s 1.16 alpha, 1.23 GA (2021). netshoot image is de facto standard for debug. Pixie (open-source, Rust) — auto-instrumentation for K8s. eBPF-based tools (bpftrace, Cilium/Isovalent) provide kernel-level insight.",
+      "tags": ["debugging", "ephemeral containers", "kubectl"],
+      "tech": ["Kubernetes", "kubectl"],
+      "references": [{ "title": "Kubernetes Docs — Ephemeral Containers" }, { "title": "kubectl debug" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "containers",
+      "topic": "Docker en producción anti-patrones",
+      "difficulty": "staff",
+      "scenario": "Un consultor revisa tu deployment: 'este container tiene mucho de anti-patrón. Vamos a listarlos'.",
+      "question": "¿Cuáles son los anti-patrones comunes de Docker en producción?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Multiple processes en 1 container: 'systemd + app + monitoring + logger' en un container. Anti-12-factor. Container debe ser 1 process idealmente. Multiple procesos = harder monitoring, complex signal handling, mixed lifecycle. Fix: 1 container per process, K8s pod para group related.", "correct": true, "why": "Correcto. 'One process per container' es guideline. Excepciones raras (sidecar patterns). Multiple processes suele indicar 'lift and shift' de VM sin refactor." },
+        { "letter": "B", "text": "Storing state en container filesystem: uploads, DB files, session data DENTRO del container. Data lost on restart. Container should be STATELESS — state en volumes, external services (DB, object storage). Cattle not pets — containers desechable.", "correct": true, "why": "Correcto. Container filesystem is ephemeral. Volumes para state persistent. If your container 'dies' con important data, wrong architecture." },
+        { "letter": "C", "text": "Latest tag en producción: 'FROM node:latest' o 'image: myapp:latest'. Non-deterministic — 'latest' cambia con new pushes. Deploy hoy = distinta image que deploy ayer. Fix: pin SHA o specific version (v1.2.3).", "correct": true, "why": "Correcto. Anti-immutability. Reproducibility broken. Best practice: pin image por digest (sha256:xxx) o exact semver." },
+        { "letter": "D", "text": "Ignorar image scanning: deploy sin CVE scan. Base images tienen CVEs conocidos, dependencies vulnerables. Trivy, Grype, Snyk son estándar. Sin scanning, deployeas known vulnerabilities.", "correct": true, "why": "Correcto. Security como afterthought. Modern pipelines: scan en CI, fail build si critical CVE. Scan continually (new CVEs discovered after build)." },
+        { "letter": "E", "text": "Correr como non-root user es anti-patrón.", "correct": false, "why": "Falso — non-root es BEST practice. Root es el anti-patrón. Ver q6." }
+      ],
+      "explanation": "Anti-patterns comunes: (1) TREAT CONTAINERS LIKE VMs — SSH into, patch in place, install multiple services. Correct: rebuild image, redeploy. (2) MASSIVE IMAGES — 5GB Ubuntu-based images. Slow deploy, storage waste. (3) STATE IN CONTAINER — data en /var/log, /data. Lost on restart. (4) LATEST TAG — non-deterministic. (5) ROOT USER — security risk. (6) NO HEALTHCHECK — orchestrator can't detect app issues. (7) IGNORE SIGNALS — no graceful shutdown. (8) SECRETS EN ENV VARS — leakable. (9) NO IMAGE SCANNING — deploy CVEs. (10) NO RESOURCE LIMITS — one container consumes all node resources, others starve. (11) HARDCODE CONFIG — non-portable. Use env vars for config. (12) LOG TO FILE — should be stdout. (13) NO IMAGE PINNING — 'latest' or floating tags. (14) NO SBOM — no traceability of dependencies. (15) NO REPRODUCIBLE BUILDS — same source → different images.\n\nProduction checklist: (1) Non-root user. (2) Minimal base (distroless/Alpine). (3) Multi-stage build. (4) .dockerignore. (5) Health check. (6) Signal handling. (7) Resource limits (K8s: limits: {cpu, memory}). (8) Image pinned by digest. (9) Image scanned + signed. (10) Read-only root filesystem where possible. (11) Least privileged capabilities. (12) Secrets externa (vault). (13) Structured logging to stdout. (14) Metrics endpoint (Prometheus). (15) SBOM generated.\n\nCommon smells: (1) 'sudo' en Dockerfile. (2) 'chmod 777'. (3) 'apt install' en runtime image. (4) 'wget | sh'. (5) 'RUN pip install' con --break-system-packages. (6) COPY . . como primera COPY (cache invalidation). (7) Fewer than 20-30 layers puede indicar concat de RUN commands que should be separado. Más de 100 layers indica no consolidation.",
+      "realWorld": "12-factor app (Heroku 2011) formalized many principles. CNCF Cloud Native Trail Map. Google Best Practices Cloud Run. AWS Best Practices ECS/EKS. Muchos production incidents provienen de estos anti-patterns — famous 2019 outage por 'no resource limits' cascade.",
+      "tags": ["anti-patterns", "production", "best practices"],
+      "tech": ["Docker", "Kubernetes"],
+      "references": [{ "title": "12-Factor App" }, { "title": "Docker Docs — Best practices" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "containers",
+      "topic": "BuildKit y build optimization",
+      "difficulty": "staff",
+      "scenario": "Tu Dockerfile es 'legacy' — build lineal, cache miss frecuente, no paralelismo. Un ingeniero senior menciona BuildKit como el futuro.",
+      "question": "¿Qué es BuildKit y qué features avanzadas provee?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "BuildKit: next-gen Docker builder (default en Docker 23+). Ventajas: (1) Paralelización — stages independientes buildean simultaneously; (2) Better caching — content-addressable, mount caches; (3) Secrets management — mount type=secret sin dejar en layers; (4) SSH forwarding — access private repos sin secrets en image; (5) Multi-arch builds nativos con buildx; (6) Frontends alternativos — Dockerfile es 1 frontend, puedes usar HCL, JSON, custom.", "correct": true, "why": "Correcto. BuildKit is transformador. Default en Docker CE ~2021. Turborepo/Nx cache backends. Google Cloud Build, GitHub Actions, GitLab CI all support." },
+        { "letter": "B", "text": "Mount caches: 'RUN --mount=type=cache,target=/root/.npm npm ci'. NPM cache persiste entre builds AUNQUE package.json cambie. Content addressable — mismo content, mismo hash, cache hit. Huge speedup en pkg managers.", "correct": true, "why": "Correcto. Antes de mount cache, cambio en lockfile invalidaba cache de node_modules install (5min). Ahora, cache reused, npm ci runs con populated ~/.npm." },
+        { "letter": "C", "text": "Secret mounts: 'RUN --mount=type=secret,id=aws,target=/root/.aws/credentials npm publish'. Secret file available during build, NO en any layer. Provide with 'docker build --secret id=aws,src=$HOME/.aws/credentials'. NPM tokens, SSH keys, cloud credentials — all safely mounted at build time.", "correct": true, "why": "Correcto. Antes de esto, secrets en build were leaked en layers (docker history mostraba). Ahora mount temporal, no layer traces." },
+        { "letter": "D", "text": "Multi-platform builds: 'docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t image:tag --push .'. Builds N architectures en paralelo (using QEMU emulation o remote builders). Push como manifest list — clients pull la correcta para su arch. Apple M1 + AWS Graviton driven demand.", "correct": true, "why": "Correcto. Multi-arch builds nativos. Alternatives: multiple builds + separate tags + docker manifest. Buildx simplifies. Native ARM runners (GitHub, Namespace) faster than emulation." },
+        { "letter": "E", "text": "BuildKit reemplaza Dockerfile completamente.", "correct": false, "why": "Falso — BuildKit corre Dockerfiles (con extras). Dockerfile sigue el default frontend. Alternate frontends (Buildpacks-style, HCL) opcionales." }
+      ],
+      "explanation": "BuildKit historia: (1) Introduced Docker 18.09 (2018) as opt-in. (2) Default en Docker 23 (2023). (3) 'DOCKER_BUILDKIT=1' before that. (4) buildx CLI extends Docker con multi-platform.\n\nDockerfile v1.4+ syntax (BuildKit):\n```dockerfile\n# syntax=docker/dockerfile:1.4\nFROM node:20-alpine AS deps\nWORKDIR /app\nCOPY package.json package-lock.json ./\n# Mount cache for npm\nRUN --mount=type=cache,target=/root/.npm \\\n    npm ci --only=production\n\nFROM node:20-alpine AS builder\nWORKDIR /app\nCOPY --from=deps /app/node_modules ./node_modules\nCOPY . .\nRUN --mount=type=cache,target=/root/.npm \\\n    npm run build\n\nFROM node:20-alpine\nWORKDIR /app\nCOPY --from=builder /app/dist ./dist\nCOPY --from=deps /app/node_modules ./node_modules\nUSER node\nCMD [\"node\", \"dist/server.js\"]\n```\n\nSecret mount:\n```dockerfile\nRUN --mount=type=secret,id=github_token \\\n    GITHUB_TOKEN=$(cat /run/secrets/github_token) \\\n    git clone https://x-access-token:$GITHUB_TOKEN@github.com/private/repo\n```\nBuild: 'docker build --secret id=github_token,src=./token.txt .'\n\nSSH mount:\n```dockerfile\nRUN --mount=type=ssh git clone git@github.com:private/repo\n```\nBuild: 'docker build --ssh default .'\n\nMulti-platform builds:\n```bash\ndocker buildx create --use  # setup builder\ndocker buildx build --platform linux/amd64,linux/arm64 -t myorg/app:v1 --push .\n```\nPush como manifest list. Docker Hub, ECR, GCR support.\n\nCache backends: (1) Inline — cache stored en image itself. Pull image = get cache. (2) Registry — separate cache tags. (3) GHA — GitHub Actions cache backend. (4) S3, Azure Blob — direct cloud cache.\n\nBenchmarks: (1) Cold build sin BuildKit — 8 min. (2) Cold build con BuildKit + mount cache — 3 min. (3) Warm build BuildKit + cache — 30 sec.",
+      "realWorld": "BuildKit widely adopted 2020+. Docker 23 (2023) made default. GitHub Actions widely use buildx + gha cache. Apple Silicon (2020) accelerated multi-arch adoption. Chainguard, Wolfi ecosystem builds heavily on BuildKit + Nix-like reproducibility. AWS Graviton (ARM) instances 30% cheaper — multi-arch demand.",
+      "tags": ["buildkit", "buildx", "multi-arch", "cache"],
+      "tech": ["Docker BuildKit", "buildx"],
+      "references": [{ "title": "Docker Docs — BuildKit" }, { "title": "Docker Docs — Multi-platform images" }]
+    }
+  ]
+}

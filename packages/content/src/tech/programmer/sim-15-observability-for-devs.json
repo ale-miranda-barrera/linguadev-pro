@@ -1,0 +1,1115 @@
+{
+  "id": "programmer-sim-15-observability-for-devs",
+  "trackId": "programmer",
+  "order": 15,
+  "title": "Simulacro 15 — Observabilidad para developers (logs, métricas, tracing)",
+  "focus": "Logging estructurado, correlation IDs, métricas Prometheus (RED/USE), cardinalidad, tracing distribuido con OpenTelemetry y errores comunes.",
+  "areaCoverage": [
+    "apis"
+  ],
+  "timeLimitMin": 25,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "apis",
+      "topic": "Structured logging — por qué JSON gana",
+      "difficulty": "mid",
+      "scenario": "Tu app loguea con `console.log('User ' + userId + ' logged in from ' + ip)`. El equipo de SRE pide migrar a structured logging JSON.",
+      "question": "¿Cuál es el beneficio real y cómo se hace?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "JSON logs (con campos estructurados: `{level, ts, msg, userId, ip, ...}`) permiten queries eficientes en agregadores (Elastic, Loki, Datadog): filtrar por userId=X, agregar por ip, correlacionar con otros servicios sin parsear texto. Herramientas: pino/winston (Node), structlog (Python), zap/logrus (Go), Serilog (.NET). Regla: nunca embed data en el mensaje — siempre campos.",
+          "correct": true,
+          "why": "Correcto. La diferencia clave es que texto plano requiere regex frágiles para extraer info; JSON expone campos como keys nativos, filtrable con queries estructuradas. En Elasticsearch: `userId:12345 AND status:error`. En Datadog: `@userId:12345`. Además: log levels estructurados, timestamps ISO, trace_id fácil de correlacionar. Convención: mensaje HUMANO breve + campos con la data. Nunca `msg: 'User 12345 logged in'` — hacer `msg: 'user login', userId: 12345`."
+        },
+        {
+          "letter": "B",
+          "text": "JSON logs son más grandes — malos para performance.",
+          "correct": false,
+          "why": "Cierto que consumen algo más de bytes que texto plano, pero el beneficio de queryability es enorme y la compresión (gzip en transporte) minimiza el overhead. En dev use pretty printing, en prod JSON."
+        },
+        {
+          "letter": "C",
+          "text": "Basta con logging tradicional + grep.",
+          "correct": false,
+          "why": "grep escala mal cuando tienes millones de líneas de N servicios. Y regex sobre texto plano se rompe con cambios menores de formato. JSON es escalable."
+        },
+        {
+          "letter": "D",
+          "text": "Migrar es opcional — no importa el formato si se registra la info.",
+          "correct": false,
+          "why": "Falso en 2026. Ecosystem completo (log aggregators, dashboards, alerts) asume structured. Producir logs no estructurados en ambiente moderno es un anti-patrón."
+        }
+      ],
+      "explanation": "Structured logging JSON es el estándar 2026. Estructura mínima: {timestamp ISO, level, message, service, trace_id, span_id, ...contextual fields}. Librerías modernas hacen esto por defecto: pino (Node, muy rápido), winston (Node, flexible), structlog (Python), Go zap (rápido, tipado), Serilog (.NET). Best practices: (1) nunca logs con concatenación de datos en el message — usar fields; (2) incluir trace/correlation IDs siempre; (3) evitar campos con alta cardinalidad como keys top-level si vas a indexar en Elastic (explosión de mapping); (4) sensitive data (PII, secrets) nunca en logs — usar sanitizers o redactors.",
+      "realWorld": "Airbnb, Uber, Netflix — todos publican con structured JSON logging desde hace años. Loki (Grafana) fue diseñado específicamente para JSON logs eficientes. Datadog, Splunk, ELK — todos optimizados para JSON. Migrar de plain text a JSON es una de las mejoras de mayor ROI en observability.",
+      "tags": [
+        "logging",
+        "structured",
+        "JSON",
+        "observability"
+      ],
+      "tech": [
+        "pino",
+        "winston",
+        "structlog",
+        "zap"
+      ],
+      "references": [
+        {
+          "title": "12factor.net — XI. Logs"
+        },
+        {
+          "title": "Observability Engineering (Majors, Fong-Jones, Miranda)"
+        }
+      ]
+    },
+    {
+      "id": "q2",
+      "areaId": "apis",
+      "topic": "Correlation IDs — trace request across services",
+      "difficulty": "senior",
+      "scenario": "Un request del user llega a service-A → llama a service-B → llama a service-C. En logs quieres ver TODOS los eventos de este request específico entre los 3 servicios.",
+      "question": "¿Cuál es el patrón correcto?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Correlation/trace ID: (1) service-A genera un ID único (UUID o traceparent header W3C) al recibir el request; (2) lo incluye en todos sus logs; (3) lo propaga en headers HTTP al llamar service-B (típicamente `traceparent` o `X-Request-ID`); (4) B y C hacen lo mismo. Query en logs: `trace_id:abc-123` devuelve toda la cadena.",
+          "correct": true,
+          "why": "Correcto. Es la primitiva base de tracing. W3C Trace Context (traceparent header, estándar 2020) es el formato moderno — codifica trace_id, span_id, flags. OpenTelemetry propaga esto automáticamente en libraries instrumentadas. Sin correlación, debugging un incidente cross-service es imposible — logs de N servicios sin forma de agruparlos. Práctica minima: propagar X-Request-ID; industrial: OpenTelemetry con full tracing."
+        },
+        {
+          "letter": "B",
+          "text": "Usar timestamps para correlacionar.",
+          "correct": false,
+          "why": "Timestamps solos son ambiguos — múltiples requests concurrentes tienen tiempos similares. No hay forma de discriminar qué logs pertenecen a qué request."
+        },
+        {
+          "letter": "C",
+          "text": "Concatenar logs de los 3 servicios en un solo archivo.",
+          "correct": false,
+          "why": "No escala (millones de requests). Y no da estructura — sigue siendo búsqueda ciega."
+        },
+        {
+          "letter": "D",
+          "text": "Cada servicio guarda su propio log — buscar manualmente.",
+          "correct": false,
+          "why": "Imposible en producción con volumen. La correlación es NECESARIA para debugging efectivo."
+        }
+      ],
+      "explanation": "Propagation de contexto: (1) trace_id — id del request completo, mismo a lo largo de toda la cadena; (2) span_id — id de la operación específica (cambia por servicio/función); (3) parent_span_id — para construir el árbol. W3C traceparent: `traceparent: 00-<trace-id>-<span-id>-<flags>`. Middleware capas usualmente: (a) receive: extraer/generar; (b) log middleware: incluir en todos los logs; (c) HTTP client middleware: inyectar en outgoing requests. OpenTelemetry SDK hace esto automáticamente para libraries instrumentadas (Express, gRPC, http.Client). Beyond HTTP: mensajes async (Kafka, RabbitMQ) también deben propagar en headers/attributes.",
+      "realWorld": "Google publicó el paper Dapper (2010) que estableció los principios del distributed tracing. Zipkin, Jaeger fueron implementaciones OSS. OpenTelemetry unifica el ecosystem. Toda arquitectura microservicios seria en 2026 tiene distributed tracing.",
+      "tags": [
+        "correlation",
+        "trace ID",
+        "distributed",
+        "observability"
+      ],
+      "tech": [
+        "W3C Trace Context",
+        "OpenTelemetry"
+      ],
+      "references": [
+        {
+          "title": "W3C Trace Context Recommendation"
+        },
+        {
+          "title": "Dapper — Google's Distributed Systems Tracing"
+        }
+      ]
+    },
+    {
+      "id": "q3",
+      "areaId": "apis",
+      "topic": "Sampling — no puedes trazar todo",
+      "difficulty": "senior",
+      "scenario": "Servicio con 10.000 req/seg. Full tracing produce 10k traces/seg × 20 spans/trace = 200k spans/seg. Storage y network costos explotan.",
+      "question": "¿Cuáles estrategias de sampling son útiles?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Head-based sampling: decisión al inicio del trace (ej. sample 1% aleatorio). Ventaja: barato, no requiere agregar spans en memoria. Desventaja: pierdes visibilidad en errores raros porque no puedes decidir 'importante' hasta ver el trace completo.",
+          "correct": true,
+          "why": "Correcto. Head sampling es la default más simple: cuando llega un request, decidir sample o drop. Se propaga en traceparent (flag sampled) — todos los servicios respetan. Bueno para casos donde solo quieres 'de todo un poco'. Malo cuando los raros interesan más."
+        },
+        {
+          "letter": "B",
+          "text": "Tail-based sampling: bufferear traces completos, decidir después de completo (ej. keep si latencia > threshold o si tuvo error). Ventaja: preserva traces 'interesantes'. Desventaja: requiere buffer en memoria y coordinador de sampling (más infra).",
+          "correct": true,
+          "why": "Correcto. Tail sampling es más 'inteligente': puedes hacer sample 100% de errores, 100% de slow requests, 1% de happy path. Requiere collector con buffer + heurística — OpenTelemetry Collector, Refinery (Honeycomb) soportan. Mayor coste operacional pero mucho mejor signal-to-noise."
+        },
+        {
+          "letter": "C",
+          "text": "Sampling adaptativo: ajusta la rate según volumen — más samples cuando hay pocos requests, menos cuando hay muchos.",
+          "correct": true,
+          "why": "Correcto. Combina lo mejor: garantiza mínima visibilidad cuando el tráfico es bajo, controla costos cuando es alto. Common en tools como Jaeger, Datadog. Puede combinarse con always-sample para errores."
+        },
+        {
+          "letter": "D",
+          "text": "Sampling siempre 100% — solo así se debuggea correctamente.",
+          "correct": false,
+          "why": "Falso a escala. En sistemas de alto throughput es económicamente inviable. Sampling inteligente + logs completos + métricas RED da buena visibilidad sin costo prohibitivo."
+        },
+        {
+          "letter": "E",
+          "text": "Sampling 0% — usar solo logs y métricas.",
+          "correct": false,
+          "why": "Pierdes contexto de latencia cross-service, hard to debug. Un poco de sampling siempre da valor."
+        }
+      ],
+      "explanation": "Sampling strategies: (1) head-based — decisión al principio, propagación en traceparent, simple; (2) tail-based — decisión post-hoc con heurística (errors, slow, unusual), requiere collector-side buffering; (3) probabilistic (percentage) o rate-limiting; (4) adaptive; (5) priority sampling — clientes 'importantes' 100%, batch users 1%. Regla común 2026: 100% de errores + 100% de slow (p95+) + 1-10% de OK, adjuntando siempre trace_id en logs para poder buscar full context aunque el trace no esté sampled. Cost matters: cada span es storage + network. Balance visibility vs cost es decisión de negocio.",
+      "realWorld": "Honeycomb (fundada por ex-Facebook SREs) empujó fuerte tail-based sampling. Refinery es su OSS. Google usa sampling agresivo en su tracing interno. Datadog, New Relic tienen distintas estrategias configurables. La 'observability tax' es real — 20-30% del budget de infra en empresas serias.",
+      "tags": [
+        "sampling",
+        "tracing",
+        "cost",
+        "observability"
+      ],
+      "tech": [
+        "OpenTelemetry",
+        "Jaeger",
+        "Honeycomb Refinery"
+      ],
+      "references": [
+        {
+          "title": "OpenTelemetry — Sampling documentation"
+        }
+      ]
+    },
+    {
+      "id": "q4",
+      "areaId": "apis",
+      "topic": "Métricas — counter, gauge, histogram",
+      "difficulty": "mid",
+      "scenario": "Necesitas exportar 4 métricas: (1) total requests procesados desde boot; (2) memoria actualmente en uso; (3) latencia de requests (p50, p95, p99); (4) items en la queue en este momento.",
+      "question": "¿Qué tipo de métrica Prometheus para cada?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "(1) Counter — solo sube, se reinicia con restart, para 'total desde X'. (2) Gauge — sube y baja, valor instantáneo. (3) Histogram — buckets de latencia; permite calcular percentiles server-side con histogram_quantile(). (4) Gauge — valor instantáneo variable.",
+          "correct": true,
+          "why": "Correcto. Los tipos Prometheus tienen semántica específica: (1) Counter = monotónicamente creciente, resetea a 0 en restart; ideal para totals (requests, errors, bytes). Rate se calcula con rate(counter[5m]). (2) Gauge = valor arbitrario ahora; para memory, CPU, queue size, connection pool used. (3) Histogram = pre-agregado en buckets; permite quantiles y count/sum totales; ideal para latencia, sizes. (4) Summary = similar a histogram pero calcula quantiles client-side (menos flexible para aggregation)."
+        },
+        {
+          "letter": "B",
+          "text": "Todos como Gauge — más simple.",
+          "correct": false,
+          "why": "Perderías el poder de rate() sobre counters (que 'normaliza' resets y calcula throughput correcto). Y para latencia percentiles necesitas histogram (o summary), gauge no soporta."
+        },
+        {
+          "letter": "C",
+          "text": "Latencia como counter incrementándose con cada valor.",
+          "correct": false,
+          "why": "Perderías la información individual — solo sabes total. No puedes calcular percentiles. Histogram es específicamente para esto."
+        },
+        {
+          "letter": "D",
+          "text": "Requests como gauge — se puede resetear.",
+          "correct": false,
+          "why": "Los counters SE PUEDEN resetear (restart), pero rate() y increase() de Prometheus manejan resets correctamente. Gauge para 'total requests' pierde ese ergonomics."
+        }
+      ],
+      "explanation": "Prometheus metric types: (1) Counter — monotónico, semantics 'count of events'; queries: rate() para throughput, increase() para total en ventana; (2) Gauge — snapshot value; queries: max(), min(), avg(); (3) Histogram — buckets predefinidos (le=0.1, le=0.5, le=1, +Inf) + count + sum; histogram_quantile(0.95, rate(bucket[5m])) para p95; ideal para SLO; (4) Summary — quantiles pre-computados client-side, menos flexible para agregación cross-instance. Regla: prefer Histogram sobre Summary si vas a agregar entre replicas. Naming convention: `_total` suffix para counters, `_seconds` para durations, `_bytes` para sizes.",
+      "realWorld": "Prometheus + Grafana es el stack estándar de métricas 2026. Métricas definidas correctamente permiten SLOs (Service Level Objectives) y error budgets. Google SRE book es el référente en cómo pensar métricas para reliability.",
+      "tags": [
+        "prometheus",
+        "metrics",
+        "counter",
+        "histogram"
+      ],
+      "tech": [
+        "Prometheus",
+        "Grafana"
+      ],
+      "references": [
+        {
+          "title": "Prometheus — Metric Types"
+        },
+        {
+          "title": "Google SRE Book — Chapter 4: SLOs"
+        }
+      ]
+    },
+    {
+      "id": "q5",
+      "areaId": "apis",
+      "topic": "Cardinalidad — el error caro",
+      "difficulty": "staff",
+      "scenario": "Un dev define métrica `http_requests_total` con labels: `method`, `path`, `status`, `user_id`, `session_id`. Después de un día, Prometheus se cae con OOM.",
+      "question": "¿Cuál es el error de cardinalidad y la regla para evitarlo?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "user_id y session_id son ALTA CARDINALIDAD — millones de valores únicos. Cada combinación label crea una time series distinta. Con 1M usuarios × 10M sesiones × 5 métodos × 100 paths × 5 statuses → billones de series. Regla: labels solo para valores de BAJA cardinalidad (< 100 típico). Para tracking por user, usar logs con trace_id.",
+          "correct": true,
+          "why": "Correcto. Cardinalidad = número de combinaciones únicas de labels. Cada serie es independiente en memoria/disk en Prometheus. Alta cardinalidad = memoria explota (KB por serie × millones = GB). Regla mental: 'si el valor del label puede ser 'infinito' — es alta cardinalidad, NO usar'. Labels apropiados: method (5), status (5), endpoint (típicamente < 100), region (< 10). Labels PROHIBIDOS: user_id, session_id, request_id, IP client, timestamp, email. Para info por-user, usar logs/traces (búsqueda ad-hoc), no métricas (aggregation)."
+        },
+        {
+          "letter": "B",
+          "text": "Agregar más RAM al Prometheus.",
+          "correct": false,
+          "why": "Aplaza el problema. Cardinality crece sin límite — pronto necesitarás más y más RAM sin fin. Fix la definición."
+        },
+        {
+          "letter": "C",
+          "text": "Usar summary en vez de histogram.",
+          "correct": false,
+          "why": "No relacionado con cardinality. El problema son los labels, no el metric type."
+        },
+        {
+          "letter": "D",
+          "text": "Reducir el retention period.",
+          "correct": false,
+          "why": "Ayuda en disk pero no en memoria activa. El problema es que Prometheus mantiene todas las series activas en memoria — cardinality alta = memoria alta independientemente del retention."
+        }
+      ],
+      "explanation": "Cardinality explosion es THE bug more expensive en observability. Cada nueva combinación de labels crea una time series adicional: (method, path, status, user, session) = producto de cardinalidades. Reglas: (1) labels solo para dimensions que agregas (avg by method); (2) evitar IDs únicos (user, session, request, trace); (3) considerar cardinality de combinaciones (10 x 100 x 100 = 100k series ya alta); (4) alertar sobre 'nuevas series' spike; (5) tools como Thanos, VictoriaMetrics escalan mejor pero cardinalidad sigue costando. Para dimensions high-cardinality, usar tools distintos: logs con index por campo (Loki, Elastic), traces con búsqueda, o databases OLAP (ClickHouse) para analytics.",
+      "realWorld": "El incidente 'metric cardinality caused Prometheus OOM' es tan común que tiene su propio meme. Grafana Cloud, Datadog cobran por cardinality — puede costar $$ real. Best practice: revisar 'top 20 series by cardinality' periódicamente y podar. Pequeño error de definición = incident de días.",
+      "tags": [
+        "cardinalidad",
+        "prometheus",
+        "labels",
+        "OOM"
+      ],
+      "tech": [
+        "Prometheus"
+      ],
+      "references": [
+        {
+          "title": "PromLabs — Understanding Metric Cardinality"
+        }
+      ]
+    },
+    {
+      "id": "q6",
+      "areaId": "apis",
+      "topic": "RED method — request-oriented services",
+      "difficulty": "mid",
+      "scenario": "Diseñas dashboard para un microservicio HTTP. Un compañero pregunta qué métricas debe mostrar como mínimo.",
+      "question": "¿Cuál es el método RED?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "RED = Rate (requests/segundo), Errors (rate de errores o error %), Duration (latencia distribuida: p50, p95, p99). Para cada endpoint o servicio. Es el 'signal minimum' para saber si el servicio funciona. Popularizado por Tom Wilkie (Grafana).",
+          "correct": true,
+          "why": "Correcto. RED es específico para request-driven services (HTTP, RPC). Rate te dice throughput; Errors te dice qué fracción falla; Duration te dice qué tan rápido responde. Con estos 3 detectas 90% de problemas antes que los usuarios reporten. Contraparte: USE (Utilization, Saturation, Errors) para recursos (CPU, disk, network) — Brendan Gregg. Ambos son complementarios: RED para services, USE para infra."
+        },
+        {
+          "letter": "B",
+          "text": "RED = Requests, Endpoints, Deployments.",
+          "correct": false,
+          "why": "Falso. RED es Rate, Errors, Duration — semántica establecida."
+        },
+        {
+          "letter": "C",
+          "text": "Rate, Endpoint, Downtime.",
+          "correct": false,
+          "why": "Falso. Confunde RED con acrónimos inventados. El estándar (Tom Wilkie, Weaveworks) es Rate, Errors, Duration — semántica fija que verás en dashboards Grafana de todos lados."
+        },
+        {
+          "letter": "D",
+          "text": "No hay estándar — cada team define.",
+          "correct": false,
+          "why": "Hay estándares (RED, USE, Golden Signals). No inventar cuando existe consenso industrial."
+        }
+      ],
+      "explanation": "Frameworks de métricas: (1) RED (Wilkie) — Rate, Errors, Duration; para services request-oriented; (2) USE (Gregg) — Utilization, Saturation, Errors; para recursos (CPU, disk, network, memory); (3) Google's Four Golden Signals — Latency, Traffic, Errors, Saturation; combinación. Adopción típica: dashboard por service con RED + dashboard por node/pod con USE + SLOs sobre las métricas críticas. Ejemplo Prometheus queries para RED HTTP: rate(http_requests_total[5m]) para Rate; rate(http_requests_total{status=~'5..'}[5m]) para Errors; histogram_quantile(0.95, rate(http_duration_seconds_bucket[5m])) para p95 Duration.",
+      "realWorld": "Grafana tiene templates 'RED method dashboard' out of the box. Kubernetes monitoring típicamente combina RED (service level) + USE (node/pod level). Netflix, Twitter, LinkedIn — todos con dashboards que siguen alguno de estos frameworks.",
+      "tags": [
+        "RED",
+        "USE",
+        "dashboards",
+        "observability"
+      ],
+      "tech": [
+        "Prometheus",
+        "Grafana"
+      ],
+      "references": [
+        {
+          "title": "Tom Wilkie — The RED Method"
+        },
+        {
+          "title": "Brendan Gregg — The USE Method"
+        }
+      ]
+    },
+    {
+      "id": "q7",
+      "areaId": "apis",
+      "topic": "OpenTelemetry — la unificación",
+      "difficulty": "senior",
+      "scenario": "Tu app está instrumentada con: Prometheus client para métricas, Zipkin para traces, Winston para logs. Cada tool tiene su config, su API, sus SDKs. Un compañero propone OpenTelemetry.",
+      "question": "¿Qué es OpenTelemetry y qué ganas?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "OpenTelemetry (OTel) es el estándar CNCF que unifica logs, metrics, traces en un solo SDK y protocolo (OTLP). Beneficios: (1) una sola API para instrumentar; (2) auto-instrumentation de libraries común; (3) vendor-neutral — puedes enviar a Prometheus, Jaeger, Datadog, Honeycomb cambiando solo config; (4) contexto propagado consistentemente (trace_id en logs, metrics con exemplars).",
+          "correct": true,
+          "why": "Correcto. OpenTelemetry (surgió de merge Metrics/Tracing SIGs en 2019) es la unificación de observability. Antes: OpenTracing (traces), OpenCensus (traces + metrics), y N vendor-specific SDKs. OTel unifica todo: SDKs en 11+ languages, spec estable de traces/metrics, spec beta de logs. Auto-instrumentation Java/Node/Python es plug-and-play (agent). OTLP (OpenTelemetry Protocol) es el wire protocol. Backends (Prometheus, Jaeger, cloud vendors) reciben OTLP nativamente."
+        },
+        {
+          "letter": "B",
+          "text": "Es solo otro tracing tool — reemplaza Zipkin.",
+          "correct": false,
+          "why": "Es MÁS que tracing — abarca los 3 pilares. Y es standard, no un tool específico."
+        },
+        {
+          "letter": "C",
+          "text": "OpenTelemetry es incompatible con Prometheus.",
+          "correct": false,
+          "why": "Al contrario — OTel Collector puede exponer métricas en formato Prometheus (scrape endpoint). Interoperabilidad completa."
+        },
+        {
+          "letter": "D",
+          "text": "Requiere pagar por licencia.",
+          "correct": false,
+          "why": "Falso — es OSS, Apache 2.0, CNCF."
+        }
+      ],
+      "explanation": "OpenTelemetry components: (1) API — interfaces estables para instrumentar (agnostic de SDK); (2) SDK — implementación con exporters, processors, samplers; (3) Auto-instrumentation — libraries para instrumentar frameworks (Express, gRPC, DB drivers, etc.); (4) Collector — proxy/agent que recibe telemetry, procesa (filters, samplers, redactors), y exporta a backends; (5) OTLP — protocolo binario gRPC/HTTP. Migration story: cambiar de un backend a otro solo requiere cambiar exporter en el collector. Best practice 2026: SDK OTel en apps + Collector como sidecar/deployment + backend de elección. Reemplaza gradualmente Jaeger/Zipkin clients + Prometheus client + logging libraries manuales.",
+      "realWorld": "Backend vendors (Datadog, New Relic, Honeycomb, Splunk) todos aceptan OTLP nativamente. Kubernetes operator para OTel es maduro. Grafana Loki, Prometheus, Tempo forman stack open source completo OTel-compatible. Adopción masiva desde 2022.",
+      "tags": [
+        "opentelemetry",
+        "OTel",
+        "observability",
+        "OTLP"
+      ],
+      "tech": [
+        "OpenTelemetry",
+        "OTLP",
+        "OTel Collector"
+      ],
+      "references": [
+        {
+          "title": "opentelemetry.io"
+        },
+        {
+          "title": "CNCF — OpenTelemetry"
+        }
+      ]
+    },
+    {
+      "id": "q8",
+      "areaId": "apis",
+      "topic": "Log levels — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Un jr loguea todo como `INFO` porque 'es más fácil'. Otro pone todo `ERROR` para 'que siempre aparezca'. El equipo pide una guía.",
+      "question": "¿Cuál es la convención correcta para cada nivel?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "DEBUG: info detallada para diagnóstico local, off en prod. INFO: eventos normales de negocio (user login, order placed). WARN: algo inesperado pero no bloqueante (fallback usado, deprecated API called). ERROR: fallo que requiere atención (excepción no manejada, servicio downstream caído). FATAL/CRITICAL: fallo que causa terminación (imposible continuar). Regla: `WARN y ERROR deberían ser accionables` — cada uno idealmente triggerea investigación.",
+          "correct": true,
+          "why": "Correcto. Levels son señales para operations. Uso apropiado: DEBUG solo dev/troubleshooting (verbose, cost); INFO para events normales (auditable, moderate); WARN para 'algo raro' que no rompió pero merece mirada; ERROR para 'algo rompió' — debería alertar; FATAL/CRITICAL para 'app va a morir'. Anti-patterns: (1) loguear todo INFO — noise, oculta reales; (2) ERROR para expected failures (retry succeeded); (3) DEBUG en prod habilitado siempre — storage y cost. Regla: si un WARN o ERROR nunca requiere acción, downgrade a INFO/DEBUG."
+        },
+        {
+          "letter": "B",
+          "text": "Solo usar INFO y ERROR — dos niveles son suficientes.",
+          "correct": false,
+          "why": "Pierdes granularidad. WARN es crítica para 'algo sospechoso pero no roto' — señal temprana de problemas."
+        },
+        {
+          "letter": "C",
+          "text": "Los levels son estéticos, no importan.",
+          "correct": false,
+          "why": "Falso. Sistemas de alerting filtran por level. Level malo = alertas erróneas o silencio en casos reales."
+        },
+        {
+          "letter": "D",
+          "text": "Loguear todo como ERROR asegura que se vea.",
+          "correct": false,
+          "why": "Contra: dashboards se vuelven ruido, alertas se ignoran ('alert fatigue'), pierdes capacidad de discriminar problemas reales."
+        }
+      ],
+      "explanation": "Log levels convención: TRACE (extremo detalle, muy raro), DEBUG (dev diagnostics), INFO (eventos normales), WARN (algo raro, no roto), ERROR (algo roto, requiere atención), FATAL/CRITICAL (app va a morir). Regla operacional: ERROR/FATAL deberían disparar alerts; WARN debería aparecer en dashboards; INFO auditable pero no alertable; DEBUG off en prod (o habilitado dinámicamente para debug puntual). Prod log volume 2026: cost de log storage y ingestion es real (Datadog cobra por GB). Cada log line es dinero. Discipline en niveles == ahorros reales. Log sampling en INFO alto volumen también es viable.",
+      "realWorld": "'Alert fatigue' es tema de charlas SRE en cada conferencia. Muchas empresas gastan más en logs de lo que gastan en compute. Netflix, Uber tienen políticas estrictas sobre log levels en producción.",
+      "tags": [
+        "log levels",
+        "convención",
+        "alerting"
+      ],
+      "tech": [
+        "logging",
+        "SLF4J",
+        "log4j"
+      ],
+      "references": [
+        {
+          "title": "Log4j — Log Level guidance"
+        },
+        {
+          "title": "Google SRE Book — Chapter 10: Alerting"
+        }
+      ]
+    },
+    {
+      "id": "q9",
+      "areaId": "apis",
+      "topic": "Health checks — liveness vs readiness",
+      "difficulty": "senior",
+      "scenario": "Tu app en Kubernetes tiene `livenessProbe` y `readinessProbe` apuntando al mismo endpoint `/health` que retorna 200 si el proceso está vivo. Bugs: (1) durante boot lento, K8s enrutan tráfico a pods que aún no están listos (500s a users); (2) durante DB slow, liveness restartea pods que en realidad están vivos.",
+      "question": "¿Cuál es la distinción correcta y el fix?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Liveness = 'estoy vivo, no me mates' — restart si falla; DEBE ser ligero, chequear solo el proceso mismo (no dependencies externas). Readiness = 'listo para recibir tráfico' — remove from service si falla; puede chequear dependencies (DB reachable, cache warmed). Separar endpoints: /live (trivial) y /ready (chequea deps). Startup probe adicional para apps con boot lento.",
+          "correct": true,
+          "why": "Correcto. Confusión común: usar el mismo endpoint es anti-patrón. Liveness debe fallar SOLO si el proceso está genuinamente muerto/hung — si chequea DB y DB está down, K8s restartea todos los pods innecesariamente. Readiness puede depender de dependencies — pod se quita de service (no traffic) hasta que DB vuelva, sin restart. StartupProbe (K8s 1.16+) permite grace period largo para boot lento sin afectar liveness runtime — muy útil para JVM apps que tardan minutos."
+        },
+        {
+          "letter": "B",
+          "text": "Ambos deben chequear todo (DB, cache, downstream) para máxima seguridad.",
+          "correct": false,
+          "why": "Anti-patrón. Cascading failure: DB slow → liveness falla → K8s restart pod → nuevo pod también falla → restart loop → CrashLoopBackoff en todo el cluster."
+        },
+        {
+          "letter": "C",
+          "text": "No usar probes — dejar K8s manejar.",
+          "correct": false,
+          "why": "Sin probes, K8s no sabe si tu app está lista ni si está viva. Traffic irá a apps no listas, apps hung nunca se restartean."
+        },
+        {
+          "letter": "D",
+          "text": "Solo liveness es suficiente.",
+          "correct": false,
+          "why": "Sin readiness, K8s enruta tráfico apenas el pod está 'running' — aún si app no está lista (boot en progress). Errors visibles a users."
+        }
+      ],
+      "explanation": "Probes K8s: (1) livenessProbe — 'restart si falla'; chequear solo proceso, evitar deps externos; endpoint trivial /healthz que retorna 200; (2) readinessProbe — 'no route traffic si falla'; puede chequear deps (DB, cache); endpoint /readyz con chequeos; (3) startupProbe — para apps con boot lento (JVM); una vez OK, liveness toma over; permite grace period largo (300s+) sin restart durante boot. Comportamiento en fallo: liveness=restart pod, readiness=quitar de service (no restart), startup=extender grace period. Anti-patterns comunes: mismo endpoint para todos, chequear deps en liveness, no configurar timeouts razonables. Buen probe: fast (< 1s), stateless, honest.",
+      "realWorld": "Uber, Netflix, Airbnb documentan patterns similares para K8s health checks. Cascading failures por bad probes son incidents reales que han caído clusters completos. Google SRE book advertising against 'chequear todo en liveness'.",
+      "tags": [
+        "health check",
+        "liveness",
+        "readiness",
+        "kubernetes"
+      ],
+      "tech": [
+        "Kubernetes",
+        "probes"
+      ],
+      "references": [
+        {
+          "title": "Kubernetes Docs — Liveness, Readiness and Startup Probes"
+        }
+      ]
+    },
+    {
+      "id": "q10",
+      "areaId": "apis",
+      "topic": "Métricas — SLO / SLI / error budget",
+      "difficulty": "staff",
+      "scenario": "Tu servicio tiene SLO '99.9% de requests responden < 200ms en un mes'. Un compañero pregunta qué significa y cómo se implementa.",
+      "question": "¿Cuál es la conceptualización correcta?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "SLI (indicador) = métrica que mides (ej. fracción de requests <200ms). SLO (objetivo) = target sobre el SLI (99.9%). Error budget = 100% - SLO = 0.1% de requests pueden violar el objetivo en el período. Si el budget se agota, la política dice: pausar features y invertir en reliability. Es el mecanismo de balance entre innovation vs stability. Métricas Prometheus: histogram_quantile o burn-rate queries.",
+          "correct": true,
+          "why": "Correcto. Framework SRE de Google: SLIs (Service Level Indicators) = qué mides (latency, availability, throughput, correctness); SLOs = target (99.9%, 200ms); SLAs = contrato con consecuencias legales/financieras. Error budget = 100% - SLO, es el 'presupuesto de fallo' aceptable. Si consumes budget rápido (burn rate alto), alertar y priorizar reliability. Es objetivo, no aspiracional. Fórmula en Prometheus para SLI: sum(rate(http_requests_total{status='200'}[30d])) / sum(rate(http_requests_total[30d]))."
+        },
+        {
+          "letter": "B",
+          "text": "SLO es solo 'objetivo aspiracional' sin acciones concretas.",
+          "correct": false,
+          "why": "Falso — el punto del framework es acciones concretas (freeze features cuando budget se agota). Sin acción, no hay valor."
+        },
+        {
+          "letter": "C",
+          "text": "SLO = availability solamente (uptime %).",
+          "correct": false,
+          "why": "Falso — SLO puede ser latency, correctness, throughput, freshness. Uptime es solo uno. Multi-SLI dashboards son estándar."
+        },
+        {
+          "letter": "D",
+          "text": "SLO se calcula por request individual.",
+          "correct": false,
+          "why": "SLO es agregado sobre ventana temporal (mes, quarter). Un request lento no viola SLO — la fracción de requests que violan lo hace."
+        }
+      ],
+      "explanation": "SRE framework Google: SLI (medida), SLO (target), SLA (contrato). Common SLIs: (1) availability = successful_reqs / total_reqs; (2) latency = fraction < threshold ms; (3) throughput = reqs/second; (4) correctness = fraction sin data errors. Error budget arithmetic: 99.9% = 43min downtime/month, 99.99% = 4.3min/month, 99.999% = 26sec/month — cada '9' es 10x más caro operacionalmente. Burn rate alerts: 'consumiendo 2h de error budget cada 1h' = severity alta. Multi-window multi-burn-rate alerts (Google's approach): combinar short window (1h high burn) + long window (24h moderate burn) para alertas robustas sin flapping. Multi-team enforcement: budget agotado → todo el equipo hace reliability work, no features.",
+      "realWorld": "Google acuñó y populariza SLO framework en SRE Book (free online). Adopción masiva desde 2016. Empresas maduras (Netflix, Airbnb, Datadog) tienen SLOs en cada servicio crítico. Herramientas: Nobl9 (SLO management), Sloth (SLO generator), OpenSLO (standard). Cultura shift más importante que herramientas.",
+      "tags": [
+        "SLO",
+        "SLI",
+        "error budget",
+        "SRE"
+      ],
+      "tech": [
+        "Prometheus",
+        "SRE"
+      ],
+      "references": [
+        {
+          "title": "Google SRE Book — Chapter 4 (SLOs)"
+        },
+        {
+          "title": "The Site Reliability Workbook — SLO Engineering Case Studies"
+        }
+      ]
+    },
+    {
+      "id": "q11",
+      "areaId": "apis",
+      "topic": "Alerting — alertas actionable",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene 200 alertas configuradas. On-call reporta 'alert fatigue' — cada noche despiertan 5 veces por alerts que no requieren acción inmediata.",
+      "question": "¿Cuáles son los principios correctos de alerting?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Alertar sobre síntomas (SLO burns, error rate, latency SLO), no sobre causas (CPU high, memoria high). Los síntomas correlan con user pain; las causas pueden ser proxies falsos.",
+          "correct": true,
+          "why": "Correcto. 'Alert on symptoms, not causes' es principio SRE. CPU alto no siempre es problema (batch job legítimo); latency alta SÍ es problema (users lo notan). Alertar en SLO burns garantiza que solo alertás cuando el compromiso con users se rompe. Alertas sobre causas son útiles como investigación (dashboards) no como paging."
+        },
+        {
+          "letter": "B",
+          "text": "Toda alerta que despierta a alguien debe ser ACCIONABLE — requerir intervención humana inmediata. Si no lo es, downgrade a ticket o dashboard.",
+          "correct": true,
+          "why": "Correcto. 'Wake up' alertas deben ser (a) accionables (hay algo para hacer), (b) urgentes (no puede esperar mañana), (c) real (no falso positivo). Alertas que 'informan pero no requieren acción' → dashboard o ticket queue. Reducir count agresivamente combatiendo alert fatigue."
+        },
+        {
+          "letter": "C",
+          "text": "Multi-window multi-burn-rate alerts (SLO framework): distintas ventanas capturan distintas severidades (page si 2% budget consumido en 1h, ticket si 10% en 6h).",
+          "correct": true,
+          "why": "Correcto. Alertas simples 'error rate > 1%' pueden flappear o disparar tarde. Multi-window multi-burn-rate combina: short window para catch fast burns (< 1h para exhaustar en <días), long window para catch slow burns (6-24h). Google publicó este pattern en Site Reliability Workbook — es state of the art."
+        },
+        {
+          "letter": "D",
+          "text": "Cuantas más alertas, mejor cobertura.",
+          "correct": false,
+          "why": "Falso — más alertas causa fatigue, ignore, missed real incidents. Menos alertas de mayor calidad es mejor."
+        },
+        {
+          "letter": "E",
+          "text": "Cada excepción en logs debería alertar.",
+          "correct": false,
+          "why": "Falso — exceptions son normales (validation errors, retries). Alert sobre rates o patterns, no individual events. Alertar por cada exception es camino directo al burn out."
+        }
+      ],
+      "explanation": "Alerting principles: (1) alert on symptoms not causes; (2) all pages should be actionable and urgent; (3) use multi-burn-rate for SLO alerts; (4) reduce alerts aggressively — measure signal:noise ratio; (5) each alert should have runbook (link en la alert); (6) post-mortem cada alert to decide if it should stay. Cost of alert fatigue: burnout on-call, missed real incidents, cultural erosion. Herramientas: PagerDuty, Opsgenie tienen features para tracking on-call load. 'Number of pages per week per engineer' es KPI SRE — target típico < 2 pages/week.",
+      "realWorld": "Google SRE book habla extensively sobre 'reducing alert noise'. Charity Majors (Honeycomb) es evangelista de 'alert on SLO burns'. Empresas serias hacen alert reviews trimestralmente para podar false positives.",
+      "tags": [
+        "alerting",
+        "SLO",
+        "on-call",
+        "alert fatigue"
+      ],
+      "tech": [
+        "Prometheus Alertmanager",
+        "PagerDuty"
+      ],
+      "references": [
+        {
+          "title": "SRE Workbook — Chapter 5: Alerting on SLOs"
+        },
+        {
+          "title": "Charity Majors — On alerting"
+        }
+      ]
+    },
+    {
+      "id": "q12",
+      "areaId": "apis",
+      "topic": "PII y logs — data privacy",
+      "difficulty": "senior",
+      "scenario": "Un dev loguea el body completo del request en un endpoint de signup. El body contiene password, email, IP, DOB. GDPR-relevant. El equipo de compliance flaggea.",
+      "question": "¿Cuáles son las prácticas correctas?",
+      "multiSelect": true,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Nunca loguear passwords, tokens, API keys, credit card numbers — bajo ninguna circunstancia. Redact en el logger (blacklist de campos).",
+          "correct": true,
+          "why": "Correcto. Secrets en logs = compromiso. Logs se comparten (support, dev, contractors), se archivan, se replican. Un log con password es un breach de facto. Redactar en origen (logger config con field blacklist) es la única forma segura. GDPR, PCI-DSS, HIPAA todos lo requieren."
+        },
+        {
+          "letter": "B",
+          "text": "PII (email, DOB, address, IP) requiere justificación y retention limitada. Muchos frameworks legales exigen minimización — no loguear si no es estrictamente necesario para debugging o audit.",
+          "correct": true,
+          "why": "Correcto. GDPR data minimization principle: solo colectar/almacenar lo estrictamente necesario para el propósito. Loguear PII por 'si acaso lo necesito' viola. Best practice: hash de identifiers (SHA de email para dedup sin exposing), truncate IPs (mantener /24 no /32 para geo sin identifiable), retention corta."
+        },
+        {
+          "letter": "C",
+          "text": "Usar log libraries con field redaction: pino con `redact: ['password', 'creditCard.*']`, structlog con processors, o logger custom.",
+          "correct": true,
+          "why": "Correcto. Automatización es más segura que discipline. Redact en config del logger significa que aún si un dev olvida omitir un campo, el logger lo tacha. pino, winston, structlog, todos los serios lo soportan. Es defense-in-depth crítico."
+        },
+        {
+          "letter": "D",
+          "text": "Encriptar los logs es suficiente.",
+          "correct": false,
+          "why": "Falso. Encriptación protege data en tránsito/storage pero no en uso. Un log con password decriptado durante troubleshooting sigue expuesto al ingeniero. Redact es más fuerte que encrypt para este propósito."
+        },
+        {
+          "letter": "E",
+          "text": "Debug logs pueden incluir PII porque son temporales.",
+          "correct": false,
+          "why": "Falso. Debug logs se replican, se archivan, se ven por múltiples personas. Mismo estándar."
+        }
+      ],
+      "explanation": "PII/secrets en logs: (1) blacklist secrets siempre (password, token, key, secret, credit card, SSN); (2) minimizar PII (email, IP, DOB) — colectar solo lo justificable; (3) redact en el logger, no post-hoc; (4) retention corta para logs con PII (30d vs 1año para operational); (5) audit logs distintos de application logs (audit con full context, app logs sanitizados); (6) compliance frameworks: GDPR (EU), CCPA (California), HIPAA (health US), PCI-DSS (payment). Herramientas: OpenTelemetry Collector puede redactar server-side, así ni siquiera datos sensibles salen del ambiente controlado.",
+      "realWorld": "Twitter, Facebook, muchos han tenido incidents por passwords en logs (visible a empleados). Multas GDPR incluyen casos de logging excessive de PII. Post-Cambridge Analytica, hyperfocus en data hygiene.",
+      "tags": [
+        "PII",
+        "secrets",
+        "GDPR",
+        "logs"
+      ],
+      "tech": [
+        "logging",
+        "pino",
+        "structlog"
+      ],
+      "references": [
+        {
+          "title": "GDPR — Data minimisation principle"
+        },
+        {
+          "title": "OWASP Logging Cheat Sheet"
+        }
+      ]
+    },
+    {
+      "id": "q13",
+      "areaId": "apis",
+      "topic": "Distributed tracing — anatomy of a trace",
+      "difficulty": "senior",
+      "scenario": "Un compañero abre un trace en Jaeger y ve muchos 'spans' anidados. Pregunta qué significa cada elemento.",
+      "question": "¿Cuál es la anatomía correcta?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Trace = una operación end-to-end (request). Span = una unidad de trabajo dentro (function call, HTTP call, DB query) con start/end time, name, attributes. Spans se anidan formando árbol via parent_span_id. Trace_id compartido across todos los spans. Attributes = key-value metadata (http.method, db.query). Events = timestamps dentro del span con logs. Status = ok/error.",
+          "correct": true,
+          "why": "Correcto. Terminología OpenTelemetry (unificada). Trace es el arbol completo; span es cada nodo. Root span (sin parent) es inicio del trace. Child spans representan subtrabajos. Ejemplo: HTTP request es root span; DB query dentro es child; HTTP call downstream es child con nuevo trace context propagado. Cada span tiene: nombre, timing, atributos (metadata), eventos (logs contextuales), status, parent. Waterfall visualization muestra timing en paralelo/secuencial."
+        },
+        {
+          "letter": "B",
+          "text": "Trace es solo un log line.",
+          "correct": false,
+          "why": "Falso — trace es una estructura de múltiples spans representando la operación completa."
+        },
+        {
+          "letter": "C",
+          "text": "Spans son sinónimos de threads.",
+          "correct": false,
+          "why": "Falso. Un thread puede ejecutar muchos spans; un span puede cruzar threads (async). Concepts ortogonales."
+        },
+        {
+          "letter": "D",
+          "text": "Trace ID cambia por servicio.",
+          "correct": false,
+          "why": "Falso — trace_id se propaga sin cambios; span_id cambia por span. Es lo que permite correlacionar cross-service."
+        }
+      ],
+      "explanation": "Modelo trace: (1) TraceContext propagado en headers HTTP (traceparent W3C), Kafka headers, DB queries con SQL comments; (2) auto-instrumentation crea spans automáticamente en boundaries (HTTP in/out, DB call); (3) manual instrumentation añade spans custom en lógica de negocio importante; (4) attributes convention (semantic conventions OTel): http.method, http.status_code, db.system, messaging.system. Backends de tracing: Jaeger (CNCF, popular), Tempo (Grafana), Datadog APM, New Relic, Honeycomb, AWS X-Ray. Waterfall view es la visualización estándar. Trace exemplars en métricas permite jump de una barra en Grafana al trace específico del sample.",
+      "realWorld": "Google Dapper paper (2010) estableció el modelo. Zipkin (Twitter, 2012) fue implementación referencia OSS. Jaeger (Uber, 2015) es CNCF. OpenTelemetry unifica los estándares. Toda architecture microservicios seria tiene tracing en 2026.",
+      "tags": [
+        "tracing",
+        "spans",
+        "trace_id",
+        "OpenTelemetry"
+      ],
+      "tech": [
+        "OpenTelemetry",
+        "Jaeger"
+      ],
+      "references": [
+        {
+          "title": "OpenTelemetry — Traces"
+        }
+      ]
+    },
+    {
+      "id": "q14",
+      "areaId": "apis",
+      "topic": "Logs vs metrics vs traces — cuándo cada uno",
+      "difficulty": "mid",
+      "scenario": "Debate en el equipo: 'todo se puede resolver con logs — para qué necesitamos metrics y traces?'.",
+      "question": "¿Cuál es la respuesta correcta sobre los 3 pilares?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Los 3 son complementarios: LOGS = eventos discretos con contexto rico (qué pasó y por qué); METRICS = agregados numéricos over time con cardinalidad baja (cuánto/qué tan rápido, para dashboards y alerts); TRACES = una operación cross-service con timing y causalidad (dónde se pierde el tiempo). Ninguno reemplaza al otro. Empezar por metrics + logs; añadir traces para debugging cross-service.",
+          "correct": true,
+          "why": "Correcto. Cada pilar responde preguntas distintas: (1) metrics para 'algo va mal ahora?' (alerts) y trends; (2) logs para 'qué exactamente pasó?' (contexto); (3) traces para 'dónde en la request?' (latency, cross-service). Solo logs = imposible calcular percentiles a escala; solo metrics = pierdes contexto de qué falló; solo traces = pierdes overview aggregate. Balance es propio de cada equipo — pero los 3 son necesarios en sistemas distribuidos serios."
+        },
+        {
+          "letter": "B",
+          "text": "Logs son suficientes — grep resuelve todo.",
+          "correct": false,
+          "why": "Falso a escala. Calcular percentile de latencia sobre 10M requests/día con grep es imposible. Metrics + histogramas hacen esto trivial. Traces revelan bottlenecks cross-service que logs no muestran claramente."
+        },
+        {
+          "letter": "C",
+          "text": "Metrics son suficientes.",
+          "correct": false,
+          "why": "Metrics dicen 'algo pasó' pero no 'qué exactamente' — necesitas logs/traces para diagnóstico. Sin logs, sabes que error rate es 5% pero no qué error."
+        },
+        {
+          "letter": "D",
+          "text": "Solo traces son necesarios en 2026.",
+          "correct": false,
+          "why": "Traces son costosos (storage, network) y sample. Metrics complementan como always-on baseline. Logs para eventos individuales con contexto rico."
+        }
+      ],
+      "explanation": "Three pillars of observability (Cindy Sridharan, popularizada 2017): logs, metrics, traces. Cost gradient: metrics (baratísimo, agregado) → traces (moderado, sampled) → logs (caro, individual events). Uso complementario: (1) alerts on metrics; (2) dashboards from metrics; (3) drill down to traces from metric spike; (4) find specific logs via trace_id. Modern debate: 'wide events' (single wide log line con full context) vs three pillars traditional. Honeycomb argumenta que wide events + BigQuery-style querying reemplaza logs+metrics+traces. Emerging paradigm. Práctico 2026: usar los 3 con OTel unificándolos.",
+      "realWorld": "Charity Majors (Honeycomb) tiene charlas famosas sobre 'observability 2.0'. Cindy Sridharan (Distributed Systems Observability) escribió el libro definitivo. En práctica, la mayoría de empresas usan las 3 con diferentes tools; unification via OTel es tendencia.",
+      "tags": [
+        "observability",
+        "pilares",
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "tech": [
+        "OpenTelemetry"
+      ],
+      "references": [
+        {
+          "title": "Distributed Systems Observability (Cindy Sridharan)"
+        }
+      ]
+    },
+    {
+      "id": "q15",
+      "areaId": "apis",
+      "topic": "Prometheus — pull vs push",
+      "difficulty": "senior",
+      "scenario": "Prometheus usa modelo pull (scrape endpoints /metrics de cada target). Un compañero pregunta: ¿por qué no push como StatsD, más simple? ¿Y qué hacemos con jobs efímeros (batch, serverless) que terminan antes del scrape?",
+      "question": "¿Cuál es la explicación y la solución para efímeros?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Pull ventajas: (1) Prometheus sabe qué está scrapeando (up metric = target healthy?); (2) service discovery integrado (K8s, Consul); (3) targets no necesitan configurar destino; (4) firewall simpler (Prometheus initiates). Contra: no adapta a jobs efímeros. Solución: Pushgateway — jobs push métricas allí antes de terminar, Prometheus scrapea Pushgateway. Usar SOLO para batch/one-shot, no para services persistentes (rompería el modelo).",
+          "correct": true,
+          "why": "Correcto. Pull vs push es debate viejo (StatsD, InfluxDB usan push; Prometheus, Datadog Agent pull). Pull ventajas: Prometheus tiene 'up' metric = ¿este target respondió al scrape?, service discovery centralizado, cada target expone /metrics endpoint indepdendiente. Pull desventaja: jobs cortos pueden terminar antes del scrape (default 15s). Pushgateway resuelve para batch pero es MISUSED común: no usarlo para long-running services (pierdes 'up', pierdes staleness detection, causa métricas 'zombie' persistentes)."
+        },
+        {
+          "letter": "B",
+          "text": "Push es mejor siempre — pull es legacy.",
+          "correct": false,
+          "why": "Falso. Ambos tienen trade-offs. Prometheus escogió pull por buenas razones (mencionadas). No es 'legacy' — es diseño intencional."
+        },
+        {
+          "letter": "C",
+          "text": "Los jobs cortos no pueden usar Prometheus.",
+          "correct": false,
+          "why": "Falso — Pushgateway existe exactamente para este caso."
+        },
+        {
+          "letter": "D",
+          "text": "Usar Pushgateway para todo simplifica.",
+          "correct": false,
+          "why": "Falso. Es anti-patrón usar Pushgateway para services persistentes. Pierdes 'up' semantics, staleness detection, y crea single point of contention."
+        }
+      ],
+      "explanation": "Prometheus architecture: (1) targets exponen /metrics (Prometheus client library en la app); (2) Prometheus server scrapea a intervalo (15s típico); (3) scrape genera 'up' métrica sintética (1 si respondió, 0 si no); (4) service discovery (K8s, Consul, DNS SRV) auto-descubre targets. Para jobs efímeros: Pushgateway. Para métricas exóticas (routers, IoT): exporters (node_exporter, blackbox_exporter, snmp_exporter). Federation: Prometheus scrapea otro Prometheus para hierarchical. Long-term storage: Thanos, Cortex, Mimir escalan Prometheus a multi-tenant y long retention. OTel Collector puede exportar en formato Prometheus también.",
+      "realWorld": "SoundCloud creó Prometheus (2012, inspired by Google Borgmon). CNCF adoption. Es el standard de facto para metrics en K8s ecosystem. Datadog, New Relic ofrecen Prometheus-compatible endpoints. VictoriaMetrics es alternativa OSS creciente.",
+      "tags": [
+        "prometheus",
+        "pull vs push",
+        "pushgateway"
+      ],
+      "tech": [
+        "Prometheus",
+        "Pushgateway"
+      ],
+      "references": [
+        {
+          "title": "Prometheus Docs — Why do you pull rather than push?"
+        }
+      ]
+    },
+    {
+      "id": "q16",
+      "areaId": "apis",
+      "topic": "Exemplars — bridge metrics to traces",
+      "difficulty": "staff",
+      "scenario": "En el dashboard ves un spike de latency p99 a las 14:30. Quieres investigar los traces específicos que causaron ese spike, pero no sabes cuáles.",
+      "question": "¿Qué feature moderna resuelve esto?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Exemplars: metric points que incluyen un trace_id ejemplar. En Prometheus 2.26+, histograma bucket puede tener exemplar (trace_id + labels + timestamp). Grafana muestra dots en el gráfico — click abre el trace en Tempo/Jaeger. Cierra el gap métricas → traces: 'aquí está el spike, y aquí está un trace específico que causó ese bucket'.",
+          "correct": true,
+          "why": "Correcto. Exemplars son innovation reciente que resuelve el 'metrics dashboard shows spike but I can't find traces from that time'. OpenTelemetry SDK inyecta exemplars automáticamente (sample de traces sampled). Prometheus 2.26+ los almacena. Grafana + Tempo lo integran. Habilita workflow: dashboard alerta → click en exemplar → trace específico → deep dive. Ejemplo real: p99 latency spike → click exemplar → trace muestra que DB call específica tardó 3s."
+        },
+        {
+          "letter": "B",
+          "text": "Es imposible correlacionar.",
+          "correct": false,
+          "why": "Falso — exemplars existen para esto. Antes de exemplars, había hacks (búsqueda manual por timestamp) — ahora es click."
+        },
+        {
+          "letter": "C",
+          "text": "Manualmente hacer query en traces por timestamp.",
+          "correct": false,
+          "why": "Funciona pero es fricción alta. Con miles de traces por segundo, encontrar el que corresponde al bucket exacto es difícil. Exemplars automatiza."
+        },
+        {
+          "letter": "D",
+          "text": "Los traces y metrics no pueden correlacionar.",
+          "correct": false,
+          "why": "Falso — exemplars y OTel unified attribute conventions permiten correlación fuerte."
+        }
+      ],
+      "explanation": "Exemplars: pequeño metadata attached a metric samples que apunta a un trace_id representativo. Habilitados con Prometheus feature flag (--enable-feature=exemplar-storage). OpenTelemetry SDK inyecta si trace context disponible. Grafana renders como dots colored on the metric line. Click → jump a Tempo/Jaeger trace view. Es la primera cross-pillar integration real. Otras integrations: trace_id en logs (para search bidireccional), span attributes que exponen como metric labels (con cuidado con cardinality). Modern observability = integración fluida entre los 3 pilares, no silos.",
+      "realWorld": "Grafana Labs impulsó exemplars fuertemente con Tempo (2020). Es feature emergente pero standardizada en OTel. Cierra un pain point antiguo de dashboards. Adopción creciendo en 2024-2026.",
+      "tags": [
+        "exemplars",
+        "metrics",
+        "traces",
+        "grafana"
+      ],
+      "tech": [
+        "Prometheus",
+        "Grafana Tempo",
+        "OpenTelemetry"
+      ],
+      "references": [
+        {
+          "title": "Prometheus Docs — Exemplars"
+        },
+        {
+          "title": "Grafana Blog — Introducing exemplars"
+        }
+      ]
+    },
+    {
+      "id": "q17",
+      "areaId": "apis",
+      "topic": "Continuous profiling — el 4o pilar?",
+      "difficulty": "senior",
+      "scenario": "Latencia p99 alta pero traces no revelan la causa — cada span parece normal, pero el total tarda. Un compañero menciona 'continuous profiling'.",
+      "question": "¿Qué es continuous profiling y cuándo se usa?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Continuous profiling: sampling low-overhead de CPU/memory/allocations en producción, correlacionable con timestamps. Herramientas: Pyroscope (Grafana), Parca, Datadog Continuous Profiler. Revela funciones caras que traces no capturan (loops CPU-bound dentro de un span sin sub-spans). eBPF-based (Parca) puede profilear cualquier proceso sin instrumentación. Complementa traces cuando 'toda la request es lenta pero no sé por qué'.",
+          "correct": true,
+          "why": "Correcto. Continuous profiling llena el gap: traces muestran timing entre operaciones instrumentadas; profiler muestra CPU spent EN cada función. Con ~1% CPU overhead (sampling), viable en producción. Especialmente útil para: (1) CPU-bound code paths sin sub-spans; (2) memory leaks (allocation profiling); (3) lock contention; (4) hot functions después de refactor. Pyroscope + Grafana / Parca son OSS; Datadog / Google Cloud Profiler comerciales."
+        },
+        {
+          "letter": "B",
+          "text": "Profiling no es útil en producción — solo dev.",
+          "correct": false,
+          "why": "Falso. Continuous profiling en prod es una técnica establecida — Google lo hace desde años (Google Cloud Profiler internamente). Overhead controlado, insight enorme."
+        },
+        {
+          "letter": "C",
+          "text": "Basta con traces.",
+          "correct": false,
+          "why": "Traces requieren instrumentación explícita. Loops CPU-heavy dentro de una función no se ven en traces sin sub-spans. Profiler ve todo el stack automáticamente."
+        },
+        {
+          "letter": "D",
+          "text": "Solo apps compiled languages soportan profiling.",
+          "correct": false,
+          "why": "Falso. Python (py-spy), Node (0x, clinic.js), Java (JFR, async-profiler), Ruby (rbspy) — todos tienen profilers viables. eBPF permite profiling agnostic de lenguaje."
+        }
+      ],
+      "explanation": "Continuous profiling: continuous, low-overhead sampling profiler en producción. Datos correlacionables por timestamp con metrics/traces. Formato pprof (Go, adopted broadly) es standard. Herramientas OSS: Pyroscope (recién adquirido por Grafana), Parca (eBPF-based), Polar Signals. Casos de uso: (1) 'algo raro en p99' que traces no muestran; (2) memory leak diagnosis (heap profiling); (3) optimization prioritization (qué función quema más CPU); (4) post-mortem analysis. eBPF profiling con Parca permite profilear kernel + user-space sin instrumentar la app — future-forward technology.",
+      "realWorld": "Google Cloud Profiler es interno hace décadas — Google's SRE toolkit. Profiling emerged como '4th pillar' de observability recently (~2020+). Pyroscope adquirido por Grafana Labs 2023. Continuous profiling adoption acelera en 2024-2026 con eBPF maturity.",
+      "tags": [
+        "profiling",
+        "eBPF",
+        "performance",
+        "observability"
+      ],
+      "tech": [
+        "Pyroscope",
+        "Parca",
+        "pprof"
+      ],
+      "references": [
+        {
+          "title": "Pyroscope — Continuous Profiling"
+        },
+        {
+          "title": "Google — Continuous Profiling of Warehouse-Scale Computers (2010)"
+        }
+      ]
+    },
+    {
+      "id": "q18",
+      "areaId": "apis",
+      "topic": "Logging library performance",
+      "difficulty": "mid",
+      "scenario": "Un compañero mide que su Node.js app pasa 15% del CPU en logging (winston.info). El throughput baja de 5000 req/seg a 4000 solo por logs.",
+      "question": "¿Qué causa el overhead y cuáles son las mitigaciones?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Overhead viene de: (1) formatting sync — winston default sync + slow; (2) serialización de objetos complejos; (3) escritura sync a stdout. Mitigaciones: (1) usar pino — logger async, orden de magnitud más rápido; (2) log level control — no loguear DEBUG en prod; (3) evitar serializar objetos grandes (limit depth); (4) transporte async (pino usa worker thread); (5) sampling de logs high-volume.",
+          "correct": true,
+          "why": "Correcto. Loggers no son gratis. winston es feature-rich pero relatively slow (default sync). pino es el rey de perf en Node — 10-30x faster que winston. Async by default con transporte a worker thread. Structured JSON. Menor allocation. Sin sacrificar features esenciales. En Python: structlog + orjson para speed. Go: zap es el equivalente performance-focused. En hot paths, elegir el logger correcto es diferencia 10x."
+        },
+        {
+          "letter": "B",
+          "text": "Loggers no importan para performance.",
+          "correct": false,
+          "why": "Falso — en apps high-throughput, logger overhead es medible y importante. 15% CPU es significant en cost cloud."
+        },
+        {
+          "letter": "C",
+          "text": "Solución: quitar todos los logs.",
+          "correct": false,
+          "why": "Overreach — pierdes observability. Optimizar es preferible a eliminar."
+        },
+        {
+          "letter": "D",
+          "text": "console.log es más rápido que cualquier logger.",
+          "correct": false,
+          "why": "Falso. console.log es sync + no estructurado. pino es más rápido Y estructurado."
+        }
+      ],
+      "explanation": "Logger performance considerations: (1) formatting es surprisingly slow — serialización + templating; (2) IO sync bloquea event loop en Node; (3) file descriptors compartidos requieren locks; (4) network transport (a Fluent Bit, Vector) tiene overhead. Best practices: (1) usar logger designed for performance (pino, zap, zerolog); (2) transporte async (worker thread, batching); (3) production log level restrictivo (INFO+); (4) sampling de logs high-volume (siempre log errores, sample 1% de OK); (5) medir con benchmarks. En apps grandes: logger delivery a colector local (Fluent Bit, Vector) que hace batching + envío async a backend.",
+      "realWorld": "pino fue creado por Matteo Collina explícitamente para reemplazar winston en apps de alto perf. Fastify (creado por él también) usa pino por default. Uber creó zap en Go por razones similares — winston's Java equivalents eran bottleneck.",
+      "tags": [
+        "logging",
+        "performance",
+        "pino",
+        "winston"
+      ],
+      "tech": [
+        "pino",
+        "winston",
+        "zap"
+      ],
+      "references": [
+        {
+          "title": "getpino.io"
+        },
+        {
+          "title": "Uber Engineering — Introducing Zap"
+        }
+      ]
+    },
+    {
+      "id": "q19",
+      "areaId": "apis",
+      "topic": "Blackbox vs whitebox monitoring",
+      "difficulty": "senior",
+      "scenario": "Discusión: '¿Necesitamos ping externos periódicos a nuestra API? Ya tenemos Prometheus con RED metrics internos'.",
+      "question": "¿Cuál es la diferencia y por qué ambos son útiles?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Whitebox = métricas desde DENTRO de la app (código instrumentado, /metrics endpoint). Ve estado interno detalladamente. Blackbox = probing desde afuera (curl al endpoint público, ping, DNS resolve). Ve lo que el USUARIO ve, incluyendo problemas de red, DNS, LB, CDN, cert expiration. Ambos son necesarios: whitebox detalla 'cómo va la app', blackbox detecta 'los users pueden alcanzarla'.",
+          "correct": true,
+          "why": "Correcto. Whitebox (internal metrics) puede reportar 'todo verde' mientras un DNS o cert issue hace la app inaccesible a users. Blackbox es user-perspective health check: puede detectar fallos que whitebox no ve (cert expirado, DNS down, LB misrouting, CDN issue). Herramientas: Prometheus blackbox_exporter (HTTP/HTTPS/DNS/TCP probes), Uptime Kuma (OSS synthetic monitoring), Pingdom/StatusCake (comercial), external synthetic tests (Datadog Synthetics)."
+        },
+        {
+          "letter": "B",
+          "text": "Blackbox es redundante con whitebox.",
+          "correct": false,
+          "why": "Falso. Blackbox atrapa fallos que whitebox no ve por definición (issues entre user y app: DNS, network, CDN, cert). Complementarios."
+        },
+        {
+          "letter": "C",
+          "text": "Whitebox es innecesario si tenemos blackbox.",
+          "correct": false,
+          "why": "Falso. Blackbox no revela cause interno. Si blackbox falla, whitebox te dice por qué (DB down, memory leak). Ambos."
+        },
+        {
+          "letter": "D",
+          "text": "Solo blackbox es necesario porque simula user.",
+          "correct": false,
+          "why": "Blackbox atrapa síntoma pero no diagnostica interior. Whitebox esencial para MTTD/MTTR."
+        }
+      ],
+      "explanation": "Whitebox vs blackbox: (1) whitebox — visibility inside (metrics, logs, traces desde la app); (2) blackbox — visibility outside (probes desde red externa). Blackbox atrapa: cert expiration, DNS issues, LB misconfig, CDN issues, ISP problems, regional network partitions. Setup típico: internal Prometheus scraping apps (whitebox) + blackbox_exporter probing endpoints externally (blackbox) + synthetic tests from multiple regions (external SaaS). Alerting: blackbox failure = customer-affecting incident (page immediately); whitebox alerts = internal signal (severity variable). Cost: blackbox from multiple regions costs money — priorizar critical endpoints.",
+      "realWorld": "Cloudflare, Fastly outages ('the internet is down') solo visibles por blackbox — apps internally showed everything green. Cert expiration incidents (Slack, Zoom, etc.) frequently blackbox-detected. External monitoring essential complement.",
+      "tags": [
+        "blackbox",
+        "whitebox",
+        "monitoring"
+      ],
+      "tech": [
+        "Prometheus blackbox_exporter",
+        "Uptime Kuma"
+      ],
+      "references": [
+        {
+          "title": "Google SRE Book — Chapter 6: Monitoring Distributed Systems"
+        }
+      ]
+    },
+    {
+      "id": "q20",
+      "areaId": "apis",
+      "topic": "Post-mortem — cultura blameless",
+      "difficulty": "junior",
+      "scenario": "Un incidente severo pasó. Un compañero pregunta cómo estructurar el post-mortem y qué evitar.",
+      "question": "¿Cuáles son los principios de un post-mortem efectivo?",
+      "multiSelect": false,
+      "options": [
+        {
+          "letter": "A",
+          "text": "Blameless: focus en 'sistema y proceso', no 'quién apretó el botón'. Estructura típica: (1) resumen; (2) timeline detallado con timestamps; (3) impacto (users, revenue, SLO); (4) root cause analysis (5 whys); (5) action items con owner + deadline. Compartir públicamente en la org para aprendizaje colectivo. El objetivo NO es castigar sino evitar la próxima ocurrencia.",
+          "correct": true,
+          "why": "Correcto. Blameless post-mortems son cultural mainstay de SRE moderno. Blaming individuos → cover-ups, defensivas, información oculta, mismo problema vuelve. Blameless → transparencia, aprendizaje real, mejoras sistémicas. Google, Etsy, Netflix — todos evangelizadores. Estructura estándar: timeline, impact, root cause (5 whys, fishbone), what went well/what didn't, action items con dueños. Compartir open dentro de la empresa (a veces public: GitHub, Cloudflare) para spread learning."
+        },
+        {
+          "letter": "B",
+          "text": "Identificar quién causó el incidente y disciplinar.",
+          "correct": false,
+          "why": "Anti-patrón. Genera cultura de miedo, cover-ups, y siguiente incident nadie reporta issues tempranos. Mata la observability cultural."
+        },
+        {
+          "letter": "C",
+          "text": "Los post-mortems son pérdida de tiempo si la app ya está arreglada.",
+          "correct": false,
+          "why": "Falso. El objetivo es aprendizaje sistémico y prevention. Sin post-mortem, mismo bug puede pasar de nuevo (frecuente)."
+        },
+        {
+          "letter": "D",
+          "text": "Solo hacer post-mortem si hay data loss.",
+          "correct": false,
+          "why": "Umbral muy alto — pierdes aprendizajes de near-misses e incidentes moderados que preceden a los grandes."
+        }
+      ],
+      "explanation": "Post-mortem structure: (1) Summary — TL;DR; (2) Impact — users affected, SLO burn, revenue, duration; (3) Timeline — cronología detallada con timestamps y actions; (4) Root cause — 5 whys hasta llegar al proceso/design flaw, no persona; (5) What went well — mitigations que ayudaron; (6) What went wrong — donde process falló; (7) Action items — mejoras específicas con owner + deadline. Cultural principles: blameless, sharing public/internal, focused on system not individual, action-oriented. Common tools: Google Docs template, PagerDuty postmortem, Blameless.com (SaaS). Etsy publicó 'Blameless PostMortems' post seminal (2012). Cloudflare, GitLab publican post-mortems públicos (learning por toda la industria).",
+      "realWorld": "Cloudflare public post-mortems son referencia técnica. AWS post-mortems (S3 outage 2017) legendary. Etsy's 'Blameless PostMortems and a Just Culture' es must-read. Post-mortem culture is what separates mature engineering orgs.",
+      "tags": [
+        "post-mortem",
+        "blameless",
+        "cultura",
+        "SRE"
+      ],
+      "tech": [
+        "SRE"
+      ],
+      "references": [
+        {
+          "title": "Google SRE Book — Chapter 15: Postmortem Culture"
+        },
+        {
+          "title": "Etsy — Blameless PostMortems and a Just Culture (John Allspaw)"
+        }
+      ]
+    }
+  ]
+}

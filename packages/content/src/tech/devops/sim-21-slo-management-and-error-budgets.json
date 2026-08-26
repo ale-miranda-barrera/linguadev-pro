@@ -1,0 +1,416 @@
+{
+  "id": "devops-sim-21-slo-management-and-error-budgets",
+  "trackId": "devops",
+  "order": 21,
+  "title": "Simulacro 21 — Gestión de SLOs y error budgets",
+  "focus": "SLI selection (availability, latency percentiles, correctness), SLO calculation, error budget policies (feature freeze), multi-window burn rate alerts, SLO tools (Nobl9, Grafana SLO, Prometheus recording rules), SLO para batch jobs, SLA vs SLO vs SLI.",
+  "areaCoverage": ["monitoring", "reliability"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "reliability",
+      "topic": "SLI vs SLO vs SLA",
+      "difficulty": "junior",
+      "scenario": "Team lead menciona SLI, SLO y SLA en la misma frase. Junior pregunta '¿cuál es cuál?'.",
+      "question": "¿Cuál es la diferencia entre SLI, SLO y SLA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SLI (Service Level Indicator): MEDICIÓN cuantitativa de un aspecto del servicio. Ej: availability = successful_requests / total_requests; latency = p99_response_time. Es el 'metric' subyacente. SLO (Service Level Objective): TARGET numérico sobre un SLI, típicamente over a window. Ej: 'availability SLO = 99.9% durante rolling 30 días'. Es lo que TE COMPROMETES A CUMPLIR internally. SLA (Service Level Agreement): COMMITMENT CONTRACTUAL a customers/business con consecuencias (refunds, credits) si no cumples. Ej: 'SLA 99.5%; si menos, refund 10%'. SLA típicamente más laxo que SLO (buffer para SLO). Jerarquía: SLI (mides) → SLO (target interno) → SLA (contrato externo).", "correct": true, "why": "Correcto. Es LA distinción foundational. Confusión frequent en devs junior. Google SRE Book Ch. 4 formal. Regla: SLO más agresivo que SLA (buffer); si SLO breaks, ajusta antes de SLA break." },
+        { "letter": "B", "text": "Son sinónimos.", "correct": false, "why": "Falso. Diferentes propósitos: SLI mide, SLO target interno, SLA contrato externo." },
+        { "letter": "C", "text": "SLA es más strict que SLO.", "correct": false, "why": "Al revés. SLO más strict (interno, no consecuencias) para buffer al SLA (externo, consecuencias financieras). Break SLO alerta; break SLA cost real." },
+        { "letter": "D", "text": "SLI son opcionales.", "correct": false, "why": "Sin SLI no puedes medir SLO ni SLA. SLI es foundational." }
+      ],
+      "explanation": "Ejemplos concretos: SLI = successful_requests / total_requests medido por HTTP status codes. SLO = 99.9% availability durante rolling 30 días. SLA = 99.5% availability medido monthly, credits 10% si <99.5%, 25% si <99%. Relationship: SLA más laxo por buffer + porque incidents específicos (natural disasters, DDoS) puede excluirlos del SLA. Choosing SLO: (1) research current performance con SLI (baseline); (2) discuss with product/business qué target user-acceptable; (3) SLO stretch pero realistic (target no puede alcanzar cost prohibitive). Anti-patterns: SLO 100% (no achievable, incents zero risk-taking); SLO copiado de otra empresa (context distinto).",
+      "realWorld": "Google SRE Book Ch. 4 canonical. AWS, GCP, Azure publish SLAs public. SLOs internos no public — más strict. Empresas mad grande tienen SLOs per service tier (critical services 99.99%, background 99%). SLOs poorly chosen crean burnout (unachievable) o complacency (trivial).",
+      "tags": ["SLI", "SLO", "SLA", "definitions"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book Ch. 4" }, { "title": "sre.google — SLO" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "reliability",
+      "topic": "SLI selection: availability",
+      "difficulty": "junior",
+      "scenario": "Team define availability SLI. Options: (a) up/down per health check; (b) success rate de requests; (c) synthetic monitoring de key endpoints; (d) uptime SLA-style.",
+      "question": "¿Cómo se define correctly availability SLI?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Availability como REQUEST SUCCESS RATE: SLI = successful_requests / total_requests. 'Successful' = 2xx o 3xx (o business logic definition: transaction_completed). Ventaja: mide user experience real, granular, aggregable time. Alternativas peores: (a) up/down health check mide un endpoint, no user experience; (b) synthetic monitoring útil pero mide desde tu perspective, no de users reales; (c) SLA-style uptime binario no captura degradation parcial (50% requests fail = SLA still 'up' technically). Best: 'Availability = ratio of successful requests over time window', measured per endpoint o global.", "correct": true, "why": "Correcto. Google SRE Book pushes request-based availability. Time-based availability (uptime % del period) es SLA-simple pero pierde granularity. Request-based: si 5% fallos durante 1 hora, availability = 5% loss even if 'system was up'. Refleja user impact real." },
+        { "letter": "B", "text": "Uptime binario per hora.", "correct": false, "why": "Simplification pierde signal. Un service 'up' que fails 50% de requests es tan malo (peor?) que down." },
+        { "letter": "C", "text": "Solo health check /healthz.", "correct": false, "why": "Health checks mide service alive, not user requests success. Un app puede health check OK pero fallar requests reales (DB pool exhausted, etc.)." },
+        { "letter": "D", "text": "Number de errors en logs.", "correct": false, "why": "Absolute count sin baseline es meaningless. 100 errors/día es fine si 1M requests, terrible si 1000 requests." }
+      ],
+      "explanation": "Availability SLI implementation: (1) counter total requests (Prometheus http_requests_total); (2) counter successful requests (filter status_code=~\"2..|3..\"); (3) SLI ratio = successful / total. Recording rule: job:availability_ratio:5m = sum(rate(http_requests_total{status_code=~\"2..|3..\"}[5m])) / sum(rate(http_requests_total[5m])). Considerations: (a) qué considerar 'success' — 4xx counts? (client errors — user fault, sometimes excluded); (b) which endpoints matter (critical path vs background); (c) which users matter (paying customers weighted more en some models). Alternative synthetic: probes cada minuto son proxy, buena addition pero no reemplaza request-based.",
+      "realWorld": "Google SRE Book Ch. 3+4 canonical. Cloudflare, Netflix publish approach. Empresas modernas usan multiple SLIs (availability + latency + correctness) para holistic view.",
+      "tags": ["availability", "SLI selection", "success rate"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "Google SRE Book Ch. 4" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "reliability",
+      "topic": "SLI: latency percentiles",
+      "difficulty": "mid",
+      "scenario": "Team quiere latency SLI. Debate: average? median? p95? p99?",
+      "question": "¿Qué percentiles usar para latency SLI y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Latency SLI: usar PERCENTILES no averages. p50 (median) shows typical experience. p95/p99 show tail — worst 5%/1% experience. Best practice: SLI en p95 o p99. Ejemplo: '95% de requests responden en <500ms'. Averages son mala señal — 100 requests, 99 at 10ms + 1 at 10s → average 110ms (looks OK), pero user with 10s abandoned. Percentiles capture reality of user experience. p99 más strict (long tail); p95 más forgiving. Google convención: usar p90/p95/p99 latency SLIs. Requires HISTOGRAM instrumentation (Prometheus histogram), no summary (no agregable cross-instance).", "correct": true, "why": "Correcto. Percentiles > averages para latency. Averages mislead: outliers (que son user experience real de some subset) get diluted. p95/p99 revelan tail behavior. Google SRE Book: 'the tail is the story'. Empresas con SLO en p50 pierden signal de 5% users tener bad experience." },
+        { "letter": "B", "text": "Average es simpler y suficiente.", "correct": false, "why": "Falso. Average esconde outliers. Latency distributions long-tailed almost always." },
+        { "letter": "C", "text": "Solo p99.", "correct": false, "why": "p99 valuable pero volatile (small samples influence). Usar múltiples percentiles (p50 + p95 + p99) da picture completo." },
+        { "letter": "D", "text": "Max response time.", "correct": false, "why": "Max es una sola muestra — un slow request skews. No representative." }
+      ],
+      "explanation": "Percentile characteristics: (1) p50 = median — 50% users faster, 50% slower — 'typical'; (2) p95 = 95% users faster — 'good user experience'; (3) p99 = 99% users faster — 'edge cases matter?'; (4) p99.9 = 99.9% — extreme tail (matters for services with high traffic). Choice guidance: user-facing critical → p95 o p99; background jobs → p50 sufficient; latency-sensitive apps (trading, gaming) → p99 o p99.9. Aggregation issue: percentiles NO agregables — average de p99 de 2 services NO es p99 combined. Usar histogram buckets → sum by → histogram_quantile permite calcular p99 accurate cross-instance. Anti-pattern: alertar en 'avg latency > 500ms' — perdés signal.",
+      "realWorld": "Amazon: 100ms latency = 1% sales lost (medido). Google: 400ms latency = 20% traffic loss (measured). Netflix, Slack alertan on p99 latency. Percentiles > averages es industry consensus.",
+      "tags": ["latency", "percentiles", "p99", "SLI"],
+      "tech": ["Prometheus"],
+      "references": [{ "title": "Google SRE Book Ch. 4" }, { "title": "Amazon — 100ms latency study" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "reliability",
+      "topic": "Error budget: concept",
+      "difficulty": "mid",
+      "scenario": "SLO = 99.9% availability. Product manager pregunta '¿podemos deployar nueva feature risky esta semana?'. Debate perpetuo dev vs ops.",
+      "question": "¿Qué es error budget y cómo resuelve tensión dev-ops?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Error Budget: cantidad de 'unreliability' permitida dado un SLO. Fórmula: budget = 1 - SLO. Ejemplo: SLO 99.9% → 0.1% budget = 43.2 minutos/mes de downtime permitido. Uso: mientras budget disponible → 'derecho' a asumir riesgo (deploys features risky, migrations). Cuando consumido → 'obligación' a invertir en reliability (freeze features, focus on hardening). Convierte discusión política ('¿podemos ser más rápidos o estable?') en decisión matemática ('cuánto budget queda?'). Alinea incentivos automáticamente: dev quiere ship, ops quiere stability — error budget balancea. Fue innovación clave SRE — resolvió el conflicto histórico. Publicado en Google SRE Book Ch. 3 'Embracing Risk'.", "correct": true, "why": "Correcto. Error budget es LA innovation clave del SRE. Antes: subjective battles dev vs ops. Después: objective metric. Enable data-driven decisions. Netflix, Slack, Airbnb adoptan." },
+        { "letter": "B", "text": "Error budget = permission para romper cosas.", "correct": false, "why": "Malinterpretación. Es acknowledgment que 100% uptime imposible + costoso. Aceptar 0.1% permite deployar features en vez de gastar all en 5-nines infra." },
+        { "letter": "C", "text": "Solo aplicable a empresas Google-scale.", "correct": false, "why": "Falso. Concept aplicable a cualquier org con SLOs. Startups implementan también." },
+        { "letter": "D", "text": "Error budget se resetea cada deploy.", "correct": false, "why": "Falso. Rolling window (típicamente 28-30 días). Un mal mes consume budget, next month resets gradually como incidents old expiran window." }
+      ],
+      "explanation": "Error budget math: SLO 99.9% x 30d = 2592000s uptime; downtime allowed = 30d × 0.001 = 43.2 min/month. Consumption: cada minuto down consume budget. Rolling window: budget = SLO - actual_availability durante last 28d. Policies (from SRE Book): (1) if budget available > 20% → normal ops (features + reliability work balanced); (2) if budget < 20% → risky work de-prioritized; (3) if budget exhausted → FEATURE FREEZE, all hands on reliability. Requires management buy-in — freeze policy es contract. Requires cultural: teams aceptan freeze without escalating politically.",
+      "realWorld": "Google interne freeze features when budget exhausted. Netflix similar. Slack publishes policy. Empresas nuevas struggle to enforce freeze (product pushback) — success requires exec support. Nobl9, Grafana SLO herramientas específicas para track error budget consumption.",
+      "tags": ["error budget", "SLO", "feature freeze", "dev vs ops"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book Ch. 3" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "reliability",
+      "topic": "Burn rate alerts",
+      "difficulty": "senior",
+      "scenario": "SLO 99.9%. Simple alert: 'availability < 99.9% durante 1h'. Ingeniero senior dice 'no — burn rate alerts multi-window are better'.",
+      "question": "¿Qué son burn rate alerts y cómo diseñar multi-window multi-burn-rate?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Burn rate: velocidad a la que consumes error budget. Burn rate = 1 significa consumes exactly budget over SLO window. Burn rate 14.4 = consumes entire budget in 2h. Burn rate 6 = 5 days. Multi-window multi-burn-rate: combina long window (statistical robustness — no false positives from spikes) + short window (recency — no wait 6h to detect). Ejemplo (fast burn): error_rate[1h] > 14.4×budget AND error_rate[5m] > 14.4×budget. Ambos deben cumplirse. Ejemplo (slow burn): error_rate[6h] > 6×budget AND error_rate[30m] > 6×budget. Publicado Google SRE Workbook Ch. 5, con table exacta de thresholds/windows. Trade-off: sensitivity vs false positives. Multi-window balance óptimo. Tools: Sloth (config-driven SLO → Prometheus rules), Prometheus recording rules.", "correct": true, "why": "Correcto. Es LA best practice moderna. Simple 'error rate > X' sufre false positives (spikes cortos) o detection tardía (window largo). Multi-window resuelve ambos. Multi-burn-rate distingue fast catastrophes (2h burn = page immediate) vs slow leaks (5 day burn = ticket for investigation)." },
+        { "letter": "B", "text": "Simple threshold es suficiente.", "correct": false, "why": "Sufre false positives (spike corto trigger) o alarms tardías (long window)." },
+        { "letter": "C", "text": "Machine learning detects burns automáticamente.", "correct": false, "why": "ML tiene lugar pero burn rate matemático es más explicable, robusto, tuneable. Google publicado approach determinista." },
+        { "letter": "D", "text": "Solo aplica a availability, no otros SLIs.", "correct": false, "why": "Applies a cualquier SLI: latency, correctness, freshness. Any measurable SLI has burn rate." }
+      ],
+      "explanation": "Multi-window multi-burn-rate table (SRE Workbook Ch. 5): (1) Fast burn — page: 2h/5m window, 14.4x burn rate — detects entire budget en 2h; (2) Medium burn — page: 6h/30m window, 6x — 5 day burn; (3) Slow burn — ticket: 24h/2h window, 1x — over rolling window trend; (4) Very slow — ticket only. Each level routed to different severity (critical page vs warning ticket). Implementation en Prometheus: recording rule pre-calcula burn rate; alerting rule AND las 2 windows; alert routing por severity. Tools: sloth (github.com/slok/sloth) generates all these from single SLO config. Nobl9, Datadog SLO, Grafana SLO have built-in.",
+      "realWorld": "Google published table 2018. Netflix, Slack, Cloudflare, Stripe implement. Prometheus community shares implementations. En 2026, SLO tooling mucho más mainstream — no need reinvent wheel.",
+      "tags": ["burn rate", "multi-window", "SLO alerts"],
+      "tech": ["Prometheus", "Sloth"],
+      "references": [{ "title": "Google SRE Workbook Ch. 5" }, { "title": "sre.google — Alerting on SLOs" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "reliability",
+      "topic": "SLO tools: Nobl9 vs Grafana vs custom",
+      "difficulty": "senior",
+      "scenario": "Team quiere implementar SLOs. Evalúa: build custom (Prometheus recording rules), Grafana SLO (nueva feature), Nobl9 (commercial specialist).",
+      "question": "¿Cuáles son los trade-offs de estas herramientas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Custom (Prometheus recording rules + Grafana panels + Alertmanager): flexibility máxima, control total, sin vendor lock-in. Cost: engineering time to build + maintain. Tools help: sloth (github.com/slok/sloth) genera SLO rules desde YAML config. Grafana Labs también tiene plantillas.", "correct": true, "why": "Correcto. Custom es viable para teams skilled. Sloth reduce boilerplate dramatically (generate multi-window burn rate rules automáticamente). Best si tienes SREs con time/skill." },
+        { "letter": "B", "text": "Grafana SLO: feature nativa en Grafana (2023+ enterprise, ahora OSS). Define SLOs UI-driven, generates rules Prometheus, dashboards, burn rate alerts. Integra tightly con Grafana ecosystem. Free tier + Enterprise features. Reduce time-to-implement significantly.", "correct": true, "why": "Correcto. Grafana SLO comprehensive tool si ya usas Grafana. UI-driven for non-SREs. Integrates con existing dashboards, alerting. Cost: locks a Grafana como platform." },
+        { "letter": "C", "text": "Nobl9: SaaS especializado en SLO management. Multi-source (recibe SLIs de Prometheus, Datadog, New Relic, etc.), SLO templates, reporting, workflows. Enterprise features (RBAC, audit, compliance reports). Cost: SaaS pricing per SLO. Best fit: empresas con multiple observability sources y needs governance.", "correct": true, "why": "Correcto. Nobl9 líder específico SLO tooling. Multi-source es strength (many empresas tienen mix). Cost significant per SLO — cost-benefit at scale." },
+        { "letter": "D", "text": "Datadog SLO, New Relic SLO, Honeycomb SLO: SLO features built-in a APM platforms. Tightly coupled con their data. Convenient si ya en those platforms, less portable si migras.", "correct": true, "why": "Correcto. Native APM SLO features are increasingly full-featured. Datadog SLO widely used. Trade-off vendor lock-in vs convenience." },
+        { "letter": "E", "text": "Todos son idénticos.", "correct": false, "why": "Falso. Different arquitectura, pricing, features, learning curve." }
+      ],
+      "explanation": "Selection criteria: (1) existing observability stack — Grafana → Grafana SLO natural; Datadog → Datadog SLO; multi-source → Nobl9. (2) team skill — skilled SRE team can build custom; less skilled prefer managed. (3) SLO count — 5-10 SLOs manual OK; 100+ needs tool. (4) reporting needs — Nobl9 strong on executive reporting; custom requires build. (5) budget — custom cheapest (except SRE time); SaaS scale with SLO count. Best practice regardless: start with 3-5 critical SLOs, expand gradually. Anti-pattern: 100 SLOs en month 1 (impossible to maintain, no team can respond to all burn alerts).",
+      "realWorld": "Nobl9 empresa specialist SLO, cerca de $100M raised. Grafana SLO shipped 2023 competing. Datadog SLO adopted heavily. Empresas grandes typically build custom con sloth-like tools. Google, Netflix have internal SLO platforms.",
+      "tags": ["SLO tools", "Nobl9", "Grafana SLO", "Sloth"],
+      "tech": ["Nobl9", "Grafana SLO", "Sloth"],
+      "references": [{ "title": "nobl9.com" }, { "title": "github.com/slok/sloth" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "reliability",
+      "topic": "SLO for batch jobs",
+      "difficulty": "senior",
+      "scenario": "Team tiene batch job nightly ETL. Corre a las 2AM, tarda ~2h, procesa 100M records. ¿Cómo definir SLO para batch job (no request-based)?",
+      "question": "¿Cómo se aplican SLOs a batch jobs / async workflows?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Batch SLIs distintos de request-based. Ejemplos: (1) FRESHNESS — 'data está actualizada dentro de N hours de source'. SLO: 'freshness < 4h during 30 days'. (2) CORRECTNESS — 'processed records match expected count within tolerance'. SLO: '99.9% jobs complete with 0 correctness violations'. (3) COMPLETENESS — 'todos los expected inputs processed'. SLO: 'no missing partitions'. (4) TIMELINESS — 'job completes by SLO deadline'. SLO: '99% jobs complete by 6AM'. Cada SLI mide aspecto distinto de batch health. Error budget aplicable: violaciones consumen budget. Multi-SLI approach para batch pipelines críticos. Herramientas: Airflow SLA feature, Prometheus custom metrics from Airflow/dbt.", "correct": true, "why": "Correcto. Batch jobs necesitan SLIs distintos que request-based services. Freshness, correctness, timeliness son las dimensiones. Google SRE Workbook Ch. 4 cubre 'Non-user-facing SLOs'. Data pipelines especialmente critical — data downstream depende." },
+        { "letter": "B", "text": "Batch jobs no pueden tener SLOs.", "correct": false, "why": "Falso. SLO concept generalizable a cualquier service — request-based es un tipo, batch es otro." },
+        { "letter": "C", "text": "Usar availability SLO (job running vs not).", "correct": false, "why": "Simplistic. Un batch job puede 'run' pero produce corrupt output — SLO passed pero users affected." },
+        { "letter": "D", "text": "Batch jobs siempre 100% correctness (o inaceptable).", "correct": false, "why": "Perfectionist trap. 100% impossible — hardware failures, data source issues. Definir tolerance realista." }
+      ],
+      "explanation": "Batch SLIs implementation: (1) Freshness — timestamp of latest processed record vs current time; (2) Correctness — checksum, row count, business rule validation; (3) Timeliness — job start/end times; (4) Completeness — expected partitions vs delivered. Instrumentation: batch jobs emit metrics on completion (via PushGateway o cronjob monitor tool). Airflow SLA: dags with SLA get alerts if not complete by deadline. dbt tests emit metrics. Considerations: (1) some batches critical (financial reports, ML training data) — strict SLOs; (2) others best-effort — loose SLOs. Business impact drives SLO tier. Data mesh: SLOs propagate — 'my source has SLO X, my derived data can be at most Y'.",
+      "realWorld": "Google, Netflix have SLOs on data pipelines. Modern data stack (Fivetran, dbt, Airflow) increasingly include SLI/SLO features. Data reliability engineering emerging as specialty. Incidents from stale data (dashboard shows yesterday's numbers) are business-impacting.",
+      "tags": ["batch SLOs", "freshness", "correctness", "data reliability"],
+      "tech": ["Airflow", "dbt"],
+      "references": [{ "title": "Google SRE Workbook Ch. 4" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "reliability",
+      "topic": "Choosing SLO targets",
+      "difficulty": "mid",
+      "scenario": "Team define SLO. Debate: 99%, 99.9%, 99.99%, 99.999%. Product manager quiere 99.999% ('users deserve best'). SRE says 'we cannot afford that'.",
+      "question": "¿Cómo se elige un SLO target realistically?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Elección basada en: (1) CURRENT PERFORMANCE — mide actual reliability con SLI. Setting SLO 99.99% cuando actual es 99.5% = impossible. Setting 99% cuando actual 99.99% = trivial (no drives improvement). Choose target LIGERAMENTE por encima del current sustainable performance. (2) USER TOLERANCE — qué downtime users notice/tolerate? Depende del service (payment critical, background job less). (3) COST — cada 9 adicional ~10x cost (99.9 → 99.99 requires HA infrastructure, redundant regions, faster failover). Business analysis: cost vs revenue impact of unreliability. (4) SLA REQUIREMENTS — SLO más strict que SLA (buffer). (5) COMPETITIVE — enterprise customers demand 99.9%+. Startup MVP puede live con 99%. Iterate: start conservative, tighten as improve.", "correct": true, "why": "Correcto. Common mistakes: (1) aspirational SLO impossible (destroys team morale) o (2) trivially achieved SLO (no drives improvement). Goldilocks: challenging but achievable con investment. Cada 9 adicional es major investment — plan accordingly." },
+        { "letter": "B", "text": "Siempre 100% availability.", "correct": false, "why": "Impossible mathematically (hardware fails). Even 5-nines es 5 min/year downtime — extreme cost." },
+        { "letter": "C", "text": "Copiar de competitor.", "correct": false, "why": "Context differs. Their SLO may not fit tu business/architecture. Base en your data + user needs." },
+        { "letter": "D", "text": "Product manager decide unilaterally.", "correct": false, "why": "SLO decision joint entre product, engineering, SRE. Product knows user tolerance; SRE knows engineering cost; both required." }
+      ],
+      "explanation": "SLO target cost/benefit: (1) 99% = 7.2h/mo downtime — cheap SLO, simple ops; (2) 99.9% = 43.2min/mo — 'reasonable' — requires monitoring, careful deploys; (3) 99.99% = 4.3min/mo — HA architecture, multi-region failover, automated recovery; (4) 99.999% = 26s/mo — extreme investment, redundancy layers deep; (5) 99.9999% = 2.6s/mo — Google/AWS-scale investment. Rule of thumb: cada 9 additional ~10x cost. Business analysis: revenue lost during downtime × probability of downtime vs infrastructure investment. Streaming (Netflix) high SLO. Internal admin tool low SLO. Payment critical high. Match SLO to business impact.",
+      "realWorld": "Google Search claims ~99.999%. Netflix ~99.99%. Small SaaS commonly 99.9%. Empresas over-promise SLO (99.99% aspirational) y sistemáticamente miss it — culture problem. Better: honest 99.5% consistently met.",
+      "tags": ["SLO target", "reliability cost", "business alignment"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book Ch. 3 — Embracing Risk" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "reliability",
+      "topic": "Error budget policies",
+      "difficulty": "senior",
+      "scenario": "SLO defined, error budget calculated. Now what? Team pregunta '¿qué hacer cuando budget consumed?'.",
+      "question": "¿Qué es una error budget policy y qué componentes tiene?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Error budget policy: documento que define ACCIONES automáticas cuando error budget se aproxima/consume. Componentes: (1) Alert thresholds — burn rate alert triggers; (2) Feature freeze — cuando budget < X%, no nuevas features hasta reliability recovered; (3) Prioritization shift — SRE hours shift 50%→100% reliability work; (4) Escalation — inform stakeholders al exceed thresholds; (5) Post-mortem requirement — after budget breach, mandatory blameless PM; (6) Weekly review of budget status.", "correct": true, "why": "Correcto. Policy es 'contract' entre teams. Without documented policy, when budget consumed, product pushes back ('but this feature is critical'), no discipline. Policy pre-agreed removes politics from moment-of-crisis." },
+        { "letter": "B", "text": "Automated actions: if budget < threshold, block deploys via CI/CD gate. Feature flag automation: when budget critical, auto-disable non-essential features. Requires infrastructure investment pero enforces policy machinelly.", "correct": true, "why": "Correcto. Automation enforces policy sin negotiation each time. Deploy gates check budget status. Emerging pattern con SLO tools." },
+        { "letter": "C", "text": "Team-level ownership: each service team owns their SLO + budget. Central SRE team advises + tools, doesn't police. Empowerment matters.", "correct": true, "why": "Correcto. Ownership at service team level. Central SRE = enabler, not enforcer. Google SRE model." },
+        { "letter": "D", "text": "Escalation path clear: if team not honoring policy (shipping features durante freeze), escalate to VP Engineering. Policy sin enforcement es toothless.", "correct": true, "why": "Correcto. Cultural + organizational. Executive buy-in essential. Policy that no one follows es worse than no policy (creates cynicism)." },
+        { "letter": "E", "text": "Policy es opcional — SLOs suficientes.", "correct": false, "why": "Falso. SLO sin policy es solo un metric. Policy convierte SLO en actionable framework." }
+      ],
+      "explanation": "Policy template (from SRE Book): (1) SLO definition (SLI, target, window); (2) Consequences: budget 20-100% healthy operations; 10-20% careful; 0-10% freeze non-essential; 0% freeze all + reliability sprint; (3) Escalation: internal comms; if repeated, exec review; (4) Actions: dedicated SRE support, on-call debug time, tech debt investment; (5) Review cadence: weekly ops review, monthly SLO retro; (6) Exceptions: emergency features may override with VP+CTO signoff (documented). Culture support: teams accept freeze without political battles. Executive backing critical.",
+      "realWorld": "Google SRE publishes policy examples. Slack, Netflix have public policies. Empresas struggle a implementar because product pressure — success requires exec support. Nobl9 tiene 'projects' con policies attached automating.",
+      "tags": ["error budget policy", "feature freeze", "governance"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book Ch. 3 — Error Budget Policy" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "reliability",
+      "topic": "Multi-tier SLOs",
+      "difficulty": "mid",
+      "scenario": "Servicios varían en criticality: payment (critical), analytics dashboard (medium), documentation site (low). Same SLO 99.9% para todos = mala idea.",
+      "question": "¿Cómo se estructuran SLOs para services de distinto tier?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multi-tier SLOs: define service tiers y assign SLO por tier. Ejemplo: (1) Tier 0 (mission-critical: auth, payment) — SLO 99.99% availability, p95 <200ms; strict error budget policy; page immediate on burn; (2) Tier 1 (customer-facing important) — 99.9%, p95 <500ms; standard policy; (3) Tier 2 (internal tooling, analytics) — 99% or 99.5%; loose policy; (4) Tier 3 (batch, background) — freshness/correctness-based SLOs. Each tier: different alerting sensitivity, on-call rotation urgency, engineering investment. Justificación: cost-benefit por service. Investment 99.99% en documentation site = waste; 99% en payment = business risk.", "correct": true, "why": "Correcto. Tiers align investment con business impact. Google, Netflix, big empresas hacen. Ejemplo Google: 'search' vs 'internal wiki' — obviamente distintos SLOs. Empresas sin tiers hacen uno de: (a) invest too much everywhere; (b) treat everything low-tier (payment down = disaster)." },
+        { "letter": "B", "text": "Un SLO para toda la empresa.", "correct": false, "why": "Falso. Simplistic. Como pagar 5-nines infra para documentation site." },
+        { "letter": "C", "text": "Cada team define su tier sin coordination.", "correct": false, "why": "Sin standard, chaos. Central definition de tier levels; teams categorize their services." },
+        { "letter": "D", "text": "SLOs solo para production services.", "correct": false, "why": "Staging SLOs útiles too (catch regressions before prod). Data pipelines internal necesitan SLOs también." }
+      ],
+      "explanation": "Tier definition process: (1) categorize services (T0-T3); (2) define SLI/SLO template por tier; (3) service teams adopt template con customization; (4) review annually. Attributes por tier: (a) SLO strictness; (b) monitoring depth (T0 gets exemplars + tracing + profiling; T3 basic metrics); (c) on-call sensitivity (T0 pages 24/7, T3 pages business hours); (d) engineering investment (T0 gets SRE support, T3 team-owned only); (e) chaos engineering (T0 game days). Anti-pattern: everything T0 → SRE overwhelmed; nothing T0 → real incidents missed.",
+      "realWorld": "Google 'Critical User Journeys' (CUJs) — measure SLOs on business flows, not just services. Netflix 'Vizceral' visualized service tiers. Empresas maduras have this documented; new empresas gradually mature.",
+      "tags": ["service tiers", "criticality", "SLO strategy"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Workbook Ch. 2" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "reliability",
+      "topic": "Prometheus recording rules for SLO",
+      "difficulty": "senior",
+      "scenario": "SLO 99.9% availability. Necesitas implement en Prometheus con recording rules + alerting rules.",
+      "question": "¿Cómo se implementa SLO tracking en Prometheus?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Recording rules layer: (1) job:sli_availability:ratio5m = sum(rate(http_requests_total{status_code=~'2..|3..'}[5m])) / sum(rate(http_requests_total[5m])) — SLI ratio per 5m; (2) similar rules para 1h, 6h, 24h, 3d, 30d windows; (3) burn rate rule: burn_rate = (1 - sli_ratio) / (1 - slo_target). Alerting rules: (a) fast burn: burn_rate_1h > 14.4 AND burn_rate_5m > 14.4 → page critical; (b) slow burn: burn_rate_6h > 6 AND burn_rate_30m > 6 → page; (c) very slow: burn_rate_24h > 1 AND burn_rate_2h > 1 → ticket. Alertmanager routes por severity. Grafana dashboard queries recording rules directly — fast. Sloth (github.com/slok/sloth) genera all these from single YAML config — recommended reduce boilerplate.", "correct": true, "why": "Correcto. Recording rules pre-computan SLI ratios y burn rates, essential para performance de alerting + dashboards. Sloth es OSS tool que genera rules following SRE Workbook table. Sin sloth, escribes ~20 rules por SLO manually." },
+        { "letter": "B", "text": "Alerting rules directas sin recording rules.", "correct": false, "why": "Slower (each alert eval recomputes), inconsistent across alert instances. Recording rules estandarizan." },
+        { "letter": "C", "text": "Manual dashboards con queries ad-hoc.", "correct": false, "why": "Slow, inconsistent, hard maintain. Recording rules mejor foundation." },
+        { "letter": "D", "text": "Requires Prometheus Enterprise.", "correct": false, "why": "Falso. OSS Prometheus con recording rules + alerting rules cubren SLO tracking." }
+      ],
+      "explanation": "Sloth YAML example: version: 'prometheus/v1', service: 'api', slos: [{name: 'availability', objective: 99.9, sli: {events: {error_query: 'sum(rate(http_requests_total{status_code=~\"5..\"}[{{.window}}]))', total_query: 'sum(rate(http_requests_total[{{.window}}]))'}}, alerting: {name: 'HighError', page_alert: {labels: {severity: 'page'}}, ticket_alert: {labels: {severity: 'ticket'}}}}]. Sloth generates: recording rules for multiple windows, burn rate calculations, multi-window multi-burn-rate alerts, ready to load into Prometheus. Alternative: Grafana SLO managed UI. Manual: escribir rules following SRE Workbook table. Considerations: (a) event count vs ratio SLIs — ratio siempre; (b) window definition matters — must cover all burn rate windows.",
+      "realWorld": "Sloth widely adopted en OSS Prometheus users. Grafana Labs internal uses similar patterns. GitLab published their SLO monitoring stack.",
+      "tags": ["Prometheus", "recording rules", "Sloth", "burn rate"],
+      "tech": ["Prometheus", "Sloth"],
+      "references": [{ "title": "github.com/slok/sloth" }, { "title": "sre.google — Alerting on SLOs" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "reliability",
+      "topic": "SLO windows",
+      "difficulty": "mid",
+      "scenario": "Team debate SLO window: '30 days rolling? Monthly calendar? 7 days? 90 days?'.",
+      "question": "¿Qué SLO window elegir y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Windows típicas: (1) 28-30 days ROLLING — most common. Rationale: matches business cycle (monthly), rolling (no artificial reset on Jan 1). Enough data for statistical significance. (2) 7 days — para services rapidly evolving (post-launch), tighter feedback. (3) 90 days — para services muy estables, long trends. Rolling vs calendar: rolling preferred (no reset gaming — 'we broke Dec 31 but Jan 1 fresh budget'). Trade-offs: shorter window = more sensitive to spikes, faster reset; longer = more stable, slower recovery from breach. Google recommends 28d rolling as default. Some tools default 30 días.", "correct": true, "why": "Correcto. 28-30 days rolling es industry standard. Rolling elimina calendar reset gaming. Longer windows más forgiving but pierdes signal about recent trends. Empresas maduras use 28d." },
+        { "letter": "B", "text": "SLO window doesn't matter.", "correct": false, "why": "Matters much. Determines budget size, sensitivity, statistical significance." },
+        { "letter": "C", "text": "Calendar-based (Jan 1 - Jan 31).", "correct": false, "why": "Gaming risk — break at end of month reset next. Rolling prevents." },
+        { "letter": "D", "text": "1 day windows.", "correct": false, "why": "Too short. Any incident consumes budget immediately — no signal. Not enough data para statistical significance." }
+      ],
+      "explanation": "Window impacts: (1) budget size (SLO 99.9% × window = allowed downtime — 30d → 43.2min, 7d → 10.1min); (2) statistical stability (longer = smoother trends); (3) recovery speed (post-incident, longer window = slower budget recovery). Match window to: (a) business cycle (monthly common); (b) service maturity (new services shorter); (c) type of SLO (freshness may need shorter). Advanced: multiple windows simultáneas — a service can have 28d SLO + 7d 'recent trend' SLO. Windows for burn rate alerts distinct from SLO measurement window — burn rate alerts on 1h, 6h etc; SLO window is 28d for overall report.",
+      "realWorld": "Google 28d default. Datadog SLO default 30d. Nobl9 configurable. Grafana SLO default 30d. Startups tend to prefer 7d (faster iteration). Enterprise 30d o 90d (more stable reporting).",
+      "tags": ["SLO window", "rolling", "measurement"],
+      "tech": [],
+      "references": [{ "title": "sre.google — SLO Implementation" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "reliability",
+      "topic": "SLI: correctness",
+      "difficulty": "mid",
+      "scenario": "Team currently mide availability + latency. But an incident: service responded 200s successfully but con incorrect data (bug returned stale data). Availability + latency both 100% during — but users affected.",
+      "question": "¿Qué es correctness SLI y cómo se instrumenta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Correctness SLI: measures whether response DATA is correct, not just successful. Ejemplos: (1) checksums — data integrity verification; (2) business logic assertion — 'total = sum of items'; (3) contract testing — response schema valid; (4) shadow requests — compare with alternative implementation; (5) sampling verification — spot-check subset of responses. SLO: 'correctness > 99.9%'. Instrumentation harder than availability — requires knowing what CORRECT means (business logic embedded). Sometimes derived from downstream reports (customer support tickets, chargebacks). Best for: financial services, ML predictions, data services. Complementa availability/latency — service can be available AND fast AND wrong.", "correct": true, "why": "Correcto. Correctness es underappreciated SLI. Muchos incidents (data corruption bugs, stale caches, ML model drift) no move availability metric pero destroy user experience. Modern SLO thinking includes correctness dimension." },
+        { "letter": "B", "text": "Availability + latency siempre son suficientes.", "correct": false, "why": "Falso. Scenario shown: service available + fast + wrong. Only correctness catches this." },
+        { "letter": "C", "text": "Correctness es imposible to measure automatically.", "correct": false, "why": "Falso. Techniques exist (checksums, contract validation, shadow requests). Requires investment but doable." },
+        { "letter": "D", "text": "Solo relevante para ML services.", "correct": false, "why": "ML services especially — model drift, data quality — but relevant a todo service donde 'correct' matters." }
+      ],
+      "explanation": "Correctness implementations: (1) Schema validation — response conforms to schema (Protobuf, JSON schema, GraphQL) — automated en gateway; (2) Business rule assertion — invariants embedded ('order.total == sum(order.items.price)') validated in test or shadow; (3) Comparison SLI — for critical services, run alternative implementation in shadow, alert on divergence; (4) User feedback loops — support tickets categorized, some incidents identified via customer reports; (5) Data quality tools — Great Expectations, Soda Core validate data pipelines. ML-specific: model performance metrics (accuracy, precision, recall), data drift detection (distribution changes). Emerging area — 'data reliability engineering'.",
+      "realWorld": "Netflix escribe sobre 'shadow requests' para verifying migrations. Google publishes on correctness for ranking systems. Banks with financial reconciliation SLOs. Fintech critical.",
+      "tags": ["correctness", "data quality", "SLI"],
+      "tech": ["Great Expectations", "Soda Core"],
+      "references": [{ "title": "Google SRE Workbook Ch. 4" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "reliability",
+      "topic": "SLO reporting y stakeholder communication",
+      "difficulty": "staff",
+      "scenario": "CTO quiere ver 'reliability status' monthly. Team lead pregunta '¿cómo reportar SLOs y error budget to leadership de way that drives decisions?'.",
+      "question": "¿Cómo se hace reporting efectivo de SLOs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SLO reporting monthly con: (1) SLO status per service — met / near breach / breach, with 28-day % actual vs target; (2) error budget consumption chart — trend over time, current remaining; (3) burn rate incidents durante period — post-mortem summaries; (4) reliability investment — engineering hours spent on tech debt / SLO recovery; (5) leading indicators — SLI trends showing improving/degrading; (6) actions items — freezes triggered, deferred features, planned investments. Formato: 1-page executive summary + detailed dashboards. Audience: executives care about impact + strategy, not technical detail. Regular cadence (monthly for ops review, quarterly for strategy). Leadership decisions: hiring SREs, prioritizing tech debt, adjusting SLO targets based on evidence.", "correct": true, "why": "Correcto. SLO reporting closes loop between technical metrics y business decisions. Sin reporting, SLOs son technical curiosity. Con reporting, they drive investment prioritization. Executives buy-in requires seeing impact clearly." },
+        { "letter": "B", "text": "Solo dashboards técnicos.", "correct": false, "why": "Executives no read Prometheus dashboards. Necesitan business-oriented summaries." },
+        { "letter": "C", "text": "Reporting no es necesario — automation handles todo.", "correct": false, "why": "Falso. Human decisions (investment, hiring, strategy) require summarized reporting." },
+        { "letter": "D", "text": "Solo cuando budget breached.", "correct": false, "why": "Regular cadence essential. Trends visible only con periodic reporting. Waiting until breach = reactive." }
+      ],
+      "explanation": "Report content: (1) Status snapshot table — service | SLO | current | target | status (green/yellow/red); (2) Error budget consumption charts; (3) Incidents summary with root causes categorized; (4) Investment breakdown — reliability hours vs feature hours; (5) Trending analysis; (6) Recommendations — 'invest in X area', 'consider SLO adjustment'. Cadence: weekly ops review (SRE team), monthly ops review (extended stakeholders), quarterly business review (executives). Tools: Nobl9 has executive reporting features; Grafana SLO dashboards; manual PDF generation. Metrics for reliability program itself: SLO coverage (% of services with SLOs), maturity level, cost of unreliability estimate.",
+      "realWorld": "Google internal SRE quarterly reviews. Netflix service reviews. Empresas maduras report SLOs as first-class business metric. Startups struggle to invest in reporting — often manual initially.",
+      "tags": ["reporting", "stakeholder communication", "governance"],
+      "tech": ["Nobl9", "Grafana SLO"],
+      "references": [{ "title": "Google SRE Workbook Ch. 5" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "reliability",
+      "topic": "SLO for dependencies",
+      "difficulty": "senior",
+      "scenario": "Service A depends on Service B (internal) and third-party API (external). If B/external is down, A can't meet SLO. Team frustrated: 'not our fault'.",
+      "question": "¿Cómo se manejan SLOs cuando depende de dependencies?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Multiple approaches: (1) Cascade SLOs — your SLO must be LESS strict than dependencies (if B is 99.9%, your service can't sustainably be 99.99% because you inherit B's failures). Math: multiplicative — 99.9% × 99.9% = 99.8%. (2) Dependency error budget — carveout in your SLO for dependency-caused issues (documented, agreed). (3) Circuit breaker + graceful degradation — when dependency down, degrade gracefully (cached data, fallback), maintain your SLO. (4) Hedged requests — send to multiple providers, take first response. (5) Owning your resiliency — 'their outage isn't our excuse — we should design for it'. This last is SRE mindset — you own user experience end-to-end, even if dependency fails. Contract with providers: their SLA less strict than yours = you need mitigation.", "correct": true, "why": "Correcto. Dependencies are reality de distributed systems. Ownership model: 'your SLO your responsibility' — even if dependency fails, you must design mitigations. Circuit breaker, retry, fallback, cache — all defensive design. Google SRE Book Ch. 22 on 'addressing cascading failures'." },
+        { "letter": "B", "text": "Exclude dependency failures from SLO.", "correct": false, "why": "Feels fair but user experience impacted regardless of blame. SLO should reflect user reality." },
+        { "letter": "C", "text": "SLO impossible with dependencies.", "correct": false, "why": "Everyone has dependencies. SLOs still meaningful with proper design (fallbacks, degradation)." },
+        { "letter": "D", "text": "Escalate to third-party CEO.", "correct": false, "why": "Political, no operational value. Focus on engineering mitigations." }
+      ],
+      "explanation": "Dependency management: (1) Map dependencies + their SLOs (formal si internal, published SLA si external); (2) Compute achievable SLO given dependencies (math: 1 - product(1-SLO_i)); (3) Design mitigations — circuit breakers (Hystrix), retries with backoff, timeout, fallback data, graceful degradation; (4) Multiple providers para critical externals; (5) Own the user experience — 'checkout still works with degraded recommendations if recommendation service down'. Tools: service mesh (Istio, Linkerd) provides circuit breaker, retry, timeout defaults. Envoy proxy config. Application code libraries (resilience4j Java, polly .NET). Testing: chaos engineering — kill dependency in staging, verify mitigation works.",
+      "realWorld": "Netflix Hystrix (open-sourced circuit breaker library) foundational. Amazon 'graceful degradation' pattern. Google SRE Book detail. Anti-pattern common: teams point-finger during dependency incidents, no one owns mitigation.",
+      "tags": ["dependencies", "cascading failures", "circuit breaker", "graceful degradation"],
+      "tech": ["Hystrix", "Envoy", "Istio"],
+      "references": [{ "title": "Google SRE Book Ch. 22" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "reliability",
+      "topic": "Alerting fatigue y SLO alerts",
+      "difficulty": "senior",
+      "scenario": "Team implementó SLO burn rate alerts. On-call receives 20 alerts/day. Fatigue setting in. 'Was implementing SLO alerts worth it?'.",
+      "question": "¿Cómo evitar alert fatigue en SLO-based alerting?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Alert fatigue solutions: (1) MULTI-WINDOW MULTI-BURN-RATE eliminates false positives from spike + late detection — publiciado Google SRE Workbook Ch. 5. (2) Severity routing: fast burn → page critical (rare, actionable); slow burn → ticket para business hours (frequent). (3) Grouping: multiple SLO alerts from same root cause → single group notification. (4) Alertmanager silences durante planned maintenance. (5) Runbook per alert — clear action steps reduce cognitive load. (6) Regular review: monthly de alerts fired, was action needed? If no, tune. (7) Alert ownership: assigned per SLO; team owns tuning. Anti-pattern: adding more alerts sin considering fatigue → team ignores all.", "correct": true, "why": "Correcto. Alert fatigue destroys effectiveness. Multi-window burn rate is technically superior to simple thresholds precisely because it reduces false positives. Routing por severity ensures only actionable alerts page — long tail goes to ticket queue. Continuous tuning necessary." },
+        { "letter": "B", "text": "Turn off alerts.", "correct": false, "why": "Extremo. Con no alerts, no know incidents. Balance necessary." },
+        { "letter": "C", "text": "Add more alerts para safety.", "correct": false, "why": "Anti-patrón. Más alerts → more fatigue → less response. Fewer, higher-quality alerts better." },
+        { "letter": "D", "text": "Only page executives.", "correct": false, "why": "Poor escalation. On-call engineers respond faster than execs. Fix the alert quality." }
+      ],
+      "explanation": "Alert quality principles: (1) actionable — every page must have clear action. If nothing to do, don't page; (2) rare — quality > quantity. Fewer alerts = higher signal; (3) contextual — links to dashboards, runbook, related traces/logs; (4) severity-appropriate — critical pages 24/7, warning tickets business hours, info in digest. Continuous improvement process: (a) weekly review of pages: was it actionable? if no, tune down; (b) monthly analysis of ticket alerts (are they useful?); (c) quarterly SLO review: are we alerting on right things? SLO burn rate + inhibition + grouping + smart routing = actionable observability.",
+      "realWorld": "Charity Majors escribe on alert fatigue en Honeycomb blog. Google SRE Book Ch. 30 'Communication and Collaboration in SRE'. PagerDuty analytics show alert fatigue reduces MTTR (paradoxically) as team ignores signals.",
+      "tags": ["alert fatigue", "on-call", "actionable alerts"],
+      "tech": ["Alertmanager", "PagerDuty"],
+      "references": [{ "title": "Google SRE Book Ch. 4" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "reliability",
+      "topic": "SLO iteration y adjustment",
+      "difficulty": "senior",
+      "scenario": "SLO 99.9% definido hace 1 año. Ahora consistently exceeded (99.99% actual). Product wants tighten to 99.99%. SRE says 'wait — actual performance may not sustain, and 99.99% requires major investment'.",
+      "question": "¿Cuándo y cómo se ajusta un SLO?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SLO adjustment criteria: (1) STOP UP (tighten): if consistently exceeded for 6+ months, actual performance sustainable, business value in tighter SLO. Verify: peak times still meet, not just averages. Consider cost of tighter target. (2) LOOSEN: if SLO impossible to meet consistently despite investment. Rare — usually invest before loosening. Signals: burnout, tech debt piling. (3) Change SLI: current SLI not measuring what matters (user complaints not correlating with SLI trends). Process: (a) quarterly SLO review; (b) data-driven proposal; (c) discuss with product, engineering, business; (d) formal change management (agreement, doc updated, alerts updated, communication); (e) monitor after change para regression. Anti-pattern: reactive tightening ('we exceeded once, tighten now') — not sustainable.", "correct": true, "why": "Correcto. SLO adjustment es part of maturity. Both directions valid based on evidence. Formal process prevents bikeshedding. Data-driven. Cost consideration important — tighter SLO = more investment required." },
+        { "letter": "B", "text": "Never change SLO.", "correct": false, "why": "SLO should reflect current business + technical realities. Static SLO becomes stale, misleading." },
+        { "letter": "C", "text": "Change frequently (monthly).", "correct": false, "why": "Too frequent = no stability, no meaningful trend. Quarterly review is common cadence." },
+        { "letter": "D", "text": "Product manager can change unilaterally.", "correct": false, "why": "Joint decision — engineering knows investment cost, product knows user needs. Requires agreement." }
+      ],
+      "explanation": "Adjustment process detailed: (1) evidence gathering — 6-month data, trend analysis; (2) proposal document — current SLO, proposed, rationale, cost/benefit, risks; (3) stakeholder review — product, engineering, SRE, sometimes business/finance; (4) decision — agreement documented; (5) implementation — SLO tools updated, alerts adjusted, dashboards updated; (6) monitoring — post-change trend to detect regression; (7) communication — teams affected informed. Tools support: Nobl9 has SLO versioning + audit trail. Grafana SLO configuration in code (GitOps). Learn from Google: SLOs are living documents, iterate. Common trigger for review: quarterly business review, post-incident.",
+      "realWorld": "Google adjusts SLOs regularly. Netflix, Slack similar. Empresas resist changes because 'we agreed to 99.9%' — but reality evolves. Data-driven adjustment is mature practice.",
+      "tags": ["SLO iteration", "governance", "adjustment"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Workbook Ch. 5" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "reliability",
+      "topic": "Common SLO pitfalls",
+      "difficulty": "staff",
+      "scenario": "Team implementó SLOs hace 6 meses. Retrospectiva: things not going as expected.",
+      "question": "¿Cuáles son common pitfalls en SLO implementation?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Vanity SLOs: definir SLOs que ALWAYS meet (99% when actual 99.99%) — no drives improvement, false confidence. Fix: challenging targets slightly beyond current sustainable.", "correct": true, "why": "Correcto. Vanity SLO = decorativo. No trigger burn alerts, no drive investment, no meaningful signal. Common mistake to look good on reports." },
+        { "letter": "B", "text": "Too many SLOs: 50 SLOs across services = team overwhelmed, no discipline. Fix: start with 3-5 critical services, mature process, expand gradually.", "correct": true, "why": "Correcto. Sistema complex sin operacional capacity. Mejor 5 SLOs deep than 50 shallow." },
+        { "letter": "C", "text": "SLO without policy: metric exists but no consequences when breached. Feature freeze not enforced. Team ignores. Fix: policy documented, exec-supported, enforced consistently.", "correct": true, "why": "Correcto. SLO sin policy es sólo métrica. Policy convierte en actionable framework. Requires cultural buy-in." },
+        { "letter": "D", "text": "SLI mismatched to user experience: SLI measures /healthz endpoint 200 OK but users experience errors on /api/users — SLI 100% but users unhappy. Fix: choose SLI based on user journeys, not technical convenience.", "correct": true, "why": "Correcto. Bad SLI = false signal. Must reflect what users actually experience. 'Health check up' vs 'requests succeed' — distinct." },
+        { "letter": "E", "text": "SLOs completamente automatizados sin human review.", "correct": false, "why": "Automation doesn't remove need for governance. Review, adjustment, policy discussion are human decisions." }
+      ],
+      "explanation": "Additional pitfalls: (1) copying other companies' SLOs without context; (2) ignoring dependencies (SLO impossible given dependencies); (3) no data before defining SLO (guess); (4) org silo (SRE defines SLO without product/engineering); (5) SLO tools without policy (buying Nobl9 doesn't solve without governance); (6) burn rate alerts too sensitive (fatigue) or too lax (miss incidents); (7) no cadence for review; (8) leadership doesn't understand → doesn't support freeze policy. Mitigations: education, gradual rollout, executive support, quarterly retros. Signs of success: teams discuss error budget in standups, product delays for freeze willingly, SLO reports drive investment decisions.",
+      "realWorld": "Charity Majors, Cindy Sridharan escribe about SLO adoption pitfalls. Google SRE Book acknowledges: even Google took years to mature SLO practice. Nobl9 blog series on 'SLO anti-patterns'. Startups skip SLOs until incident; enterprises struggle with governance.",
+      "tags": ["pitfalls", "anti-patterns", "SLO maturity"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Workbook Ch. 2" }, { "title": "Nobl9 blog — SLO anti-patterns" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "reliability",
+      "topic": "SLO en microservices grande",
+      "difficulty": "staff",
+      "scenario": "Empresa con 500 microservices. Cada team define SLO. Inconsistency: same SLI name means different things across teams. Rollup reporting broken.",
+      "question": "¿Cómo se gobierna SLOs a escala organizational?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Governance a escala requires: (1) STANDARDS centralized — templates de SLI/SLO per service type (API, batch, ML model). Consistent naming, calculation methods. (2) PLATFORM approach — central SRE team provides SLO tooling, guidance; service teams own their SLOs within framework. (3) TIER-BASED templates — mission-critical services fixed SLO 99.99%; standard 99.9%; internal 99%. Reduces one-off decisions. (4) REVIEW cadence — new SLO proposed, reviewed by SRE guild; existing quarterly review. (5) TOOLING enforcement — SLO tool (Nobl9, Grafana SLO) enforces schema; can't create malformed. (6) TRAINING — devs learn SLO concepts via workshops. (7) EXECUTIVE reporting — rollup views per business unit, dependency-aware. Anti-patterns: fully decentralized (chaos), fully centralized (bottleneck). Sweet spot: guardrails + team autonomy.", "correct": true, "why": "Correcto. Scale requires standards + platform + governance. Google, Netflix have documented approaches. Sin governance, 500 SLOs = 500 different definitions = executive reporting nightmare + inconsistent alerting sensitivity. Central platform team enables service teams." },
+        { "letter": "B", "text": "Cada team totalmente autónomo.", "correct": false, "why": "Chaos at scale. No consistency, no rollup, no shared learning." },
+        { "letter": "C", "text": "Central team defines all SLOs.", "correct": false, "why": "Bottleneck + doesn't scale. Service teams best know their services." },
+        { "letter": "D", "text": "SLOs son overhead innecesario a scale.", "correct": false, "why": "At scale even more important — cannot manually monitor 500 services without formal SLOs. Governance essential." }
+      ],
+      "explanation": "Governance model detail: (1) Platform team (central SRE) — provides tooling, standards, training, consultation; (2) Service team — owns their SLOs, on-call, incident response; (3) Governance body (SRE guild or committee) — reviews new SLOs quarterly, approves changes to standards. Tooling: templates in Sloth/Nobl9/Grafana; CI/CD gates enforce standards; centralized dashboards for exec view. Federation model: business unit SREs support their orgs, central defines cross-cutting. Communication: monthly SLO reports rolled up per BU. Success metrics: SLO coverage %, consistency %, breach response time, cross-team learning (post-mortems shared).",
+      "realWorld": "Google, Netflix have thousands of SLOs governed. Amazon 'Two-pizza teams' own their SLOs within org standards. Enterprise adoption: Bloomberg, Booking.com published journeys. Gap between having SLO tools y using them well is significant.",
+      "tags": ["governance", "scale", "microservices", "platform team"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Workbook Ch. 6" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "reliability",
+      "topic": "SLO maturity model",
+      "difficulty": "staff",
+      "scenario": "CTO: 'Rate our SLO maturity. Where are we? Where should we be?'.",
+      "question": "¿Cuál es un maturity model de SLOs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Level 0 — None: no formal SLOs. Ad-hoc uptime tracking. Incidents drive reactive discussion.", "correct": true, "why": "Correcto. Common starting point. No formal reliability measurement." },
+        { "letter": "B", "text": "Level 1 — Basic: SLOs defined for top 3-5 services. Availability + latency SLIs. Manual tracking. Alerts based on burn rate. Error budget conceptualized but not enforced.", "correct": true, "why": "Correcto. Entry level. Team learning process. Focus on critical services. Getting alerting to work well. Cultural adoption starting." },
+        { "letter": "C", "text": "Level 2 — Operationalized: SLOs on all customer-facing services. Multi-window burn rate alerts standard. Error budget policy documented + enforced. Weekly ops review. Recording rules automated. Tools like Sloth adopted.", "correct": true, "why": "Correcto. Operational maturity. Tools + process consistent. Enforcement of freeze policies. Investment prioritization data-driven." },
+        { "letter": "D", "text": "Level 3 — Strategic: SLOs align with business KPIs. Multi-SLI (availability + latency + correctness). Dependency SLOs mapped. Cross-team learning via shared post-mortems. SLO tooling platform-level. Advanced: Nobl9/Grafana SLO enterprise-wide.", "correct": true, "why": "Correcto. SLOs are business metric, not just technical. Investment strategy driven by SLO reports. Reliability considered product feature." },
+        { "letter": "E", "text": "Level 4 — Adaptive: automated actions on SLO breach (auto-rollback, feature flag kill). Continuous SLO refinement via ML. Chaos engineering validates SLO defensibility. SLO-driven capacity planning.", "correct": true, "why": "Correcto. State of the art. Automation of policy enforcement. Self-healing where possible. Google/Netflix level." }
+      ],
+      "explanation": "Progression indicators: (Level 0 → 1) 3-6 months, focused pilot; (1 → 2) 6-12 months, tooling + process; (2 → 3) 12-24 months, expansion + governance; (3 → 4) 24+ months, cultural maturity + advanced automation. Blockers: (a) engineering skill; (b) executive support; (c) tool investment; (d) cultural adoption. Value at each level: Level 1 = better incident visibility; Level 2 = data-driven investment decisions; Level 3 = strategic alignment; Level 4 = competitive advantage. Empresas most: Level 1-2. Empresas top: Level 3-4. Startups: Level 0-1 (deliberate skip until scale). Publishing SLO status public (like Cloudflare, Google) is signal of maturity.",
+      "realWorld": "Google SRE Book Ch. 32 'Evolving SRE Engagement Model'. Charity Majors 'Observability Maturity Model' similar. Nobl9 SLO Maturity assessment. Empresas adopting: journey typically 2-3 years to Level 3. Not lineal — some empresas 4-star tooling but 2-star culture.",
+      "tags": ["maturity model", "SLO adoption", "roadmap"],
+      "tech": [],
+      "references": [{ "title": "Google SRE Book" }, { "title": "Nobl9 — SLO Maturity" }]
+    }
+  ]
+}

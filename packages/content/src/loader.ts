@@ -4,9 +4,24 @@ import fundamentosA2 from './packs/fundamentos-a2.json' with { type: 'json' };
 import travelB1 from './packs/travel-b1.json' with { type: 'json' };
 import workInterviewB1 from './packs/work-interview-b1.json' with { type: 'json' };
 import everydayA2 from './packs/everyday-a2.json' with { type: 'json' };
+import techEnglishB1 from './packs/tech-english-b1.json' with { type: 'json' };
+import techEnglishCodeReviewB2 from './packs/tech-english-code-review-b2.json' with { type: 'json' };
+import techEnglishIncidentB2 from './packs/tech-english-incident-postmortem-b2.json' with { type: 'json' };
+import techEnglishDesignReviewC1 from './packs/tech-english-design-review-c1.json' with { type: 'json' };
+import techEnglishInterviewC1 from './packs/tech-english-interview-behavioral-c1.json' with { type: 'json' };
 import { LEVEL_PACKS } from './packs/levels/index.js';
 
-const BUNDLED = [fundamentosA2, everydayA2, travelB1, workInterviewB1] as unknown[];
+const BUNDLED = [
+  fundamentosA2,
+  everydayA2,
+  travelB1,
+  workInterviewB1,
+  techEnglishB1,
+  techEnglishCodeReviewB2,
+  techEnglishIncidentB2,
+  techEnglishDesignReviewC1,
+  techEnglishInterviewC1,
+] as unknown[];
 
 export function loadBundledPacks(): Pack[] {
   const packs: Pack[] = [];

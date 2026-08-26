@@ -1,0 +1,419 @@
+{
+  "id": "devops-sim-08-kubernetes-workloads",
+  "trackId": "devops",
+  "order": 8,
+  "title": "Simulacro 08 — Kubernetes Workloads y Autoscaling",
+  "focus": "Workload controllers avanzados: StatefulSets (identity, ordering, persistent storage), DaemonSets, Jobs, CronJobs, PodDisruptionBudgets. Autoscaling: HPA, VPA, Cluster Autoscaler. Resource requests/limits, QoS classes. Entender cuándo cada tipo aplica y por qué.",
+  "areaCoverage": ["kubernetes"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "kubernetes",
+      "topic": "Deployment vs StatefulSet — cuándo cada uno",
+      "difficulty": "junior",
+      "scenario": "Necesitas correr: (a) una API stateless web; (b) un cluster de PostgreSQL con 3 réplicas donde cada nodo tiene identidad estable y su propio disco.",
+      "question": "¿Cuándo usar Deployment vs StatefulSet?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Deployment para (a) — apps stateless intercambiables. Pods sin identidad (nombres aleatorios: api-abc123-x7y8), sin storage persistente, cualquiera puede reemplazar a cualquiera. StatefulSet para (b) — apps stateful con identidad estable (postgres-0, postgres-1, postgres-2), orden de startup/shutdown (0 primero, N último), y CADA pod tiene su propio PVC persistente que sobrevive rescheduling.", "correct": true, "why": "Correcto. La regla es: si tu app requiere que 'yo soy postgres-0' importe (para replicación, sharding, leader election), StatefulSet. Si cualquier pod puede servir cualquier request sin estado, Deployment. StatefulSets también tienen headless Service asociado (DNS por pod: postgres-0.postgres.default.svc.cluster.local)." },
+        { "letter": "B", "text": "Deployment funciona para ambos casos.", "correct": false, "why": "Falso. Deployment no da identidad estable — si postgres-abc muere, aparece postgres-xyz (nombre distinto, PVC nuevo). El cluster PostgreSQL rompería (replicación por hostname)." },
+        { "letter": "C", "text": "StatefulSet es solo para bases de datos.", "correct": false, "why": "También apps stateful como Kafka, Elasticsearch, Zookeeper, Cassandra, MongoDB, Redis clustered, etcd. Cualquier cosa con identidad de miembro y storage persistente." },
+        { "letter": "D", "text": "Deployment escala más rápido que StatefulSet.", "correct": false, "why": "Cierto pero no la razón principal. StatefulSet arranca ordenado (0 → 1 → 2) por diseño (replicación necesita orden). Deployment paralelo. Pero eso es consecuencia del uso, no la elección." }
+      ],
+      "explanation": "StatefulSet garantiza: (1) NOMBRES ESTABLES (podName-N donde N es índice); (2) ORDEN de creación/terminación (ordinal, sequential por default); (3) STORAGE ESTABLE (cada Pod tiene su propio PVC vía volumeClaimTemplates); (4) DNS ESTABLE (headless Service crea record por Pod). Cuándo NO usarlo: si tu app es 'quasi-stateful' (usa storage pero no requiere identidad — típicamente Deployment + PVC monta el mismo PV a varios Pods; requiere ReadWriteMany, apto para algunos casos). Los operators modernos (PostgreSQL Operator, Kafka Strimzi) manejan la orquestación stateful — usan StatefulSets internamente pero exponen abstracciones más amigables.",
+      "realWorld": "Kafka en K8s (Strimzi operator) usa StatefulSets. PostgreSQL Operator (Zalando) StatefulSets. Elasticsearch operator similar. MongoDB Operator (Kubernetes MongoDB Community Operator). Netflix, Airbnb, Spotify corren muchos stateful workloads sobre StatefulSets + operators.",
+      "tags": ["deployment", "statefulset", "stateful", "workload"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — StatefulSets" }, { "title": "Kelsey Hightower — Stateful Kubernetes" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "kubernetes",
+      "topic": "DaemonSet — un pod por nodo",
+      "difficulty": "junior",
+      "scenario": "Necesitas: (a) log shipper (Fluent Bit) en cada nodo; (b) node monitoring exporter para Prometheus; (c) CSI driver que provee storage.",
+      "question": "¿Qué es un DaemonSet y por qué es el fit correcto para estos casos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DaemonSet asegura que CADA nodo (o subset seleccionado) tenga exactamente UN Pod de la especificación. Cuando añades un nodo nuevo, DaemonSet automáticamente pone un Pod ahí. Cuando quitas un nodo, el Pod se limpia. Usos típicos: agents por nodo (logs, monitoring), CNI plugins, CSI drivers, storage cluster nodes, security agents (Falco).", "correct": true, "why": "Correcto. DaemonSet es la abstracción de 'necesito X corriendo en cada nodo'. Ideal para infraestructura por nodo. Se puede limitar con node selector (solo en nodos con label específico — ej. solo GPU nodes tienen driver DaemonSet)." },
+        { "letter": "B", "text": "DaemonSet es un Deployment con más réplicas.", "correct": false, "why": "Falso. Deployment sigue el estado deseado 'N réplicas'; DaemonSet sigue el estado 'una por nodo'. Semántica distinta." },
+        { "letter": "C", "text": "DaemonSet solo funciona en el control plane.", "correct": false, "why": "Al revés — corre principalmente en workers (agents que observan/actúan sobre workloads locales). Puede correr también en control plane con tolerations especiales." },
+        { "letter": "D", "text": "Un DaemonSet requiere PVC.", "correct": false, "why": "No — la mayoría de DaemonSets usan hostPath (acceso al filesystem del nodo) para leer logs o interactuar con el kubelet, no PVCs." }
+      ],
+      "explanation": "DaemonSet's magic: automáticamente add/remove Pods según el pool de nodos cambie. Cluster autoscaler crea nodo → DaemonSet controller schedulea Pod ahí. Common DaemonSets: Fluent Bit / Fluentd / Vector (logs), Prometheus node-exporter (métricas), Cilium/Calico/Flannel (CNI), Longhorn/OpenEBS (storage), Falco (runtime security), Datadog agent, New Relic agent. Update strategies: RollingUpdate (default, respeta maxUnavailable), OnDelete (manual). Nota: DaemonSets suelen necesitar tolerations especiales para correr en nodos con taints (ej. control plane que tiene NoSchedule taint — un agent de monitoring necesita toleration para estar ahí).",
+      "realWorld": "Prometheus node-exporter en cada nodo (métricas de CPU, memoria, disco por nodo). Fluent Bit forwarding logs a Loki/Elasticsearch. Cilium/Calico como CNI en cada nodo. Datadog, New Relic, Dynatrace despliegan sus agents como DaemonSets. Falco (CNCF) para runtime security.",
+      "tags": ["daemonset", "per-node", "agent", "infrastructure"],
+      "tech": ["kubernetes", "fluent-bit", "prometheus"],
+      "references": [{ "title": "kubernetes.io — DaemonSet" }, { "title": "CNCF — Falco DaemonSet pattern" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "kubernetes",
+      "topic": "Jobs — trabajos batch",
+      "difficulty": "mid",
+      "scenario": "Necesitas: (a) una migración de DB one-shot; (b) procesar 100 archivos en paralelo (batch); (c) un cron diario a las 3 AM.",
+      "question": "¿Cómo usar Jobs y CronJobs para estos casos?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Job (a): completa una tarea y termina. spec.completions=1, backoffLimit para reintentos. Cuando el Pod termina exit 0, el Job se marca Complete. Retention: ttlSecondsAfterFinished limpia automáticamente.", "correct": true, "why": "Correcto. Job es el fit correcto para one-shot work. Diferencia con Deployment: Deployment quiere Pods corriendo permanentemente; Job quiere Pods que terminen. Nunca uses Pod naked para batch — sin Job, si falla no reintenta." },
+        { "letter": "B", "text": "Job con parallelism > 1 (b): parallelism=10 arranca hasta 10 Pods concurrentes. completions=100 → necesita 100 Pods successful para completar. Útil para procesar N items paralelizados (ETL, ML preprocessing).", "correct": true, "why": "Correcto. Patrón 'work queue': Job procesa items de una cola (Redis, SQS). Cada Pod toma items independientemente. completions vs parallelism te da control de cómo distribuir." },
+        { "letter": "C", "text": "CronJob (c): agenda Jobs en horario cron. spec.schedule='0 3 * * *'. Cada ejecución crea un Job nuevo. Cuidado con concurrencyPolicy (Allow/Forbid/Replace) para casos donde el anterior aún corre cuando llega el próximo.", "correct": true, "why": "Correcto. CronJob envuelve Job con scheduling. Concurrencia importa: si tu cron tarda 45 min y corre cada 30 min, sin Forbid tienes overlaps. También startingDeadlineSeconds para skip si el scheduler no pudo lanzarlo a tiempo." },
+        { "letter": "D", "text": "Jobs no reintentan cuando fallan.", "correct": false, "why": "Falso. spec.backoffLimit define reintentos (default 6). El Pod se recrea si falla, con backoff exponencial. Si backoffLimit se supera, el Job se marca Failed." },
+        { "letter": "E", "text": "CronJob usa un scheduler externo tipo Airflow.", "correct": false, "why": "No — CronJob es nativo de K8s (kube-controller-manager). Para workflows complejos con DAG, dependencies, retries sofisticados, usas Argo Workflows, Tekton, o Airflow externamente." }
+      ],
+      "explanation": "Job es el workload controller para work bounded (que termina). Patterns: (1) parallelism=1, completions=1 → single task (migration); (2) parallelism=N, completions=M → parallel batch (procesar M items con N workers); (3) parallelism=N, completions=null, work queue → workers pullean de queue hasta que se vacía. CronJob añade scheduling. Anti-patterns: usar Deployment para batch (Pod restart infinito), usar Pod naked (no retries), CronJob sin concurrencyPolicy (overlap issues), CronJob sin startingDeadlineSeconds (jobs stuck si scheduler no pudo lanzar a tiempo). Alternativas más avanzadas: Argo Workflows (DAGs), Tekton (CI/CD pipelines), Airflow (data pipelines con dependencies).",
+      "realWorld": "Airflow originado en Airbnb para data pipelines. Argo Workflows en Intuit para CI/CD (creado allí). Tekton Pipelines para cloud-native CI/CD. Netflix Meson (workflow orchestration interno). Un Job clásico: db migration antes de deploy nuevo (con initContainer o Job pre-deploy).",
+      "tags": ["job", "cronjob", "batch", "parallel"],
+      "tech": ["kubernetes", "argo-workflows", "airflow"],
+      "references": [{ "title": "kubernetes.io — Jobs" }, { "title": "kubernetes.io — CronJobs" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "kubernetes",
+      "topic": "PodDisruptionBudget — proteger disponibilidad",
+      "difficulty": "mid",
+      "scenario": "Tienes un StatefulSet de Kafka con 3 brokers. Un administrador drena un nodo (kubectl drain) para maintenance. Los 3 brokers estaban en ese nodo. Kafka se cae.",
+      "question": "¿Qué es un PodDisruptionBudget y cómo protegería este caso?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PDB declara: 'de este grupo de Pods (seleccionados por labels), como MÁXIMO N pueden estar disruptivos simultáneamente' (via maxUnavailable) o 'al MENOS M deben estar disponibles' (minAvailable). Aplica solo a VOLUNTARY DISRUPTIONS (drain, evict, cluster autoscaler removing node) — NO protege contra fallos involuntarios (kernel panic, node crash). K8s bloqueará el drain si viola el PDB.", "correct": true, "why": "Correcto. En el ejemplo: PDB con minAvailable=2 (o maxUnavailable=1) sobre los brokers Kafka bloqueará drain si más de 1 broker está afectado. El drain esperará (retry) hasta que sea safe. Sin PDB, drain evict todos los Pods simultáneamente." },
+        { "letter": "B", "text": "PDB protege contra fallos hardware.", "correct": false, "why": "Falso. Node crash es 'involuntary disruption' — PDB no aplica. Para tolerar fallos hardware necesitas replicación + topology spread (Pods distribuidos en distintas AZs/nodos)." },
+        { "letter": "C", "text": "PDB es redundante con Deployment replicas.", "correct": false, "why": "No — Deployment mantiene N; PDB protege durante DISRUPTIONS. Sin PDB, drain puede matar N-1 Pods rápido, degrading service. Distintas capas: replicas es SLO steady-state, PDB es SLO durante events." },
+        { "letter": "D", "text": "PDB es la única forma de hacer maintenance en K8s.", "correct": false, "why": "Hay otras: cordon (marca node unschedulable), drain (evict), PDB (protege durante evict). PDB los complementa, no los reemplaza." }
+      ],
+      "explanation": "PDBs son críticos para maintenance seguro. Escenarios que triggerean voluntary disruptions: (1) kubectl drain (upgrade OS, K8s version); (2) Cluster Autoscaler removing nodes; (3) node updates managed (GKE/EKS auto-upgrade); (4) Karpenter node consolidation. Sin PDB, estas operaciones pueden tumbar tu app. PDB pattern: minAvailable típicamente N-1 para clusters de N (Kafka 3, ZK 3, DB HA 2). maxUnavailable útil para stateless (aceptas 10% down durante update). Nota: PDB requiere que el owner (Deployment/StatefulSet) tenga suficientes réplicas para satisfacerlo; si intentas minAvailable=3 con 3 replicas, drain bloqueará forever hasta añadir capacidad.",
+      "realWorld": "Google GKE Autopilot enforces PDBs. Karpenter respeta PDBs durante node consolidation. Un incident classic: Etcd cluster con 3 nodos, sin PDB, un rolling node upgrade tumbó quorum. Post-mortem: PDB con maxUnavailable=1. AWS EKS Best Practices documenta PDBs como must-have para stateful.",
+      "tags": ["pdb", "disruption", "availability", "maintenance"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Pod Disruption Budget" }, { "title": "kubernetes.io — Disruptions" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "kubernetes",
+      "topic": "Horizontal Pod Autoscaler (HPA)",
+      "difficulty": "mid",
+      "scenario": "Tu API tiene tráfico spiky: 100 req/s durante el día, 5000 req/s en peaks. Tienes 3 Pods siempre → gastas caro en idle y en peaks te satura. Quieres autoscaling.",
+      "question": "¿Cómo funciona HPA y qué configuraciones son críticas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "HPA observa métricas (CPU %, memoria, custom métricas via Prometheus Adapter o KEDA) y ESCALA la réplica count de un Deployment/StatefulSet/ReplicaSet entre min y max. Loop típico cada 15s. Fórmula: desiredReplicas = ceil(currentReplicas × currentMetric / targetMetric).", "correct": true, "why": "Correcto. HPA es el autoscaler estándar. Requiere metrics-server instalado para CPU/memoria. Custom metrics requieren metrics API (Prometheus Adapter). Escala horizontal (más réplicas), no vertical." },
+        { "letter": "B", "text": "El target CPU típico es 60-70% (no 100%): necesitas headroom para que el HPA reaccione ANTES de saturar. Con target 90%, cuando el HPA empiece a escalar (60s+ típico), ya estás saturado. Con 60%, tienes runway.", "correct": true, "why": "Correcto. Buffer para responder. Escalar toma tiempo (metrics collection 15s + HPA decision 15s + Pod arranca 30-60s + readiness). Sin buffer, tu p99 latency sufre durante el ramp-up." },
+        { "letter": "C", "text": "Scale up rápido, scale down lento: behavior policy permite configurar velocidades. Scaling down agresivo puede matar Pods sirviendo requests. Best practice: stabilizationWindowSeconds alto para scale-down (300s+), bajo para scale-up (0s).", "correct": true, "why": "Correcto. Asymmetric behavior. Escalar arriba rápido salva tráfico; escalar abajo agresivo mata capacity que puede necesitar en 2 min. K8s 1.18+ tiene 'behavior' field para esta configuración." },
+        { "letter": "D", "text": "HPA con métricas custom via KEDA: para escalar por métricas no-CPU (queue length en SQS, lag en Kafka, connections abiertas en Redis). KEDA (CNCF) es el estándar de facto. Ejemplo: 'escalar workers según msg backlog en SQS'.", "correct": true, "why": "Correcto. CPU no siempre es proxy correcto (worker que espera I/O tiene CPU bajo pero backlog crece). KEDA extiende HPA a >50 event sources: SQS, Kafka, Redis, Postgres, Prometheus queries, etc. Sponsored by Microsoft, CNCF Graduated." },
+        { "letter": "E", "text": "HPA escala verticalmente ajustando requests/limits.", "correct": false, "why": "Falso — eso es VPA (Vertical Pod Autoscaler). HPA solo cambia réplica count." }
+      ],
+      "explanation": "HPA algorithm: cada 15s (default), consulta metrics API, computa desired replicas por métrica (si hay varias, toma el máximo), aplica behavior policies (rate limits), actualiza replicas del owner. Métricas soportadas: Resource (CPU/mem), Pods (métrica por pod agregada), Object (métrica de un objeto K8s específico), External (métricas externas via adapter). Trade-offs: HPA es reactivo (no predice tráfico). Alternativas: Cluster Proportional Autoscaler (escala por N nodes), KEDA (event-driven scale to zero), predictive autoscaling (GCP has this). Escala a cero: KEDA soporta scale-to-zero (para workers ETL); HPA nativo no.",
+      "realWorld": "Zalando escaló autoscaling a scale masivo — publicaron sus learnings. Netflix usa custom HPA controllers. Booking.com KEDA para Kafka consumers. Uber usa autoscaling combinado con predictive. Ingress rate como métrica popular (autoscaling on QPS).",
+      "tags": ["hpa", "autoscaling", "horizontal", "metrics", "keda"],
+      "tech": ["kubernetes", "keda", "prometheus"],
+      "references": [{ "title": "kubernetes.io — Horizontal Pod Autoscaler" }, { "title": "KEDA — Kubernetes Event-Driven Autoscaling" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "kubernetes",
+      "topic": "Vertical Pod Autoscaler (VPA)",
+      "difficulty": "mid",
+      "scenario": "Tus Pods tienen requests {cpu: 500m, memory: 512Mi}. En prod usan ~80m cpu y ~800Mi memoria. Desperdicias CPU y OOMKills ocurren. Descubres VPA.",
+      "question": "¿Qué es VPA y cuáles son sus limitaciones?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "VPA analiza uso histórico de CPU/memoria y RECOMIENDA (o aplica) nuevos values de requests/limits. Modos: (1) Off — solo recomienda; (2) Initial — set requests al crear Pod; (3) Auto — recrea Pods con nuevos requests. Limitación crítica: para cambiar requests en Auto, VPA MATA el Pod y crea uno nuevo — no es in-place (K8s 1.27+ tiene in-place resize experimental). Conflicto con HPA por CPU/memoria (competir sobre la misma métrica).", "correct": true, "why": "Correcto. VPA resuelve el problema 'estimar requests correctamente'. Los devs suelen adivinar mal (o over-provision para safety). VPA aprende del real usage. La limitación de restart es major — muchas apps no toleran restart sin planning. In-place resize es la solución futuro (aún beta)." },
+        { "letter": "B", "text": "VPA reemplaza HPA — hace ambas cosas.", "correct": false, "why": "No. HPA cambia RÉPLICAS (horizontal); VPA cambia RESOURCES (vertical). Diferentes ejes. Se pueden combinar pero con cuidado — HPA sobre CPU + VPA sobre CPU compiten." },
+        { "letter": "C", "text": "VPA es parte de K8s core.", "correct": false, "why": "Es addon separado (kubernetes-sigs/vertical-pod-autoscaler). GKE tiene VPA integrado; EKS/AKS requieren instalación manual." },
+        { "letter": "D", "text": "VPA solo se aplica a Deployments.", "correct": false, "why": "Aplica a Deployment, StatefulSet, DaemonSet, ReplicaSet, Job — cualquier workload con PodTemplate." }
+      ],
+      "explanation": "VPA components: (1) Recommender (analiza métricas históricas via metrics-server / Prometheus); (2) Updater (evicta Pods que necesitan resize); (3) Admission Controller (mutating webhook que inyecta nuevos requests al crear Pod). El resize NO es in-place (aún) — el Pod muere y reaparece con nuevos requests. Riesgos: (1) restart innecesarios (usa PDB para limitar); (2) VPA + HPA sobre misma métrica → conflict; solución: HPA por CPU + VPA por memoria, o HPA por métrica custom (RPS) + VPA por resources. Best practice: Off mode primero (leer recomendaciones), luego Initial (aplicar en Pods nuevos), luego Auto cuando confías. Karpenter node autoscaler integra bien con VPA (rightsizes tanto Pods como Nodes).",
+      "realWorld": "GKE Autopilot usa VPA por default (rightsizing continuo). Datadog publicó sobre uso de VPA para reducir costos ~30%. Zalando publica extensively sobre resource management. Karpenter + VPA + HPA es el stack cost-optimization moderno.",
+      "tags": ["vpa", "vertical scaling", "rightsizing", "resource optimization"],
+      "tech": ["kubernetes", "vpa"],
+      "references": [{ "title": "kubernetes-sigs — Vertical Pod Autoscaler" }, { "title": "GKE — Vertical Pod Autoscaling" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "kubernetes",
+      "topic": "QoS classes — Guaranteed, Burstable, BestEffort",
+      "difficulty": "mid",
+      "scenario": "Tu cluster está bajo presión de memoria. El OOM killer del kernel necesita elegir qué matar. K8s tiene un orden basado en QoS classes.",
+      "question": "¿Cómo funcionan las QoS classes y cuál elegir para cada workload?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Guaranteed: requests==limits en TODOS los containers (CPU y memoria). Última prioridad para eviction (last to die). Burstable: al menos un container tiene request<limit o solo request definido. Media prioridad. BestEffort: ni requests ni limits. Primera víctima de eviction (dies first). K8s asigna la QoS class automáticamente basada en config. Producción crítica → Guaranteed; batch/best-effort → BestEffort.", "correct": true, "why": "Correcto. QoS class es asignada por K8s, no manual. Deriva de la config de resources. Cuando el kubelet tiene que evict Pods por presión (memoria, disco), evict en orden: BestEffort → Burstable (excediendo request) → Guaranteed." },
+        { "letter": "B", "text": "Puedes setear QoS class manualmente.", "correct": false, "why": "Falso. Es derived automáticamente. Cambias resources para cambiar QoS. Es un implicit field." },
+        { "letter": "C", "text": "BestEffort tiene la mayor prioridad.", "correct": false, "why": "Al revés. BestEffort = no reservó nada = primera víctima cuando el nodo necesita liberar. Semánticamente 'lo hago si puedo, si no me sacrifico'." },
+        { "letter": "D", "text": "Guaranteed evita el OOM killer completamente.", "correct": false, "why": "No. Un Pod Guaranteed que excede su LIMIT igual es OOMKilled (limits enforce cgroup memory.limit). Solo tiene menor prioridad ante presión GENERAL del nodo (no ante su propio exceso)." }
+      ],
+      "explanation": "QoS classes gobiernan el comportamiento del kubelet ante presión: (1) BestEffort — Pod sin resources, kubelet libera memoria matando estos primero; (2) Burstable — request<limit, si el Pod está por encima de su request es más elegible; (3) Guaranteed — requests==limits, más protección. Órden dentro de misma clase: prioridad decrece con mayor uso relativo al request. PriorityClass es concepto separado (preemption): PriorityClass alta puede desalojar Pods de PriorityClass baja para hacer room. Combina QoS + PriorityClass para producción crítica: Guaranteed + PriorityClass=1000000 (system-cluster-critical) → máxima protección.",
+      "realWorld": "GKE Autopilot forces Guaranteed por default para simplicidad. AWS EKS Best Practices recomienda Guaranteed para stateful. Netflix estudió QoS class impact en performance. Etcd, kube-apiserver, kube-scheduler corren como Guaranteed con PriorityClass alta.",
+      "tags": ["qos", "guaranteed", "burstable", "besteffort", "eviction"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Configure Quality of Service for Pods" }, { "title": "kubernetes.io — Pod Priority and Preemption" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "kubernetes",
+      "topic": "Cluster Autoscaler vs Karpenter",
+      "difficulty": "senior",
+      "scenario": "Tu cluster EKS necesita escalar nodos con tráfico. Cluster Autoscaler ha sido el standard. Un colega propone Karpenter (AWS). Necesitas evaluar.",
+      "question": "¿Qué diferencia Cluster Autoscaler de Karpenter?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cluster Autoscaler (CA): trabaja con NODE GROUPS predefinidos (ASG en AWS, MIG en GCP). Sube/baja Pods pendientes → escala el node group asociado. Es lento (Node groups add nodes con delay), rígido (tipos de instancia predefinidos), estable, bien probado.", "correct": true, "why": "Correcto. CA es el standard de años. Funciona pero requiere que planees node groups por tipo (spot, on-demand, gpu, etc.). Cada node group tiene 1 tipo de instancia y escala independientemente." },
+        { "letter": "B", "text": "Karpenter (AWS-native, ahora también Azure): selecciona tipo de instancia ÓPTIMO en runtime basado en workload pending. No requiere node groups — elige instance types que fitteen mejor (más CPU-optimizado, memory-optimizado, spot vs on-demand). Muy rápido (30-60s). Reduce costos por rightsizing.", "correct": true, "why": "Correcto. Karpenter es 'just-in-time provisioning'. Un Pod pending con 8 CPU / 32Gi → Karpenter selecciona m5.2xlarge o similar sin config previa. Optimiza spot instances automáticamente. Menor overhead operativo." },
+        { "letter": "C", "text": "Karpenter hace consolidation: si dos nodos tienen 40% util cada uno, mueve Pods y termina uno (respetando PDBs). CA no lo hace nativamente.", "correct": true, "why": "Correcto. Consolidation ahorra costo dramáticamente. CA solo evalúa scale-down conservador. Karpenter activamente reorganiza." },
+        { "letter": "D", "text": "Karpenter es multi-cloud desde su inicio.", "correct": false, "why": "Nacido para AWS (Amazon abrió en 2021). Recientemente adoptado por Azure (AKS Karpenter provider). GCP tiene su propio (Node Auto-Provisioner)." },
+        { "letter": "E", "text": "Cluster Autoscaler y Karpenter son idénticos.", "correct": false, "why": "Approaches muy distintos: CA reactive-per-nodegroup, Karpenter proactive-flexible. Coexisten en algunos clusters durante migration." }
+      ],
+      "explanation": "El landscape de node autoscaling: (1) Cluster Autoscaler (todos los clouds, node groups); (2) Karpenter (AWS/Azure, flexible); (3) GKE Node Auto-Provisioning (GCP); (4) Azure AKS Autoscaler. Karpenter innovaciones: (a) Provisioner CRD define constraints (tipos permitidos, capacity types spot/on-demand, zones), no instances específicas; (b) Consolidation reorganiza continuamente; (c) TTL expiration (nodos > N días auto-recycle para refresh). Trade-off Karpenter: menos predecible (qué tipo específico corres cambia), más complejidad debugging, requiere IAM permissions amplios. Best practice combinar con Spot con fallback a on-demand; usar PriorityClass para workloads críticos.",
+      "realWorld": "Karpenter creado en AWS (open-sourced 2021). Anthropic, Airbnb, Disney adopted. GKE Autopilot fully-managed nodes (sin node groups visible). Karpenter graduated to CNCF 2024. Cost savings reportados: 20-50% típicos vs CA.",
+      "tags": ["cluster-autoscaler", "karpenter", "node-autoscaling", "cost"],
+      "tech": ["kubernetes", "karpenter", "aws"],
+      "references": [{ "title": "karpenter.sh" }, { "title": "kubernetes.io — Cluster Autoscaler" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "kubernetes",
+      "topic": "StatefulSet — identity y volumeClaimTemplates",
+      "difficulty": "senior",
+      "scenario": "Deployeas un StatefulSet 'kafka' con 3 réplicas. Cada Kafka broker necesita disco persistente y hostname estable para la replicación entre brokers.",
+      "question": "¿Cómo StatefulSet garantiza identidad estable y storage por Pod?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Nombres ordinales: kafka-0, kafka-1, kafka-2. Si kafka-1 muere, aparece uno NUEVO con MISMO nombre kafka-1 (no un nombre nuevo). Con headless Service, cada uno tiene DNS estable: kafka-0.kafka.default.svc.cluster.local. volumeClaimTemplates genera un PVC por cada Pod (kafka-data-kafka-0, kafka-data-kafka-1). El PVC SOBREVIVE al Pod (si el Pod muere, el mismo PVC se re-monta al nuevo Pod con el mismo nombre).", "correct": true, "why": "Correcto. Este mecanismo es lo que hace stateful workloads posibles. Kafka broker.0 tiene su disco con partitions; si el Pod se recrea, obtiene EL MISMO disco. La ordering (0 antes que 1) es también garantizada — Kafka replica setup asume que broker-0 arrancó primero." },
+        { "letter": "B", "text": "Los Pods se nombran aleatoriamente como en Deployment.", "correct": false, "why": "Falso. Deployment usa hashes (deploy-abc-x7y8); StatefulSet usa ordinales estables (statefulset-0, statefulset-1)." },
+        { "letter": "C", "text": "StatefulSet crea un solo PVC compartido por todos los Pods.", "correct": false, "why": "No — volumeClaimTemplates crea UN PVC POR POD. Cada broker Kafka tiene su propio disk (no comparten storage). ReadWriteOnce típicamente." },
+        { "letter": "D", "text": "Si borras el StatefulSet, los PVCs se borran automáticamente.", "correct": false, "why": "Los PVCs SOBREVIVEN al StatefulSet (safety). Debes borrarlos manualmente. Esto previene pérdida accidental de datos." }
+      ],
+      "explanation": "StatefulSet garantías: (1) Ordinal names (0 to N-1); (2) Ordered creation (0 first, then 1, then 2) — waits until previous is Ready; (3) Ordered termination (reverse: N-1 first); (4) Stable network identity (headless Service + DNS record per pod); (5) Stable storage (volumeClaimTemplates → PVC per pod, persists). Update strategies: RollingUpdate (default, updates N-1 downwards to 0), OnDelete (manual). partition field: 'solo actualiza pods con ordinal >= partition' — useful para canaries (actualiza kafka-2 primero como test). Trade-offs: bootstrap slow (secuencial), scaling complex (removing kafka-2 vs kafka-0 tiene semantics distinta). Alternative modernas: Operators (Strimzi para Kafka, Cassandra Operator) manejan operaciones específicas del stateful workload por encima de StatefulSet.",
+      "realWorld": "Strimzi (Kafka on K8s) uses StatefulSets. Cassandra K8s operator similar. Zalando Postgres Operator. Vitess (planetscale) uses StatefulSets under the hood. Rook (Ceph on K8s) para storage cluster nodes.",
+      "tags": ["statefulset", "identity", "pvc", "volume-claim-templates"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — StatefulSet Basics" }, { "title": "Strimzi — Kafka on Kubernetes" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "kubernetes",
+      "topic": "InitContainers vs Sidecars",
+      "difficulty": "senior",
+      "scenario": "Tu app necesita: (a) esperar que la DB esté disponible antes de arrancar; (b) tener un proxy Envoy inyectado para mTLS; (c) hacer DB migration antes de la primera versión del app.",
+      "question": "¿Cuándo usar InitContainer y cuándo Sidecar?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "InitContainer para (a) y (c): corre ANTES de los main containers, HASTA COMPLETAR (exit 0). Si falla, kubelet reinicia. Solo cuando all init containers finalizan, arrancan los main containers. Perfecto para: DB waiting, downloads pre-arranque, migraciones, generate configs, chown volumes. Sidecar para (b): corre EN PARALELO con main containers durante todo el lifecycle. Perfecto para: proxies (Envoy Istio), log forwarders (Fluent Bit), auth proxies, service mesh.", "correct": true, "why": "Correcto. Distintos lifecycles. InitContainer es 'do this before'; sidecar es 'run alongside'. K8s 1.28+ formalizó 'native sidecar containers' (initContainers con restartPolicy: Always que corren en paralelo pero permanecen up)." },
+        { "letter": "B", "text": "InitContainers y sidecars son idénticos.", "correct": false, "why": "Falso. InitContainer termina antes del main. Sidecar corre paralelo al main." },
+        { "letter": "C", "text": "Sidecars solo se usan con Istio.", "correct": false, "why": "Común con Istio (Envoy sidecar), pero también con Datadog agent, log forwarders, OAuth proxies, sidecar patterns diversos." },
+        { "letter": "D", "text": "InitContainer puede tener volumen distinto del main.", "correct": false, "why": "Comparten el Pod (mismos volumes, misma network namespace). Precisamente por eso init puede preparar cosas (populate config file en emptyDir) que el main consume." }
+      ],
+      "explanation": "InitContainer patterns: (1) Wait for dependency (curl hasta que DB responda); (2) Prepare data (download models, decrypt configs); (3) Set permissions (chown volumes); (4) Run migrations (kubectl migrate). Sidecar patterns: (1) Service mesh proxy (Envoy, Linkerd proxy); (2) Log forwarding (Fluent Bit reads main's logs from emptyDir, sends to Loki); (3) Metrics exporter (converts app metrics format for Prometheus); (4) SSL/TLS termination; (5) OAuth2 proxy (adds auth to legacy app). K8s 1.28+ 'sidecarContainers': initContainers con restartPolicy: Always que corren durante lifecycle del Pod — resuelve issue previo de que sidecars nativos morían antes que main containers en Job termination. Anti-patterns: Meter la app principal y una DB en el mismo Pod (deben ser deployments separados).",
+      "realWorld": "Istio inyecta Envoy sidecar via mutating webhook. Datadog Agent como sidecar. Vault Agent Injector adds vault sidecar for secrets. K8s 1.28 released native sidecar support (Beta). Log forwarders (Fluent Bit) muy común pattern.",
+      "tags": ["init-container", "sidecar", "pod", "lifecycle"],
+      "tech": ["kubernetes", "istio"],
+      "references": [{ "title": "kubernetes.io — Init Containers" }, { "title": "kubernetes.io — Sidecar Containers (1.28+)" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "kubernetes",
+      "topic": "Pod affinity, anti-affinity, topology spread",
+      "difficulty": "senior",
+      "scenario": "Tienes 3 réplicas de tu API. Todas se schedulean en el mismo nodo → si el nodo muere, downtime total. Necesitas distribuir en AZs distintas para HA.",
+      "question": "¿Cómo garantizas distribución de Pods entre nodos/zonas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "PodAntiAffinity: 'no scheduleá este Pod donde YA hay otro Pod con label X'. Ejemplo: preferredDuringSchedulingIgnoredDuringExecution 'no en el mismo hostname'. requiredDuringSchedulingIgnoredDuringExecution = hard constraint, preferred = soft. Overuse causa Pods pending si no hay suficientes nodos.", "correct": true, "why": "Correcto. La técnica clásica pre-topologySpreadConstraints. Bien usada evita 'all Pods on 1 node' anti-pattern. Sintaxis verbosa y complexa comparada con TSC." },
+        { "letter": "B", "text": "TopologySpreadConstraints: sintaxis moderna (1.19+) para distribución. maxSkew define cuántos Pods MÁS puede haber en un topology domain vs otro. topologyKey (topology.kubernetes.io/zone, kubernetes.io/hostname). whenUnsatisfiable: DoNotSchedule (hard) o ScheduleAnyway (soft).", "correct": true, "why": "Correcto. TSC es la mejor forma actual. Ejemplo: maxSkew=1, topologyKey=zone → los Pods se distribuyen entre AZs con diferencia máxima 1. Más expressive y menos verbose que anti-affinity." },
+        { "letter": "C", "text": "PodAffinity: 'schedule este Pod DONDE YA HAY otro con label X'. Uso: co-locación deseada (cache junto al app que la consume, para reducir latencia). Raro; anti-affinity es mucho más común.", "correct": true, "why": "Correcto. Menos común pero válido. Ejemplo: 'poner Pods de logging con Pods de app para minimizar network hop'. Con containerd + fluent bit as DaemonSet este pattern es menos necesario." },
+        { "letter": "D", "text": "Node affinity: constrains scheduling a nodos con labels específicos. Ejemplo: 'solo nodes con label gpu=true'. requiredDuringSchedulingIgnoredDuringExecution para hard, preferredDuring... para soft.", "correct": true, "why": "Correcto. Node selector es la versión simple; node affinity es más expressive (OR conditions, weights). Uso: workloads que necesitan hardware específico (GPUs, high-mem instances)." },
+        { "letter": "E", "text": "Los Pods siempre se distribuyen automáticamente sin config.", "correct": false, "why": "Falso. El scheduler default hace best-effort spread pero no garantiza multi-AZ o multi-node distribution sin config. Necesitas TSC o anti-affinity explícito." }
+      ],
+      "explanation": "Techniques de placement: (1) nodeSelector (simple, exact match on node label); (2) node affinity (más expresivo, weights, OR); (3) taints/tolerations (nodes reject Pods sin toleration — gatekeepers para dedicated nodes); (4) pod affinity/anti-affinity (relaciones entre Pods); (5) topologySpreadConstraints (moderno). Best practice moderno: TSC con topologyKey=zone (multi-AZ HA) y hostname (multi-node). requiredDuring... = hard (Pods pending si no puede satisfacer); preferredDuring... = soft (best effort). No sobreconstrainer — soft es usualmente mejor. Nodes labels standard: topology.kubernetes.io/zone, kubernetes.io/hostname, node.kubernetes.io/instance-type.",
+      "realWorld": "Netflix, Airbnb usan multi-AZ TSC obligatorio para prod. GKE, EKS regions con múltiples AZs support TSC nativamente. Datadog blog post 'How we schedule on K8s' habla de TSC en scale. Karpenter respeta TSC durante provisioning.",
+      "tags": ["affinity", "anti-affinity", "topology-spread", "ha", "scheduling"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Assigning Pods to Nodes" }, { "title": "kubernetes.io — Pod Topology Spread Constraints" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "kubernetes",
+      "topic": "Graceful shutdown y SIGTERM",
+      "difficulty": "senior",
+      "scenario": "Rolling update mata Pods viejos. Algunos requests en-flight se pierden porque el Pod muere mientras procesa. Necesitas graceful shutdown.",
+      "question": "¿Cómo funciona el shutdown de un Pod y qué debes hacer para gracefulness?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Kubelet envía SIGTERM al proceso PID 1 del container. Espera terminationGracePeriodSeconds (default 30s). Si aún vive, envía SIGKILL. Simultáneamente, el Pod se marca 'Terminating' y sale de los Endpoints del Service — nuevos requests dejan de llegar. Lo que DEBES hacer: (1) app trap SIGTERM; (2) stop accepting new connections; (3) finish in-flight requests; (4) close connections cleanly; (5) exit 0. También preStop hook + delay útil: espera N segundos ANTES de SIGTERM para que endpoint propagation ocurra (propagation puede tardar segundos en clusters grandes).", "correct": true, "why": "Correcto. El detalle clave: endpoint removal es async vs SIGTERM inmediato → race condition donde nuevos requests aún llegan al Pod que ya cerró listening. preStop hook con sleep 10-20s da tiempo a kube-proxy y load balancers de actualizar antes de matar el proceso." },
+        { "letter": "B", "text": "K8s envía SIGKILL directamente cuando termina.", "correct": false, "why": "Falso. Envía SIGTERM primero (grace period). SIGKILL solo si el proceso no termina en terminationGracePeriodSeconds." },
+        { "letter": "C", "text": "El shutdown no necesita cuidado — K8s espera automáticamente.", "correct": false, "why": "K8s espera pero la app debe SABER responder a SIGTERM. Muchas apps ignoran señales por default y mueren con SIGKILL, perdiendo work." },
+        { "letter": "D", "text": "terminationGracePeriodSeconds es siempre 30s (fijo).", "correct": false, "why": "Default 30s pero configurable por Pod. Batches que procesan trabajos largos pueden querer 300s+." }
+      ],
+      "explanation": "Sequence completo de shutdown: (1) K8s marca Pod Terminating; (2) preStop hook ejecuta (si definido) — commonly `sleep 20` para wait de endpoint propagation; (3) SIGTERM enviado al PID 1; (4) La app debe: stop new connections, drain in-flight, close cleanly; (5) Wait hasta terminationGracePeriodSeconds; (6) Si aún vive, SIGKILL. Frameworks modernos (Spring Boot, Fastify, Go net/http) tienen graceful shutdown built-in. Anti-patterns: apps que ignoran SIGTERM (bash scripts, PID 1 no reap zombies), no cerrar DB connections (leaks). Para workers batch: consumer ACK del message solo después de procesarlo; SIGTERM = 'termina current work, no tomes nuevo'.",
+      "realWorld": "Uber, Twitter documented graceful shutdown patterns. Envoy tiene 'connection draining' explícito. Spring Boot 2.3+ graceful shutdown built-in. Empirical experience: preStop sleep de 10-20s resuelve 90% de dropped connections durante deploys.",
+      "tags": ["graceful shutdown", "sigterm", "prestop", "termination"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Container Lifecycle Hooks" }, { "title": "Learnk8s — Graceful shutdown in Kubernetes" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "kubernetes",
+      "topic": "PriorityClass y preemption",
+      "difficulty": "senior",
+      "scenario": "Tu cluster está saturado. Un Pod crítico (payment service) no puede schedulear porque no hay recursos. Un Pod menos importante (batch nocturno) tiene recursos asignados.",
+      "question": "¿Qué es PriorityClass y preemption y cómo se usan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "PriorityClass asigna un valor numérico de prioridad a Pods (via podSpec.priorityClassName). Cuando el scheduler no puede schedulear un Pod de alta prioridad, PREEMPTS (mata) Pods de menor prioridad para liberar espacio. K8s tiene system-cluster-critical (2000000000) y system-node-critical (2000001000) reservados. Custom: definir PriorityClass (name, value, description). Mayor valor = mayor prioridad. preemptionPolicy: PreemptLowerPriority (default) o Never.", "correct": true, "why": "Correcto. Preemption es la respuesta a 'cluster full pero necesito room para lo crítico'. Los Pods preempted son evict (con grace period). Combinar con PDB — preemption respeta PDBs (no preempt si viola PDB del target)." },
+        { "letter": "B", "text": "PriorityClass solo afecta el orden en el que aparecen en kubectl get.", "correct": false, "why": "Falso. Afecta scheduling activo y preemption. Cambia el comportamiento real del cluster." },
+        { "letter": "C", "text": "Preemption es automática para todos los Pods.", "correct": false, "why": "Depende del PriorityClass. Sin PriorityClass, Pod tiene priority 0 (nadie preempts). Sin PriorityClass con valor mayor que otro, no hay preemption trigger." },
+        { "letter": "D", "text": "PriorityClass afecta la ejecución del Pod después de scheduling.", "correct": false, "why": "Solo scheduling y preemption. Una vez running, PriorityClass no afecta CPU/memoria en runtime (eso es QoS class + cgroups)." }
+      ],
+      "explanation": "PriorityClass ecosystem: (1) create PriorityClass CRD; (2) referencia en Pod spec; (3) scheduler considers priority en scheduling queue y preemption. Preemption: cuando Pod unschedulable, scheduler busca nodes donde matando Pods menor prioridad podría hacer room. Respeta PDBs (no viola disponibilidad). El Pod preempted recibe SIGTERM (graceful). Best practice: (1) definir 3-4 PriorityClasses (critical, high, normal, low); (2) system Pods (etcd, kube-apiserver) usan system-cluster-critical; (3) prod apps 'high'; (4) batch jobs 'low'; (5) monitor preemption events (indica cluster under-provisioned). Anti-patterns: todos con misma priority (no efecto), demasiadas priorityClasses (chaos), sin PDBs (preemption viola HA).",
+      "realWorld": "Google Borg tenía priority levels sofisticados (Borg cell priorities). Airbnb ha documentado uso de PriorityClass para separar prod vs batch. Argo Workflows respeta PriorityClass en Jobs. Batch on K8s (Volcano, Kueue) usan PriorityClass extensively.",
+      "tags": ["priorityclass", "preemption", "scheduling", "batch"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Pod Priority and Preemption" }, { "title": "Volcano — Batch Kubernetes" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "kubernetes",
+      "topic": "Batch on Kubernetes — Jobs con parallelism sofisticado",
+      "difficulty": "senior",
+      "scenario": "Necesitas correr un batch ML: 500 tareas de training paralelo. Cada tarea toma 20 minutos. Necesitas quotas, priorities, gang scheduling (todos-o-nada).",
+      "question": "¿Por qué Jobs nativos no son suficientes y qué alternativas hay?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Jobs nativos son ok para batch simple (procesa N ítems paralelos). Limitations: no gang scheduling (si necesitas 100 Pods simultáneos o ninguno — Jobs nativos empiezan uno a uno); no advanced queuing (fairness entre teams, priorities dinámicas); no fine-grained resource sharing (batch A vs batch B compitiendo por nodo).", "correct": true, "why": "Correcto. Job nativo es suficiente para 90% de batch simple. Casos avanzados (HPC, ML training distribuido, multi-team fairness) requieren scheduler adicional." },
+        { "letter": "B", "text": "Volcano (CNCF, ex-Kube-Batch): batch scheduler alternativo para K8s. Provee gang scheduling, queues por proyecto, fair-share, preemption avanzada, priority classes por queue. Fit para HPC, ML training, big data en K8s.", "correct": true, "why": "Correcto. Volcano fue creado por Huawei/Baidu para AI workloads. Reemplaza kube-scheduler o coexiste (Pod indica scheduler específico)." },
+        { "letter": "C", "text": "Kueue (Kubernetes SIG project): job queueing más simple que Volcano, integrado con Jobs nativos + otras CRDs (RayJob, MPIJob). Diseñado por Google + Red Hat + IBM. Foco en fairness, quotas, preemption sin reemplazar el scheduler.", "correct": true, "why": "Correcto. Kueue es el sucesor 'native' — extends Jobs con queueing en lugar de reemplazar scheduler. Más simple de operar. Usado en GKE Batch." },
+        { "letter": "D", "text": "Argo Workflows para DAGs de tareas con dependencies (task A depende de output de B). Diferente que batch parallelism — orquesta flow. Fit para CI/CD complex, data pipelines, ML pipelines multi-step.", "correct": true, "why": "Correcto. Argo Workflows resuelve orquestación (order + deps), no scheduling. Complementa batch schedulers. Kubeflow Pipelines built on top of Argo." },
+        { "letter": "E", "text": "Todos los batch workloads deben usar Deployments.", "correct": false, "why": "Falso. Deployments para servicios long-running; Jobs (o extensions) para batch. Deployment con containers que exit = crash loop." }
+      ],
+      "explanation": "Batch ecosystem en K8s: (1) Jobs nativos — simple; (2) Kueue — queueing/quotas nativos; (3) Volcano — batch scheduler completo con gang, fairness; (4) Argo Workflows — DAG orchestration; (5) Kubeflow — ML pipelines (built on Argo). Consideraciones: gang scheduling crítico para distributed training (ML donde 100 workers deben arrancar juntos o el training falla — no queremos 90 workers waiting for 10). Priority queues, quotas per team, preemption respectando budgets. Ray on K8s también popular (KubeRay operator). Big data: Spark on K8s reemplazando YARN.",
+      "realWorld": "Google Kubeflow para ML pipelines. Uber Michelangelo (interno ML). Airbnb Metaflow. Spotify usa Argo Workflows para data. Volcano en Baidu, Huawei ML. Ray en OpenAI (rumor documentado en papers). Kueue en GKE Batch.",
+      "tags": ["batch", "job", "kueue", "volcano", "argo-workflows"],
+      "tech": ["kubernetes", "kueue", "volcano", "argo"],
+      "references": [{ "title": "Kueue — kubernetes-sigs" }, { "title": "Volcano.sh" }, { "title": "Argo Workflows" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "kubernetes",
+      "topic": "PodDisruptionBudget vs eviction API",
+      "difficulty": "senior",
+      "scenario": "Vas a hacer node maintenance. `kubectl drain` respeta PDB — pero también hay 'eviction API' y 'delete Pod'. ¿Qué diferencia hay?",
+      "question": "¿Qué distingue delete Pod, eviction API, y drain respecto a PDBs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "kubectl delete pod: fuerza deletion, NO respeta PDB. Peligroso en producción. Eviction API (POST /pods/<name>/eviction): respeta PDBs — falla si viola. Drain: usa Eviction API bajo el capó (respeta PDB). Cluster Autoscaler, node maintenance, Karpenter todos usan Eviction para respetar PDBs. Delete es solo para debugging o cuando eviction está stuck y sabes qué haces.", "correct": true, "why": "Correcto. La distinción es crítica operacionalmente. Un delete pod en cluster crítico puede tumbar servicio; eviction respeta las guarantees declaradas. Runbooks producción siempre usan eviction/drain, nunca delete raw." },
+        { "letter": "B", "text": "Todos los tres son equivalentes.", "correct": false, "why": "Falso. Delete es imperative (matar), eviction es voluntary disruption (respeta PDB), drain es sequential eviction de nodo." },
+        { "letter": "C", "text": "Eviction siempre exitosa.", "correct": false, "why": "Puede fallar si viola PDB (429 Too Many Requests). El caller debe retry o esperar." },
+        { "letter": "D", "text": "PDB es solo consejo — K8s no lo enforcement.", "correct": false, "why": "Sí es enforcement por Eviction API (rechaza requests que violarían). Solo delete direct lo bypass." }
+      ],
+      "explanation": "Eviction lifecycle: (1) client POST /pods/name/eviction; (2) API server evalúa PDB del owner; (3) si viola → 429; si ok → Pod deleted normalmente. Drain: cordon (mark node unschedulable) + iterate Pods → eviction each. Karpenter/CA: node consolidation → eviction Pods → recycle. Producción runbook: NUNCA delete pod, siempre eviction. Los bugs comunes: (1) drain stuck porque PDB is unsatisfiable → aumenta replicas o revisa PDB; (2) drain --force -f matches sin gracia — solo para emergencias; (3) sin PDB → drain rápido pero sin garantías. Related: Pod Disruption Budget requires the workload owner (Deployment/StatefulSet) to have enough replicas para satisfacerlo.",
+      "realWorld": "AWS EKS Best Practices explícitamente recomienda eviction over delete. GKE Autopilot enforces PDBs strictly. Bugs históricos: nodo upgrades sin PDB tumbaron etcd, ZooKeeper clusters. Learnings: PDB es must-have para stateful. Karpenter respeta PDBs — famous slow evictions cuando PDB too restrictive.",
+      "tags": ["eviction", "pdb", "drain", "delete", "maintenance"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — API-initiated Eviction" }, { "title": "kubernetes.io — Safely Drain a Node" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "kubernetes",
+      "topic": "ResourceQuota y LimitRange",
+      "difficulty": "senior",
+      "scenario": "Un team consume todo el cluster con Pods sin limits. Otros teams se quedan sin recursos. Necesitas controls por namespace.",
+      "question": "¿Qué son ResourceQuota y LimitRange y cómo se usan juntos?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "ResourceQuota: límite AGREGADO por namespace (max CPU/memoria total, max Pods, max PVCs, max Services LoadBalancer). Si namespace excede, nuevas creations fallan. LimitRange: default/min/max por CONTAINER en el namespace. Sin LimitRange + con Quota + Pods sin requests → Pods fail (Quota exige requests). LimitRange resuelve: inyecta defaults para Pods sin especificar. Los dos juntos: Quota controla total, LimitRange asegura que cada Pod tiene requests razonables.", "correct": true, "why": "Correcto. Los dos son complementarios. Quota sin LimitRange es una molestia (dev sees error al crear Pod sin requests). LimitRange sin Quota permite over-consumption. Producción multi-tenant necesita ambos." },
+        { "letter": "B", "text": "ResourceQuota aplica cluster-wide.", "correct": false, "why": "Aplica por namespace. Multi-namespace requires multiple Quotas. Cluster-wide quotas requieren gatekeeper policies o similar." },
+        { "letter": "C", "text": "LimitRange fuerza que TODOS los Pods tengan requests.", "correct": false, "why": "LimitRange inyecta DEFAULTS (si no especificado) y valida min/max. Con Quota que requires requests, Pods sin explícitos usan defaults del LimitRange." },
+        { "letter": "D", "text": "ResourceQuota reserva recursos para el namespace.", "correct": false, "why": "No — Quota es LÍMITE (no reservation). No garantiza que el nodo tenga recursos disponibles. Solo bloquea que namespace exceda el max." }
+      ],
+      "explanation": "Multi-tenant pattern: (1) namespace por team; (2) ResourceQuota per namespace (CPU, mem, Pods, PVCs); (3) LimitRange per namespace (defaults, min, max); (4) RBAC per namespace (team miembros). Types Quota: compute-resources.requests.cpu, .memory (aggregate requests); .limits.cpu, .memory (aggregate limits); object-count (max pods, services, secrets). Priority Quotas: quota por PriorityClass (high-priority workloads pueden tener quota aparte). LimitRange types: Container (default per container), Pod (max total per Pod), PersistentVolumeClaim (min/max size). En producción: define team quotas from capacity planning + historic usage + buffer. Monitor usage con Prometheus (kube_resourcequota metrics).",
+      "realWorld": "Airbnb, Datadog usan quotas para namespaces por team. GKE Autopilot enforces defaults. Kubernetes multi-tenant white paper (CNCF) recommends. Kyverno/OPA Gatekeeper para políticas más avanzadas (más allá de Quota/LimitRange).",
+      "tags": ["resourcequota", "limitrange", "multi-tenancy", "quota"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Resource Quotas" }, { "title": "kubernetes.io — Limit Ranges" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "kubernetes",
+      "topic": "Container startup ordering y readiness gates",
+      "difficulty": "senior",
+      "scenario": "Tu Pod tiene 2 containers: app + envoy sidecar. Envoy debe estar Ready ANTES de que app arranque (proxy mTLS necesita estar up). ¿Cómo garantizarlo?",
+      "question": "¿Qué mecanismos hay para ordering entre containers de un mismo Pod?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Native sidecar containers (K8s 1.28+, GA en 1.29): initContainer con restartPolicy: Always. Arranca antes que main containers, sigue running durante Pod lifecycle. Antes de esto: hack con initContainer que espera envoy port + Envoy en containers (arranca paralelo, race conditions). Native sidecars resuelven el problema oficialmente. También readiness gates + Pod conditions para casos más complejos.", "correct": true, "why": "Correcto. Native sidecar es LA solución moderna. Antes se hacían hacks (init container que curls envoy, envoy en containers paralelos, delays). K8s 1.29 GA'd native sidecar. Solves ordering para service mesh, log forwarders, etc." },
+        { "letter": "B", "text": "K8s garantiza container order dentro de containers array.", "correct": false, "why": "Falso. Todos los containers regulares arrancan en paralelo. Order del YAML no es semantic." },
+        { "letter": "C", "text": "InitContainer es la única forma — arranca envoy como initContainer.", "correct": false, "why": "InitContainer TERMINA antes de que main arranque. Un proxy sidecar debe seguir corriendo, no terminar. Por eso native sidecar (init + restartPolicy: Always) es la solución." },
+        { "letter": "D", "text": "El Pod arranca todos los containers exactamente al mismo tiempo.", "correct": false, "why": "Init containers primero (secuencial entre init containers), luego regular containers en paralelo. No hay ordering entre regular containers antes de native sidecars." }
+      ],
+      "explanation": "Container ordering evolution: (1) pre-1.28: init containers (block main until done), regular containers paralelo — sidecar problem (main starts before sidecar ready). Workarounds: initContainer que curls sidecar port hasta responder; app tolera sidecar down inicialmente. (2) 1.28 Beta / 1.29 GA: native sidecar containers — initContainers con restartPolicy: Always. Corren durante Pod lifecycle, ordered before regular containers ready. Istio y otros service meshes benefit. Readiness gates: Pod-level conditions custom que deben ser True para que Pod se considere Ready. Uso: ALB target group registration; external LB health; complex ordering conditions. Pod stays 'not ready' hasta que condiciones cumplen.",
+      "realWorld": "Istio implementaba workarounds antes de sidecar containers. K8s 1.29 released Q4 2023. AWS Load Balancer Controller uses readiness gates para ALB registration. Cloud Native Buildpacks explicaron trade-offs pre-1.28.",
+      "tags": ["sidecar", "init-container", "ordering", "readiness-gates"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Sidecar Containers 1.29" }, { "title": "kubernetes.io — Pod Readiness Gate" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "kubernetes",
+      "topic": "Autoscaling matrix — HPA + VPA + CA + Karpenter",
+      "difficulty": "staff",
+      "scenario": "Diseñas autoscaling para producción crítica. Tráfico varía 20x entre peaks. Recursos deben rightsized. Nodos escalables. ¿Cómo combinar HPA, VPA, CA/Karpenter?",
+      "question": "¿Cuál es la matriz correcta de autoscalers para producción?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Combo típico: (1) HPA por métrica de aplicación (RPS via KEDA, no CPU crudo) — escala replicas con tráfico. (2) VPA en modo OFF (recommend only) o Initial (aplica al crear Pod) — rightsizing basado en histórico. Evitar VPA Auto + HPA por misma métrica (conflict). (3) Karpenter (o Cluster Autoscaler) — provisiona nodes cuando Pods pending; consolida cuando underused. (4) PriorityClass + PDB — protege prod crítico. Todo respeta topologySpreadConstraints para multi-AZ.", "correct": true, "why": "Correcto. La combinación es la mejor práctica actual. Cada tool su rol: HPA replicas, VPA resources, Karpenter nodes. KEDA extiende HPA a event-driven. Rate limits de HPA behavior para evitar flapping. Karpenter consolidation reduces cost." },
+        { "letter": "B", "text": "Solo HPA es suficiente.", "correct": false, "why": "Sin VPA, requests siguen manual (bug prone). Sin CA/Karpenter, nodes fijos (no cost optimization). Producción seria necesita el combo completo." },
+        { "letter": "C", "text": "VPA + HPA por CPU simultáneamente sin problema.", "correct": false, "why": "Conflict: ambos ajustan basado en CPU. HPA ve alto CPU → escala replicas. VPA ve alto CPU → aumenta requests → escala nodos. Racing/oscillation. Solution: HPA por métrica non-CPU (RPS, latency, queue) + VPA por CPU/mem." },
+        { "letter": "D", "text": "Deshabilitar autoscaling y over-provision siempre es más simple.", "correct": false, "why": "Cost explosion. Con tráfico 20x variable, over-provision es 20x costo constante. Autoscaling paga per uso." }
+      ],
+      "explanation": "El autoscaling stack completo tiene 4 layers: (1) POD LEVEL horizontal: HPA (built-in) o KEDA (event-driven, más flexible); (2) POD LEVEL vertical: VPA (rightsizing requests based on históric); (3) CLUSTER LEVEL: Cluster Autoscaler (node groups) o Karpenter (flexible provisioning); (4) COST OPTIMIZATION: spot instances, PriorityClass para batch en spot, on-demand para critical. Best practices: RPS-based HPA (más responsive que CPU); scale-down slow, scale-up fast (behavior policies); consolidation habilitado en Karpenter; VPA solo Off/Initial (Auto restart problemático); PDB para maintain HA durante scaling operations; TSC para multi-AZ spread. Metrics para monitor: HPA scaling events, Karpenter provisioning latency, VPA recommendations drift, cost per RPS/user.",
+      "realWorld": "Airbnb, Datadog, Zalando publicaron sobre autoscaling stacks. Karpenter + KEDA es popular en 2024. Cost savings 30-70% típicos vs static. Uber tuvo issues con HPA + VPA competing — documentaron. Grafana Labs blog serie sobre autoscaling en scale.",
+      "tags": ["autoscaling", "hpa", "vpa", "karpenter", "keda", "stack"],
+      "tech": ["kubernetes", "karpenter", "keda"],
+      "references": [{ "title": "AWS EKS — Autoscaling Best Practices" }, { "title": "GKE — Autopilot autoscaling" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "kubernetes",
+      "topic": "Job idempotency y retries",
+      "difficulty": "staff",
+      "scenario": "Tu Job procesa payments desde una queue. Si el Pod muere mid-processing, K8s reintenta (backoffLimit=6). Pero cada retry PROCESA de nuevo → double charges.",
+      "question": "¿Cómo diseñar Jobs idempotentes para retries seguros?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "La APP debe ser idempotente (no K8s). Design: (1) idempotency keys — cada request con UUID, checkeas si ya procesaste antes; (2) message queues con at-least-once + dedup logic; (3) transactional state — 'processed' flag en DB before efecto lateral; (4) exactly-once semantics es DIFÍCIL (Kafka streams tries).", "correct": true, "why": "Correcto. K8s garantiza at-least-once execution (Pod restart if fails). Exactly-once es responsabilidad de la app. Sin idempotency, retries causan duplicate work — famoso caso Stripe: idempotency keys son la solución universal." },
+        { "letter": "B", "text": "backoffLimit=0 evita retries — pero significa que 1 failure = job failed permanentemente (perdida de trabajo si era transient). Trade-off: idempotency + retries es mejor que no-retries.", "correct": true, "why": "Correcto. backoffLimit=0 es blunt tool. Mejor invertir en idempotency y tener retries razonables (3-6)." },
+        { "letter": "C", "text": "PodFailurePolicy (K8s 1.26+, GA 1.29) permite treatment fino: 'exit code 42 → FailJob (no retry)', 'exit code 143 (SIGTERM) → Ignore (don't count towards backoffLimit)'. Fit para batch donde some failures son transient, others son fatal.", "correct": true, "why": "Correcto. PodFailurePolicy resuelve 'una preemption no debería contar como failure permanent'. Kueue lo usa extensively para batch fairness." },
+        { "letter": "D", "text": "Split trabajo en tareas menores (más Jobs con completions distintas). Un Job procesa 1 payment (small blast radius) vs un Job procesando 1000 (retry big).", "correct": true, "why": "Correcto. Granularidad importa. Un Job por payment = retry es un payment. Un Job por batch de 1000 = retry es 1000. Trade-off overhead (más Pods) vs safety." },
+        { "letter": "E", "text": "K8s garantiza exactly-once automatically.", "correct": false, "why": "FALSO. K8s garantiza at-least-once. Exactly-once requires idempotency en la app o dedup a nivel de sink." }
+      ],
+      "explanation": "K8s Job semantics: at-least-once execution (retries on failure). Exactly-once semantics: aplicación es responsable. Patterns: (1) idempotency keys (checkear 'processed' before doing); (2) atomic 'claim + process + acknowledge' con DB transactions; (3) checkpoint state para resume-mid-batch; (4) circuit breaker de external services (para no retry cuando downstream unhealthy); (5) PodFailurePolicy para treat distintos failure modes. Anti-patterns: assumir K8s garantiza exactly-once, sin dedup (double invoices), Job que hace side effects sin ACK explicit. Related: Argo Workflows tiene retries per task, dependencies. Kueue integrates con PodFailurePolicy para batch.",
+      "realWorld": "Stripe idempotency keys es referencia industry. Uber payments idempotent design. Kafka Streams tries exactly-once con transactions. Airflow tasks debe ser idempotent (documented best practice). Argo Workflows y Kueue leveraging PodFailurePolicy heavily.",
+      "tags": ["job", "idempotency", "retries", "exactly-once", "pod-failure-policy"],
+      "tech": ["kubernetes"],
+      "references": [{ "title": "kubernetes.io — Pod Failure Policy" }, { "title": "Stripe — Idempotency Keys" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "kubernetes",
+      "topic": "Multi-tenant workload isolation",
+      "difficulty": "staff",
+      "scenario": "Tu plataforma corre workloads de 100 clientes en un cluster shared. Necesitas: (1) isolation de recursos entre clientes; (2) noisy neighbor prevention; (3) security boundary; (4) cost attribution.",
+      "question": "¿Cuáles son los patterns correctos para multi-tenant workload isolation?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Namespace per tenant + ResourceQuota + LimitRange + NetworkPolicy deny-by-default + RBAC estricto. Soft isolation — cheap pero no protege contra escape de container o pod-to-pod snooping via node kernel.", "correct": true, "why": "Correcto. Este es 'soft multi-tenancy'. Fit cuando confías los tenants (misma empresa, distintos teams). Kubernetes docs y CNCF whitepapers lo recomiendan como base." },
+        { "letter": "B", "text": "vCluster (virtual clusters): cada tenant tiene su 'virtual cluster' (API server sintético + syncer que traduce a namespace del host). Más isolation percibida (RBAC y API resources parecen exclusivos), mismo cluster físico.", "correct": true, "why": "Correcto. vCluster (Loft Labs, CNCF sandbox) balance costo/isolation. Cada team tiene su 'own K8s' pero comparten cluster underneath. Fit para dev environments o SaaS platforms." },
+        { "letter": "C", "text": "Nodes dedicados por tenant via taints + tolerations + node selectors. Pods de tenant A solo schedulean en nodes taggeados 'tenant-a'. Prevents noisy neighbor a nivel node.", "correct": true, "why": "Correcto. Node-level isolation elimina noisy neighbor. Costo: más nodos (menos bin-packing). Fit para tenants con SLOs estrictos o compliance." },
+        { "letter": "D", "text": "Kata Containers / gVisor: runtime alternativo con sandboxing tipo VM. Cada Pod corre en microVM (Firecracker). Kernel isolation real. Cost: performance overhead, más memoria por Pod.", "correct": true, "why": "Correcto. 'Hard multi-tenancy' con isolation kernel-level. Fit cuando corres workloads UNTRUSTED (SaaS con customer code). Fly.io, AWS Fargate use Firecracker. Cost 10-30% overhead pero real security boundary." },
+        { "letter": "E", "text": "Un solo cluster con RBAC es suficiente para hostile multi-tenancy.", "correct": false, "why": "Peligrosa asunción. RBAC + namespaces = soft isolation. Si tenants son hostile (customer code arbitrary), un CVE de runtime puede escalar. Hard multi-tenancy require sandboxing o clusters separados." }
+      ],
+      "explanation": "Multi-tenancy spectrum: (1) SOFT — trusted tenants (mismo team/company) — namespaces + Quota + RBAC + NetworkPolicy; (2) MEDIUM — semi-trusted (distintas divisiones) — + vClusters + node taints + PSA; (3) HARD — untrusted (customer code, SaaS) — clusters separados o Kata/gVisor. Cost attribution: métricas por namespace (Prometheus + Grafana), Kubecost, OpenCost (CNCF). Real security patterns: (1) baseline PSA restricted; (2) NetworkPolicy default deny; (3) OPA/Kyverno políticas admission; (4) sandbox runtime for untrusted (Fly.io Machines, AWS Fargate Firecracker). Best decision framework: risk model + cost tolerance + operator skill.",
+      "realWorld": "Fly.io con Firecracker microVMs para arbitrary code. AWS Fargate uses Firecracker. Loft Labs vCluster. Google GKE Sandbox Pods (gVisor). Alibaba multi-tenant scale enormously. Salesforce Hyperforce multi-tenant. Netflix Titus separate cluster per environment.",
+      "tags": ["multi-tenancy", "isolation", "vcluster", "kata", "security"],
+      "tech": ["kubernetes", "vcluster", "kata-containers"],
+      "references": [{ "title": "CNCF — Kubernetes Multi-Tenancy WG" }, { "title": "loft.sh/blog/vcluster" }]
+    }
+  ]
+}

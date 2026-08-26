@@ -1,0 +1,421 @@
+{
+  "id": "devops-sim-28-cdn-and-edge-computing",
+  "trackId": "devops",
+  "order": 28,
+  "title": "Simulacro 28 — CDN y Edge Computing",
+  "focus": "CDN moderno (CloudFront, Cloudflare, Fastly, Akamai) — cache hit ratio, invalidation (purge vs TTL), edge functions (Lambda@Edge, CloudFront Functions, Cloudflare Workers), static vs dynamic content, geographic distribution (PoPs), DDoS protection (L3/L4/L7), cache stampede (thundering herd) y patrones para mitigarlo (SWR, request coalescing, jitter).",
+  "areaCoverage": ["networking"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "networking",
+      "topic": "¿Qué es un CDN y para qué sirve?",
+      "difficulty": "junior",
+      "scenario": "Tu app sirve imágenes, JS, CSS y HTML desde un único servidor en us-east-1. Usuarios en Tokyo se quejan de que la web tarda 4-6 segundos en cargar (RTT ~180ms, 40+ requests). El CTO propone 'poner un CDN'.",
+      "question": "¿Qué es un CDN y por qué reduce la latencia percibida?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CDN (Content Delivery Network) es una red de servidores caché (Points of Presence — PoPs) distribuidos geográficamente. Cuando un usuario en Tokyo pide /logo.png, la request va al PoP más cercano (Tokyo/Osaka, ~5ms) en vez del origin en us-east-1 (~180ms). Si el PoP tiene el objeto cacheado (HIT), lo sirve inmediatamente; si no (MISS), lo pide al origin, lo cachea y lo sirve. Reduce (1) latencia por proximidad geográfica, (2) carga del origin, (3) ancho de banda de egress.", "correct": true, "why": "Correcto. CDN = cache geográficamente distribuido + red optimizada (Anycast BGP para routing al PoP más cercano, TCP/TLS terminados en el edge, connection pooling al origin). El beneficio dominante para assets estáticos es el RTT: 180ms → 5ms por objeto, multiplicado por N requests. Cloudflare tiene 330+ PoPs; CloudFront ~450 edge locations; Akamai ~4000+." },
+        { "letter": "B", "text": "Un CDN es un proxy HTTP que solo comprime respuestas.", "correct": false, "why": "Compresión (gzip/brotli) es UNA feature, no el propósito. El core es cache distribuido geográficamente. Puedes tener compresión sin CDN (el origin comprime) y CDN sin compresión adicional." },
+        { "letter": "C", "text": "Un CDN reemplaza al origin — ya no necesitas tu servidor de aplicaciones.", "correct": false, "why": "Confusión peligrosa. El origin sigue existiendo — el CDN cachea COPIAS. Para contenido dinámico (APIs con datos por usuario), el CDN suele hacer pass-through al origin. El origin sigue siendo la fuente de verdad." },
+        { "letter": "D", "text": "Un CDN solo sirve para descargar archivos grandes (videos, ISOs).", "correct": false, "why": "Aunque los CDNs sí destacan en video (Netflix Open Connect, YouTube), sirven para cualquier contenido cacheable: HTML, JSON, JS bundles, imágenes, fuentes, e incluso APIs con cache headers correctos." }
+      ],
+      "explanation": "Un CDN combina 4 elementos: (1) PoPs distribuidos globalmente — cachean contenido cerca del usuario; (2) Anycast routing — el mismo IP se anuncia desde muchos PoPs, BGP enruta al más cercano; (3) TLS/TCP terminados en el edge — reduce RTT del handshake; (4) origin shield / tiered cache — reduce hits al origin. Beneficios: (a) latencia (proximidad); (b) throughput (paralelización); (c) resiliencia (edge sigue sirviendo si origin cae, si TTL no expiró); (d) seguridad (DDoS absorbido en el edge). El cache hit ratio (CHR) es la métrica clave: HIT no toca origin, MISS sí. CHR típico de un sitio bien configurado: 80-95%.",
+      "realWorld": "Netflix Open Connect es un caso extremo: en vez de usar CDN de terceros, Netflix distribuye appliances (OCA — Open Connect Appliances) físicos DENTRO de ISPs de todo el mundo. Cachea el catálogo completo cerca del usuario, sirve >95% del tráfico desde el ISP local, reduce peering costs y latencia. Es un CDN privado, no comercial.",
+      "tags": ["CDN", "PoP", "cache", "latencia", "Anycast"],
+      "tech": ["CloudFront", "Cloudflare", "Fastly", "Akamai"],
+      "references": [{ "title": "Cloudflare Learning — What is a CDN?" }, { "title": "Netflix Tech Blog — Open Connect" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "networking",
+      "topic": "Cache hit ratio — la métrica clave",
+      "difficulty": "junior",
+      "scenario": "Tu equipo puso CloudFront delante del origin. Después de una semana, revisas métricas: 60% de requests son HIT, 40% MISS. El origin sigue quemándose. Un compañero dice: 'el CDN no está funcionando'. Otro dice: '60% es normal'.",
+      "question": "¿Qué es cache hit ratio (CHR) y qué valores son aceptables?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CHR = requests servidas desde el edge / requests totales. Un sitio típico bien configurado alcanza 80-95%. 60% es BAJO y sugiere problemas: (1) TTLs demasiado cortos, (2) URLs con querystrings variables (cachekey rompe), (3) Cache-Control: no-store en respuestas cacheables, (4) headers Vary excesivos (Vary: User-Agent explota la key), (5) origin devuelve Set-Cookie en assets estáticos.", "correct": true, "why": "Correcto. CHR es la métrica número uno de eficiencia CDN. Un CHR de 60% significa que 40% del tráfico llega al origin — casi como no tener CDN. Las causas más comunes son mala configuración de cache keys, cookies contaminando responses cacheables, y query strings dinámicos (?v=timestamp, ?utm_source=...) que hacen que cada URL sea 'única'." },
+        { "letter": "B", "text": "CHR de 60% es excelente — no puedes esperar más.", "correct": false, "why": "Falso. Sitios optimizados (Wikipedia, static sites, sites con buen cache strategy) llegan al 95%+. 60% es señal de problemas configurables." },
+        { "letter": "C", "text": "CHR no importa mientras el origin aguante.", "correct": false, "why": "Peligroso. Bajo CHR = alto costo (egress del origin), alta latencia (cada MISS = RTT completo al origin), riesgo operacional (spike de tráfico satura origin). El CHR es tanto económico como de resiliencia." },
+        { "letter": "D", "text": "CHR debe ser exactamente 100% para valer la pena.", "correct": false, "why": "Irreal. Contenido dinámico o nuevo siempre generará MISS. Además, el primer request tras un cache clear siempre es MISS. 100% solo sería posible para contenido totalmente estático y precached." }
+      ],
+      "explanation": "Optimizar CHR: (1) normaliza cache keys — remueve query params irrelevantes (utm_*, fbclid) del cache key; (2) TTLs largos para assets con hash (main.abc123.js puede ser Cache-Control: max-age=31536000, immutable); (3) TTLs cortos + revalidation para HTML (max-age=60, stale-while-revalidate=600); (4) evita Set-Cookie en responses cacheables; (5) usa origin shield / tiered cache — un único PoP hace de 'segundo nivel' antes del origin, aumenta CHR global. Métricas complementarias: origin offload (% bytes servidos por el CDN), bandwidth savings.",
+      "realWorld": "Wikipedia sirve ~95% de sus pageviews desde Varnish cache (edge) sin tocar MediaWiki. Un caso clásico de mal CHR: e-commerce que pone Set-Cookie: sessionid en / (homepage) — cada usuario ve una copia 'personalizada' y el CDN no puede cachear. Fix: cookies solo en paths /account/*, no en assets.",
+      "tags": ["cache hit ratio", "CHR", "TTL", "cache key", "optimización"],
+      "tech": ["CloudFront", "Cloudflare", "Varnish"],
+      "references": [{ "title": "Fastly — Cache hit ratio best practices" }, { "title": "AWS — CloudFront cache hit ratio" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "networking",
+      "topic": "Cache invalidation — purge vs TTL",
+      "difficulty": "mid",
+      "scenario": "Publicas una nueva versión de /index.html. El CDN aún sirve la versión anterior a usuarios en varias regiones. Tienes dos opciones: (a) esperar a que expire el TTL (10 min), o (b) hacer un purge manual del path.",
+      "question": "¿Cuáles son las estrategias de invalidación y sus trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "TTL-based (Cache-Control: max-age=N): el CDN considera el objeto 'fresh' durante N segundos, después revalida con el origin (If-None-Match / If-Modified-Since). Simple, escalable, sin acciones manuales. Trade-off: cambios tardan hasta N segundos en propagarse; útil para contenido que puede aceptar cierta staleness.", "correct": true, "why": "Correcto. TTL es el mecanismo canónico HTTP. Escalable a millones de objetos. Trade-off principal: latencia de propagación = TTL. Elegir TTL corto (60s HTML) o largo (1 año para assets con hash) según necesidad." },
+        { "letter": "B", "text": "Purge / Invalidation: fuerzas al CDN a marcar objetos como stale INMEDIATAMENTE. En CloudFront: 'invalidation' (1000 gratis/mes, luego $0.005 por path). En Cloudflare: 'Purge Cache' (por URL, tag, o todo). En Fastly: 'instant purge' (<150ms globalmente). Útil para contenido crítico (hotfix, take-down legal).", "correct": true, "why": "Correcto. Purge es el 'panic button' para invalidar inmediatamente. Fastly es famoso por su instant purge sub-segundo usando su sistema bitcache. CloudFront es más lento (minutos) y cuesta después de 1000 invalidations/mes." },
+        { "letter": "C", "text": "Cache-busting por URL: en vez de invalidar, cambias el nombre del archivo (main.js → main.abc123.js). El HTML apunta al nuevo nombre; el viejo puede quedar cacheado sin problema. Es la estrategia PREFERIDA para assets versionados (JS/CSS/imágenes con hash).", "correct": true, "why": "Correcto. Este es el 'immutable asset pattern': archivos con content hash en el nombre nunca cambian de contenido; el TTL puede ser 1 año. Solo el HTML (con TTL corto) apunta al nuevo hash. Sin invalidations, sin race conditions. Es el patrón dominante en frontend moderno (webpack, Vite, Next.js)." },
+        { "letter": "D", "text": "Surrogate keys / tags: etiquetas los objetos con IDs (product_123, category_electronics). Al actualizar un producto, purgas por tag y todos los objetos etiquetados se invalidan atómicamente. Fastly, Cloudflare Enterprise y Varnish lo soportan. Ideal para e-commerce donde una edición debe invalidar homepage, categoría, y páginas de producto simultáneamente.", "correct": true, "why": "Correcto. Surrogate keys (aka Cache-Tag en Cloudflare, Surrogate-Key en Fastly) son un game-changer para contenido dinámico cacheado. Permiten invalidación granular sin conocer todas las URLs afectadas. El origin marca respuestas con Surrogate-Key: product-123 category-42; el purge por tag hace el resto." },
+        { "letter": "E", "text": "La única forma correcta es purge global cada vez que hay cambio.", "correct": false, "why": "Anti-patrón. Purge global es caro, lento, y anula el propósito del cache (thundering herd al origin). Debe reservarse para emergencias." }
+      ],
+      "explanation": "Phil Karlton: 'There are only two hard things in Computer Science: cache invalidation and naming things'. Estrategias, de mejor a peor: (1) cache-busting por hash del contenido (immutable, no invalidation nunca); (2) surrogate keys (invalidación granular por tag); (3) TTL corto con stale-while-revalidate (bueno para HTML); (4) purge quirúrgico por URL (para hotfixes); (5) purge global (último recurso). Combinar: HTML corto + assets immutable + surrogate keys para APIs cacheables es la combinación óptima moderna.",
+      "realWorld": "Cuando Fastly tuvo el famoso outage global el 8 junio 2021 (misconfig de un cliente disparó bug latente), lo notable fue que su instant purge sub-segundo se convirtió en instant break sub-segundo — invalidó todo el cache globalmente. La lección: la misma velocidad que te salva puede amplificar errores. Muchos sitios (Reddit, Amazon, GitHub) cayeron durante ~1h.",
+      "tags": ["cache invalidation", "purge", "TTL", "surrogate keys", "cache busting"],
+      "tech": ["CloudFront", "Cloudflare", "Fastly", "Varnish"],
+      "references": [{ "title": "Fastly — Purging" }, { "title": "AWS — CloudFront invalidations" }, { "title": "Cloudflare — Cache Tags (Enterprise)" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "networking",
+      "topic": "Cache-Control headers",
+      "difficulty": "mid",
+      "scenario": "Necesitas configurar el origin para que sirva HTML (dinámico pero cacheable brevemente), JS bundles con hash (immutable), y APIs con datos por usuario (nunca cacheable).",
+      "question": "¿Qué headers Cache-Control son apropiados para cada caso?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "HTML: Cache-Control: public, max-age=60, stale-while-revalidate=600 — cachea 60s en shared caches (CDN); si expira, sirve la versión stale mientras revalida en background (SWR). Mejora UX porque no hay latencia de MISS visible.", "correct": true, "why": "Correcto. stale-while-revalidate (RFC 5861) es una técnica clave para latencia baja: el usuario recibe respuesta inmediata (aunque ligeramente stale); el CDN refresca en background. Combinada con TTL corto para HTML, permite deploys frecuentes con propagación en <1 minuto." },
+        { "letter": "B", "text": "JS bundle con hash (main.abc123.js): Cache-Control: public, max-age=31536000, immutable — un año, y 'immutable' indica al navegador que NO revalide ni siquiera con soft-reload. El contenido nunca cambia porque el hash está en el nombre.", "correct": true, "why": "Correcto. immutable (soportado por navegadores modernos) evita revalidations innecesarias. Combinado con content-hash naming es el patrón óptimo para assets estáticos versionados. Ahorra RTTs incluso en cache local del browser." },
+        { "letter": "C", "text": "API con datos por usuario: Cache-Control: private, no-store — nunca cachear en shared caches, no almacenar en disco de navegador. Además Vary: Authorization si aplica. Los datos sensibles jamás deben cachearse en el CDN.", "correct": true, "why": "Correcto. private = solo cachear en client-side (browser), NUNCA en shared caches (CDN, proxies). no-store = ni siquiera en disco. Para datos autenticados por usuario, esta es la protección mínima. Además, algunos CDNs respetan Authorization por defecto (no cachean si el request tiene Authorization header) pero hay que verificarlo." },
+        { "letter": "D", "text": "Endpoint público de listado (top-10 products, sin datos por usuario): Cache-Control: public, s-maxage=300, max-age=60 — CDN cachea 5 min (s-maxage), browser 1 min (max-age). Aumenta CHR sin comprometer freshness percibida por el usuario.", "correct": true, "why": "Correcto. s-maxage aplica a shared caches (CDN), max-age a private (browser). Poder separarlos permite estrategias como 'CDN cachea mucho, browser cachea poco' — útil cuando quieres invalidar el CDN con purge y forzar refresh en el próximo hit del browser sin esperar." },
+        { "letter": "E", "text": "Para todo: Cache-Control: no-cache, no-store, must-revalidate para máxima seguridad.", "correct": false, "why": "Sobre-defensivo. Aplicar 'no-cache' a assets estáticos destruye el propósito del CDN, aumenta costos y empeora UX. Cada tipo de contenido requiere headers específicos." }
+      ],
+      "explanation": "Directivas clave: (1) max-age=N — TTL en shared+private caches; (2) s-maxage=N — TTL solo shared (CDN); (3) public — cacheable en shared; (4) private — solo browser; (5) no-cache — cachear pero SIEMPRE revalidar antes de servir (misnomer histórico); (6) no-store — no cachear en absoluto; (7) immutable — no revalidar nunca; (8) stale-while-revalidate=N — servir stale por N seg mientras se revalida; (9) stale-if-error=N — servir stale si origin devuelve error. Combinar bien reduce carga al origin y mejora latencia. Vary controla dimensiones del cache key (ojo: Vary: User-Agent explota la key).",
+      "realWorld": "Facebook usa TTLs muy cortos (segundos) en HTML pero maximiza SWR — el usuario nunca espera. Vercel, Netlify, Cloudflare Pages usan 'immutable' agresivamente para assets con hash: han medido reducciones de 30-50% en revalidation traffic.",
+      "tags": ["Cache-Control", "max-age", "s-maxage", "stale-while-revalidate", "immutable"],
+      "tech": ["HTTP", "CloudFront", "Cloudflare"],
+      "references": [{ "title": "MDN — Cache-Control" }, { "title": "RFC 5861 — HTTP Cache-Control Extensions (SWR)" }, { "title": "web.dev — HTTP caching" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "networking",
+      "topic": "CloudFront vs Cloudflare vs Fastly vs Akamai",
+      "difficulty": "mid",
+      "scenario": "Tu empresa evalúa qué CDN adoptar. Cada uno tiene fortalezas distintas. El equipo debate cuál escoger.",
+      "question": "¿Cuáles son las fortalezas relativas de estos CDNs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CloudFront (AWS): mejor integración con el ecosistema AWS (S3, ALB, Lambda@Edge, WAF, ACM). Pricing por región (más caro en Asia/SA). Origin Shield, invalidations lentas (minutos). Edge functions: Lambda@Edge (Node/Python, full runtime, más caro) y CloudFront Functions (JS, ultra-rápido, limitado). Ideal si ya estás en AWS.", "correct": true, "why": "Correcto. CloudFront brilla por integración nativa con AWS: SigV4 al S3, ACM certs automáticos, WAF integrado, logs a S3/Kinesis, real-time metrics en CloudWatch. La contra: setup más complejo, invalidations lentas, pricing por región. Es el default para stacks AWS." },
+        { "letter": "B", "text": "Cloudflare: red gigantesca (330+ PoPs), plan gratuito muy generoso, DDoS protection incluido (Anycast + scrubbing), Workers (V8 isolates, cold start <5ms), R2 (storage sin egress fees), pricing simple (flat rate en muchos planes). Purge instant. Muy popular en startups y sitios medianos.", "correct": true, "why": "Correcto. Cloudflare democratizó CDN con su free tier. Su red Anycast absorbe DDoS masivos (Mirai, HTTP/2 Rapid Reset 398M rps). Workers son pioneros en edge compute con V8 isolates. R2 sin egress fees es un ataque directo al lock-in de S3." },
+        { "letter": "C", "text": "Fastly: instant purge sub-segundo (bitmap-based), VCL (Varnish Configuration Language) para lógica de cache MUY expresiva, Compute@Edge (WASM, Rust/Go/JS/AssemblyScript), muy popular en news/media (NYT, Reddit, GitHub) por su control fino y purge veloz. Más caro que Cloudflare, requiere más expertise.", "correct": true, "why": "Correcto. Fastly = 'CDN para ingenieros'. VCL permite lógica compleja (A/B testing, request routing, header manipulation) en el edge. Instant purge = <150ms globalmente. Compute@Edge con WASM tiene isolation fuerte y buen perf. Usado por Reddit, NYT, Shopify, GitHub, Stripe." },
+        { "letter": "D", "text": "Akamai: el más grande y más antiguo (~4000+ PoPs, embebido en ISPs), fuerte en enterprise/media (streaming de eventos masivos, gobierno, banking), features de seguridad avanzadas (Kona Site Defender, Bot Manager), pricing enterprise (contract-based, no self-serve). Ideal para gigantes con requisitos custom.", "correct": true, "why": "Correcto. Akamai es el pionero (1998, MIT spinoff). Su red 'edge in the ISP' es sin par (más de 4000 PoPs con presencia directa en telcos). Domina en broadcast masivo (Olympics, World Cup), gobierno, banking. La contra: pricing opaco enterprise, self-service limitado, curva de aprendizaje." },
+        { "letter": "E", "text": "Todos los CDNs son idénticos en features y solo se diferencian en precio.", "correct": false, "why": "Falso. Cada CDN tiene fortalezas distintas: capacidad de red, modelo de edge compute, capacidades de purge, integración con clouds, features de seguridad. La elección afecta arquitectura y coste real." }
+      ],
+      "explanation": "Consideraciones al elegir CDN: (1) origen — si estás en AWS, CloudFront tiene ventajas de integración; (2) tráfico — Akamai/Cloudflare tienen la red más grande; (3) edge compute — Cloudflare Workers y Fastly Compute@Edge son más maduros que Lambda@Edge; (4) purge — Fastly instant vs CloudFront minutos; (5) DDoS — Cloudflare y Akamai lideran; (6) costo — Cloudflare simple flat, CloudFront pay-per-use complejo, Akamai contract; (7) developer experience — Cloudflare y Fastly ganan en self-serve. Es común usar multi-CDN (DNS steering entre 2 proveedores) para resiliencia.",
+      "realWorld": "El 8 junio 2021 Fastly cayó globalmente 1h (config bug en cliente disparó latent bug en software), tumbando Reddit, Amazon, NYT, GOV.UK, Twitch. El 8 julio 2022 Cloudflare cayó ~30min por config BGP mal desplegada. El 30 junio 2024 CloudFront tuvo degradación regional. Enseñanza: multi-CDN es defensa profunda para tier-1 sites.",
+      "tags": ["CloudFront", "Cloudflare", "Fastly", "Akamai", "comparación"],
+      "tech": ["CloudFront", "Cloudflare", "Fastly", "Akamai"],
+      "references": [{ "title": "AWS — CloudFront features" }, { "title": "Cloudflare — Network" }, { "title": "Fastly — Compute@Edge" }, { "title": "Akamai — Intelligent Edge Platform" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "networking",
+      "topic": "Edge functions — Lambda@Edge vs CloudFront Functions",
+      "difficulty": "mid",
+      "scenario": "En CloudFront tienes DOS opciones para ejecutar código en el edge: Lambda@Edge y CloudFront Functions. Necesitas (a) redirects basados en país, (b) reescritura de URLs para SPA (fallback a index.html), (c) autenticación con JWT en cada request.",
+      "question": "¿Cuáles son las diferencias entre Lambda@Edge y CloudFront Functions?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "CloudFront Functions: JS runtime (JavaScript ES5-like), tiempo de ejecución <1ms, memoria 2MB, ideal para header/URL manipulation, redirects, A/B routing. Corre en TODOS los edge locations (450+). Sin acceso a red externa, sin filesystem. Precio: $0.10 por millón de invocaciones. Lambda@Edge: Node.js/Python full runtime, hasta 30s execution, 10GB memoria, acceso a red (fetch a APIs, DBs), pero corre solo en Regional Edge Caches (~13), no todos los PoPs. Más caro. Ideal para lógica compleja (JWT verify con crypto, fetch a upstream, transformaciones grandes).", "correct": true, "why": "Correcto. CloudFront Functions es 'el ligerísimo': arranque instantáneo, escala infinita, ideal para 90% de casos edge (redirects, rewrites, headers). Lambda@Edge es 'el completo': puedes hacer casi todo lo que hace un Lambda normal pero corre más lejos del user (Regional Edge Caches, no PoPs). Para SPA fallback y country redirects → CloudFront Functions. Para JWT verify complejo con jwks fetch → Lambda@Edge (o mejor: mueve auth a la app)." },
+        { "letter": "B", "text": "Son la misma cosa con distinto nombre.", "correct": false, "why": "Falso. Runtime, límites, precio, y ubicación de ejecución son distintos. Confundirlos lleva a arquitecturas ineficientes." },
+        { "letter": "C", "text": "Lambda@Edge es más rápido que CloudFront Functions.", "correct": false, "why": "Invertido. CloudFront Functions es dramáticamente más rápido (<1ms) porque usa un runtime JS ultra-ligero y corre en cada PoP. Lambda@Edge tiene cold starts y corre en Regional Edge Caches (menos ubicaciones)." },
+        { "letter": "D", "text": "CloudFront Functions puede hacer fetch a APIs externas.", "correct": false, "why": "Falso. CloudFront Functions NO tiene network access, solo manipula el request/response. Si necesitas fetch a otra API o DB, usa Lambda@Edge." }
+      ],
+      "explanation": "Regla general de decisión: (1) ¿Solo tocas headers/URL/status? → CloudFront Functions (barato, ultra-rápido, escala infinita). (2) ¿Necesitas fetch, crypto pesado, filesystem? → Lambda@Edge. (3) ¿Lógica de negocio compleja? → probablemente NO debe estar en el edge (mejor en el origin o en un backend regional). Los 4 triggers de CloudFront: viewer-request (antes del cache), origin-request (cache MISS antes de ir al origin), origin-response (respuesta del origin antes de cachear), viewer-response (respuesta al usuario). CloudFront Functions solo soporta viewer-request y viewer-response.",
+      "realWorld": "Un patrón común es usar CloudFront Functions para (a) forzar HTTPS, (b) añadir security headers (HSTS, CSP), (c) redirect www→apex. Lambda@Edge para (d) image resize on-demand (URL /img/w_400/photo.jpg → transforma en el edge), (e) JWT stateless verification. Cloudflare Workers es el equivalente 'todo en uno': V8 isolate con cold start <5ms, red externa permitida, KV/D1/R2 disponibles.",
+      "tags": ["Lambda@Edge", "CloudFront Functions", "edge functions", "runtime"],
+      "tech": ["CloudFront", "Lambda@Edge", "AWS"],
+      "references": [{ "title": "AWS — Choosing between CloudFront Functions and Lambda@Edge" }, { "title": "AWS re:Invent — CloudFront Functions deep dive" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "networking",
+      "topic": "Cloudflare Workers — V8 isolates",
+      "difficulty": "staff",
+      "scenario": "Investigas cómo Cloudflare Workers logra cold starts <5ms cuando un Lambda tradicional puede tardar 100-500ms. Alguien menciona 'V8 isolates' como la clave.",
+      "question": "¿Cómo funcionan los V8 isolates y qué ventajas dan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "V8 isolates son 'sandboxes' aislados dentro de UN mismo proceso V8 (el motor de Chrome/Node). En vez de un container/VM por función (como Lambda), Workers ejecuta miles de isolates en un único proceso V8 compartido. Ventajas: (1) cold start <5ms porque no arranca proceso ni VM — solo crea un isolate; (2) memoria muy eficiente (KB vs MB por función); (3) escala a miles de tenants por servidor. Trade-off: JS/WASM únicamente (no Python/Ruby nativos); isolation más débil que VM (Cloudflare mitiga con Site Isolation y Spectre defenses).", "correct": true, "why": "Correcto. Este es el paper 'Workers KV: Cloudflare Workers' (2018). El modelo de V8 isolates es lo que permite Cloudflare correr Workers en CADA request de sus 330+ PoPs con costo marginal cercano a cero. Es una arquitectura fundamentalmente distinta al modelo Lambda (una VM/container por función). Trade-offs: solo JS/WASM (aunque WASM permite Rust/Go/AssemblyScript compilados), isolation basada en proceso V8 en vez de kernel/VM." },
+        { "letter": "B", "text": "V8 isolates son VMs completas que se pre-warm y se recycle.", "correct": false, "why": "Confusión con warm containers. Los isolates NO son VMs — son mucho más ligeros. Un proceso V8 puede tener miles de isolates simultáneos." },
+        { "letter": "C", "text": "V8 isolates son idénticos a Docker containers.", "correct": false, "why": "Falso. Containers usan kernel namespaces/cgroups y suelen pesar 10-100MB; V8 isolates son estructuras de memoria dentro de un proceso, pesan KB." },
+        { "letter": "D", "text": "V8 isolates son un tipo de proceso Unix.", "correct": false, "why": "Falso. Son estructuras internas al motor V8 (dentro del proceso). Comparten address space del proceso host pero con heap/globals aislados." }
+      ],
+      "explanation": "Modelo de Cloudflare Workers vs Lambda: LAMBDA usa Firecracker microVMs (pesos ~125MB, arranque ~125ms), un tenant por microVM, aislamiento fuerte por hardware/kernel. WORKERS usa V8 isolates dentro de un proceso multi-tenant (~kB overhead, arranque ~5ms), muchos tenants por proceso, aislamiento por V8 sandbox (mitigaciones contra Spectre, memory pressure, CPU steal). Trade-off elegido: Cloudflare prioriza escala y latencia sobre isolation máxima. Deno Deploy y Vercel Edge Functions siguen el mismo modelo. Fastly Compute@Edge usó WASMTime (WASM sandbox) — otro punto de diseño con isolation vía tipo/memoria en vez de VM.",
+      "realWorld": "En 2018 Kenton Varda (arquitecto de Workers) publicó 'Cloud Computing without Containers' explicando por qué eligieron V8 isolates. Cloudflare Workers ejecuta miles de millones de requests por día. El modelo permitió a Cloudflare cobrar $0.30/millón (10x más barato que Lambda) sostenidamente. Vercel adoptó el mismo modelo para Edge Functions.",
+      "tags": ["V8 isolates", "Cloudflare Workers", "edge compute", "cold start"],
+      "tech": ["Cloudflare Workers", "V8"],
+      "references": [{ "title": "Cloudflare — Cloud Computing without Containers (Kenton Varda)" }, { "title": "Cloudflare Workers Runtime" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "networking",
+      "topic": "CDN para contenido estático vs dinámico",
+      "difficulty": "mid",
+      "scenario": "Tu app tiene: (a) JS bundles con hash (static), (b) HTML SSR que cambia cada request (dynamic), (c) API JSON con datos por usuario (dynamic private), (d) API JSON con listados públicos (dynamic public), (e) imágenes de usuarios (static per-user, uploaded).",
+      "question": "¿Qué política de cache aplica a cada tipo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "JS bundles con hash: static, cache infinito. Cache-Control: public, max-age=31536000, immutable. Como el nombre cambia con cada build (main.abc123.js), no hay conflicto de versiones. CHR debería ser >99%.", "correct": true, "why": "Correcto. Es el caso perfecto para CDN. Un año de TTL + immutable = zero revalidation. Cambios se propagan por cambio de URL (nueva ref en HTML)." },
+        { "letter": "B", "text": "HTML SSR: dynamic, cachear con TTL corto + SWR o purge por evento. Cache-Control: public, max-age=60, stale-while-revalidate=300. Si el HTML depende de user context (logged-in view), NO cachear — usa Cache-Control: private, no-store o mueve la personalización a client-side.", "correct": true, "why": "Correcto. HTML es 'la parte difícil'. Trucos: (1) genera dos versiones (logged-in y logged-out) y usa Vary: Cookie o edge logic para elegir; (2) mueve personalización a client-side (edge sirve HTML anónimo + JS hace fetch autenticado); (3) HTML corto + SWR para propagar deploys rápido. Netflix, Airbnb, LinkedIn usan combinaciones de esto." },
+        { "letter": "C", "text": "API JSON con datos por usuario: NUNCA cachear en CDN. Cache-Control: private, no-store. La CDN debe hacer pass-through al origin. Si el CDN cachea por error una respuesta con datos de usuario A, un usuario B podría verla — grave vulnerabilidad (cache poisoning).", "correct": true, "why": "Correcto. Este es el clásico riesgo: 'user data leaked via cache'. Ha ocurrido a Steam, LinkedIn, Twitter en incidentes reales. Defensas: (1) headers correctos; (2) rutas /api/user/* con explicit no-store; (3) auditar el cache key para no ignorar Authorization; (4) Vary: Authorization si el endpoint puede tener versiones anónimas y autenticadas." },
+        { "letter": "D", "text": "API JSON con listados públicos: SÍ cachear en CDN con TTL corto. Cache-Control: public, s-maxage=60, max-age=10. Aumenta CHR y protege el origin bajo tráfico. Ideal para /api/products/top10, /api/news/latest.", "correct": true, "why": "Correcto. Es un caso enormemente subutilizado — muchos equipos no cachean APIs porque 'son dinámicas', pero endpoints públicos SIN personalización son cacheables. 60s de TTL puede reducir carga al origin 100x. Combinar con surrogate keys para invalidar por evento (nuevo producto → purge tag)." },
+        { "letter": "E", "text": "Imágenes de usuarios: static per-user, cacheable pero con URLs firmadas (signed URLs). CDN cachea por URL (que incluye signature), TTL medio (horas). Al eliminar la imagen del origin y expirar signature, el edge dejará de servirla al expirar TTL (o via purge).", "correct": true, "why": "Correcto. Signed URLs (CloudFront Signed URLs, S3 presigned) son el patrón estándar para contenido semi-privado. La URL incluye una firma con expiración (?X-Amz-Signature=...); el CDN cachea por URL exacta, la signature invalida naturalmente. Para take-down urgente: purge + rotate signing key." }
+      ],
+      "explanation": "Regla de oro: NO existe 'CDN solo para estáticos'. CDN moderno cachea dinámico también, siempre que puedas expresar la política correctamente. Preguntas para clasificar contenido: (1) ¿es idéntico para todos los usuarios? → cacheable public; (2) ¿cambia con frecuencia? → TTL corto + SWR o surrogate keys; (3) ¿contiene datos sensibles? → private/no-store; (4) ¿el nombre puede versionarse? → immutable. Auditar el cache key es CRÍTICO — muchos incidentes de cache poisoning vienen de ignorar Authorization/Cookie en la key.",
+      "realWorld": "El 21 sept 2018, Steam sufrió un incidente donde usuarios veían datos de otras cuentas por 30 min: un cache mal configurado incluyó respuestas autenticadas. Similar: Cloudflare 'Cloudbleed' 2017 (buffer over-read filtró datos sensibles en respuestas HTML cacheadas). Auditar cache keys y headers es defense-in-depth.",
+      "tags": ["static", "dynamic", "cache policy", "signed URLs", "cache poisoning"],
+      "tech": ["CloudFront", "Cloudflare", "S3"],
+      "references": [{ "title": "OWASP — Web Cache Deception" }, { "title": "Fastly — Cache dynamic content" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "networking",
+      "topic": "Geographic distribution — PoPs y Anycast",
+      "difficulty": "senior",
+      "scenario": "Un usuario en Buenos Aires hace request a tu app en cloudfront.net. ¿Cómo termina en el PoP de São Paulo (más cercano) y no en el PoP de Frankfurt?",
+      "question": "¿Cómo funciona Anycast BGP en un CDN?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Anycast: el CDN anuncia el MISMO rango IP (ej 143.204.0.0/16) desde MUCHOS PoPs simultáneamente vía BGP. Los routers de internet, al enrutar hacia esa IP, eligen el path 'más corto' (menos AS hops según BGP). Esto tiende a llevar el tráfico al PoP topológicamente más cercano al usuario. NO es exactamente 'geográfico' — es 'BGP-más-corto', que suele correlacionar con cercanía geográfica pero no siempre (dependen de peering agreements entre ISPs).", "correct": true, "why": "Correcto. Anycast es la magia de los CDNs modernos: una sola IP, muchos servidores. BGP hace el trabajo de routing hacia el PoP más cercano en términos de AS hops. Cloudflare, Fastly, Google, AWS Global Accelerator lo usan intensivamente. Sutileza: BGP routing depende de peering — a veces un usuario en Nairobi termina en Ámsterdam porque su ISP tiene mejor peering con Ámsterdam que con Johannesburg, incluso si Johannesburg está geográficamente más cerca." },
+        { "letter": "B", "text": "El CDN detecta la IP del usuario, hace geolocation lookup, y devuelve un CNAME al PoP correcto vía DNS (GeoDNS).", "correct": false, "why": "Este es el modelo ANTIGUO de CDN (usado por Akamai originalmente y muchos aún hoy en menor grado). GeoDNS funciona pero tiene problemas: (1) DNS resolver puede estar lejos del usuario (Google DNS 8.8.8.8 puede resolver desde otro país); (2) DNS TTL agrega latencia; (3) no adapta a fallos rápido. Anycast es superior en la mayoría de casos, pero GeoDNS y Anycast a veces se combinan (Akamai híbrido)." },
+        { "letter": "C", "text": "El navegador del usuario elige el PoP basándose en JavaScript.", "correct": false, "why": "No — el routing sucede a nivel red antes de que el navegador ejecute nada. El JS del navegador no controla routing IP." },
+        { "letter": "D", "text": "El CDN tiene un único servidor central que redirige a PoPs regionales.", "correct": false, "why": "Falso. No hay 'servidor central' — cada PoP es autónomo. La red misma (BGP) hace el routing." }
+      ],
+      "explanation": "Anycast en detalle: (1) el CDN opera un AS (Autonomous System) con sus rangos IP; (2) anuncia esos rangos vía BGP desde cada PoP a los ISPs con los que peer; (3) los routers globales aprenden múltiples paths hacia el mismo rango; (4) cada router elige el 'best path' según BGP decision process (shortest AS_PATH principalmente); (5) el tráfico de un cliente termina en el PoP con el path más corto desde su ISP. Ventajas: (a) failover automático (si PoP cae, BGP re-routea); (b) DDoS diluido (ataque se distribuye a muchos PoPs); (c) latencia baja. Contras: no controlas exactamente qué PoP recibe cada usuario. Tools: RIPE Atlas, looking glass, dig +short.",
+      "realWorld": "Cloudflare opera 330+ PoPs con Anycast. Su famoso post 'How we built a global network' explica cómo un ataque DDoS de 26M rps se distribuyó automáticamente entre PoPs sin intervención. Google (8.8.8.8) es Anycast puro. Netflix Open Connect NO usa Anycast — es GeoDNS puro para dirigir al OCA correcto en el ISP.",
+      "tags": ["Anycast", "BGP", "PoP", "geographic distribution", "routing"],
+      "tech": ["BGP", "CloudFront", "Cloudflare"],
+      "references": [{ "title": "Cloudflare — How Anycast works" }, { "title": "RIPE — BGP Anycast" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "networking",
+      "topic": "Origin shield y tiered caching",
+      "difficulty": "senior",
+      "scenario": "Tu CHR global es 82% pero el origin sigue recibiendo carga alta. Investigas: hay muchos PoPs (200+), cada uno con su cache separado. Un mismo objeto se pide 200 veces al origin (una por PoP en su primer MISS).",
+      "question": "¿Qué es origin shield / tiered caching y qué problema resuelve?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Origin Shield (CloudFront) o Tiered Cache (Cloudflare) es una capa INTERMEDIA de cache entre los PoPs (edge tier) y el origin. Todos los PoPs pasan por un shield común (o una jerarquía) antes de ir al origin. Efecto: un objeto se pide UNA vez al origin (por el shield), y el shield lo sirve a todos los PoPs. Reduce carga al origin dramáticamente, mejora CHR desde la perspectiva del origin (origin offload puede pasar de 80% a 98%+).", "correct": true, "why": "Correcto. Sin tiered cache: N PoPs × 1 MISS por objeto = N requests al origin. Con tiered cache: 1 MISS al origin, N-1 HITs desde el shield. Especialmente útil cuando el 'long tail' de contenido es grande (millones de objetos poco populares — cada uno se pide a origin desde muchos PoPs)." },
+        { "letter": "B", "text": "Origin shield es un WAF que protege al origin.", "correct": false, "why": "Confusión con WAF/security. Origin shield es una CAPA DE CACHE, no un firewall. Cloudflare Shield y AWS WAF son productos separados." },
+        { "letter": "C", "text": "Origin shield es un balancer entre múltiples origins.", "correct": false, "why": "Falso. Load balancing entre origins es otra feature (origin failover, origin groups). El shield es un cache intermedio." },
+        { "letter": "D", "text": "Origin shield ya no es necesario con Anycast.", "correct": false, "why": "Falso — son ortogonales. Anycast enruta usuarios a PoPs cercanos; origin shield agrupa MISS de PoPs hacia el origin. Ambas son útiles simultáneamente." }
+      ],
+      "explanation": "Cómo funciona: (1) usuario → PoP edge; (2) si MISS en el PoP edge, va al PoP shield (no al origin); (3) si MISS en shield, va al origin; (4) shield cachea, PoP cachea, usuario recibe. En CloudFront, activas 'Origin Shield' y eliges UN región (típicamente cerca del origin). En Cloudflare 'Argo Tiered Cache' organiza una jerarquía dinámica (edge PoPs → regional tier → central tier → origin). Beneficio real: origin recibe menos tráfico, puede ser más pequeño y barato. Combinado con SWR y stale-if-error, el origin puede caer sin que usuarios lo noten (mientras TTL aguante).",
+      "realWorld": "Cloudflare Argo Tiered Cache es un producto premium famoso. Su blog reporta reducciones de 30-50% en tráfico al origin para sitios con long tail (imágenes de user-generated content, catálogos e-commerce con millones de SKUs). CloudFront Origin Shield añade una capa opcional; muchos usuarios reportan mejoras similares.",
+      "tags": ["origin shield", "tiered cache", "origin offload", "long tail"],
+      "tech": ["CloudFront", "Cloudflare Argo"],
+      "references": [{ "title": "AWS — CloudFront Origin Shield" }, { "title": "Cloudflare — Argo Tiered Cache" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "networking",
+      "topic": "DDoS protection en el edge",
+      "difficulty": "senior",
+      "scenario": "Tu app recibe un ataque DDoS de 500 Gbps + 20M rps. El origin caería instantáneamente. El CDN dice 'DDoS protection incluida'. ¿Qué defensas ofrece?",
+      "question": "¿Cuáles son las capas de DDoS protection que ofrece un CDN moderno?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "L3/L4 volumétrico: absorción por capacidad de red (Anycast distribuye el ataque entre PoPs). Cloudflare y Akamai tienen 100+ Tbps de capacidad global. Filtros de paquetes malformados, reflection attacks (DNS, NTP amplification), SYN floods absorbidos con SYN cookies. Se hace en el edge de red, antes de que llegue a servidores de aplicación.", "correct": true, "why": "Correcto. Volumétrico L3/L4 se defiende con CAPACIDAD y filtrado temprano. Anycast es un multiplicador: un ataque de 1Tbps se divide entre 300 PoPs = ~3Gbps por PoP, manejable. Cloudflare, Akamai, AWS Shield Advanced tienen la capacidad para absorber ataques de récord." },
+        { "letter": "B", "text": "L7 (HTTP/HTTPS): rate limiting, bot detection (JS challenge, CAPTCHA, browser fingerprinting), WAF rules, behavioral analysis. Detecta ataques 'slowloris', HTTP flood, credential stuffing. Cloudflare 'Under Attack Mode' y AWS WAF con rate-based rules son ejemplos. El costo aquí es CPU en el edge, no ancho de banda.", "correct": true, "why": "Correcto. L7 es donde los ataques modernos golpean más — HTTP/2 Rapid Reset (CVE-2023-44487) es un ejemplo reciente que aprovechó protocol. Defensa: rate limiting por IP/ASN/cookie, JS challenges (bots no ejecutan JS bien), managed rules específicas para bots conocidos, ML behavioral (Cloudflare Bot Management, Akamai Bot Manager)." },
+        { "letter": "C", "text": "Cache absorption: si el contenido está cacheado, el CDN sirve desde el edge sin tocar el origin. Un DDoS de HTTP GET a /index.html se convierte en cache HITs — el origin no ve el ataque. Es la razón por la que 'cachea más' es también 'seguridad más'.", "correct": true, "why": "Correcto. Elevated CHR es una defensa en sí mismo. Si un ataque de 10M rps golpea rutas cacheadas, se sirve todo desde el edge. Los ataques efectivos suelen buscar rutas no cacheadas (search, login) — por eso rate limiting granular en esas rutas es crítico." },
+        { "letter": "D", "text": "Origin hiding: el origin no está expuesto públicamente. El firewall del origin solo acepta tráfico desde IPs del CDN (allowlist). Un atacante que descubre la IP real del origin no puede bypassear el CDN. AWS Origin Access Control (OAC), Cloudflare Argo Tunnel (cloudflared) son mecanismos.", "correct": true, "why": "Correcto. Es una defensa OFTEN OLVIDADA. Si tu origin es accesible directamente por IP, un atacante puede bypassear el CDN. Fixes: (a) allowlist IPs de CloudFront/Cloudflare en Security Group; (b) usar Origin Access Identity/Control con S3; (c) Cloudflare Tunnel (origin sin puerto público, conecta out al edge)." },
+        { "letter": "E", "text": "Un CDN no ofrece ninguna defensa DDoS — necesitas un servicio separado.", "correct": false, "why": "Falso. DDoS protection es feature core de CDNs modernos. Cloudflare y Akamai lo incluyen en todos los planes; CloudFront tiene AWS Shield Standard incluido gratis." }
+      ],
+      "explanation": "Capas defensivas: (1) Anycast + capacidad — absorbe volumétrico; (2) filtros de red (BPF, XDP, DDoS Guard) — descartan malformados en línea de red; (3) rate limiting L7 — por IP, país, ASN, JA3, cookie; (4) WAF rules — patrones conocidos; (5) bot management — behavioral / fingerprinting; (6) cache absorption; (7) origin hiding. Los ataques modernos son mixtos: distraction volumétrico + surgical L7. Ver 'DDoS trends' de Cloudflare Radar. Costos: DDoS puede quemar bandwidth (egress) — algunos CDNs cobran, otros absorben gratis (Cloudflare 'unmetered').",
+      "realWorld": "Octubre 2023: HTTP/2 Rapid Reset (CVE-2023-44487) — Cloudflare mitigó ataques de 201M rps, Google mitigó 398M rps, AWS 155M rps. Todos usaron reset-stream flood en HTTP/2. Se parchearon libraries (nginx, HAProxy, Go, Envoy). Cloudflare publicó post 'The largest DDoS attack in history' — el edge protegió con rate limiting y protocol-aware filters.",
+      "tags": ["DDoS", "L3", "L4", "L7", "WAF", "rate limiting", "bot management"],
+      "tech": ["Cloudflare", "AWS Shield", "Akamai"],
+      "references": [{ "title": "Cloudflare — DDoS threat report" }, { "title": "AWS Shield — DDoS protection" }, { "title": "CVE-2023-44487 HTTP/2 Rapid Reset" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "networking",
+      "topic": "Cache stampede — thundering herd",
+      "difficulty": "staff",
+      "scenario": "Un objeto muy popular (/api/homepage) tiene TTL=60s. En el segundo 60, expira. En ese instante, 5000 requests llegan simultáneamente al PoP. El PoP hace MISS en todas — envía 5000 requests al origin, que se cae bajo la carga.",
+      "question": "¿Qué es cache stampede y cómo se mitiga?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cache stampede (thundering herd): cuando un objeto muy popular expira, muchas requests concurrentes hacen MISS simultáneamente y todas van al origin. Es un patrón catastrófico especialmente para endpoints costosos de generar (queries pesadas, LLM calls). Puede tumbar el origin cuando el CDN estaba 'ayudando'.", "correct": true, "why": "Correcto. Es un problema clásico de sistemas de cache — no específico de CDN. También ocurre con Redis, Memcached. El TTL alineado convierte al cache en un amplificador de carga en cada expiración." },
+        { "letter": "B", "text": "Request coalescing (aka collapsing, single-flight): el CDN detecta múltiples requests concurrentes al MISMO objeto en MISS. Envía UNA sola request al origin y sirve la respuesta a todas las requests pendientes. Todos los CDNs modernos lo hacen dentro de un mismo PoP (Fastly 'request collapsing', Cloudflare 'concurrent origin requests', CloudFront lo hace por defecto).", "correct": true, "why": "Correcto. Request coalescing es la defensa PRIMARIA contra stampede. Reduce N requests al origin a 1. Limitaciones: (a) solo funciona por-PoP (200 PoPs = potencialmente 200 requests al origin simultáneas — mitigable con origin shield); (b) requiere que la respuesta sea cacheable (respuestas con Vary complejo pueden no coalescer bien)." },
+        { "letter": "C", "text": "Stale-while-revalidate (SWR): el CDN sirve la versión STALE (expirada recientemente) mientras revalida en background con el origin. Las requests concurrentes reciben stale (sin latencia); solo UNA revalidation va al origin. Combina bien con TTL corto: max-age=60, stale-while-revalidate=600 significa 'fresh 60s, después de eso sirve stale hasta 10min mientras refresca'.", "correct": true, "why": "Correcto. SWR (RFC 5861) es la técnica moderna preferida. Elimina el 'cliff' de expiración: en vez de 'fresh → MISS', hay una zona 'stale servido rápido, refresh en background'. Muchos frameworks (Next.js ISR, Vercel) lo usan intensivamente." },
+        { "letter": "D", "text": "TTL con jitter: en vez de TTL fijo, añade un componente random (max-age=60 ± 10s). Evita que muchos objetos generados al mismo tiempo expiren simultáneamente. Útil para keys sharding lo suficiente para desincronizar expirations.", "correct": true, "why": "Correcto. TTL jitter es una defensa complementaria — reduce la probabilidad de que muchos objetos populares expiren en el mismo instante. Amazon lo usa en clientes AWS SDK para evitar synchronized retries. Es una técnica de 'chaos engineering aplicada a expiraciones'." },
+        { "letter": "E", "text": "El cache stampede no existe si tienes suficiente RAM en el cache.", "correct": false, "why": "Falso. El problema es en el momento de expiración, no de capacidad de cache. Incluso con RAM infinita, cuando el TTL expira el objeto se considera stale y N requests van al origin." }
+      ],
+      "explanation": "Combinación defensiva completa: (1) request coalescing (por defecto en CDNs serios); (2) SWR (Cache-Control) — nunca esperar por revalidation; (3) origin shield — reduce fanout entre PoPs; (4) TTL jitter — desincronizar expirations; (5) rate limiting en el origin — última línea de defensa; (6) para casos extremos (LLM calls costosas), lock explícito en el backend (single-flight pattern con Redis SET NX). En Go: singleflight.Group. En Python: aiocache o custom con asyncio locks. La ausencia de estas defensas es una causa común de outages en Black Friday, product launches, viral events.",
+      "realWorld": "En 2019, Fastly implementó 'shielding' explícito para stampede en news sites (Guardian, BBC). Cuando una noticia se viraliza (millones de requests en segundos), el fanout entre PoPs sin shield tumbaría al origin. El post 'Cache stampede: what it is and how to solve it' (Fastly) es referencia. En LLM APIs (OpenAI, Anthropic), el stampede también aparece — las cache layers modernas (Cloudflare AI Gateway, Portkey) implementan request coalescing y SWR para reducir costo.",
+      "tags": ["cache stampede", "thundering herd", "request coalescing", "SWR", "jitter"],
+      "tech": ["CloudFront", "Fastly", "Redis"],
+      "references": [{ "title": "Fastly — Request Collapsing" }, { "title": "RFC 5861 — stale-while-revalidate" }, { "title": "Wikipedia — Cache stampede" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "networking",
+      "topic": "Cloudflare 2019 regex CPU incident",
+      "difficulty": "staff",
+      "scenario": "El 2 de julio 2019, Cloudflare cayó globalmente durante ~30 minutos. El culpable: una única regla WAF con una regex catastrófica que consumió 100% CPU en todos los servidores.",
+      "question": "¿Qué pasó técnicamente y qué lecciones se extraen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un cambio en las reglas WAF (regla para detectar XSS) incluía una regex con backtracking catastrófico ('ReDoS' — Regular Expression Denial of Service). En strings específicos, la regex tardaba tiempo exponencial en evaluar. Se desplegó a producción global sin canary. Cada worker de Cloudflare gastó 100% CPU intentando evaluar la regex contra tráfico normal. Toda la red bajó ~30min. Lecciones: (1) staged rollouts obligatorios incluso para 'solo una regla WAF'; (2) time budgets / timeouts para regex; (3) tests de regex con inputs adversariales; (4) kill switches globales.", "correct": true, "why": "Correcto. El post-mortem público de Cloudflare (John Graham-Cumming, CTO) explica todo en detalle. La regex tenía un patrón '(?:(?:\"|'|\\]|\\}|\\\\|\\d|(?:nan|infinity|true|false|null|undefined|symbol\\(|\\)|(?:'|\"|\\]|\\}|\\\\|\\d|(?:nan|infinity|true|false|null|undefined|symbol\\(|\\{|\\[|\\(|(?:'|...))))*)*' (nesting con quantifiers) — patrón clásico de ReDoS. Se desplegó globalmente en minutos porque las reglas WAF se consideraban 'seguras'." },
+        { "letter": "B", "text": "Un DDoS de un actor estatal.", "correct": false, "why": "Falso. Fue un incidente de auto-inflicción, no ataque. Cloudflare lo reveló en su post-mortem." },
+        { "letter": "C", "text": "Un cable submarino cortado.", "correct": false, "why": "Falso. El problema fue software, no infraestructura física." },
+        { "letter": "D", "text": "Un ataque BGP hijack.", "correct": false, "why": "Falso. Fue código propio, no un ataque externo." }
+      ],
+      "explanation": "Fixes implementados por Cloudflare tras el incidente: (1) motor de regex reemplazado por RE2 (Google) — garantía de tiempo lineal, no backtracking; (2) staged rollout obligatorio para TODOS los cambios de WAF (canary → 1% → 10% → 100%); (3) 'kill switch' global para desactivar reglas WAF inmediatamente; (4) time budgets estrictos por request en el edge (si un request tarda >X ms, se aborta); (5) chaos testing con inputs adversariales. Es un caso de estudio de cómo un 'cambio pequeño y seguro' (una regla) puede tumbar una red global. Lección: no existe cambio 'demasiado pequeño para canary'.",
+      "realWorld": "El post-mortem de Cloudflare del 2019 (blog.cloudflare.com/details-of-the-cloudflare-outage-on-july-2-2019/) es lectura obligada en incident response. Se estudia en Google SRE trainings. Fastly tuvo un caso similar el 8 junio 2021 con un config bug latente activado por un cliente. GitHub tuvo un incidente en 2018 por bug de MySQL split-brain. Patrón común: cambio pequeño + rollout rápido + falta de canary + amplificación por escala global.",
+      "tags": ["Cloudflare 2019", "ReDoS", "regex", "outage", "post-mortem"],
+      "tech": ["Cloudflare", "WAF", "regex"],
+      "references": [{ "title": "Cloudflare — Details of the Cloudflare outage on July 2, 2019" }, { "title": "OWASP — Regular Expression Denial of Service (ReDoS)" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "networking",
+      "topic": "Edge storage — KV, R2, D1",
+      "difficulty": "senior",
+      "scenario": "Tu edge function necesita persistencia: (a) sesiones/tokens rápidos (lecturas), (b) archivos grandes (assets generados), (c) datos relacionales pequeños (config por usuario).",
+      "question": "¿Qué edge storage services existen y para qué sirven?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cloudflare KV: key-value distribuido eventual-consistent, lecturas rápidas globales (<50ms), escrituras se propagan en ~60s. Ideal para config, feature flags, cache de tokens. Cloudflare R2: object storage S3-compatible SIN egress fees, ideal para assets grandes. Cloudflare D1: SQLite en el edge (basado en Litestream), relacional pequeño con réplicas globales. AWS tiene DynamoDB Global Tables (multi-región) pero NO tiene una capa de storage en el mismo edge que CloudFront Functions. Fastly tiene KV Store, Object Store, y Config Store (Compute@Edge).", "correct": true, "why": "Correcto. Cloudflare lidera edge storage: KV para lecturas dominantes, R2 para blobs (sin egress fees es enorme), D1 para relacional ligero, Durable Objects para stateful. AWS Lambda@Edge no tiene storage nativo en el edge — usualmente hace fetch a DynamoDB (con latencia agregada). Fastly Compute@Edge tiene stores similares (KV, Object, Config, Secret) con eventual consistency." },
+        { "letter": "B", "text": "El edge no debe tener storage — siempre debes hacer fetch al origin.", "correct": false, "why": "Anti-patrón. Un edge sin storage es solo un proxy. Storage en el edge permite latencia baja (<50ms globales) para lecturas frecuentes de datos pequeños." },
+        { "letter": "C", "text": "El edge storage siempre es strongly consistent globalmente.", "correct": false, "why": "Falso. La mayoría son eventual consistent (KV) o zone-based (D1 réplicas leen locales). La consistencia fuerte global tiene costo de latencia — no es el trade-off que suelen elegir." },
+        { "letter": "D", "text": "Cloudflare R2 cobra egress igual que S3.", "correct": false, "why": "Punto de diferenciación de R2: cero egress fees. Cobra por almacenamiento y operaciones, pero no por bytes servidos. Es un ataque directo a S3 (donde egress puede ser el mayor costo)." }
+      ],
+      "explanation": "Modelos de consistencia: (1) eventual (KV, DynamoDB Global) — escritura propagada asincrónicamente, lectura local rápida; (2) session (Durable Objects) — objetos con identidad, escritura fuerte en su zona; (3) strong global (Spanner, FaunaDB) — cara en latencia, no común en edge. Elegir según caso de uso: sesiones y tokens tolerables con eventual (con TTL corto); feature flags eventual; datos financieros necesitan strong. Durable Objects de Cloudflare permiten patterns interactivos (chat rooms, multiplayer) en el edge — cada objeto tiene su 'home' y sesiones fuertes localmente.",
+      "realWorld": "Cloudflare popularizó edge storage con Workers KV (2018). R2 (2022) atacó el S3 lock-in con egress cero. D1 (2023, GA 2024) trajo SQLite al edge — perfecto para apps con datos por usuario que caben en pocos GB. Vercel Storage (Postgres, KV, Blob) sigue modelo similar. Deno KV es strong consistent global usando FoundationDB. Cada uno tiene trade-offs distintos entre consistencia, latencia y precio.",
+      "tags": ["edge storage", "KV", "R2", "D1", "Durable Objects"],
+      "tech": ["Cloudflare KV", "R2", "D1", "Fastly"],
+      "references": [{ "title": "Cloudflare — Workers KV" }, { "title": "Cloudflare — R2 Object Storage" }, { "title": "Cloudflare — D1 database" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "networking",
+      "topic": "AWS CloudFront outages — historia",
+      "difficulty": "senior",
+      "scenario": "En junio 2024, CloudFront tuvo una degradación regional (us-east-1) que afectó a muchos servicios AWS (S3 pre-signed URLs, ACM cert issuance, apps con edge). Antes hubo eventos similares.",
+      "question": "¿Qué patrones se repiten en outages de CloudFront y qué aprendizajes hay?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Patrón común: (1) us-east-1 es región especial (control plane, cert issuance para muchos servicios AWS); (2) cuando us-east-1 tiene problemas, servicios GLOBALES (CloudFront, IAM, Route53) pueden verse afectados; (3) cambios de configuración desplegados globalmente amplifican errores. Aprendizajes: (a) multi-CDN o multi-cloud CDN (Cloudflare + CloudFront con DNS steering); (b) cachear certificados críticos localmente; (c) usar Route53 health checks con failover; (d) probar chaos scenarios simulando outages de CDN. AWS Well-Architected Framework ahora recomienda diseñar asumiendo que us-east-1 puede fallar.", "correct": true, "why": "Correcto. us-east-1 es 'la región tóxica' — muchos control planes viven ahí y cuando falla, afecta a servicios que 'no deberían depender de us-east-1'. Ha ocurrido varias veces (2017, 2020, 2021, 2023, 2024). Empresas maduras (Netflix, Stripe) han diseñado assumiendo esta realidad." },
+        { "letter": "B", "text": "CloudFront nunca ha tenido outages.", "correct": false, "why": "Falso. Ha tenido múltiples eventos documentados en el status page de AWS." },
+        { "letter": "C", "text": "Los outages solo afectan a usuarios pequeños.", "correct": false, "why": "Falso. Los outages de CloudFront afectan a servicios enormes (Netflix, Amazon.com, Prime Video). Ninguna arquitectura es inmune por tamaño." },
+        { "letter": "D", "text": "Multi-CDN aumenta el riesgo por complejidad.", "correct": false, "why": "Añade complejidad SÍ, pero reduce riesgo de dependencia única. El trade-off suele valer para tier-1 sites. Cloudflare Load Balancer, AWS Global Accelerator, o DNS steering (Route53, NS1) son mecanismos comunes." }
+      ],
+      "explanation": "Arquitecturas resilientes ante CDN outage: (1) multi-CDN activo-activo con DNS failover (health checks marcan CDN caído como down, DNS TTL corto para failover rápido); (2) origin resiliente en múltiples regiones (Multi-AZ + Multi-Region); (3) chaos game days simulando CDN down; (4) SLO/SLI que incluyen dependencia de CDN; (5) monitoring desde múltiples locations (RUM + synthetic checks). Trade-off: cada capa añade costo y complejidad. La regla: 'defense in depth para lo crítico, single vendor para el resto'.",
+      "realWorld": "13 dic 2021 outage de us-east-1 tumbó Amazon.com, Disney+, Netflix APIs, Ring, apps corporativas — el evento originó desde control plane de us-east-1. 22 jul 2022 CloudFront edge outage regional afectó a Slack, Shopify. Estas historias motivaron a Netflix a construir 'Zuul 2' (gateway con failover automático entre CDNs) y a Stripe a documentar 'How Stripe API is designed for resilience'.",
+      "tags": ["CloudFront outages", "us-east-1", "multi-CDN", "resiliencia"],
+      "tech": ["CloudFront", "AWS"],
+      "references": [{ "title": "AWS Service Health Dashboard" }, { "title": "Netflix Tech Blog — Zuul 2 gateway" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "networking",
+      "topic": "Signed URLs y signed cookies",
+      "difficulty": "senior",
+      "scenario": "Vendes cursos con videos. Cada usuario paga para acceder. No quieres que los videos sean públicos, pero necesitas servirlos vía CDN por latencia.",
+      "question": "¿Cómo funcionan signed URLs / signed cookies en un CDN?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Signed URL: la URL incluye una firma criptográfica y una expiración. El CDN verifica la firma antes de servir. Ejemplo CloudFront: https://d123.cloudfront.net/video.mp4?Expires=...&Signature=...&Key-Pair-Id=... Ventaja: control granular por objeto. Desventaja: URL única por asset — si el HTML tiene 20 assets, generas 20 signed URLs.", "correct": true, "why": "Correcto. Signed URLs son ideales para descargas específicas o assets aislados. La firma incluye la URL y una expiración; el CDN verifica con la public key del par que firmó. AWS y Cloudflare tienen soporte nativo. S3 tiene su propia versión (presigned URLs)." },
+        { "letter": "B", "text": "Signed Cookie: el usuario recibe un cookie firmado que da acceso a un rango de URLs (ej /videos/*). El CDN verifica el cookie en cada request. Ventaja: una única auth para múltiples assets (HLS streaming con muchos .ts chunks). Desventaja: cookies no funcionan cross-domain sin trabajo extra.", "correct": true, "why": "Correcto. Signed Cookies son la elección para streaming video (HLS/DASH con miles de chunks) o galerías de imágenes. Un solo cookie autoriza el rango entero. Es el patrón usado por Netflix, HBO Max, muchos streaming services." },
+        { "letter": "C", "text": "Ambos requieren rotación periódica de la signing key. Comprometer la key permite generar URLs válidas ilimitadamente. AWS: key pairs asociados a la distribution. Cloudflare: keys via API. Rotate según policy (90d típico).", "correct": true, "why": "Correcto. Signing key es el 'crown jewel' de esta arquitectura. Rotación regular + monitoring de acceso son básicos. Storage en KMS/Secrets Manager, jamás en repo." },
+        { "letter": "D", "text": "Combinar con IP restriction / User-Agent restriction para reducir replay attacks. La signature puede incluir la IP del usuario esperada. Contrapunto: usuarios móviles cambian IP, hay que balancear seguridad con UX.", "correct": true, "why": "Correcto. IP binding evita que un URL/cookie robado se use desde otra red. Trade-off: usuarios en 4G o VPNs cambian IP frecuentemente y pueden ver 403. Alternativa: fingerprint más flexible (device ID + TLS session)." },
+        { "letter": "E", "text": "Los signed URLs bypasean el cache — cada URL única no se cachea.", "correct": false, "why": "Falso, con matiz. Si el CDN normaliza el cache key (ignorando Expires, Signature, Key-Pair-Id), múltiples signed URLs para el mismo objeto pueden compartir cache. Es el patrón recomendado — de lo contrario cada usuario genera cache miss." }
+      ],
+      "explanation": "Patrón production: (1) usuario auth en app; (2) app genera signed URL/cookie con TTL corto (5-60min) y roles/permisos verificados; (3) CDN valida signature en el edge (sin ir al origin); (4) sirve objeto si válido, 403 si no. Configurar CACHE KEY para NO incluir Expires/Signature (así el mismo objeto para múltiples usuarios comparte cache). Adicionalmente: restrict IP, restrict referrer, log accesos, revoke keys en compromise. Alternativas: token en header Authorization con Lambda@Edge / Worker validando JWT (más flexible pero requiere edge compute).",
+      "realWorld": "Netflix usa una combinación de signed cookies + DRM (Widevine, PlayReady, FairPlay) — la URL solo es la primera capa; el video real está encriptado y requiere licencia del DRM server. HLS/DASH con signed cookies es estándar en streaming (Vimeo, Wistia, Panopto). Errores comunes: TTL muy largo (URLs se comparten), incluir Signature en cache key (destruye CHR), key en repo Git.",
+      "tags": ["signed URLs", "signed cookies", "streaming", "auth"],
+      "tech": ["CloudFront", "Cloudflare", "S3"],
+      "references": [{ "title": "AWS — Serving private content with signed URLs and cookies" }, { "title": "Cloudflare — Signing keys" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "networking",
+      "topic": "Image optimization en el edge",
+      "difficulty": "mid",
+      "scenario": "Tu sitio sirve imágenes 5MB desde el origin. Los usuarios en móvil consumen datos y esperan segundos. Necesitas servir WebP/AVIF, resized, y responsive automáticamente.",
+      "question": "¿Cómo funciona image optimization en el edge y qué CDNs lo ofrecen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "El CDN recibe request con parámetros (URL o query): /cdn-cgi/image/width=400,format=webp/photo.jpg. El edge tiene un procesador de imágenes (libvips, mozjpeg) que transforma on-demand: resize, format conversion (JPEG → WebP/AVIF), quality adjustment, crop. La versión resultante se cachea con el cache key incluyendo los parámetros. Servicios: Cloudflare Images, Cloudflare Polish, CloudFront + Lambda@Edge, Fastly Image Optimizer, Akamai Image Manager. Ahorros típicos: 60-90% en bytes servidos.", "correct": true, "why": "Correcto. Image optimization en el edge es una feature clave de CDNs modernos. AVIF/WebP puede ser 30-50% más pequeño que JPEG con misma calidad; resize responsive evita servir 4K a móviles. Cache key debe incluir parámetros (ancho, formato, quality) para servir la versión correcta. Servicios: Cloudflare Images ($5/mes desde 100k imgs), Cloudinary (dedicado), Imgix, Fastly IO." },
+        { "letter": "B", "text": "El origin siempre debe pre-generar todas las variantes.", "correct": false, "why": "Impráctico — combinatoria de anchos × formatos × qualities explota storage. On-demand + cache es la aproximación moderna." },
+        { "letter": "C", "text": "Los navegadores no soportan WebP/AVIF todavía.", "correct": false, "why": "Falso a 2026. WebP soporte >95% (todos los modernos incluyendo Safari). AVIF >90% (Safari 16+). Fallback vía content negotiation (Accept header) sigue siendo buena práctica." },
+        { "letter": "D", "text": "Image optimization requiere CPU en el origin.", "correct": false, "why": "En el modelo edge, la CPU es del CDN (no del origin). El origin sirve el original; el edge transforma y cachea. Origin puede ser S3 sin CPU." }
+      ],
+      "explanation": "Best practices: (1) usar <picture> con srcset para servir versiones responsive; (2) Accept: image/avif,image/webp para content negotiation; (3) lazy loading (loading='lazy'); (4) cache TTL largo (immutable con content hash en URL); (5) transformaciones on-demand (URL parametrizada) en vez de pre-generación; (6) monitorear CHR de imágenes específicamente (suele ser >95% si bien configurado). Costo: procesar es CPU-intensive; cache es RAM/disk-intensive. Precio suele ser por transformación única (primer request) + storage.",
+      "realWorld": "Cloudinary y Imgix son SaaS puros dedicados a image optimization (con CDN incorporado). Cloudflare Images empaqueta la feature en su ecosistema. Vercel y Netlify tienen image optimization built-in. Un caso famoso: Airbnb ahorró millones en bandwidth adoptando WebP + resize dinámico en 2019 (blog post en Airbnb Engineering).",
+      "tags": ["image optimization", "WebP", "AVIF", "resize", "responsive"],
+      "tech": ["Cloudflare Images", "CloudFront", "Fastly", "Cloudinary"],
+      "references": [{ "title": "Cloudflare — Images" }, { "title": "web.dev — Serve responsive images" }, { "title": "Fastly — Image Optimizer" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "networking",
+      "topic": "Cache poisoning attacks",
+      "difficulty": "staff",
+      "scenario": "Un investigador reporta que enviando un header X-Forwarded-Host malicioso, puede inyectar contenido en la respuesta cacheada. Todos los usuarios subsecuentes reciben la versión envenenada.",
+      "question": "¿Qué es cache poisoning y cómo se defiende un CDN?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cache poisoning: un atacante manipula un input (header no incluido en cache key pero usado por el origin en la respuesta) para que el origin genere respuesta 'envenenada', y el CDN cachea esa respuesta y la sirve a otros usuarios. Ejemplo: origin usa X-Forwarded-Host para generar URLs canonical; atacante envía X-Forwarded-Host: evil.com; origin genera HTML con <a href='https://evil.com/steal'>; CDN cachea (porque URL es la misma); todos los usuarios reciben el HTML envenenado. Defensa: (1) normalizar/strippear headers no confiables en el edge; (2) incluir en cache key TODOS los inputs que afectan la respuesta (o Vary correcto); (3) validar respuesta antes de cachear; (4) tests específicos de cache poisoning (herramientas: Param Miner de PortSwigger).", "correct": true, "why": "Correcto. James Kettle (PortSwigger) popularizó esta clase de ataques en 2018-2020 ('Practical Web Cache Poisoning', 'Web Cache Entanglement'). Es una vulnerabilidad de la INTERACCIÓN entre app y cache — ninguna capa es 'culpable' por sí sola. Fixes reales requieren revisar cache keys, headers permitidos, y comportamiento del origin ante inputs inesperados." },
+        { "letter": "B", "text": "Cache poisoning es lo mismo que DNS poisoning.", "correct": false, "why": "Falso. Son distintos: DNS poisoning ataca la resolución de nombres; web cache poisoning ataca el contenido cacheado por HTTP caches." },
+        { "letter": "C", "text": "Los CDNs modernos son inmunes a cache poisoning.", "correct": false, "why": "Falso. Ha habido casos reales en Cloudflare, CloudFront, Fastly y otros. La vulnerabilidad suele estar en la config del cliente (qué headers acepta el origin), no en el CDN." },
+        { "letter": "D", "text": "Solo afecta a APIs, no a HTML.", "correct": false, "why": "Al contrario, HTML es el vector más común porque los origins suelen usar headers como Host/X-Forwarded-Host para generar URLs, links, redirects, meta tags." }
+      ],
+      "explanation": "Variantes: (1) unkeyed input poisoning — header no en cache key altera respuesta; (2) fat GET — POST parameters en GET cacheado; (3) parameter cloaking — querystring que el CDN normaliza pero origin no (o viceversa); (4) HTTP request smuggling + cache — desincronización entre proxy y origin; (5) cache deception — /account.php/logo.png sirve datos privados en URL 'estática' que el CDN cachea. Defense-in-depth: (a) allowlist estricto de headers; (b) cache key exhaustivo; (c) validar Content-Type esperado; (d) monitoring de anomalías en respuestas cacheadas; (e) pen-testing regular con herramientas específicas.",
+      "realWorld": "James Kettle documentó cache poisoning en producción contra Mozilla, Redis Labs, unnamed Fortune-500. Su charla 'Practical Web Cache Poisoning' (DEF CON, Black Hat) es lectura obligada. Se descubrieron vulns en CVE-2020-XX en frameworks (Rails, Django) por generar URLs con Host header no validado. Fix típico: canonical URL config estática en el server, no derivada de header.",
+      "tags": ["cache poisoning", "security", "unkeyed input", "Vary"],
+      "tech": ["HTTP", "CDN", "WAF"],
+      "references": [{ "title": "James Kettle — Practical Web Cache Poisoning (PortSwigger)" }, { "title": "OWASP — Web Cache Deception" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "networking",
+      "topic": "SSR vs SSG vs ISR en el edge",
+      "difficulty": "senior",
+      "scenario": "Tu equipo debate arquitectura de un e-commerce. Opciones: (a) SSR clásico (cada request rendered en origin); (b) SSG (todo pre-generado, servido como estático); (c) ISR (Incremental Static Regeneration — pre-generado + revalidation on-demand); (d) Edge SSR (rendered en el edge).",
+      "question": "¿Cuáles son los trade-offs de cada modelo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "SSR clásico: HTML rendered en cada request en el origin. Ventajas: datos siempre frescos, personalización trivial. Desventajas: alta latencia (RTT completo al origin), carga en origin escala con tráfico, difícil cachear (dinámico). Bueno para páginas altamente personalizadas.", "correct": true, "why": "Correcto. SSR es la opción tradicional. Con CDN delante puede cachear páginas anónimas, pero pierde ventaja si toda página es personalizada. Frameworks: Next.js (getServerSideProps), Nuxt (asyncData), Remix (loader por default)." },
+        { "letter": "B", "text": "SSG: HTML pre-generado en build time, servido como estático desde CDN. Ventajas: máxima velocidad (todo cacheado), coste bajo, resistente a spikes. Desventajas: rebuild completo para cualquier cambio (build times de horas para sitios grandes), no personalización, no datos frescos. Ideal para blogs, docs, marketing sites.", "correct": true, "why": "Correcto. SSG es el pattern de Jamstack. Frameworks: Gatsby, Next.js (getStaticProps sin revalidate), Hugo, Jekyll, Astro. Gana en CHR (100% cacheable). Pierde en flexibilidad. Sitios como Vercel docs, Stripe docs, blogs son SSG." },
+        { "letter": "C", "text": "ISR (Next.js): páginas pre-generadas con revalidate=N segundos. Al expirar, next request dispara regeneración en background (SWR pattern) y sirve la versión stale. Combina lo mejor de SSG (velocidad) y SSR (datos frescos). On-demand revalidation por webhook permite invalidar páginas específicas por evento (nueva publicación → revalidate esa URL).", "correct": true, "why": "Correcto. ISR es una innovación de Next.js. Es la respuesta a 'quiero estático pero con datos que cambian'. Vercel lo implementó con revalidación por PoP (cada edge revalida independiente). Similar en Astro, SvelteKit. Cachea perfectamente + refresca sin bloquear al usuario." },
+        { "letter": "D", "text": "Edge SSR: HTML rendered en el edge (Cloudflare Workers, Vercel Edge Functions, CloudFront Functions). Ventajas: baja latencia (rendered cerca del usuario), personalización dinámica, escala infinita. Desventajas: runtime limitado (JS/WASM), acceso a datos requiere edge storage o global DB con latencia, cold starts (mitigado con isolates).", "correct": true, "why": "Correcto. Edge SSR es la frontera actual. Frameworks: Next.js Edge Runtime, Remix (edge adapter), Astro (edge middleware), SvelteKit. Funciona bien cuando datos son cacheables o cuando existe edge DB (Cloudflare D1, PlanetScale con edge cache, Turso, Vercel Postgres). Trade-off: no Node full runtime, algunas libraries no funcionan." },
+        { "letter": "E", "text": "El único modelo válido moderno es SSR — SSG e ISR son obsoletos.", "correct": false, "why": "Falso. Cada modelo tiene su nicho. Docs sites SSG (velocidad + cost); e-commerce ISR (balance); apps SaaS personalizadas SSR o edge SSR (personalización); blogs SSG con ISR (frescura ocasional)." }
+      ],
+      "explanation": "Regla de decisión: (1) contenido cambia raramente y es igual para todos → SSG; (2) cambia ocasionalmente + volumen enorme de páginas → ISR; (3) datos por request pero cacheable → edge SSR con cache; (4) altamente personalizado por usuario → SSR clásico o CSR (Client-Side Rendering) con API. Muchas apps modernas mezclan: shell SSG + islands ISR + API SSR. Frameworks como Next.js App Router permiten decidir por ruta ('use client', 'use server'). Métricas relevantes: TTFB (Time to First Byte), FCP, LCP — cada modelo optimiza distinto.",
+      "realWorld": "Vercel documentó cómo su propio marketing site pasó de SSR (Next.js) a SSG+ISR (Next.js), reduciendo TTFB de 800ms a 40ms y costo de compute 90%. Amazon.com sigue siendo SSR clásico (personalización profunda). Notion es CSR (heavy client app). Netflix homepage usa combinación (edge SSR para shell + APIs personalizadas para rows).",
+      "tags": ["SSR", "SSG", "ISR", "edge SSR", "Next.js"],
+      "tech": ["Next.js", "Vercel", "Cloudflare Workers"],
+      "references": [{ "title": "Vercel — Rendering strategies" }, { "title": "Next.js — Data fetching" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "networking",
+      "topic": "Observability de CDN",
+      "difficulty": "senior",
+      "scenario": "Necesitas monitorear tu CDN: performance real de usuarios, CHR por ruta, errores en el edge, coste. ¿Qué señales y herramientas usar?",
+      "question": "¿Qué métricas y prácticas de observability son clave para un CDN en producción?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Cache metrics: CHR global y por ruta (/api/*, /assets/*, /), origin offload (% bytes servidos por edge), cache MISS reasons (TTL expired, no-cache header, cache-key miss). CloudFront: CloudWatch Metrics + real-time logs a Kinesis. Cloudflare: Analytics dashboard + Logpush a S3/BigQuery. Fastly: Real-time analytics + logging via Syslog.", "correct": true, "why": "Correcto. Métricas de cache son fundamentales. Segmentar por ruta es CRÍTICO — un promedio global de CHR 90% oculta que /api/search tiene CHR 20%. CloudWatch, Datadog, Grafana con datasource CDN son comunes." },
+        { "letter": "B", "text": "Real User Monitoring (RUM): mide performance REAL de usuarios (TTFB, FCP, LCP, TTI) desde JS embebido en tu app. Muestra latencia real por región/ISP, no promedio sintético. Herramientas: Cloudflare Web Analytics, Google Web Vitals, Datadog RUM, SpeedCurve, New Relic Browser.", "correct": true, "why": "Correcto. RUM es la 'verdad final' — cómo experiencian los usuarios. Métricas sintéticas (Pingdom, WebPageTest) no capturan variabilidad real (ISP malos, congestion, device diferences). Google Web Vitals (LCP, FID/INP, CLS) son estándar SEO también." },
+        { "letter": "C", "text": "Synthetic monitoring: checks periódicos desde múltiples locations (Pingdom, Datadog Synthetics, Grafana K6 Cloud, Catchpoint). Detecta problemas antes que usuarios, mide baseline consistente. Complementa RUM (que solo mide donde hay tráfico). Especialmente útil para páginas críticas (login, checkout).", "correct": true, "why": "Correcto. Sintético + RUM = combo defensivo. Sintético captura problemas en regiones con poco tráfico (donde RUM tiene poca data). Sintético detecta outage inmediato (RUM tarda en converger). Alertas de sintético son típicamente más rápidas." },
+        { "letter": "D", "text": "Logs en el edge: cada request logeado (URL, status, cache status, latencia, user country/ISP, POP). Envío a data lake (BigQuery, S3+Athena, Snowflake) para análisis ad-hoc. Detección de patrones (spikes en 404s, rutas populares no cacheadas, ataques). Costoso pero valioso — muchas empresas samplean para reducir costo.", "correct": true, "why": "Correcto. Logs completos permiten investigación forense: 'por qué esta ruta tiene 0% CHR?', 'qué IPs generan 500s?', 'hay traffic pattern anómalo?'. CloudFront Real-Time Logs, Cloudflare Logpush, Fastly Real-Time Log Streaming. A escala pueden ser TBs/día — sampling y compresión son necesarios." },
+        { "letter": "E", "text": "Cost monitoring: CDN pricing es complejo (egress por región, invalidations, edge compute invocations). Tags/labels para atribuir costo por producto/equipo. Alertas sobre spikes (posible bug o ataque). AWS Cost Explorer con filtros por CloudFront distribution.", "correct": true, "why": "Correcto. CDN puede ser gasto grande — spikes inesperados (bugs generando querystrings únicos, bots consumiendo bandwidth) pueden multiplicar factura. Alertar temprano evita facturas de miedo. Los CDN dashboards suelen tener projected cost." }
+      ],
+      "explanation": "Setup completo: (1) métricas cache/traffic → dashboard Grafana con CHR por ruta, requests/s, egress, edge errors; (2) RUM → Web Vitals recolectados globalmente, alertas si LCP p75 > 2.5s; (3) sintéticos → checks cada 1min desde 5 regiones críticas; (4) logs → real-time streaming a data lake, sampled 10-100%; (5) alertas → error rate spike, CHR drop, latencia p99 spike; (6) costo → daily/weekly budget alerts. Ownership: SRE + frontend + product juntos revisan performance semanal. Métricas SLI/SLO típicas: availability edge 99.99%, cache HIT ratio >90% (routes cacheables), p95 TTFB <200ms.",
+      "realWorld": "Cloudflare Radar publica trends globales (attacks, protocol adoption). Airbnb publicó cómo usan RUM (con Datadog) para detectar regresiones de perf en cada release. Etsy famoso por su cultura de logging/dashboards ('measure everything'). Netflix ha publicado múltiples posts sobre RUM + synthetic combinados para debugging de perf en múltiples geografías.",
+      "tags": ["observability", "RUM", "synthetic", "logs", "cost monitoring"],
+      "tech": ["CloudFront", "Cloudflare", "Datadog", "Grafana"],
+      "references": [{ "title": "Cloudflare — Web Analytics" }, { "title": "web.dev — Web Vitals" }, { "title": "Datadog — CDN monitoring" }]
+    }
+  ]
+}

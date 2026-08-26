@@ -1,0 +1,419 @@
+{
+  "id": "devops-sim-03-git-workflows-and-branching",
+  "trackId": "devops",
+  "order": 3,
+  "title": "Simulacro 03 — Git workflows y branching strategies",
+  "focus": "Trunk-based vs GitFlow vs GitHub Flow. PR review process. Protected branches. Signed commits. Rebase vs merge. Cherry-pick. Bisect. Hooks. Monorepo vs polyrepo. Submodules. La estrategia de branching define cómo trabaja tu equipo.",
+  "areaCoverage": ["vcs-ci"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "vcs-ci",
+      "topic": "Merge vs Rebase — cuál usar",
+      "difficulty": "junior",
+      "scenario": "Tu feature branch está atrás de main por 20 commits. Debes actualizar tu branch antes de PR. Un compañero dice 'git merge main', otro dice 'git rebase main'. ¿Cuál es la diferencia?",
+      "question": "¿Cuál es la diferencia entre git merge y git rebase para actualizar tu branch?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "git merge main crea un MERGE COMMIT que une los dos historias — preserva el historial pero añade 'ruido' (merge commits). git rebase main REESCRIBE tu branch para que empiece desde el HEAD actual de main — historial linear, pero cambia los SHAs de tus commits. Regla común: rebase para actualizar TU branch privada; merge para integrar branches compartidas.", "correct": true, "why": "Correcto. Merge preserva historia, rebase la reescribe. Ambos son válidos con distintos tradeoffs. La regla 'don't rebase public branches' es fundamental — si otros tienen tu branch checkout, rebase cambia SHAs y les rompes." },
+        { "letter": "B", "text": "Son exactamente lo mismo, solo distinto nombre.", "correct": false, "why": "Diferentes en resultado: merge crea commit adicional; rebase reescribe historia. En Git internamente son operaciones diferentes." },
+        { "letter": "C", "text": "Rebase siempre es peor que merge.", "correct": false, "why": "Absolutista. Rebase da historial linear más fácil de leer. Muchos proyectos (Linux kernel, Rust) prefieren rebase para PRs limpios." },
+        { "letter": "D", "text": "Merge es solo para admins, rebase para devs.", "correct": false, "why": "No hay tal división. Ambas son comandos que cualquier dev usa." }
+      ],
+      "explanation": "Merge crea un commit adicional con 2 parents (tu branch + main). El grafo se ramifica y re-junta visualmente. Preserva EXACTAMENTE lo que pasó. Ventaja: no reescribe historia, seguro para public branches. Desventaja: historial se vuelve un tejido de merge commits difícil de leer con git log.\n\nRebase toma tus commits, los 'desapila', mueve HEAD al target (main actual), y re-aplica tus commits uno por uno on top. Cada commit obtiene nuevo SHA. Ventaja: historial linear, git log lee limpio, git bisect más efectivo. Desventaja: reescribe SHAs — si tu branch está pushed y otro dev la checkouteó, rompes su copia.\n\nRegla de oro (Git docs): 'Never rebase a branch that has been pushed and that others may be working on'. Tu propio feature branch (nadie más lo tiene) = rebase seguro. main compartida = NUNCA rebase. Fast-forward merge (merge sin merge commit cuando no hay divergencia) es un tercer caso: no crea commit, solo mueve el pointer.\n\nWorkflows típicos: (1) Rebase workflow — dev rebasa su feature onto main antes de PR. PR se mergea con squash o fast-forward. Historial linear. (2) Merge workflow — dev mergea main into su feature para actualizarse. PR se mergea con merge commit. Historial preserved. (3) Squash and merge — GitHub UI default: colapsa TODO tu feature branch en 1 commit al merge. Historial ultra-limpio pero pierdes granularidad.",
+      "realWorld": "Linux kernel usa rebase workflow estricto — Linus rechaza PRs con historial 'sucio'. Rust project similar. GitHub por default ofrece 3 estrategias: merge commit, squash and merge, rebase and merge — cada proyecto elige. En 2017 GitLab tuvo el famoso incident donde un rebase mal ejecutado causó problemas de sincronización en el backup.",
+      "tags": ["merge", "rebase", "git basics"],
+      "tech": ["Git"],
+      "references": [{ "title": "Pro Git Book — Rebasing" }, { "title": "Atlassian — Merging vs. Rebasing" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "vcs-ci",
+      "topic": "Git branch básico",
+      "difficulty": "junior",
+      "scenario": "Un dev jr pregunta: '¿qué es un branch en Git? ¿es una copia del código?'.",
+      "question": "¿Qué es realmente un branch en Git?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Un branch en Git es un POINTER (una referencia móvil) a un commit específico. NO es una copia del código. Crear un branch es instantáneo (solo crea un archivo con el SHA del commit). Cuando commiteás, el pointer del branch avanza al nuevo commit. main y feature/x son ambos solo pointers a distintos commits en el grafo.", "correct": true, "why": "Correcto. Es lo que diferencia Git de SVN/CVS. En SVN, crear branch copiaba archivos. En Git, es un pointer de <100 bytes. Por eso Git es tan rápido con branches." },
+        { "letter": "B", "text": "Un branch es una copia completa del código en una carpeta separada.", "correct": false, "why": "Ese es el modelo SVN/CVS, no Git. En Git, todos los branches comparten los mismos objetos (blobs, trees) en .git/objects. Solo cambia qué commit apunta cada branch." },
+        { "letter": "C", "text": "Un branch es solo un tag para versionado.", "correct": false, "why": "Los tags son referencias FIJAS (no se mueven). Los branches son MÓVILES (avanzan con nuevos commits)." },
+        { "letter": "D", "text": "Un branch es un directorio dentro de tu proyecto.", "correct": false, "why": "Confusión con working directory. El working directory refleja un branch (HEAD), pero el branch en sí es solo el pointer." }
+      ],
+      "explanation": "Git anatomy: (1) OBJECTS — blobs (file content), trees (directories), commits, tags. Todo hasheado por SHA-1 (o SHA-256 experimental). Immutable. (2) REFS — pointers a commits. Branches (refs/heads/main), tags (refs/tags/v1.0), remote-tracking (refs/remotes/origin/main). Files simples con un SHA. (3) HEAD — pointer al branch (o commit) que tienes actualmente checkouteado.\n\nEl grafo Git: cada commit conoce sus parents. Un branch es solo una etiqueta que dice 'este es el último commit de este branch'. Múltiples branches pueden apuntar al mismo commit. Los branches son 'gratis' (no hay penalidad por crear muchos).\n\nComandos: (a) git branch [name] — crea branch (pointer) sin cambiarte a él. (b) git checkout [branch] / git switch [branch] — cambia HEAD al branch. (c) git branch -d — borra el pointer (los commits pueden quedar accesibles por otros branches o eventualmente garbage collected). (d) git reflog — historial de MOVIMIENTOS de HEAD, útil para recuperar branches borrados por accidente.\n\nDetached HEAD: cuando checkout a un commit específico (no un branch), HEAD apunta directamente al commit. Commits que hagas quedan huérfanos si te vas. Confuso para principiantes.",
+      "realWorld": "El modelo de pointers de Git fue revolucionario (Linus 2005). Mercurial (competidor) tenía branches persistentes en historial — más complejo. En 2020, git 2.28 introdujo main como default branch name (antes master). git worktree permite tener múltiples working directories del mismo repo — útil para trabajar en 2 branches simultáneamente sin stash.",
+      "tags": ["branches", "pointers", "git fundamentals"],
+      "tech": ["Git"],
+      "references": [{ "title": "Pro Git Book — Git Branching in a Nutshell" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "vcs-ci",
+      "topic": "GitFlow — cuándo (y cuándo no)",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate branching strategy. Alguien propone GitFlow con develop, feature/, release/, hotfix/, main. Otro dice: 'GitFlow es obsoleto, usemos trunk-based'.",
+      "question": "¿Qué es GitFlow y en qué contextos es apropiado (o no)?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GitFlow (Vincent Driessen, 2010) usa 5 tipos de branches: main (production), develop (integration), feature/* (para features), release/* (para preparar releases), hotfix/* (para fixes urgentes en prod). Diseñado para SOFTWARE VERSIONED con RELEASES DISCRETAS (v1.0, v1.1). NO óptimo para servicios web con continuous deployment. Popular en 2010s, hoy considerado overhead para la mayoría de web apps.", "correct": true, "why": "Correcto. GitFlow es apto para software packaged (versiones distribuidas — desktop apps, embedded, libraries mayores). Para web/SaaS con CD, es demasiado ceremony. El propio Driessen escribió en 2020: 'if you're doing continuous delivery, use something simpler'." },
+        { "letter": "B", "text": "GitFlow es la mejor práctica universal.", "correct": false, "why": "Falso — GitFlow no funciona bien con CD/CI. DORA data muestra que trunk-based correlaciona con high performance. GitFlow con desarrollo web = release cycles largos y integration hell." },
+        { "letter": "C", "text": "GitFlow y trunk-based son idénticos.", "correct": false, "why": "Opuestos en filosofía. GitFlow: muchos branches long-lived, releases scheduled. Trunk-based: solo main + branches muy cortas, releases continuas." },
+        { "letter": "D", "text": "GitFlow solo funciona en repos con menos de 5 devs.", "correct": false, "why": "Sin correlación con tamaño de equipo. Funciona con equipos grandes cuando el modelo de release (discreto y versionado) lo justifica." }
+      ],
+      "explanation": "GitFlow branches: (1) main — código de producción. Cada commit debe ser deployable. (2) develop — integración de features. Testing continuo. (3) feature/* — nuevas features, brancheadas desde develop, mergeadas a develop. (4) release/* — preparar release. Solo bug fixes, no nuevas features. Mergea a main + develop. (5) hotfix/* — fix urgente de prod, brancheado desde main, mergeado a main + develop.\n\nCuándo GitFlow SÍ tiene sentido: (a) Software distribuido en versiones — apps móviles (Play Store review process), desktop apps, embedded firmware. (b) Librerías con SemVer estricto. (c) Regulación fuerte que exige releases discretos y auditados. (d) Múltiples versiones soportadas simultáneamente (v1.x y v2.x).\n\nCuándo NO (mayoría de web/SaaS): (a) Deploy múltiple veces/día. (b) Un solo binary en prod. (c) Feature flags para gradual rollout. Alternativas mejores: trunk-based con feature flags, GitHub Flow (main + short PRs), release branches solo si absolutamente necesario.\n\nProblemas comunes con GitFlow: (1) Long-lived develop branch = merge conflicts constantes. (2) Feature branches largas = integration hell. (3) Release branches como 'freeze' periods = velocity drop. (4) Hotfix branches = complejidad para mergear back a develop.",
+      "realWorld": "Driessen publicó 'A successful Git branching model' en 2010 — post más leído sobre Git branching. En 2020 él mismo actualizó: 'GitFlow es de una era donde deploys eran raros. Si haces continuous delivery, es overhead innecesario'. GitLab documenta caso 'from GitFlow to trunk-based' de varios clientes. Kotlin (lenguaje) usa una variante — releases discretos con GitFlow-ish.",
+      "tags": ["gitflow", "branching strategy", "release model"],
+      "tech": ["Git"],
+      "references": [{ "title": "Vincent Driessen — A successful Git branching model (2010)" }, { "title": "Vincent Driessen — Note about the model (2020)" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "vcs-ci",
+      "topic": "GitHub Flow",
+      "difficulty": "mid",
+      "scenario": "Tu equipo hace SaaS con deploys diarios. GitFlow es overhead. Un ingeniero propone 'GitHub Flow' — más simple.",
+      "question": "¿Qué es GitHub Flow y por qué es popular en SaaS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GitHub Flow: solo main + short-lived feature branches. Cada feature branch → PR → review → merge a main → deploy. Sin develop, sin release branches. main siempre deployable. Simple, alineado con CD. Ideal para SaaS con deploys frecuentes.", "correct": true, "why": "Correcto. Descrito por Scott Chacon (2011). Modelo que GitHub usa internamente. Simplicidad máxima con las salvaguardas mínimas (PR review, CI verde antes de merge)." },
+        { "letter": "B", "text": "GitHub Flow requiere pagar por GitHub Enterprise.", "correct": false, "why": "Falso — 'GitHub Flow' es un NOMBRE del workflow, no una feature del producto. Funciona en cualquier Git (GitLab, Bitbucket, self-hosted)." },
+        { "letter": "C", "text": "GitHub Flow y GitFlow son iguales.", "correct": false, "why": "Opuestos en complejidad. GitFlow tiene 5 tipos de branches; GitHub Flow tiene 1 (main) + feature branches temporales." },
+        { "letter": "D", "text": "GitHub Flow requiere que NO haya code review.", "correct": false, "why": "Opuesto — GitHub Flow ENFATIZA code review via PR como el gate principal. Sin PR review, no es GitHub Flow, es solo push-to-main." }
+      ],
+      "explanation": "GitHub Flow steps: (1) Crear branch desde main (nombre descriptivo). (2) Commits en el branch. (3) Push y abrir Pull Request. (4) Discussion + review. (5) Deploy a staging desde el PR (opcional). (6) Merge a main. (7) Deploy a producción.\n\nVs Trunk-based: GitHub Flow es 'trunk-based lite'. Ambos: solo main, branches cortas. Diferencia: trunk-based típicamente enfatiza direct commits o PRs cortos (<1 día). GitHub Flow más flexible en tiempo del PR.\n\nCuándo funciona bien: (a) Web/SaaS con CD. (b) Equipos pequeños-medianos. (c) main protegida con required reviews + CI verde. (d) Rollback fácil (revert commit + auto-deploy).\n\nExtensiones comunes: (a) Environment branches — algunos usan staging branch o release branch además de main. (b) Release tags — v1.0, v2.0 para audits. (c) Auto-deploy on merge a main — el default en muchas empresas ahora.\n\nRequisitos: (1) main SIEMPRE deployable — CI verde antes de merge. (2) PR review real (no rubber stamp). (3) Rollback fácil (feature flags, blue-green). (4) Tests confiables. Si un test es flaky y bloquea PRs, GitHub Flow falla.",
+      "realWorld": "GitHub usa GitHub Flow internamente (según Scott Chacon 2011). GitLab similar en pequeña forma. Basecamp DHH: 'we've never used GitFlow, always main + PRs'. Como default para OSS (más simple para contribuidores).",
+      "tags": ["github flow", "branching", "simplicity"],
+      "tech": ["Git", "GitHub"],
+      "references": [{ "title": "Scott Chacon — GitHub Flow (2011)" }, { "title": "GitHub Docs — GitHub flow" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "vcs-ci",
+      "topic": "PR review process",
+      "difficulty": "mid",
+      "scenario": "Tu PR tiene 3 días abierta. El reviewer nunca responde. Cuando finalmente lo hace, pide cambios en toda la arquitectura. Estás frustrado y el PR crece. Un ingeniero senior sugiere 'change the PR process'.",
+      "question": "¿Qué caracteriza un PR review process EFECTIVO?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "PRs PEQUEÑOS — <400 líneas es sweet spot. Estudios muestran: PR >800 líneas → review rate drops, comentarios superficiales, 'LGTM' porque nadie lee de verdad. Un PR de 200 líneas obtiene review real; uno de 3000 obtiene rubber stamp.", "correct": true, "why": "Correcto. Google's engineering blog documenta esto: '200 líneas es el sweet spot'. SmartBear paper 'Best Kept Secrets of Peer Code Review' — reviewers efectivos <400LOC/hora. PRs enormes son anti-quality." },
+        { "letter": "B", "text": "SLA de review corto (mismo día ideal, <24h aceptable). Sin SLA, PRs se estancan, devs pierden contexto, PRs crecen para 'compensar' el wait time. Herramientas: notifications, rotational reviewer, review reminders.", "correct": true, "why": "Correcto. Sin SLA, review-time blockea CD. Muchas empresas top tienen 'review buddies' (dedicated reviewers para el día) o rotation. GitHub CODEOWNERS + review reminders bot son estándar." },
+        { "letter": "C", "text": "Focus en FUNCTIONALITY primero, STYLE al final. Comentarios sobre 'variable name should be x' con misma prioridad que 'esto rompe seguridad' = ruido. Usar linters/formatters para style automático (Prettier, Black, gofmt), reservar review para lógica.", "correct": true, "why": "Correcto. Toda cosa que un LINTER puede atrapar NO debe ser tema de review. Reviewer humano debe enfocarse en: correctness, security, design, testability. Herramientas: pre-commit hooks bloquean style issues, no llegan a review." },
+        { "letter": "D", "text": "Comentarios CONSTRUCTIVOS con reasoning. 'Este approach es mejor porque X' vs 'esto está mal'. El objetivo es ENSEÑAR y MEJORAR, no demonstrar superioridad. Cultura de review saludable = knowledge sharing bidireccional.", "correct": true, "why": "Correcto. Google engineering practices doc: 'comments should say what is wrong, why, and how to improve'. Reviews como oportunidad de mentoring vs gatekeeping. Feedback constructivo eleva al team." },
+        { "letter": "E", "text": "Review debe tomar días para ser 'thorough'.", "correct": false, "why": "Falso — un review efectivo debe ser en horas, no días. Reviewer que 'necesita días' para 300 líneas usualmente está procrastinando. Time-box: 1h max para revisar un PR pequeño." }
+      ],
+      "explanation": "PR anti-patrones: (1) PRs gigantes — 5000 líneas, imposible reviewar realmente. Fix: split, feature flags para incompleto. (2) 'LGTM' sin review — culpa cultural. Fix: require substantial comments. (3) Bikeshedding — debates infinitos sobre nombres de variables. Fix: linters + style guide para automatic decisions. (4) Review as gatekeeping — reviewer usa poder para bloquear. Fix: dispute resolution process. (5) No feedback — PR sits without response. Fix: SLA + escalation.\n\nHerramientas: (a) GitHub Actions/GitLab CI auto-run tests en PR — feedback antes que review humano. (b) CodeQL, SonarCloud — auto-detect bugs comunes. (c) Danger.js — reglas custom en PR (ej. 'PR sin tests requiere justificación'). (d) Reviewpad, Codecov — assist review con métricas. (e) CODEOWNERS — auto-assign reviewers por directorio.\n\nMétricas útiles: (1) Time to first review (TTFR) — desde PR abierta hasta primer review. Target <4h. (2) Time to merge (TTM) — desde PR abierta hasta merge. Target <24h para PRs típicos. (3) PR size distribution — >80% <400 líneas ideal. (4) Rework rate — % de PRs con multiple review rounds.\n\nCultura: Google 'What every developer should know about code review' — reviewers deben ser respectful, timely, thorough. Ni 'nit'-picky (debate sobre 1 espacio) ni superficial ('LGTM without reading'). Balance difícil pero fundamental para team health.",
+      "realWorld": "Google publicó 'Code Review Developer Guide' — referencia canónica. Facebook 'Phabricator' — herramienta específicamente diseñada para large-scale code review. Microsoft 'Code Review Practices' paper (2018) documenta cambios. GitLab tiene métricas de PR abiertas en su handbook (public).",
+      "tags": ["code review", "PR", "process"],
+      "tech": ["GitHub", "GitLab"],
+      "references": [{ "title": "Google — Code Review Developer Guide" }, { "title": "SmartBear — Best Kept Secrets of Peer Code Review" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "vcs-ci",
+      "topic": "Protected branches",
+      "difficulty": "mid",
+      "scenario": "Un dev jr empujó directamente a main por error, saltándose el PR y CI. El deploy automático lo llevó a prod. Falló y hubo incident. ¿Cómo prevenir?",
+      "question": "¿Qué son branch protection rules y qué controles típicos configurar?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Require PR before merging: bloquea 'git push origin main' direct. Todo cambio a main debe pasar por Pull Request. Auditability + gate para review.", "correct": true, "why": "Correcto. La regla más fundamental. Sin ella, main puede ser 'polluted' por pushes accidentales. GitHub/GitLab/Bitbucket todos soportan esto." },
+        { "letter": "B", "text": "Require status checks (CI) passing before merge: verde en CI (build + tests + linters) obligatorio. Sin CI verde, botón merge disabled.", "correct": true, "why": "Correcto. Assegura que main SIEMPRE está verde. Prevents 'red main' — nadie puede mergear código roto. Base para trunk-based/CD." },
+        { "letter": "C", "text": "Require code review: N approvals de N reviewers específicos (CODEOWNERS). Cannot merge PR sin review. Puede requerir 'stale reviews dismissed' — si empujas cambios nuevos, reviews previas se invalidan.", "correct": true, "why": "Correcto. Enforceable via UI en GitHub 'require pull request reviews before merging'. Con CODEOWNERS puedes exigir reviewer específico por área (ej. security team para changes a auth/)." },
+        { "letter": "D", "text": "Require signed commits (GPG/SSH): cada commit firmado criptográficamente, previene commits con identidad falsa. Especialmente para main branch. Detección de commits no firmados en el push.", "correct": true, "why": "Correcto. Sin signed commits, cualquiera puede commit como cualquiera (git config user.email = 'ceo@company.com'). Signed commits verifican la identidad. Linux kernel requires signed commits. GitHub muestra 'Verified' badge." },
+        { "letter": "E", "text": "Allow force push a main para 'flexibility'.", "correct": false, "why": "Anti-patrón crítico. Force push a main puede DESTRUIR historia (git push --force). Debe estar BLOQUEADO en todo branch protegido. Nunca justificable en main." }
+      ],
+      "explanation": "Branch protection en GitHub (y equivalentes en GitLab, Bitbucket): (1) Require pull request before merging — no direct pushes. (2) Require approvals — N reviewers. (3) Dismiss stale approvals on new commits — approval solo válida para el estado actual. (4) Require review from Code Owners — CODEOWNERS file define quién debe aprobar por directorio. (5) Require status checks passing — CI verde. (6) Require branches to be up to date — no merge de branch atrás de main. (7) Require signed commits — GPG/SSH signature. (8) Require linear history — no merge commits (solo squash o rebase). (9) Restrict who can push — allowlist. (10) Restrict force pushes and deletions — critical.\n\nSetup típico para main: enable all de las anteriores. Para develop/staging (si usadas): menos restricciones. Para release branches: max restricciones.\n\nBypass con admin: por default, admins pueden bypass protection rules. En repos serios: 'Include administrators' toggle ON — ni siquiera admins pueden bypass.\n\nExceptions: (1) Bot accounts para automated releases (semantic-release, dependabot) — token con permission. (2) Emergency fix procedure — process documentado, requiere justificación post-hoc.\n\nAudit: quien enable/disable protection rules — log en GitHub audit log. En orgs enterprise, monitor para asegurar que rules no se deshabilitan sin causa.",
+      "realWorld": "En 2018, un accidente en Meltdown/Spectre patch de Linux kernel: un commit firmado incorrectamente casi llega a mainline. Signed commits atraparon. GitHub Enterprise Server tiene 'ruleset' feature más rica que classic branch protection (2023+). En 2020, un pentester demostró que sin signed commits, se pueden firmar commits como cualquier maintainer si te llegan credentials.",
+      "tags": ["branch protection", "security", "governance"],
+      "tech": ["GitHub", "GitLab"],
+      "references": [{ "title": "GitHub Docs — About protected branches" }, { "title": "GitLab Docs — Protected branches" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "vcs-ci",
+      "topic": "Signed commits",
+      "difficulty": "mid",
+      "scenario": "Un attacker con acceso a repo público forzó un commit con 'Author: linus@kernel.org' que introduce backdoor. En GitHub, aparece como si Linus lo firmó. ¿Cómo prevenir?",
+      "question": "¿Qué son signed commits y qué garantías ofrecen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Signed commits: cada commit se firma criptográficamente con GPG key, SSH key, o S/MIME. La firma prueba que el commit fue creado por alguien con acceso a la private key. GitHub/GitLab verifican firmas contra keys registradas en el account. Sin signature verificada, aparece 'Unverified'. Con signed commits + branch protection requiring signed = imposible impersonar.", "correct": true, "why": "Correcto. Sin signed commits, git config user.email = 'ceo@company.com' es todo lo que se necesita para 'ser' el CEO. Signed commits arreglan la identidad." },
+        { "letter": "B", "text": "Signed commits requieren que uses IDs de Google.", "correct": false, "why": "Falso — se usan GPG, SSH, o S/MIME. Ningún ID de Google." },
+        { "letter": "C", "text": "Signed commits garantizan que el código es seguro.", "correct": false, "why": "Confusión. Signed commits garantizan IDENTIDAD del autor, no CALIDAD/SEGURIDAD del código. Un dev legítimo puede firmar código malicioso." },
+        { "letter": "D", "text": "Signed commits son solo para OSS.", "correct": false, "why": "Falso — son valiosos en cualquier contexto donde la identidad del autor importa (compliance, audit trail, supply chain security)." }
+      ],
+      "explanation": "Cómo funciona: (1) Dev genera key pair (GPG o SSH). (2) Registra public key en GitHub/GitLab. (3) git config commit.gpgsign true (o git config gpg.format ssh + user.signingkey). (4) Cada commit: git crea la firma con private key, la almacena en el commit object. (5) GitHub verifica: firma válida + key pertenece al author account → 'Verified' badge.\n\nAlternativas: (a) GPG — histórico, más setup, requiere gpg-agent. (b) SSH signing (Git 2.34+) — usa la misma SSH key para signing y para pushing. Más simple. (c) S/MIME (X.509) — enterprise, requires CA. (d) Sigstore/gitsign — cloud-based signing con OIDC, no local keys.\n\nBenefits: (1) Impersonation prevention — attacker sin private key no puede firmar como tí. (2) Supply chain security — critical para dependencies. (3) Compliance — SOX, HIPAA requieren attribution firme. (4) Non-repudiation — dev no puede negar que hizo el commit.\n\nRealidades operacionales: (1) Onboarding overhead — cada dev debe generar y registrar key. (2) Lost keys — dev pierde laptop, needs new key + re-register. (3) CI signing — bots (semantic-release) needs signing key, complejo secretos. (4) Vet keys — en OSS, cualquiera puede register key. Enterprise: attest via IdP.\n\nGit signing con SSH: en 2021, Git 2.34 añadió soporte de SSH keys para signing. Ventaja: dev ya tiene SSH key para push, misma key firma. Simplifica dramatically.",
+      "realWorld": "Linux kernel requiere signed commits/tags con GPG. En 2019, evento 'sudo commit' donde alguien commit como Linus Torvalds sin signing (después de mucho fallout). Sigstore/gitsign (2022) permite signing con OIDC — no local keys, más adopción en OSS. GitHub 'Verified' badge en 2016, con SSH signing en 2022.",
+      "tags": ["signed commits", "GPG", "SSH", "supply chain"],
+      "tech": ["Git", "GPG"],
+      "references": [{ "title": "Git Docs — Signing your work" }, { "title": "GitHub Docs — About commit signature verification" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "vcs-ci",
+      "topic": "git bisect",
+      "difficulty": "senior",
+      "scenario": "Producción falla. El bug NO estaba hace 2 semanas y SÍ está ahora. Hay 300 commits entre esos dos puntos. Debugging manual tomaría días. Un ingeniero senior dice: 'usa bisect'.",
+      "question": "¿Qué es git bisect y cómo funciona?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "git bisect: búsqueda BINARIA en el historial de commits. Marcas un commit 'good' (ej. hace 2 semanas) y uno 'bad' (HEAD). Git te checkoutea el commit del medio. Testeas: ¿bug presente? Si sí, marcas 'bad' → busca en la mitad anterior. Si no, marcas 'good' → busca en la mitad posterior. En N iteraciones de log2(300) ≈ 9 tests, encuentras EL commit exacto que introdujo el bug.", "correct": true, "why": "Correcto. Powerful tool subutilizado. Log2(300) = 8-9 iteraciones para encontrar el culpable de 300 commits. Puede automatizarse con 'git bisect run [script.sh]' — bisect corre tu script en cada checkpoint, marcando automáticamente." },
+        { "letter": "B", "text": "git bisect testea todos los commits secuencialmente.", "correct": false, "why": "Falso — sería O(N). Bisect es O(log N) por búsqueda binaria." },
+        { "letter": "C", "text": "git bisect solo funciona en Linux.", "correct": false, "why": "Falso — es comando de Git, funciona en cualquier plataforma." },
+        { "letter": "D", "text": "git bisect requiere que reproduzcas el bug manualmente.", "correct": false, "why": "Parcialmente falso — puede AUTOMATIZARSE con 'git bisect run [script.sh]'. Si tienes un test que reproduce el bug, bisect corre solo." }
+      ],
+      "explanation": "Bisect workflow: (1) git bisect start. (2) git bisect bad HEAD (commit actual, tiene bug). (3) git bisect good <sha> (commit conocido bueno). (4) Git checkoutea el commit del medio. (5) Testeas — bug presente o no. (6) git bisect good / bad. (7) Repetir hasta que Git dice 'first bad commit is <sha>'. (8) git bisect reset — vuelves a HEAD original.\n\nAutomatización: git bisect run [script.sh]. El script debe: exit 0 = bueno, exit 1-127 = malo (excepto 125), exit 125 = skip (commit no testeable, ej. build broken). Puedes usar cualquier script — reproduce el bug programáticamente, retorna código apropiado.\n\nSkip: si un commit no compila o no puede testearse, git bisect skip lo salta.\n\nCasos donde bisect brilla: (a) Performance regression — cuándo empezó el slowdown? Bisect con benchmark. (b) Test failing — cuándo empezó a fallar? Bisect con test runner. (c) Build broken — cuándo? (d) Correctness bug — más complejo, needs deterministic reproduction.\n\nBisect en monorepo grande: cada checkout puede tomar mucho (compile, test setup). Skip commits que no afectan el subproyecto. Ó bisect solo en subdirectorio con 'git bisect start HEAD good -- path/'.\n\nAlternativas: (a) Delta debugging — más sofisticado, útil para input minimization. (b) Bug tracking with tags/releases — 'v1.2 was good, v1.3 was bad, look between'. (c) Blame line by line — útil para bugs específicos en un archivo.",
+      "realWorld": "Linus creó bisect precisamente para debug del kernel — miles de commits/día, bugs difíciles de rastrear. Chromium engineers documentan usar bisect diariamente. Un caso famoso: LLVM performance regression atrapada con bisect en 20 minutos vs semanas de manual debugging. Rust project usa bisect extensivamente en rustc regressions.",
+      "tags": ["bisect", "debugging", "regression"],
+      "tech": ["Git"],
+      "references": [{ "title": "Pro Git Book — Debugging with Git" }, { "title": "git-bisect man page" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "vcs-ci",
+      "topic": "cherry-pick",
+      "difficulty": "senior",
+      "scenario": "Fixaste un bug crítico en la branch de development. Necesitas ese fix ESPECÍFICO en la branch de release (v2.5.x) sin traerte los otros 200 commits de development.",
+      "question": "¿Qué hace git cherry-pick y cuándo usarlo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "git cherry-pick <sha>: aplica el DIFF de un commit específico a tu branch actual, creando un NUEVO commit con el mismo change pero distinto SHA. Útil para: (1) portar fix a release branches; (2) traer feature específica de long-lived branch; (3) rollback selectivo (cherry-pick el revert). Riesgos: crea 'duplicate' commits en historial (mismo change en 2 SHAs), puede haber conflicts, no maneja bien commits con dependencies.", "correct": true, "why": "Correcto. Herramienta útil pero de doble filo. Ideal para hotfix portable across release branches. Peligroso si abusas — historial se vuelve confuso con 'mismo' commit múltiple veces." },
+        { "letter": "B", "text": "cherry-pick copia el commit exactamente con mismo SHA.", "correct": false, "why": "Falso — el nuevo commit tiene distinto SHA (distinto parent = distinto hash). El diff es el mismo, pero es un commit nuevo." },
+        { "letter": "C", "text": "cherry-pick solo funciona en la branch main.", "correct": false, "why": "Falso — funciona en cualquier branch. Comando común: 'git checkout release/v2.5 && git cherry-pick <sha>'." },
+        { "letter": "D", "text": "cherry-pick reemplaza a merge y rebase.", "correct": false, "why": "Distinto propósito. Merge/rebase para integrar BRANCHES completas. Cherry-pick para traer COMMITS ESPECÍFICOS." }
+      ],
+      "explanation": "Uso típico: backport a release branches. Tienes v2.5.x en producción, main con features nuevas. Fix urgente al bug X va a main. Necesitas fix en v2.5.x sin traer todo main. Cherry-pick <fix-sha> al v2.5.x branch.\n\nConflicts: cherry-pick puede fallar si el commit depende de cambios previos que no están en la target branch. Ej. commit añade uso de nueva función que no existe en v2.5. Resolución: manual, o 'git cherry-pick --abort'.\n\nMultiple commits: cherry-pick acepta rangos. 'git cherry-pick abc123..def456' aplica todos los commits en ese rango (excluyendo abc123). Utilidad limitada — para trees de commits, mejor rebase o merge.\n\nDependencies problem: si commit A añade util(), commit B usa util(). Cherry-pick solo B → uso de función que no existe. Fix: cherry-pick A también, o refactor.\n\nAnti-patrones: (1) Cherry-pick masivo entre branches como sustituto de merge — confusing historial. (2) Cherry-pick sin marcar el origen — usar --no-commit + amend con reference al SHA original. (3) Cherry-pick como método de 'promover' entre environments (dev → staging → prod) — mejor: tag el mismo commit en múltiples branches.\n\nHerramientas relacionadas: (a) git format-patch <sha> + git am — extrae commit como patch file, aplicar en otra branch. Más portable. (b) git rebase --onto — mover un rango de commits a otra base. Más poderoso pero más complejo.",
+      "realWorld": "Kernel Linux — backports a stable branches vía cherry-pick con conventions (Cc: stable@vger.kernel.org). Chrome release management — cherry-picks a M-99 branch de main durante RC period. Rust project — cherry-pick de fixes a beta y stable channels.",
+      "tags": ["cherry-pick", "backport", "release management"],
+      "tech": ["Git"],
+      "references": [{ "title": "Git Docs — cherry-pick" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "vcs-ci",
+      "topic": "Git hooks",
+      "difficulty": "senior",
+      "scenario": "Los devs frecuentemente commiten código sin linter y sin tests. En CI luego falla. Un ingeniero senior propone: 'usemos git hooks para atrapar problems ANTES del commit'.",
+      "question": "¿Qué son git hooks y cuáles son las categorías principales?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Client-side hooks (en dev machine): pre-commit (antes de crear commit), prepare-commit-msg (edita el mensaje), commit-msg (valida el mensaje), post-commit (después del commit), pre-push (antes de push). Útiles para: linters, formatters, tests rápidos, validación de mensaje (conventional commits).", "correct": true, "why": "Correcto. Client hooks corren en la máquina del dev. Fast feedback antes que CI. Herramientas comunes: Husky (Node), pre-commit (Python), lefthook (fast, multi-lang), overcommit (Ruby)." },
+        { "letter": "B", "text": "Server-side hooks (en Git server): pre-receive (antes de aceptar push), update (per-branch), post-receive (después de accept), post-update. Útiles para: enforce commit format, block force pushes, trigger deploys, integration con Jira (ticket ID required en commit).", "correct": true, "why": "Correcto. Server hooks son autoridad final — no bypassables por client. GitHub Actions, GitLab webhooks, Bitbucket hooks son similares. Enterprise Git servers (Bitbucket Server, GitLab self-hosted, Gitea) permiten hooks nativos." },
+        { "letter": "C", "text": "Los hooks pueden bypassable con --no-verify. Client-side hooks NO son controles de seguridad — un dev puede saltárselos. Por eso: server-side hooks Y CI checks son las autoridades reales.", "correct": true, "why": "Correcto. git commit --no-verify salta pre-commit hooks. Client hooks son AYUDAS al dev, no controles de compliance. CI + server hooks son el enforce real." },
+        { "letter": "D", "text": "Hooks deben ser RÁPIDOS. Un pre-commit que toma 30 seg = devs lo odian y lo bypass. Target <5 seg para pre-commit típico. Lint solo los archivos changed, no todos. Tests full suite = pre-push, no pre-commit.", "correct": true, "why": "Correcto. Slow hooks kill developer productivity. Best practice: pre-commit solo lint/format (rápido), pre-push corre tests (más lento pero menos frecuente)." },
+        { "letter": "E", "text": "Los hooks se versionan automáticamente con el repo.", "correct": false, "why": "Falso — hooks locales viven en .git/hooks/ que NO está versionado. Para versionar hooks: usa herramientas como Husky que copia hooks al .git/hooks al npm install. O configura core.hooksPath a una carpeta versionada." }
+      ],
+      "explanation": "Client hooks detalle: (1) pre-commit — antes de git commit. Corre linter, formatter, tests. Fallar (exit non-zero) = commit abortado. (2) commit-msg — recibe el mensaje temporal, puede editarlo o validarlo. Enforce Conventional Commits (feat/fix/chore prefixes). (3) prepare-commit-msg — pre-populate mensaje (ej. incluye issue ID de branch name). (4) pre-push — antes de git push. Corre tests full, verifica no hay debug prints.\n\nServer hooks: (1) pre-receive — Git server recibe el push, hook decide accept/reject. Corre en el server. Rechazar = push falla. (2) update — similar pero per-branch. Puede reject solo ciertos branches. (3) post-receive — después de accept. Trigger CI, notificaciones, etc.\n\nHerramientas populares: (a) Husky (Node ecosystem) — instalación via npm install, config en package.json o .husky/. (b) pre-commit (Python but polyglot) — config en .pre-commit-config.yaml, gestiona hooks de linters de múltiples lenguajes. (c) Lefthook (Go, super rápido) — config en lefthook.yml, paralelización. (d) Overcommit (Ruby).\n\nBest practices: (1) Versionar la config — .husky/pre-commit o .pre-commit-config.yaml commiteado. (2) Fast — solo files staged, no todo el repo. (3) Auto-fix — formatters como Prettier, Black auto-fix, no solo detect. (4) Fail loud — mensaje claro de qué falló y cómo fixear. (5) Skip options — --no-verify para casos de emergencia (después justificar).",
+      "realWorld": "Husky es standard en JS ecosystem — miles de repos lo usan. pre-commit (framework) usado en Kubernetes, Django, muchos OSS. GitLab Server-side hooks permite enforce commit format organization-wide. En 2019, GitHub introdujo 'branch protection rulesets' que reemplaza muchas server hooks.",
+      "tags": ["hooks", "pre-commit", "husky", "automation"],
+      "tech": ["Git", "Husky", "pre-commit"],
+      "references": [{ "title": "Pro Git Book — Git Hooks" }, { "title": "Husky Docs" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "vcs-ci",
+      "topic": "Monorepo vs polyrepo",
+      "difficulty": "senior",
+      "scenario": "Tu empresa tiene 50 servicios. Actualmente hay 50 repos de Git (polyrepo). Un ingeniero propone consolidar en 1 monorepo estilo Google. Otros defienden el status quo.",
+      "question": "¿Cuáles son los tradeoffs REALES entre monorepo y polyrepo?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "MONOREPO PRO: cambios atómicos across services — un PR puede tocar 5 services simultáneamente, todos mergean juntos, no hay estado 'partially deployed'. Refactoring de shared code es trivial (rename function → update all callers en el mismo PR).", "correct": true, "why": "Correcto. El argumento killer de monorepo. En polyrepo, refactor de shared library = coordinar PR en 20 repos + versionar library + esperar consumers upgrade. Semanas. En monorepo, 1 PR." },
+        { "letter": "B", "text": "MONOREPO PRO: consistencia. UN linter config, UN test framework, UN CI config, UNA versión de cada dependency. Elimina 'este repo usa Node 16 aunque los demás usan Node 20'.", "correct": true, "why": "Correcto. Google internal es famoso por esto — todo Google usa una versión de Guava, una de Protobuf, etc. Drift eliminado. Costo: force adoption de todos cuando actualiza." },
+        { "letter": "C", "text": "MONOREPO CON: escalabilidad de tooling. Repos monstruosos (2B LOC como Google) requieren tooling especial (Bazel, custom build systems, remote cache, sparse checkout). Git default no escala a 1M+ files. Herramientas: Google usa Piper (no Git), Facebook usa Sapling, Microsoft usa Scalar.", "correct": true, "why": "Correcto. Los grandes monorepos han creado tooling propio. GitHub y GitLab tienen dificultad con repos >100GB. Sparse checkout, partial clone, VFS for Git son mitigaciones." },
+        { "letter": "D", "text": "POLYREPO PRO: independencia de teams. Cada team maneja su repo — su CI, su release cadence, su tooling. Menos coordination necesaria. Un team lento no bloquea a otros.", "correct": true, "why": "Correcto. Conway's Law inverso — polyrepo se alinea con org structure. Microservices frecuentemente = polyrepo. Team A puede usar Rust, Team B Python, sin conflicto." },
+        { "letter": "E", "text": "Solo empresas pequeñas usan monorepo.", "correct": false, "why": "Falso — Google, Facebook, Uber, Twitter, Airbnb todos usan monorepo. Y small startups a veces prefieren polyrepo. No hay correlación con tamaño." }
+      ],
+      "explanation": "Cuándo monorepo: (1) Códigos que comparten mucho — shared libraries, protos, schemas. (2) Refactoring frecuente across services. (3) Recursos para tooling avanzado (Bazel, Nx, Turborepo). (4) Cultura de 'one team, one codebase'. (5) Deployment coordinado (todo se deployea junto o por partes coordinadas).\n\nCuándo polyrepo: (1) Services independientes (poco código compartido). (2) Teams autónomos con distintos stacks. (3) OSS extraible (Kubernetes tiene monorepo interno + varios repos externos). (4) Falta de resources para monorepo tooling. (5) Independent release cadence (uno deploya semanal, otro mensual).\n\nHybrid: muchas empresas mixan. Ej. Airbnb: monorepo para frontend (Nx), separate repos para backend services (polyrepo). GitLab: 1 gran repo para GitLab CE, separate repos para runners, etc.\n\nMonorepo tooling maduro: (a) Bazel (Google origin) — universal build system. (b) Buck2 (Facebook) — successor to Buck. (c) Nx (Nrwl) — JS-first, popular. (d) Turborepo (Vercel) — JS, simpler than Nx. (e) Pants — Python + JVM + more. (f) Rush (Microsoft) — JS.\n\nMonorepo challenges: (1) Build times — sin caching, cambio de 1 file re-buildea todo. Fix: affected + cache. (2) Merge conflicts — muchos devs commiteando al mismo repo. Fix: small PRs, fast merge. (3) IDE performance — indexar 2M archivos = slow. Fix: sparse checkout, partial index. (4) CI cost — todo en 1 pipeline puede ser caro. Fix: affected + selective CI.",
+      "realWorld": "Google monorepo (2B LOC, 45k commits/día) con Piper + Blaze. Facebook con Buck2 (creado tras Buck fail escala). Uber pasó a monorepo Go + Java. Twitter mono desde 2010. Airbnb monorepo frontend con Nx. Netflix mixed. Kubernetes mixed (K8s core mono, ecosystem polyrepo).",
+      "tags": ["monorepo", "polyrepo", "scale", "tooling"],
+      "tech": ["Bazel", "Nx", "Turborepo"],
+      "references": [{ "title": "Rachel Potvin — Why Google Stores Billions of Lines of Code in a Single Repository" }, { "title": "monorepo.tools" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "vcs-ci",
+      "topic": "Git submodules",
+      "difficulty": "senior",
+      "scenario": "Tu proyecto necesita usar código de otro repo (una librería interna). Un dev propone git submodule. Otro dice: 'submodules son horribles, usa git subtree'. Tercero: 'usa package manager'.",
+      "question": "¿Qué son git submodules y cuáles son sus tradeoffs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Submodule: un repo Git incrustado dentro de otro. El repo parent almacena un POINTER (SHA) al commit específico del child. git clone del parent no clona el child por default — necesitas 'git submodule update --init'. Tradeoffs: (1) versionado explícito del child; (2) permite trabajo en ambos repos independientemente; PERO (3) complejidad — muchos comandos se comportan diferente con submodules; (4) devs olvidan hacer update; (5) commits al submodule no propagan automáticamente al parent.", "correct": true, "why": "Correcto. Submodules son una feature powerful pero con footguns muchos. Usados en proyectos como LLVM, Ceph. La complejidad operacional es real — la mayoría de teams prefieren package managers para dependency management." },
+        { "letter": "B", "text": "Submodules copian el código completo en el parent repo.", "correct": false, "why": "Falso — solo guarda un pointer (SHA + URL). El código físicamente está en el submodule's Git objects, no duplicado." },
+        { "letter": "C", "text": "Submodules son la mejor práctica siempre.", "correct": false, "why": "Falso — la mayoría prefiere package managers (npm, pip, cargo, Maven) por deps normales. Submodules útiles en casos específicos (vendored code, monorepo lite)." },
+        { "letter": "D", "text": "Submodules eliminan la necesidad de coordinar changes.", "correct": false, "why": "Opuesto — SÍ requieren coordinación. Cambio al submodule = update pointer en parent. Múltiples parents = update multiple." }
+      ],
+      "explanation": "Submodule workflow: (1) git submodule add <url> <path> — añade submodule. Crea .gitmodules file. (2) Clone parent con submodules: git clone --recurse-submodules. O 'git submodule update --init --recursive' post-clone. (3) Update submodule: cd submodule, git pull, cd ..; git add submodule; git commit -m 'update submodule'. (4) Trabajar EN el submodule: cd submodule/, edit, commit en su Git; luego en parent, git add submodule para actualizar pointer.\n\nCommon footguns: (1) Devs clonan sin --recurse-submodules, luego se preguntan por qué falta código. (2) Cambio en submodule no se refleja en parent hasta git add del pointer. (3) 'detached HEAD' en submodule confuso. (4) Merge conflicts en el pointer confusos.\n\nAlternativas: (a) Package managers (npm, pip, cargo) — versioned deps. Mejor para librerías. (b) git subtree — merge del child repo INTO el parent (copia el código). Más simple para uso, pero pierdes trazabilidad. (c) Monorepo — evita todo esto poniendo todo en un repo. (d) Package registries privados — Nexus, Artifactory, GHCR.\n\nCuándo submodules OK: (1) Vendored code que necesitas modificar localmente. (2) Múltiples repos que evolucionan juntos pero requieren repos separados por razones (open source vs private, distintos permissions). (3) Cuando el 'child' es genuinamente un otro proyecto (no una librería consumible).",
+      "realWorld": "LLVM usa submodules (Clang, LLDB, etc.) — funciona pero requiere training. Ceph. En 2013 GitHub tenía docs quejándose de submodule complexity. En 2020 GitHub introdujo 'nested repos' UI para mostrar submodules mejor. Facebook Sapling (2022, git-alternative) evita submodules con superior tooling.",
+      "tags": ["submodules", "dependencies", "vendored"],
+      "tech": ["Git"],
+      "references": [{ "title": "Pro Git Book — Submodules" }, { "title": "Atlassian — Git Submodules" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "vcs-ci",
+      "topic": "git reset vs revert",
+      "difficulty": "senior",
+      "scenario": "Un dev empujó código malo a main. El equipo debe removerlo. Alguien dice 'git reset --hard HEAD~1'. Otro dice 'git revert HEAD'. ¿Cuál usar?",
+      "question": "¿Cuál es la diferencia entre git reset y git revert?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "git reset MUEVE el pointer del branch a un commit anterior — REESCRIBE historia. Peligroso en public branches (necesitas force push, otros devs se rompen). git revert crea un NUEVO commit que INVIERTE los cambios del commit malo — preserva historia. Safe en public branches. Regla: en main/shared, SIEMPRE revert; en tus branches locales privadas, reset OK.", "correct": true, "why": "Correcto. Distinción crítica. Reset = 'como si nunca hubiera existido' (destructivo). Revert = 'creo un nuevo commit que deshace' (preserva historia). En main con protection rules, reset requiere force push que debe estar bloqueado." },
+        { "letter": "B", "text": "Son idénticos, distinto nombre.", "correct": false, "why": "Falso — reset reescribe historia, revert añade commit inverso. Distinto efecto en historial y en other devs." },
+        { "letter": "C", "text": "revert es solo para OSS, reset para privado.", "correct": false, "why": "Falso — la distinción es sobre PUBLIC vs PRIVATE branches, no OSS vs privado. Un repo privado con branch shared merece revert." },
+        { "letter": "D", "text": "reset siempre es más rápido y por eso mejor.", "correct": false, "why": "Falso — 'rápido' no es criterio. La corrección es preservar historia en shared branches." }
+      ],
+      "explanation": "git reset modes: (1) --soft — mueve pointer, deja changes staged. (2) --mixed (default) — mueve pointer, unstage changes. (3) --hard — mueve pointer, discard changes. Los últimos dos DESCARTAN work — cuidado.\n\ngit revert commit: crea un NEW commit con el inverse del target. Ejemplo: si commit añadió línea X, revert crea commit que quita línea X. Historia preservada — el commit malo sigue en el log, y también el commit revert.\n\nCuándo reset OK: (1) Tu branch local que no has pushed. (2) 'Deshacer' el último commit local para reformularlo. (3) Squash commits locales antes de push. 'git reset --soft HEAD~3 && git commit' — combina 3 commits en 1.\n\nCuándo revert OK: (1) Undo de commit en main. (2) Rollback de bad deploy. (3) Cualquier public branch shared.\n\nRevert de merge commit: complicated. 'git revert -m 1 <sha>' donde 1 = mantener parent 1 (main), descarta parent 2 (feature). No es merge back — es 'undo el merge'.\n\nAnti-patrones: (1) reset --hard main en main — DESTRUYE historia + fuerza push, rompe todos los devs. (2) revert de un revert — 'un-undo' que confunde historia. Mejor: forward fix. (3) reset local después de push — historia local ≠ remote, próximo push confuso.",
+      "realWorld": "GitLab 2017 incident (famous): un ingeniero usó 'rm -rf' equivalente + reset en el production DB backup script. 6 horas de data pérdida. Post-mortem público. En 2019 un dev en Google intentó reset en main — el sistema de submission bloqueó (Google usa Piper, no Git — pero el principio aplica).",
+      "tags": ["reset", "revert", "history rewriting"],
+      "tech": ["Git"],
+      "references": [{ "title": "Pro Git Book — Reset Demystified" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "vcs-ci",
+      "topic": "Conventional commits",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene commits como 'fix stuff', 'updates', 'wip'. Generar changelogs manualmente toma horas. Un ingeniero propone Conventional Commits.",
+      "question": "¿Qué son Conventional Commits y qué beneficios traen?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Conventional Commits: formato estándar para mensajes de commit: '<type>[optional scope]: <description>'. Types comunes: feat (feature), fix (bug fix), docs, style, refactor, test, chore, perf. Beneficios: (1) auto-generation de CHANGELOG; (2) auto-calculation de SemVer bump (feat = MINOR, fix = PATCH, BREAKING CHANGE = MAJOR); (3) commits searchable/filterable por type; (4) team-wide consistency.", "correct": true, "why": "Correcto. Especificación estándar (conventionalcommits.org). Adoptada por Angular, Vue, Nx, muchos OSS. Habilita tools como semantic-release, standard-version, changesets — auto-versionado + auto-release notes." },
+        { "letter": "B", "text": "Conventional Commits requiere que uses inglés.", "correct": false, "why": "Falso — el formato es del prefix. El description puede ser cualquier idioma. Consistencia importa, idioma no." },
+        { "letter": "C", "text": "Conventional Commits son solo para OSS.", "correct": false, "why": "Falso — igualmente útiles en enterprise. Auto-changelog útil para release notes internas, auto-versionado útil para paquetes internos." },
+        { "letter": "D", "text": "Conventional Commits limitan la creatividad de los devs.", "correct": false, "why": "El 'limit' es estructural (formato), no de contenido. Como funciones tienen sintaxis, comments no. La estructura habilita machine-parsing." }
+      ],
+      "explanation": "Ejemplos: (a) feat: add user login. (b) fix(auth): correct JWT expiration. (c) docs: update README with install steps. (d) refactor(api): extract user service. (e) feat!: change API response format (! = breaking). (f) fix: correct calculation\\n\\nBREAKING CHANGE: removed deprecated field 'name'.\n\nSemantic-release + Conventional Commits automatiza EL CICLO DE RELEASE completo: (1) commit merge a main. (2) semantic-release analiza commits desde last release. (3) determines bump — hay BREAKING CHANGE? MAJOR. hay feat? MINOR. solo fix? PATCH. no releasable? skip. (4) auto-generates CHANGELOG.md. (5) publica a npm/etc. (6) crea GitHub release + tag. Todo sin humano.\n\nHerramientas: (a) commitlint — valida formato en commit-msg hook. (b) commitizen — CLI para redactar commit interactively. (c) semantic-release — auto-versioning + release. (d) standard-version — similar sin auto-publish. (e) changesets — para monorepos con múltiples packages.\n\nAntipatrones: (1) 'feat: fix bug' — misclassification. (2) Description vaga ('feat: updates'). (3) BREAKING CHANGE no marcado — usuarios sorprendidos. (4) Enforce demasiado estricto sin buy-in del equipo — friction sin beneficio. Usa validators progresivos.",
+      "realWorld": "Angular popularizó Conventional Commits ~2015. Vue.js, Nx, TypeScript ecosystem widely adopted. Semantic-release used by miles de OSS packages en npm. Estimated: 30-50% de OSS npm packages en 2024 usan Conventional Commits.",
+      "tags": ["conventional commits", "changelog", "automation"],
+      "tech": ["semantic-release", "commitlint"],
+      "references": [{ "title": "conventionalcommits.org" }, { "title": "Angular Commit Message Guidelines" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "vcs-ci",
+      "topic": "Merge queues",
+      "difficulty": "senior",
+      "scenario": "Tu repo tiene 20 PRs abiertos que quieren mergear a main. Cada uno CI passing individualmente. Pero cuando se mergean secuencialmente, algunos fallan porque otros mergearon primero y cambiaron main. Devs re-run CI, re-mergean, re-fail. Caos.",
+      "question": "¿Qué son merge queues y cómo resuelven el problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Merge queue: sistema que SERIALIZA merges. Devs no mergean directamente — encolan sus PRs. La queue toma cada PR en orden, rebasa contra main actual, corre CI, y si pasa, mergea. Si falla, saca de queue y notifica. Garantiza main siempre verde + evita conflicts entre PRs. GitHub 'Merge Queue' (2023), GitLab 'Merge Trains', Bors, Kodiak son implementaciones.", "correct": true, "why": "Correcto. Solución elegante al 'race condition' entre PRs. Especialmente valiosa en repos con alta velocity (20+ PRs/día). Rust project (bors) es el ejemplo clásico." },
+        { "letter": "B", "text": "Merge queue permite mergear sin CI.", "correct": false, "why": "Opuesto — el punto del merge queue es CORRER CI contra el estado más reciente. Sin CI, no hay validation." },
+        { "letter": "C", "text": "Merge queue es un feature de Git core.", "correct": false, "why": "Falso — es feature del Git server (GitHub, GitLab, Bitbucket) o tools externos (Bors, Kodiak, Mergify). Git core no tiene concept de queue." },
+        { "letter": "D", "text": "Merge queue es lo mismo que required status checks.", "correct": false, "why": "Diferentes. Required checks: PR debe tener CI verde. Merge queue: PR + CI verde CONTRA main actual + serializar merges. Complementarios." }
+      ],
+      "explanation": "El problema (semaphore issue): PR A y PR B ambos CI verdes contra main viejo. Ambos mergean. Ahora main tiene A + B. Puede haber conflicto lógico (test que solo A pasa, test que solo B pasa, ambos juntos fallan). Main verde individualmente, pero broken combined.\n\nMerge queue workflow: (1) Dev enqueue PR. (2) Queue toma PR head. (3) Rebasa PR contra main actual. (4) Corre CI. (5) Si CI verde, merge. (6) Toma siguiente PR. (7) Si CI red, remove del queue, notifica dev.\n\nOptimizations: (a) Speculative batching — queue asume múltiples PRs pasarán, corre CI de A+B+C batch. Si pasa, mergea 3 juntos. Si falla, bisect para encontrar el bad. Reduce CI runs de N a log(N). GitHub llama esto 'batch mode'. (b) Priority — hotfixes al inicio del queue. (c) Fair scheduling — no un dev monopoliza queue.\n\nHerramientas: (a) GitHub Merge Queue (GA en 2023) — nativo, batch mode. (b) Bors (Rust community, 2014) — el original OSS, aún usado en Rust project. (c) Homu — extendido bors. (d) Kodiak — GitHub App. (e) Mergify — SaaS. (f) GitLab Merge Trains — GitLab equivalent.\n\nCuándo needed: (a) High velocity teams (>20 PRs/día). (b) Fragile tests (races entre PRs). (c) Main protection strict — 'never red main' policy. En teams pequeños (5 PRs/day), no needed.",
+      "realWorld": "Rust project usa bors desde 2014 — cero merges rojos en main desde entonces. GitHub introdujo Merge Queue en 2022 (GA 2023). Uber uses internamente merge queue para monorepo. Facebook similar. Zulip usa Kodiak. Sentry usa Mergify.",
+      "tags": ["merge queue", "bors", "CI reliability"],
+      "tech": ["GitHub Merge Queue", "Bors", "GitLab Merge Trains"],
+      "references": [{ "title": "GitHub Docs — Merge queue" }, { "title": "Rust bors documentation" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "vcs-ci",
+      "topic": "git reflog — la red de seguridad",
+      "difficulty": "senior",
+      "scenario": "Un dev hizo 'git reset --hard' por accidente y perdió 3 días de work. Otro dijo: 'está perdido para siempre'. Un ingeniero senior dice: 'no, usa reflog'.",
+      "question": "¿Qué es git reflog y cuándo úsalo?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "git reflog: historial de MOVIMIENTOS de HEAD (y branch pointers) en tu repo local. Registra CADA operación que movió HEAD: commit, checkout, reset, merge, rebase, cherry-pick. Después de un reset o rebase 'perdido', puedes hacer 'git reflog' para ver SHAs previos y 'git reset --hard <sha>' para recuperar. Los commits huérfanos permanecen en Git objects durante ~90 días antes de garbage collection.", "correct": true, "why": "Correcto. Reflog es la 'undo button' de Git. Save many careers. Local-only — no se pushea. Retención default 90 días para reachable commits, 30 para unreachable." },
+        { "letter": "B", "text": "reflog es un backup en el server.", "correct": false, "why": "Falso — reflog es LOCAL, en .git/logs/HEAD. No se pushea. Después de clonar en otra máquina, no tienes reflog del original." },
+        { "letter": "C", "text": "reflog solo funciona si tienes GitHub Pro.", "correct": false, "why": "Falso — feature de Git core, funciona en cualquier repo local independiente del provider." },
+        { "letter": "D", "text": "reflog permite recuperar commits pushed que fueron force-pushed.", "correct": false, "why": "Parcial — reflog local recupera SI el commit pasó por tu HEAD. Si un dev en otra máquina force-pushed reset, y tú no habías pulled, no puedes recuperar via reflog local." }
+      ],
+      "explanation": "Reflog entries: (1) HEAD@{0}: last operation. (2) HEAD@{1}: previous. etc. Format: <sha> HEAD@{N}: <operation>: <description>. Ej. 'a1b2c3d HEAD@{0}: reset: moving to HEAD~1'.\n\nUsos: (a) Recover after bad reset — 'git reset --hard <sha-from-reflog>'. (b) Recover deleted branch — 'git reflog | grep <branch-name>', encuentra el last SHA, 'git branch <name> <sha>'. (c) Recover from rebase gone wrong — reflog muestra el commit pre-rebase. (d) Undo checkout que perdió stash.\n\nRetención: reflog entries se garbage collected. Default: reachable commits (accessible from a branch/tag) — 90 días. Unreachable (huérfanos) — 30 días. Configurable con gc.reflogExpire y gc.reflogExpireUnreachable.\n\nLimitaciones: (1) Local only — no compartido con el server. (2) Solo tu repo — reflog de otro dev no accesible. (3) Después de 30/90 días, git gc puede borrar los objects. (4) Si nunca hiciste checkout/commit del state, no está en reflog.\n\nAlternativas para 'undo' complementarias: (a) git stash — save WIP temporalmente. (b) git worktree — múltiples working trees, no perder work al cambiar branches. (c) IDE local history — VSCode/IntelliJ mantienen historia de archivos independiente de Git.",
+      "realWorld": "En 2019 un dev en Twitter perdió una semana de work por 'git reset --hard' — recuperó todo con reflog en 5 minutos. Los Stack Overflow answers sobre 'I deleted my branch, help' casi siempre incluyen reflog. En 2020, GitHub agregó 'branch restore' UI para deleted branches recientes — reflog equivalent en el server.",
+      "tags": ["reflog", "recovery", "undo"],
+      "tech": ["Git"],
+      "references": [{ "title": "Pro Git Book — Data Recovery" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "vcs-ci",
+      "topic": "Squash and merge",
+      "difficulty": "senior",
+      "scenario": "Tu PR tiene 20 commits: 'wip', 'fix typo', 'trying again', 'ok this works', etc. Al mergear, un ingeniero senior te dice 'squash y merge para no polluter main con esos commits'.",
+      "question": "¿Qué es squash and merge y cuáles son sus tradeoffs?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Squash and merge: TODOS los commits de la feature branch se COLAPSAN en 1 solo commit al merge a main. El PR title/description se convierte en el mensaje. PRO: main history limpia (1 commit por feature); CONTRA: pierdes granularidad (imposible bisect a un commit intermedio), 'wip' commits nunca aparecen en historia. GitHub UI default para muchos repos.", "correct": true, "why": "Correcto. Tradeoff clásico: cleanliness vs granularity. Para PRs pequeños con commits de progreso incoherentes, squash es ideal. Para PRs con commits atómicos bien-crafted, squash pierde valor." },
+        { "letter": "B", "text": "Squash merge preserva todos los commits individuales.", "correct": false, "why": "Falso — específicamente COLAPSA a 1. Si quieres preservar, usa merge commit o rebase-merge." },
+        { "letter": "C", "text": "Squash merge es lo mismo que rebase merge.", "correct": false, "why": "Rebase merge preserva CADA commit del PR (linear, mismo número). Squash merge COLAPSA a 1 solo commit." },
+        { "letter": "D", "text": "Squash merge es la única opción correcta.", "correct": false, "why": "Depende del contexto. Rust project prefiere rebase (mantiene granularidad). Kubernetes usa merge commits. GitHub squash es popular pero no universal." }
+      ],
+      "explanation": "3 estrategias de merge en GitHub UI: (1) Create merge commit — traditional Git merge, preserva history + añade merge commit. (2) Squash and merge — colapsa commits, 1 commit fresh en main. (3) Rebase and merge — reaplica commits del PR on top de main, linear history, cada commit preserved.\n\nCuándo squash: (a) PRs con muchos 'wip', 'fix typo' commits. (b) Prefiere main linear con 1 commit per feature. (c) Contribuidores externos que no cuidan commit history. (d) Small PRs que naturalmente son 1 change lógico.\n\nCuándo merge commit: (a) Preservar exact history del PR. (b) Quieres poder ver el branch que existió. (c) Merge commits ayudan a agrupar commits relacionados.\n\nCuándo rebase merge: (a) Devs cuidan sus commits (cada uno es atómico y meaningful). (b) Preferís linear history sin merge commits. (c) Quieres poder git bisect a granularidad de commit del PR.\n\nEjemplo caso squash gone wrong: PR con 3 commits: (1) 'add feature X', (2) 'refactor before X', (3) 'add tests X'. Squash → 1 commit gigante que hace todo. Bisect ahora inutilizable — no puedes aislar refactor de feature. Fix: preserve granularity con rebase merge.",
+      "realWorld": "Linus Torvalds famously prefiere rebase con clean commits, se opone a squash de PRs bien-crafted. GitHub docs promueven squash por default para simplicity. Kubernetes usa 'ok-to-merge' bot con squash. Chromium usa merge commits estrictamente para permite bisect exacto.",
+      "tags": ["squash", "merge strategy", "history"],
+      "tech": ["Git", "GitHub"],
+      "references": [{ "title": "GitHub Docs — About merge methods" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "vcs-ci",
+      "topic": "Large files en Git",
+      "difficulty": "staff",
+      "scenario": "Tu repo tiene 20GB. Clone toma 30 minutos. La razón: alguien commiteó video files de 500MB hace 2 años. git filter-branch parece complicado. ¿Qué hacer?",
+      "question": "¿Cómo manejar large files en Git y limpiar el pasado?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Prevención: .gitignore para binaries + pre-commit hook que bloquea files >10MB. Git LFS (Large File Storage) para files que DEBES versionar (videos, PSDs, datasets). LFS almacena pointer en Git, blob real en un LFS server.", "correct": true, "why": "Correcto. Baseline. Git nunca fue diseñado para binaries grandes — cada 'change' al binary duplica en objects. Un video de 500MB modificado 10 veces = 5GB en objects." },
+        { "letter": "B", "text": "Cleanup del pasado: git filter-repo (successor de filter-branch) es la herramienta moderna. Reescribe el historial removiendo los large files. Requiere force-push, todos los devs necesitan re-clone. Usar en emergency, coordinar con team.", "correct": true, "why": "Correcto. git filter-repo (Elijah Newren) reemplazó filter-branch (deprecated). Rápido, seguro. BFG Repo-Cleaner es alternativa. Reescritura de historia = DESTRUCTIVE, requires coordination." },
+        { "letter": "C", "text": "Shallow clone: 'git clone --depth 1' clona solo el último commit. Reduce clone size dramatically para CI/CD que no necesita historial completo. Downside: no puedes bisect, log limitado.", "correct": true, "why": "Correcto. Especialmente útil en CI (donde solo necesitas el last commit). GitHub Actions actions/checkout usa depth 1 por default. Para dev day-to-day, historial completo suele quererse." },
+        { "letter": "D", "text": "Partial clone: 'git clone --filter=blob:none' clona metadata + commits, pero descarga blobs on-demand cuando necesitas checkout. Escala a repos gigantes. Requires Git 2.19+.", "correct": true, "why": "Correcto. Feature moderno. Microsoft desarrolló para VSTS/Azure DevOps con Windows monorepo (350GB). Ahora en Git core. Los blobs no accessed nunca se descargan." },
+        { "letter": "E", "text": "Git puede manejar files de cualquier tamaño sin problemas.", "correct": false, "why": "Falso — Git internamente maneja bien texto (delta compression funciona), pero binaries grandes cada commit ~duplica en objects. Repos >10GB se vuelven lentos, unclonable, unusable." }
+      ],
+      "explanation": "Git internals con large files: Git almacena cada versión de cada file en objects/. Texto: delta compression eficiente (solo el diff). Binary: cada versión duplica (no hay 'diff' de un video). Un file de 100MB commiteado 10 veces = ~1GB en objects.\n\nGit LFS (Large File Storage): (1) Config: git lfs track '*.psd'. (2) Añade .gitattributes con el pattern. (3) Los files matching van a LFS server, Git tracks solo pointers (SHA + size). (4) Al clone, LFS files se descargan lazy. Servers: GitHub LFS, GitLab, Bitbucket, self-hosted. GitHub free tier limita LFS a 1GB storage + 1GB bandwidth/month.\n\nAlternativas a LFS: (a) Git-annex — más flexible, más complejo. (b) External storage con symlinks — S3, artifact registry, referenciados por scripts. (c) DVC (Data Version Control) — datasets versioning, popular en ML.\n\nfilter-repo workflow (cleanup): (1) Backup del repo (siempre). (2) pip install git-filter-repo. (3) git filter-repo --strip-blobs-bigger-than 10M. (4) Force push. (5) Todos re-clonen. Coordinar. Historia destruida — no hay vuelta atrás.\n\nOtras técnicas: (a) Sparse checkout — solo working directory tiene subset de files, pero .git tiene todo. Útil para monorepos donde solo necesitas 1 subproyecto. (b) Worktrees — múltiples working directories, comparten Git objects.\n\nMonorepos gigantes usan: (a) Sapling (Facebook) — alternative a Git, better scale. (b) VFS for Git (Microsoft) — Windows repo. (c) Piper (Google) — no Git at all, custom system.",
+      "realWorld": "Microsoft Windows repo (2017): 350GB, 3.5M files. Movido a Git con VFS for Git. Facebook mono con Sapling. Cloudflare recolonó su main repo en 2020 con filter-repo. GitHub tiene warning para repos >5GB. Un famoso incident: en 2015 un dev de Adobe commiteó un archivo de 30GB por error, repo unclonable durante semanas.",
+      "tags": ["large files", "LFS", "filter-repo", "scale"],
+      "tech": ["Git LFS", "git filter-repo"],
+      "references": [{ "title": "Git Docs — Git Large File Storage" }, { "title": "git-filter-repo docs" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "vcs-ci",
+      "topic": "Supply chain security en Git",
+      "difficulty": "staff",
+      "scenario": "Un attacker compromete un mantainer de una popular library. Publica una versión con backdoor. Users lo instalan. La library está en tu package.json. ¿Cómo prevenir?",
+      "question": "¿Qué prácticas mitigan supply chain attacks en Git y package management?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Lockfile enforcement (package-lock.json, yarn.lock, poetry.lock, Cargo.lock). Pinnea EXACTAMENTE la versión + hash de cada dep transitiva. 'npm ci' (vs 'npm install') fails si lockfile no matches. Cambios al lockfile requieren PR review — un dependency bump nunca 'entra' sin revisión.", "correct": true, "why": "Correcto. Baseline. Sin lockfile, 'npm install' puede resolver a nueva versión con backdoor. Con lockfile + npm ci, EXACT versions con integrity hashes verificados." },
+        { "letter": "B", "text": "Dependency scanning con Snyk, Dependabot, Renovate — alerta automática cuando dep tiene CVE conocida. Puede auto-crear PRs con updates. Combinar con SBOM (Software Bill of Materials) para track dependencies.", "correct": true, "why": "Correcto. Reactive layer — cuando CVE public, alerta rápida. Dependabot integrado en GitHub gratis. Snyk más features. Renovate open-source, más flexible." },
+        { "letter": "C", "text": "Signed commits obligatorios en el repo + verify signatures en CI. Attacker sin private key no puede push commits legítimos. Especialmente crítico para libraries downstream users trust.", "correct": true, "why": "Correcto. Sigstore + cosign para libraries. GPG + branch protection require signed commits. Kubernetes y otros CNCF requiere signing." },
+        { "letter": "D", "text": "Private registry mirror + allow-list de packages. En lugar de npm/PyPI/Maven Central público, usar Artifactory/Nexus/GitHub Packages que mirroean solo packages aprobados. Nueva dep = approval process. Elimina dependency confusion attacks.", "correct": true, "why": "Correcto. Alex Birsan's 2021 attack demostró dependency confusion — un attacker puede publicar package con nombre igual al de tu private package en npm público, npm elige el público (higher priority). Private registries + explicit allow-list previene." },
+        { "letter": "E", "text": "Nunca actualizar dependencies — mejor freeze en versiones viejas.", "correct": false, "why": "Peor solución. Freeze deja CVEs unpatched, actualizas eventually enorme jump = risky. Mejor: continuous updates + testing." }
+      ],
+      "explanation": "Supply chain attacks vectors: (1) Compromise de maintainer account — take over popular library account, publish malicious version. Casos: event-stream 2018, ua-parser-js 2021. (2) Typosquatting — publish package con nombre similar (colors → color-s). (3) Dependency confusion — internal package name in public registry higher priority. (4) Source repo compromise — attacker pushes to Git, released to registry. (5) CI compromise — steal signing keys en CI environment.\n\nDefensas: (1) Reproducible builds — dado same input, same output binaries. Verifiable. (2) SBOM (Software Bill of Materials) — inventory de todas dependencies incluidas. SPDX o CycloneDX format. (3) Signing artifacts — Sigstore, cosign, in-toto. Chain of trust from source to binary. (4) SLSA (Supply-chain Levels for Software Artifacts) — Google framework, levels 1-4 de supply chain security. (5) Attestations — provenance de cómo se buildeó (which CI, which commit).\n\nSLSA levels: L1 — build script exists. L2 — hosted build service. L3 — hardened builds, non-forgeable. L4 — two-party review + hermetic reproducible builds. Kubernetes en L3. NPM adding SLSA support 2023+.\n\nAtaque prevention en la práctica: (1) 2FA obligatorio para maintainers de popular OSS. NPM enforce 2FA para top packages desde 2022. (2) Package publication requires OIDC (no more static token). (3) Alerta si dep new version tiene major sudden changes (nueva dep 1000x weight suspicioso).",
+      "realWorld": "event-stream 2018: un attacker offereció mantener event-stream (popular npm), added flatmap-stream dep con code que roba Bitcoin. ua-parser-js 2021: compromised, mined crypto en systems users. colors.js 2022: maintainer voluntarily corrupted his own package (protest). SolarWinds 2020: supply chain compromise en el CI, affected miles de orgs. Log4Shell (Log4j) 2021 — mismo dep en todos lados = catastrophe.",
+      "tags": ["supply chain", "sbom", "sigstore", "dependencies"],
+      "tech": ["Sigstore", "Dependabot", "SLSA"],
+      "references": [{ "title": "SLSA.dev" }, { "title": "OWASP — Software Supply Chain Security" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "vcs-ci",
+      "topic": "Trunk-based development at scale",
+      "difficulty": "staff",
+      "scenario": "Tu monorepo tiene 500 devs commiteando a main. CI tarda 45 min. Merge queue congestionado. Devs frustrated. Feature branches largas 'to avoid the pain'. ¿Cómo hacer trunk-based funcionar a scale?",
+      "question": "¿Qué se requiere para trunk-based development a escala (100s de devs)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "CI ULTRA-RÁPIDO (<10min ideal, <20min max). A scale de 100s devs, un CI de 45min = queue enorme, devs no puedan commit-multiple-times-per-día. Requiere: affected-only builds, distributed test execution, remote cache, test sharding. Investment en CI infra >> cost del staff time perdido.", "correct": true, "why": "Correcto. La ecuación es simple: 500 devs × 3 commits/día × 45 min CI = enormidad de tiempo. Reducirlo a 10 min = 3x productivity. Empresas top invierten heavily en CI perf (Google, Facebook)." },
+        { "letter": "B", "text": "Merge queue con speculative batching. Serializar merges + batch múltiples PRs juntos en un CI run. Si batch de 10 PRs pasa, mergea 10 juntos. Si falla, bisect para encontrar el bad. Reduces CI runs de N a log(N).", "correct": true, "why": "Correcto. GitHub Merge Queue batch mode, Bors batch mode. Con 500 devs y 100 PRs/día, sin batching el CI serial es imposible. Con batching, factible." },
+        { "letter": "C", "text": "Feature flags MADUROS. WIP code se mergea a trunk detrás de flag off. Sin flags, devs no pueden mergear parcial → keep long branches → integration hell. Empresa necesita: flag service (LaunchDarkly/homegrown), guidelines, cleanup process.", "correct": true, "why": "Correcto. Trunk-based sin feature flags falla a scale. Las features grandes necesitan mergearse en pedazos small y coherentes cada uno, ocultos por flag hasta completos." },
+        { "letter": "D", "text": "TEST RELIABILITY. Flaky tests son death of trunk-based. Si tests pasan 95% del tiempo, en un CI batch de 10 tests, chance de pass = 0.95^10 = 60%. Blockers constantes. Investment en test infrastructure — quarantine, retry policies, root-cause analysis obligado.", "correct": true, "why": "Correcto. Flaky tests son enemigo #1 de trunk-based a scale. Google internal: 'flaky test' es tratado como bug prioridad P1. Quarantine sistema — flakies no bloquean, pero owner responsible por fix." },
+        { "letter": "E", "text": "Freeze changes 90% del tiempo, deployear solo trimestralmente.", "correct": false, "why": "Opuesto de trunk-based. Freeze mata productivity + causa el mismo integration hell que trunk-based resuelve." }
+      ],
+      "explanation": "Trunk-based at scale requires investment layer by layer: (1) BUILD SYSTEM — Bazel, Buck2, Turborepo para affected builds. (2) TEST INFRA — parallel execution, distributed, quarantine flakies. (3) CI PLATFORM — merge queue con batching, priority scheduling. (4) FEATURE FLAG PLATFORM — sophisticated, service-managed, cleanup automation. (5) OBSERVABILITY — canary + auto-rollback + progressive deploy. (6) CULTURE — devs disciplined en small PRs, fast reviews, blameless postmortem.\n\nMétricas a track: (1) Time to merge (P95) — deve be <1 día ideally. (2) CI wall time (P95). (3) Flaky test rate. (4) Feature flag debt (cuántas flags viejas sin owner). (5) Merge queue latency.\n\nGoogle internal (Piper monorepo + Blaze + TAP): (a) 100k+ CI runs/day. (b) 2 billion LOC. (c) Every merge triggers affected tests. (d) Flakies quarantined automatically after N failures. (e) Presubmit checks fast (<10min); postsubmit exhaustive.\n\nFacebook (Sapling + Buck2 + Sandcastle): (a) Rebase workflow, no merge commits. (b) Speculative execution — CI runs BEFORE dev requests. (c) Massive investment in test infrastructure. (d) Push queue + smart batching.\n\nAnti-patrones staff-level: (1) Adopt trunk-based sin CI mature — devs suffer, revert to feature branches informally. (2) Ignore flaky tests — 'just re-run' culture. (3) Feature flags without lifecycle — thousands stale flags. (4) One team lags — el slowest team es el bottleneck de todos.",
+      "realWorld": "Google internal — >4000 commits/day a Piper monorepo, trunk-based since forever. Facebook mismo con Sapling. Uber migrated to monorepo + trunk-based, documented struggles. Netflix has published about mono-ish setup. Airbnb published 'monorepo journey' with challenges at scale. In 2022 Uber published paper 'submit queue' about their merge queue architecture.",
+      "tags": ["trunk-based", "scale", "monorepo", "merge queue"],
+      "tech": ["Bazel", "Merge Queue"],
+      "references": [{ "title": "Rachel Potvin — Why Google Stores Billions of Lines of Code in a Single Repository" }, { "title": "Accelerate — Trunk-based Development" }]
+    }
+  ]
+}

@@ -1,0 +1,420 @@
+{
+  "id": "programmer-sim-05-apis-and-security",
+  "trackId": "programmer",
+  "order": 5,
+  "title": "Simulacro 05 — APIs, idempotencia y seguridad práctica",
+  "focus": "Diseño de APIs REST/GraphQL, idempotencia, versioning, error handling y errores de seguridad frecuentes (OWASP).",
+  "areaCoverage": ["apis", "security"],
+  "timeLimitMin": 22,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "apis",
+      "topic": "HTTP status codes — uso correcto",
+      "difficulty": "junior",
+      "scenario": "Un endpoint POST /users devuelve `200 OK` con body `{\"error\": \"email already exists\"}` cuando falla la validación. Un compañero comenta 'esto está mal'.",
+      "question": "¿Cuál es el status code CORRECTO y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Devolver 200 con error en body está bien — el cliente lo procesa igual.", "correct": false, "why": "Falso y problemático. 200 significa 'success' semánticamente. Clientes, proxies, monitoring dashboards, retry logic todos usan status codes para decidir. Errores enmascarados como 200 rompen todo el ecosistema HTTP." },
+        { "letter": "B", "text": "409 Conflict si el email ya existe. En general: 2xx success, 3xx redirects, 4xx client error (retry no ayudará), 5xx server error (retry puede ayudar). Los status codes son parte del CONTRATO — clientes y tools dependen de ellos.", "correct": true, "why": "Correcto. 409 Conflict es específico para 'estado del recurso conflicta con el request' (email duplicado). Otros: 400 Bad Request (input malformado), 401 Unauthorized (no autenticado), 403 Forbidden (autenticado sin permiso), 404 Not Found, 422 Unprocessable Entity (input válido pero inconsistente). Distinción crítica: 4xx = no reintentar; 5xx = puede reintentar." },
+        { "letter": "C", "text": "500 Internal Server Error.", "correct": false, "why": "500 indica bug del servidor. Duplicate email no es bug — es validación esperada. 5xx activa alertas y retries innecesarios." },
+        { "letter": "D", "text": "418 I'm a teapot.", "correct": false, "why": "Broma histórica de RFC 2324. No usar en producción — confunde." }
+      ],
+      "explanation": "HTTP status codes son un CONTRATO estándar (RFC 7231). Rangos: 1xx informational, 2xx success, 3xx redirection, 4xx client error, 5xx server error. Uso correcto habilita: (1) monitoring por status; (2) retry logic diferenciado (5xx retry, 4xx no); (3) proxies/CDNs pueden cache 200 pero no 404; (4) debugging fácil por status. Common misuses: (a) 200 con error body — enmascara issues; (b) 500 para validation errors — alerta ruido; (c) 401 vs 403 confusion (401 = 'who are you?', 403 = 'I know you, you can't'). REST maduro respeta el estándar HTTP.",
+      "realWorld": "GitHub API es referencia — usa status codes precisos, docs claros de cada uno. Twilio, Stripe también. Anti-ejemplos: muchas APIs enterprise antiguas devuelven 200 con `success: false` en body — resulta imposible integrar con tools estándar (Postman, retry libraries, monitoring).",
+      "tags": ["HTTP", "status codes", "REST", "API design"],
+      "tech": ["HTTP", "REST"],
+      "references": [{ "title": "RFC 7231 — HTTP/1.1 Semantics and Content" }, { "title": "MDN — HTTP response status codes" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "apis",
+      "topic": "REST vs RPC vs GraphQL",
+      "difficulty": "junior",
+      "scenario": "Nuevo proyecto: dashboard con datos de múltiples entidades (user + orders + preferences) en una sola pantalla. El equipo debate REST vs GraphQL.",
+      "question": "¿Cuáles son las TRADE-OFFS reales entre paradigmas?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "REST: recursos y verbs HTTP. Simple, caching HTTP nativo. Puede requerir múltiples requests o endpoints custom (BFF) para agregación.", "correct": true, "why": "Correcto. REST idealmente 1 recurso = 1 endpoint. Para vistas agregadas puede necesitar múltiples calls (N+1) o BFF (Backend for Frontend) — endpoint específico por pantalla." },
+        { "letter": "B", "text": "GraphQL: cliente pide exactamente los campos que necesita en UN request. Resuelve over-fetching y under-fetching. Costo: complejidad de setup, cache más difícil, riesgo de queries costosas.", "correct": true, "why": "Correcto. Facebook creó GraphQL (2015) para dashboards mobile que necesitaban datos de muchas entidades. Beneficios: 1 request, cliente elige campos, evolución de schema sin versioning. Costos: (1) complejidad de resolvers; (2) N+1 en resolvers (mitigado con DataLoader); (3) caching HTTP no aplica igual; (4) queries maliciosas pueden ser DoS." },
+        { "letter": "C", "text": "gRPC: RPC binario con Protobuf. Muy rápido, tipado estricto. Ideal para service-to-service interno. Menos amigable para browsers (necesita gateway).", "correct": true, "why": "Correcto. gRPC (Google) usa HTTP/2 + Protobuf. Ventajas: (1) type-safe end-to-end; (2) streaming bidireccional; (3) muy performante. Uso: microservicios internos. Para browser, gRPC-Web requiere gateway (Envoy). Uber, Netflix, Kubernetes usan gRPC internamente." },
+        { "letter": "D", "text": "REST es siempre mejor porque es estándar.", "correct": false, "why": "Falso. Cada paradigma tiene casos. La elección depende del contexto: público → REST/GraphQL; interno service-to-service → gRPC; mobile con muchos joins → GraphQL." },
+        { "letter": "E", "text": "GraphQL elimina la necesidad de versioning.", "correct": true, "why": "Correcto y es beneficio real. GraphQL agrega campos sin romper clientes existentes (que no los piden). Deprecar campos con @deprecated warning. REST necesita /v1, /v2, /v3 más frecuentemente." }
+      ],
+      "explanation": "Elegir API paradigm según contexto: (1) REST — público, caching-friendly, simple; (2) GraphQL — clients diversos con needs de fetching flexibles (mobile, multi-platform); (3) gRPC — internal service-to-service, alto throughput, type safety; (4) WebSocket/SSE — real-time bidirectional. Combinación común: REST/GraphQL público + gRPC interno. Ninguno es universalmente superior — trade-offs. GraphQL requiere disciplina (query complexity limits, depth limits, DataLoader para N+1) para evitar problemas.",
+      "realWorld": "Facebook (creador de GraphQL) lo usa para todo. GitHub tiene REST v3 + GraphQL v4 en paralelo. Netflix usa GraphQL federated para BFF. Stripe usa REST puro y muy bien diseñado — no todo el mundo necesita GraphQL. Uber, Kubernetes — gRPC internal.",
+      "tags": ["REST", "GraphQL", "gRPC", "API paradigms"],
+      "tech": ["REST", "GraphQL", "gRPC"],
+      "references": [{ "title": "Roy Fielding — 'Architectural Styles and the Design of Network-based Software Architectures' (thesis 2000)" }, { "title": "GraphQL spec" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "apis",
+      "topic": "Idempotencia — por qué importa",
+      "difficulty": "senior",
+      "scenario": "Diseñas un endpoint `POST /payments` que carga una tarjeta. El cliente móvil hace la request; falla la respuesta por timeout de red; el cliente reintenta. Ahora tienes 2 cargos.",
+      "question": "¿Cómo se diseña un endpoint que evite doble cargo bajo cualquier reintento?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cambiar a `PUT /payments/{id}`. PUT es idempotente por definición.", "correct": false, "why": "Cierto en semántica REST pero la idempotencia debe estar en el HANDLER, no solo en el verbo. Si tu implementación de PUT inserta una fila cada vez, no es realmente idempotente. La regla HTTP es una convención, no una garantía." },
+        { "letter": "B", "text": "El cliente envía un header `Idempotency-Key: <uuid>`. El servidor: (1) busca la key en tabla dedicada; (2) si existe, devuelve la respuesta previamente guardada; (3) si no, procesa y guarda respuesta con esa key + resultado. Reintentos con el MISMO uuid devuelven la misma respuesta sin re-cargar la tarjeta.", "correct": true, "why": "Correcto. Es el patrón que usan Stripe, Square, todos los procesadores de pagos serios. El uuid es responsabilidad del cliente (generarlo antes de enviar, reutilizarlo en reintentos). El servidor guarda la respuesta por 24h (típico) para reintentos. Es la única forma de idempotencia RIGUROSA en operaciones con side-effect." },
+        { "letter": "C", "text": "Añadir un lock por userId+amount en Redis por 30 segundos.", "correct": false, "why": "Frágil: (1) qué pasa si el usuario legítimamente quiere cargar 2 veces $50 en 30s?; (2) el lock se pierde si Redis se cae; (3) no ayuda si el reintento viene 1 minuto después. Idempotency-Key es más preciso." },
+        { "letter": "D", "text": "Poner retry: false en el cliente.", "correct": false, "why": "El cliente no siempre puede saber si el request llegó (timeout de red = ambiguo). Prohibir retries llevaría a UX terrible (usuario piensa que falló y hace clic de nuevo)." }
+      ],
+      "explanation": "Idempotencia = ejecutar la misma operación N veces produce el MISMO estado que ejecutarla 1 vez. Es CRÍTICA en sistemas distribuidos porque los mensajes se pueden entregar más de una vez (network retries, reconnects). Idempotency-Key (RFC draft) es el estándar de facto. Alternativas más débiles: unique constraints en DB (pero errores confusos), tokens de sesión (rompe si cambia). Regla: TODO endpoint que muta estado debe ser idempotente por diseño.",
+      "realWorld": "Stripe documenta 'Idempotent Requests' como uno de los pilares de su API. Amazon Prime hace millones de payments/día y depende de esto. En 2013, hubo un famoso incidente en un banco donde un timeout causó cargos duplicados a miles de clientes por no implementar idempotency.",
+      "tags": ["idempotencia", "retries", "distributed systems", "APIs"],
+      "tech": ["HTTP", "Stripe", "REST"],
+      "references": [{ "title": "Stripe API — Idempotent Requests" }, { "title": "RFC draft — The Idempotency-Key HTTP Header Field" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "security",
+      "topic": "Password hashing — errores frecuentes",
+      "difficulty": "senior",
+      "scenario": "Un desarrollador junior implementa signup con `String hash = MessageDigest.getInstance('SHA-256').digest(password.getBytes());` y guarda el hash. En code review dices: 'esto está mal para passwords'.",
+      "question": "¿Por qué SHA-256 solo NO es aceptable para passwords y cuál es el estándar 2026?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "SHA-256 es rápido. Rápido = brute-force factible. Un atacante con GPU prueba miles de millones de hashes/segundo. Estándar 2026: argon2id (winner Password Hashing Competition 2015) con salt único por password. Alternativa aceptable: bcrypt/scrypt. Costo alto por hash → brute-force inviable. NUNCA SHA-256/SHA-512/MD5 solos para passwords.", "correct": true, "why": "Correcto. SHA-256 fue diseñado para integridad (verificar archivos) — rápido a propósito. Password hashing necesita LENTITUD deliberada para frenar ataques offline. Argon2id es el ganador oficial de la Password Hashing Competition 2015 y es el default en libsodium, muchos frameworks. Bcrypt (1999) sigue siendo aceptable si es la única disponible. Scrypt para casos con memoria hard. SHA-256 rápido con salt + 100k iteraciones (PBKDF2) es aceptable pero inferior." },
+        { "letter": "B", "text": "SHA-256 está bien pero necesitas 'pepper' — un secreto global adicional.", "correct": false, "why": "Pepper añade defense-in-depth pero no compensa la velocidad. Aún con pepper, un atacante que roba la DB Y adivina el pepper puede brute-forcear rápido. La solución es el algoritmo lento." },
+        { "letter": "C", "text": "SHA-256 con doble hash (SHA-256(SHA-256(password))) resuelve el problema.", "correct": false, "why": "Solo duplica el trabajo. Un atacante lo hace igual — sigue siendo del orden de millones de hashes/segundo. Solución no efectiva." },
+        { "letter": "D", "text": "Usar SHA-256 con salt + 10.000 iteraciones (PBKDF2).", "correct": false, "why": "Sería aceptable en 2010 pero en 2026 es débil: hardware moderno hace millones de PBKDF2 por segundo con GPU. NIST recomienda ≥600.000 iteraciones si vas a usar PBKDF2. Y aun así, Argon2id es preferible por su resistencia a GPU y ASIC." }
+      ],
+      "explanation": "Password hashing tiene 4 propiedades deseables: (1) SLOW — que un hash cueste ms, no ns; (2) SALT único por password (para prevenir rainbow tables); (3) memory-hard (Argon2/scrypt) — obliga al atacante a usar mucha RAM, no solo GPU; (4) tuneable — poder aumentar costo con el tiempo. Argon2id (variante balanced) es la elección 2026. Ojo con implementaciones malas: NUNCA loguear passwords, NUNCA enviarlos por email, SIEMPRE HTTPS. Cuando cambies algoritmo, guarda un identificador ('argon2id$...') para poder rotar.",
+      "realWorld": "En 2019, Linkedin fue hackeada con 6M+ passwords SHA-1 sin salt — la mayoría fue crackeada en horas. Adobe (150M passwords con 3DES en 2013) — pesadilla similar. Ambos casos hubieran sido mucho más costosos con Argon2id.",
+      "tags": ["password hashing", "argon2id", "bcrypt", "seguridad", "OWASP"],
+      "tech": ["Argon2", "bcrypt", "PBKDF2", "libsodium"],
+      "references": [{ "title": "OWASP Password Storage Cheat Sheet" }, { "title": "Password Hashing Competition — Argon2 (2015)" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "security",
+      "topic": "SQL Injection en 2026",
+      "difficulty": "mid",
+      "scenario": "Revisas este código y detectas problema:\n\n```python\ncursor.execute(f\"SELECT * FROM users WHERE email = '{email}'\")\n```\n\nEl desarrollador dice: 'ya sanitizo el email antes: `email = email.replace(\\\"'\\\", \\\"\\\")`'.",
+      "question": "¿La solución es correcta? Explica.",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Sí, sanitizar comillas es suficiente para prevenir SQL injection.", "correct": false, "why": "Falso y peligroso. Existen decenas de vectores de bypass: (1) `''` no cubre \\\\', backslash-escape, or unicode variants; (2) segundo-order injection (email limpio va a DB, luego se usa en otra query sin escapar); (3) drivers con distintos escape rules. Sanitización manual siempre pierde algún vector." },
+        { "letter": "B", "text": "No. Usar SIEMPRE prepared statements / parametrized queries: `cursor.execute(\"SELECT * FROM users WHERE email = %s\", (email,))`. El driver escapa correctamente Y separa lógicamente los datos del SQL. La sanitización manual es un anti-patrón.", "correct": true, "why": "Correcto. Prepared statements separan la ESTRUCTURA (query template) de los DATOS (parámetros) a nivel de protocolo. La DB no puede confundir un parámetro con parte del SQL — es imposible por diseño. Todos los drivers modernos lo soportan. Es el único mecanismo aceptable. Bonus: mejora performance porque la DB cachea el plan de query." },
+        { "letter": "C", "text": "Depende del driver. Si el driver auto-sanitiza, el f-string es OK.", "correct": false, "why": "No hay driver moderno que 'auto-sanitice' un f-string. La sanitización ocurre al pasar parámetros por la API adecuada del driver. Si construyes SQL como string, el driver no puede saber qué es datos y qué es lógica." },
+        { "letter": "D", "text": "Usar ORM. Los ORMs modernos previenen SQL injection automáticamente.", "correct": false, "why": "Cierto para queries ORM idiomáticas, pero muchos ORMs permiten 'raw queries' donde el problema vuelve. La regla base es prepared statements — el ORM lo hace por debajo. Depender del ORM sin entender por qué es un incidente esperando." }
+      ],
+      "explanation": "SQL Injection es OWASP #1 desde 2003. La única defensa efectiva es prepared statements / parametrized queries. El principio: NUNCA construyas SQL concatenando strings con input de usuario. En ORMs (SQLAlchemy, Sequelize, TypeORM, Prisma, Hibernate), usa las funciones normales; para raw SQL, usa placeholders. Extra: principio least privilege — la app conecta con un user DB que solo puede hacer lo necesario (no DROP, no ALTER). WAF (Web Application Firewall) es defense-in-depth, NO reemplazo de código seguro.",
+      "realWorld": "En 2019, First American Financial expuso 885 millones de records de propiedad por un simple SQL injection. Sony PSN 2011 tuvo un incidente masivo. TalkTalk UK 2015 pagó multas y perdió 10% de clientes. En 2026, ver SQL injection en producción es indicio de negligencia gruesa.",
+      "tags": ["SQL injection", "prepared statements", "OWASP", "seguridad"],
+      "tech": ["Python", "SQLAlchemy", "prepared statements"],
+      "references": [{ "title": "OWASP Top 10 — A03: Injection" }, { "title": "Bobby Tables — XKCD 327" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "apis",
+      "topic": "API versioning — estrategias",
+      "difficulty": "mid",
+      "scenario": "Tu API tiene v1. Necesitas cambiar el formato de una response (`totalPrice` ahora es objeto en vez de número). Los clientes móviles v1 aún son usados por 40% de usuarios.",
+      "question": "¿Cuál es la estrategia de versioning más SANA?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Introducir v2 con el nuevo formato manteniendo v1. Comunicar deprecation timeline claro (ej. 12 meses). Métricas de uso de v1 para saber cuándo apagar. Los clientes migran gradualmente.", "correct": true, "why": "Correcto. Es el approach industrial estándar. Ventajas: (1) clientes existentes no se rompen; (2) tiempo para migrar; (3) rollback posible. Estrategias de URL: /v1/users vs /v2/users (más común); header Accept: application/vnd.api.v2+json (más 'purista' REST pero menos amigable); parameter ?version=2 (menos común). Todos válidos — elige uno y sé consistente." },
+        { "letter": "B", "text": "Cambiar el formato en v1 — los clientes se adaptan.", "correct": false, "why": "Breaking change en v1 activa = clientes v1 rompen. Especialmente crítico en mobile donde updates son lentos (usuarios no actualizan)." },
+        { "letter": "C", "text": "No versionar — cada cambio es breaking change intencional.", "correct": false, "why": "Puedes hacer 'evolutionary API' (nunca rompes contratos, solo añades) — GraphQL lo permite bien. Pero cuando NECESITAS breaking change (rediseño), versioning es la respuesta." },
+        { "letter": "D", "text": "Nunca hacer breaking changes — congelar la API.", "correct": false, "why": "APIs necesitan evolucionar. La estrategia es MANEJAR breaking changes con versioning, no evitarlos siempre." }
+      ],
+      "explanation": "API versioning estrategias: (1) URL path — /v1/users, /v2/users; simple, muy visible; (2) Header — Accept: version=2; más 'REST puro' pero menos discoverable; (3) Query param — ?v=2; anti-patrón según muchos. Cambios NON-breaking (aditivos): nuevo endpoint, nuevo campo optional, nuevo status code opcional — no necesitan versión. Cambios BREAKING (removals, semantic changes): requieren nueva version. Deprecation process: (a) anunciar, (b) alert headers `Deprecation: true, Sunset: 2026-12-31`, (c) monitoring de uso, (d) apagado programado. GraphQL alternativa: schema evolution sin versioning (add fields, mark @deprecated).",
+      "realWorld": "GitHub API v3 fue REST desde 2013; v4 GraphQL desde 2016 — ambas viven en paralelo. Stripe versiona por FECHA (2019-08-14) — 'API versioning by date'. Twilio, Twitter — versioning URL clásico. Slack tiene versioning granular por endpoint. Ninguna estrategia es perfecta.",
+      "tags": ["versioning", "REST", "deprecation", "API design"],
+      "tech": ["REST", "GraphQL"],
+      "references": [{ "title": "GitHub API — Versioning" }, { "title": "Stripe — API Versioning" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "security",
+      "topic": "JWT — usos correctos y errores",
+      "difficulty": "senior",
+      "scenario": "Tu app usa JWT para auth. Un desarrollador implementa: (1) el token guarda userId, roles, y toda la info del perfil; (2) validez de 30 días; (3) refresh token en localStorage; (4) sin blacklist para revocar tokens.",
+      "question": "¿Cuáles son PROBLEMAS de esta implementación?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "JWT no encriptado (JWS) es LEGIBLE por cualquiera con el token — no meter datos sensibles del perfil. Solo debería tener claims mínimos (userId, roles, exp).", "correct": true, "why": "Correcto. JWT (JWS por default) es signed pero NO encrypted — base64 decode lo lee. Meter emails privados, PII, o info sensible expone datos si el token se logea, transita por proxies, o queda en logs. Regla: JWT solo claims necesarios para authz." },
+        { "letter": "B", "text": "30 días de validez es muy largo. Estándar: access token ~15 min, refresh token días/semanas. Si un access token es robado, la ventana de exposición es corta.", "correct": true, "why": "Correcto. JWT no se puede revocar (sin blacklist). Validez larga = ventana de riesgo larga. Patrón estándar: access token corto (15 min) + refresh token largo. Al expirar el access, se usa refresh para obtener nuevo access. Si refresh es robado, se puede rotar/revocar en el server." },
+        { "letter": "C", "text": "localStorage es vulnerable a XSS. Cualquier script malicioso en tu página puede leer tokens. Preferible: HttpOnly cookies (inaccesibles a JS) — pero hay que manejar CSRF.", "correct": true, "why": "Correcto. XSS + localStorage = tokens robados. HttpOnly cookies mitigan XSS pero introducen riesgo CSRF (mitigable con SameSite=Strict/Lax + CSRF tokens). Trade-off documentado. Alternativa moderna: BFF con session cookies del backend, tokens nunca llegan al browser." },
+        { "letter": "D", "text": "Sin blacklist, no puedes revocar un token comprometido hasta que expire. Con tokens de 30 días, un token robado sigue válido 30 días.", "correct": true, "why": "Correcto. JWT es 'stateless' por diseño — no se consulta DB por validez. Trade-off: no revocable. Solución: (1) short-lived access + refresh with rotation; (2) blacklist en Redis (agrega state); (3) versioning de tokens (increment 'kid' rotate keys). Sin ninguna, es responsabilidad crítica." },
+        { "letter": "E", "text": "JWT firmado con `alg: none` es aceptable si el token no sale del servidor.", "correct": false, "why": "'alg: none' es un vector de attack famoso — atacante fabrica tokens sin firma, servidor los acepta. TODOS los libraries lo prohíben por default. Si aparece en código, es red flag." }
+      ],
+      "explanation": "JWT es standard (RFC 7519) pero mal usado es peligroso. Best practices 2026: (1) access token corto (5-15 min); (2) refresh token con rotation (revocable); (3) claims mínimos (nunca PII sensible); (4) firma robusta (RS256/ES256 > HS256 en distribuidos); (5) 'alg' validation estricta; (6) exp/iat/nbf validation; (7) httpOnly cookies o BFF para browser. Alternativas: session cookies con backend state (más simple, revocable), OAuth con Introspection endpoint (cross-service). No hay silver bullet — JWT no es siempre la mejor opción.",
+      "realWorld": "En 2023, incidentes de JWT mal implementado: Uber (2016) tuvo bug con verification. GitLab, Auth0 han publicado guides. El paper 'Top 10 JWT Vulnerabilities' documenta patterns: alg=none, weak key, kid injection, JKU/X5U SSRF. Cada uno es CVE serio.",
+      "tags": ["JWT", "auth", "tokens", "seguridad"],
+      "tech": ["JWT", "OAuth", "OIDC"],
+      "references": [{ "title": "RFC 7519 — JSON Web Token" }, { "title": "OWASP — JSON Web Token for Java Cheat Sheet" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "apis",
+      "topic": "Pagination — cursor vs offset",
+      "difficulty": "mid",
+      "scenario": "Endpoint `GET /messages?page=1&size=20` para listar mensajes. Con millones de mensajes y usuarios paginando frecuentemente, el equipo nota queries lentas y a veces mensajes duplicados o saltados.",
+      "question": "¿Cuál es la mejor estrategia de paginación para datasets grandes?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Cursor-based pagination: `GET /messages?cursor=abc123&size=20`. El cursor es un id/timestamp opaco que marca 'último visto'. Ventajas: (1) escalable — no requiere OFFSET (que degrada con page grande); (2) sin duplicados si nuevos items se insertan durante paginación; (3) API estable ante inserts.", "correct": true, "why": "Correcto. Offset-based (LIMIT ... OFFSET N) degrada: para page 10000, la DB tiene que contar/saltar 200k rows. Cursor-based indexes directamente: `WHERE id > cursor ORDER BY id LIMIT 20` — O(log n) con index. Además, si insertas mensajes mientras paginas, offset causa duplicados/saltos (los items se desplazan); cursor no." },
+        { "letter": "B", "text": "Offset pagination es el estándar — mantener.", "correct": false, "why": "Escala mal. Por eso Twitter, Facebook, Slack usan cursor. Postgres OFFSET a 1M rows tarda segundos." },
+        { "letter": "C", "text": "Cargar TODO en el cliente y paginar del lado cliente.", "correct": false, "why": "No escalable — millones de rows = megabytes de payload. Latencia terrible. Inviable." },
+        { "letter": "D", "text": "Random pagination con `ORDER BY RAND() LIMIT N`.", "correct": false, "why": "Sin orden estable, cada request devuelve items distintos — el usuario ve duplicados. Y ORDER BY RAND es O(n) en DB." }
+      ],
+      "explanation": "Pagination strategies: (1) Offset — simple pero degrada con página grande y frágil ante inserts; (2) Cursor — id/timestamp opaco, escalable, estable; (3) Keyset — cursor con multiple columns for ordering (id + timestamp). Cursor es el estándar moderno para timelines/feeds. GraphQL Relay spec formaliza cursor pagination con edges/nodes/pageInfo. REST: header `Link` (GitHub style) o body con cursor. Ojo: cursor debe ser OPAQUE (base64 encode el id) — no expongas estructura interna que ate el cliente.",
+      "realWorld": "Twitter, Facebook, Instagram — todos usan cursor pagination para feeds (timelines cambian constantemente por inserts). Slack, Discord — mismo. GitHub API v3 usa Link headers para cursor. Un incidente clásico: sitios de e-commerce con OFFSET colapsando en 'ver más' de 500a página.",
+      "tags": ["pagination", "cursor", "offset", "API design"],
+      "tech": ["REST", "GraphQL Relay"],
+      "references": [{ "title": "GraphQL Cursor Connections Specification" }, { "title": "Slack API — Pagination" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "security",
+      "topic": "CSRF — qué es y cómo prevenir",
+      "difficulty": "senior",
+      "scenario": "Un dev pregunta: '¿por qué mi API necesita CSRF token si ya uso JWT en header?'",
+      "question": "¿Cuál es la respuesta correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Si el token va en HEADER (Authorization: Bearer <token>), CSRF no aplica — el browser NO añade headers custom automáticamente en requests cross-origin. CSRF es un problema cuando la auth va en COOKIE que el browser envía automáticamente. Regla: tokens en header = no CSRF; cookies = necesitas CSRF token o SameSite=Strict.", "correct": true, "why": "Correcto. CSRF (Cross-Site Request Forgery) explota que el browser envía automáticamente cookies del dominio target en cualquier request (incluidos hidden forms en sitios maliciosos). Con auth por header (Authorization), el atacante en otro sitio NO puede añadir el header (Same-Origin Policy previene). CORS controla qué origins pueden leer responses; combinado, cookies simples son vulnerables, headers no." },
+        { "letter": "B", "text": "Siempre necesitas CSRF token, independiente del método.", "correct": false, "why": "Falso. Es específico a auth por cookie (session id, session cookie). Con Bearer token en header, no aplica." },
+        { "letter": "C", "text": "CSRF token es obsoleto en 2026.", "correct": false, "why": "Sigue siendo relevante para apps con cookies de sesión. SameSite cookies (Chrome 80+, ~2020) mitigan MUCHO pero no todos los casos. CSRF token defense-in-depth." },
+        { "letter": "D", "text": "Solo GET requests necesitan CSRF protection.", "correct": false, "why": "Inverso. GET debe ser SAFE (no side-effects) — no requiere CSRF. POST/PUT/DELETE (mutating) requieren protection." }
+      ],
+      "explanation": "Same-Origin Policy (SOP): el browser bloquea que scripts de origin A lean responses de origin B. Pero SÍ permite HACER requests cross-origin (con excepciones). CORS: el server permite/deniega explícitamente cross-origin (con preflight OPTIONS). Auth methods y vulnerabilidad CSRF: (1) cookies simples → CSRF vulnerable (browser auto-envía); (2) cookies con SameSite=Strict/Lax → mitigado; (3) Authorization header con Bearer → no CSRF vulnerable. Best practices 2026: (a) API cookies con SameSite=Lax + CSRF tokens; (b) SPA con Bearer tokens; (c) BFF con session cookies. Doble token pattern (double submit cookie) es alternativa a CSRF token server-stored.",
+      "realWorld": "Djangovs Rails frameworks tienen CSRF middleware por default (cookie-based session). Apps SPA modernas con JWT en header no lo necesitan. En 2019, Trello tuvo bug de CSRF que permitía tomar acciones en nombre del user — cookies sin SameSite.",
+      "tags": ["CSRF", "cookies", "same-origin", "OWASP"],
+      "tech": ["cookies", "CORS", "SameSite"],
+      "references": [{ "title": "OWASP CSRF Prevention Cheat Sheet" }, { "title": "MDN — SameSite cookies" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "security",
+      "topic": "XSS — tipos y prevención",
+      "difficulty": "senior",
+      "scenario": "Página que muestra comentarios de usuarios. Un usuario mete un tag script con `alert(document.cookie)` dentro. Cuando otro user ve el comentario, sale el alert con cookies.",
+      "question": "¿Cuál es la prevención CORRECTA de XSS?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Encoding/escaping OUTPUT según contexto: HTML text (`<`→`&lt;`), HTML attribute (`\"`→`&quot;`), URL (encodeURI), JS (JSON encode). NUNCA insertar user input crudo en HTML. Frameworks modernos (React, Vue, Angular) hacen escape automático por default — pero cuidado con `dangerouslySetInnerHTML`, `v-html`.", "correct": true, "why": "Correcto. XSS (Cross-Site Scripting) explota que el server/client inserta user input en HTML sin escapar, ejecutando código malicioso en el browser del víctima. Prevención: contextual output encoding. React `{user.name}` escapa automáticamente; `dangerouslySetInnerHTML={{__html: user.name}}` NO — hay que sanitizar (DOMPurify). Additional layers: CSP (Content Security Policy) header limita qué scripts pueden ejecutar." },
+        { "letter": "B", "text": "Sanitizar INPUT en el server — remover tags de script con regex.", "correct": false, "why": "Anti-patrón (blacklist). Existen decenas de vectores XSS (event handlers, javascript: URLs, SVG, etc.). Whitelist de HTML permitido (DOMPurify, sanitize-html) es más seguro. Pero preferible: sanitizar en OUTPUT en el contexto correcto." },
+        { "letter": "C", "text": "Deshabilitar JavaScript en el browser.", "correct": false, "why": "No feasible en apps modernas. Y no protege a la mayoría de users." },
+        { "letter": "D", "text": "Bloquear la palabra 'script' con regex.", "correct": false, "why": "Bypasses triviales: mixed case (ScRiPt), img tags con onerror, javascript: URLs, encodings. Blacklist regex jamás cubre todo." }
+      ],
+      "explanation": "XSS tipos: (1) Stored — payload guardado (comment DB) y ejecuta cada vez que se ve; (2) Reflected — payload en URL parameter que server refleja en HTML; (3) DOM-based — JS del cliente pone user input en DOM sin escape. Defensas: (1) contextual output encoding (auto en frameworks modernos); (2) sanitización con whitelist (DOMPurify) si necesitas HTML del user; (3) CSP header (`script-src 'self'`) limita orígenes de scripts; (4) HttpOnly cookies (protege session cookie de XSS); (5) Trusted Types (browser API moderna). Regla: NUNCA construir HTML por concatenación de strings con user input.",
+      "realWorld": "En 2005, Samy Kamkar diseñó el worm 'Samy' que hizo XSS en MySpace y se autopropagó a 1M users en 20 horas. Yahoo Mail 2013 XSS estuvo activo meses. React fue diseñado con escape by default explícitamente para prevenir XSS. Angular tiene similar (interpolation escapa).",
+      "tags": ["XSS", "output encoding", "CSP", "OWASP"],
+      "tech": ["React", "DOMPurify", "CSP"],
+      "references": [{ "title": "OWASP XSS Prevention Cheat Sheet" }, { "title": "MDN — Content Security Policy" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "apis",
+      "topic": "Rate limiting — algoritmos",
+      "difficulty": "senior",
+      "scenario": "Necesitas limitar API a 100 requests/minuto por usuario. Un dev propone: 'contador simple en memoria — al llegar a 100, reject'. Otro dice 'usa token bucket'.",
+      "question": "¿Cuáles son los ALGORITMOS de rate limiting y sus trade-offs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Fixed window: contador por minuto (00:00-00:59). Simple pero burst boundary: 100 requests a las 00:59 + 100 a las 01:00 = 200 en 2 segundos.", "correct": true, "why": "Correcto. Ventaja: implementación trivial. Desventaja: burst en boundary del window. Aceptable para casos donde precisión no crítica." },
+        { "letter": "B", "text": "Sliding window log: guardar timestamps de cada request, contar los del último minuto. Preciso pero más memoria (una entry por request).", "correct": true, "why": "Correcto. Máxima precisión — evita el burst issue. Costo: memoria proporcional a rate × window. Para 100 req/min × millones de users = muchísima memoria." },
+        { "letter": "C", "text": "Token bucket: bucket con capacidad N (100 tokens), rellena a rate R (100/min). Cada request consume 1 token. Rechaza si vacío. Permite bursts controlados (hasta capacidad) manteniendo rate promedio.", "correct": true, "why": "Correcto. Es el algoritmo más popular. Ventajas: (1) permite bursts (importante para UX real — humanos no hacen requests uniformes); (2) simple estado (2 números: tokens, last_refill); (3) escalable con Redis." },
+        { "letter": "D", "text": "Sliding window counter: aproximación combinando dos fixed windows con weighted average. Compromiso memoria/precisión.", "correct": true, "why": "Correcto. Balance entre memoria (2 counters) y precisión (mejor que fixed puro). Usado por Cloudflare y otros CDNs por default." },
+        { "letter": "E", "text": "Sin rate limiting es mejor — restringir a usuarios legítimos.", "correct": false, "why": "Falso. Sin rate limiting: DDoS trivial, scraping abusivo, costos infra descontrolados. Rate limiting es DEFENSIVO fundamental." }
+      ],
+      "explanation": "Rate limiting es fundamental en APIs públicas. Algoritmos: (1) Fixed Window — simple, boundary bursts; (2) Sliding Window Log — preciso, memory-heavy; (3) Token Bucket — burst-friendly, popular; (4) Leaky Bucket — smoothing, no bursts; (5) Sliding Window Counter — approximation. En distribuido: Redis + INCR/GET con TTL, or Redis-Cell (module). Rate limiting responses: (1) 429 Too Many Requests; (2) Retry-After header; (3) X-RateLimit-Remaining, X-RateLimit-Reset headers. Diferenciar per-user, per-IP, per-endpoint (tiered).",
+      "realWorld": "GitHub API: 5000 req/hora authenticated (token bucket). Stripe: 100 req/segundo (token bucket con burst). Twitter: complex tiered rate limits. Cloudflare Rate Limiting service usa sliding window counter. AWS API Gateway soporta multiple algoritmos. En 2020, un incidente famoso: startup Discord bot exceeded Discord API rate limits, cascading affect.",
+      "tags": ["rate limiting", "token bucket", "sliding window", "429"],
+      "tech": ["Redis", "Cloudflare", "AWS API Gateway"],
+      "references": [{ "title": "Stripe Engineering — 'Scaling your API with rate limiters'" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "apis",
+      "topic": "REST — errores de diseño",
+      "difficulty": "mid",
+      "scenario": "Un dev diseña estos endpoints: `GET /getUsers`, `POST /createUser`, `POST /updateUser`, `POST /deleteUser`. Un revisor comenta 'no es RESTful'.",
+      "question": "¿Cuál es el diseño CORRECTO REST y por qué importa?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "REST usa NOUNS (recursos) y HTTP VERBS (métodos). Correcto: GET /users, POST /users, PUT /users/{id}, DELETE /users/{id}. Verbos en URL (getUsers, createUser) son RPC-style, no REST. Ventajas de REST: consistencia, caching HTTP nativo (GET), semántica clara.", "correct": true, "why": "Correcto. Roy Fielding (creador REST) enfatizó: recursos identificados por URIs, manipulados con métodos HTTP. Verbos en URL (getX, createX) violan el principio. Beneficios: (1) predecible — cualquier dev entiende POST /users; (2) caching por HTTP method; (3) idempotency por método (GET/PUT/DELETE idempotent; POST no); (4) tooling (Postman, cURL) trabaja natural." },
+        { "letter": "B", "text": "Está bien — mientras funcione, el naming no importa.", "correct": false, "why": "Naming es contrato. Consistencia facilita: onboarding de devs, integración de clientes, tooling. APIs bien diseñadas son 'discoverable'." },
+        { "letter": "C", "text": "REST está obsoleto — usar GraphQL siempre.", "correct": false, "why": "REST sigue viviendo y bien. Cada paradigma tiene lugar. Y GraphQL no elimina la necesidad de buen diseño." },
+        { "letter": "D", "text": "Usar SOAP para consistencia enterprise.", "correct": false, "why": "SOAP tiene lugar pero es más pesado que REST. Consistencia se obtiene siguiendo convenciones REST, no volviendo a SOAP." }
+      ],
+      "explanation": "REST core principles (Fielding thesis 2000): (1) resource-based URIs; (2) HTTP verbs for operations; (3) stateless (server no guarda client state); (4) HATEOAS (hypermedia links) — el nivel más maduro, raro en la práctica. Common conventions: (1) plural nouns (/users no /user); (2) nested para relaciones (/users/{id}/orders); (3) query params para filter/sort/pagination; (4) sub-resources para actions (POST /orders/{id}/refund). Anti-patterns: verbs en URL, action-based endpoints, no HTTP methods. Alternativas: OpenAPI spec formaliza el contrato, guía a diseño consistente.",
+      "realWorld": "GitHub API v3, Stripe, Twilio — todos REST bien diseñado. Anti-ejemplos: muchas APIs SOAP legacy con /getEverythingService?action=doThing. La Richardson Maturity Model clasifica REST en niveles 0-3 según qué tan idiomático es.",
+      "tags": ["REST", "API design", "HTTP verbs", "resources"],
+      "tech": ["REST", "HTTP"],
+      "references": [{ "title": "Roy Fielding — 'Architectural Styles and the Design of Network-based Software Architectures' (2000)" }, { "title": "Richardson Maturity Model (Fowler)" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "security",
+      "topic": "Secrets management",
+      "difficulty": "senior",
+      "scenario": "En el repo encuentras `const DB_PASSWORD = 'super_secret_123'` hardcodeado. Un dev dice 'no importa, es un repo privado'.",
+      "question": "¿Cuáles son las prácticas CORRECTAS de secrets management?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "NUNCA hardcodear secrets en código. Un repo privado puede volverse público (fork, clone), o comprometido (ex-empleado, breach). Además, git history preserva secrets incluso si se borran.", "correct": true, "why": "Correcto. GitGuardian estima que cada año 6 millones de secrets se filtran en repos públicos. Un secret en git history requiere REWRITE de historia (git filter-branch, BFG) para removerlo — y aún así, si fue fetched, ya está afuera." },
+        { "letter": "B", "text": "Environment variables (12-factor app). Cada environment (dev, staging, prod) tiene sus propios secrets, no en código.", "correct": true, "why": "Correcto. 12-factor 'config' factor: config in environment. Simple, funciona en Docker/Kubernetes/serverless. Precaución: no logear env vars (accidental exposure)." },
+        { "letter": "C", "text": "Secret managers dedicados (AWS Secrets Manager, HashiCorp Vault, Google Secret Manager) para producción. Ofrecen: rotation automática, audit log, access control granular, encryption at rest.", "correct": true, "why": "Correcto. Para producción, especially con cumplimiento (SOC2, PCI), secret managers son estándar. Rotación automática cambia credentials sin intervención manual — reduce ventana de compromise." },
+        { "letter": "D", "text": "Encriptar secrets en el repo con GPG (SOPS, git-crypt).", "correct": true, "why": "Correcto. Alternativa para GitOps: secrets encriptados en repo, key management aparte (KMS). Herramientas: Mozilla SOPS, git-crypt, Sealed Secrets (Kubernetes). Preserva 'infrastructure as code' con encryption." },
+        { "letter": "E", "text": "Compartir passwords via Slack/email es aceptable dentro del equipo.", "correct": false, "why": "Falso. Slack/email retienen histórico, notificaciones expuestas, forward accidental. Usar password managers compartidos (1Password Teams, Bitwarden) o secret managers." }
+      ],
+      "explanation": "Secrets management es una disciplina propia: (1) discovery — dónde están tus secrets; (2) storage — dónde deberían estar (vaults, env vars); (3) rotation — cambiar regularmente; (4) access — mínimo necesario (least privilege); (5) audit — quién accedió cuándo; (6) revocation — habilidad de invalidar. Herramientas 2026: HashiCorp Vault (líder open source), AWS Secrets Manager, Google Secret Manager, Azure Key Vault, 1Password Secrets Automation. Detection: TruffleHog, GitGuardian, GitHub Secret Scanning para detectar secrets accidentalmente committed.",
+      "realWorld": "Uber 2016: 57M records comprometidos, en parte por AWS credentials en GitHub. Codecov 2021: supply chain attack extrajo secrets de miles de CI systems. Toyota 2023: data leak de 260k customer info por credentials en public GitHub repo. Es problema constante — GitHub secret scanning ha detectado millones de secrets automatizado.",
+      "tags": ["secrets", "vault", "environment variables", "seguridad"],
+      "tech": ["HashiCorp Vault", "AWS Secrets Manager", "SOPS"],
+      "references": [{ "title": "OWASP Secrets Management Cheat Sheet" }, { "title": "12-factor app — Config" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "security",
+      "topic": "OAuth 2.0 y OIDC — cuál para qué",
+      "difficulty": "senior",
+      "scenario": "Necesitas integrar 'Login with Google' en tu app. Un dev pregunta '¿uso OAuth 2.0 o OpenID Connect?'.",
+      "question": "¿Cuál es la diferencia y para qué se usa cada uno?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "OAuth 2.0 es un framework de AUTORIZACIÓN (delegar acceso a resources: 'esta app puede leer tus archivos de Drive'). OpenID Connect (OIDC) construye SOBRE OAuth para AUTENTICACIÓN ('quién es este user'). Para 'login with Google' → OIDC. Para 'permitir esta app usar mi Drive' → OAuth con scopes. Frecuentemente ambos van juntos.", "correct": true, "why": "Correcto. Distinción crítica y frecuentemente confundida. OAuth 2.0 (2012): flow para obtener access token que da permiso a resources. OIDC (2014): añade id_token (JWT) con claims sobre el usuario (sub, email, name). Para authentication: siempre OIDC. OAuth PURO para authn es anti-patrón — el token de acceso no es prueba de identidad." },
+        { "letter": "B", "text": "Son idénticos.", "correct": false, "why": "Falso. Distinción importante. OAuth para authorization, OIDC para authentication. OIDC extiende OAuth pero añade capa específica para identidad." },
+        { "letter": "C", "text": "OAuth 2.0 es viejo — usar SAML.", "correct": false, "why": "SAML (2005) es standard XML-based, más pesado. Usado en enterprise SSO. OAuth/OIDC es más ligero y moderno, dominante en apps consumer y muchas enterprise." },
+        { "letter": "D", "text": "OIDC es solo para mobile.", "correct": false, "why": "Falso. OIDC funciona para web, mobile, SPA, machine-to-machine. Con distintos flows apropiados." }
+      ],
+      "explanation": "OAuth 2.0 flows: (1) Authorization Code — server-side apps, más seguro; (2) Authorization Code with PKCE — SPA y mobile (no client secret); (3) Client Credentials — service-to-service; (4) Refresh Token — renovar access token. DEPRECATED: Implicit Flow (inseguro), Resource Owner Password (evitar). OIDC añade: (1) id_token — JWT con user info; (2) userinfo endpoint — más claims si necesarios; (3) discovery — .well-known/openid-configuration. Providers: Google, Auth0, Okta, Microsoft, Cognito. Best practices 2026: Authorization Code + PKCE en todo (mobile y SPA), tokens en http-only cookies o BFF pattern.",
+      "realWorld": "Google, Facebook, Apple, GitHub — todos usan OIDC para 'login with X'. Auth0/Okta ofrecen managed OIDC. FAPI (Financial API) es perfil de OIDC más estricto para banking. En 2023, un CVE de OAuth misconfiguration afectó a Booking.com (redirect_uri validation débil).",
+      "tags": ["OAuth", "OIDC", "SSO", "auth"],
+      "tech": ["OAuth 2.0", "OIDC", "Auth0"],
+      "references": [{ "title": "RFC 6749 — OAuth 2.0" }, { "title": "OpenID Connect Core 1.0" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "apis",
+      "topic": "Error responses — diseño consistente",
+      "difficulty": "mid",
+      "scenario": "Diferentes endpoints devuelven errores con formatos distintos: unos con `{error: 'msg'}`, otros con `{message: 'x', code: 'y'}`, otros con string plano. Frontend tiene que hacer switch por endpoint.",
+      "question": "¿Cuál es el diseño SANO de error responses?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Estructura consistente. RFC 7807 (Problem Details) es un estándar: `{type: 'https://...', title: 'X', status: 400, detail: '...', instance: '...'}`. Otras convenciones: JSON:API errors array, custom con code + message + details. Lo crítico es CONSISTENCIA en toda la API.", "correct": true, "why": "Correcto. RFC 7807 formaliza problem details — extensible con campos custom. Estructura mínima recomendada: (1) code — machine-readable identifier ('user_not_found'); (2) message — human-readable; (3) details — array de errores específicos (validation errors); (4) trace_id para debugging cross-service. Clientes pueden implementar handling genérico." },
+        { "letter": "B", "text": "Errores en formato libre — cada endpoint decide.", "correct": false, "why": "El problema actual. Sin consistencia, cada cliente tiene que handle diferente por endpoint. Error handling se duplica." },
+        { "letter": "C", "text": "Solo string plano — más simple.", "correct": false, "why": "Insuficiente. Pierde información estructurada (code, field, context). Frontend no puede reaccionar programáticamente." },
+        { "letter": "D", "text": "HTTP status code es suficiente, no body de error.", "correct": false, "why": "Status code es necesario pero insuficiente. Diferentes 400 (validation, business rule) requieren distinción para UX." }
+      ],
+      "explanation": "Error response design: (1) HTTP status code correcto (4xx client, 5xx server); (2) body estructurado consistente; (3) machine-readable code ('EMAIL_ALREADY_EXISTS') separado de human message; (4) validation errors: array con field + message; (5) trace_id para correlar logs; (6) NO exponer stack traces o SQL en prod (info disclosure). Standards: RFC 7807 (problem+json), JSON:API errors, GraphQL errors format. Consistencia > estándar específico. Documentar los codes de error en OpenAPI/docs.",
+      "realWorld": "Stripe: consistent error object con type, code, message, param, doc_url. GitHub: consistent structure with message, documentation_url, errors array. Anti-ejemplos: muchas APIs enterprise donde cada endpoint responde distinto — desarrollo cliente doloroso.",
+      "tags": ["error handling", "RFC 7807", "API design", "consistency"],
+      "tech": ["RFC 7807", "JSON:API"],
+      "references": [{ "title": "RFC 7807 — Problem Details for HTTP APIs" }, { "title": "Stripe API — Errors" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "security",
+      "topic": "CORS — configuración correcta",
+      "difficulty": "senior",
+      "scenario": "Frontend en `https://app.example.com` llama API en `https://api.example.com`. El browser bloquea con CORS error. Un dev pone `Access-Control-Allow-Origin: *` y funciona.",
+      "question": "¿Por qué esto es PROBLEMÁTICO y cuál es la configuración correcta?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "`*` permite CUALQUIER origen leer responses de tu API — sitios maliciosos pueden llamar tu API desde el browser del user. Correcto: whitelist específico de origins (`Access-Control-Allow-Origin: https://app.example.com`). Y `Access-Control-Allow-Credentials: true` requiere origin específico (spec prohíbe combinar con `*`).", "correct": true, "why": "Correcto. `Access-Control-Allow-Origin: *` es 'permit any cross-origin site'. Si tu API tiene endpoints públicos sin credentials (auth) OK, pero muchas veces no es lo que quieres. Con cookies/credentials: DEBE ser origin específico. Whitelist de origins conocidos previene que otros sitios abusen tu API desde browsers de usuarios legítimos." },
+        { "letter": "B", "text": "`*` está bien — CORS es solo protección superflua.", "correct": false, "why": "Falso. CORS complementa Same-Origin Policy. Sin CORS bien configurado, un sitio malicioso puede hacer requests con credentials del user a tu API." },
+        { "letter": "C", "text": "Deshabilitar CORS completamente.", "correct": false, "why": "Se hace ignorando el problema. Y no puedes 'deshabilitar' CORS — el browser lo aplica. Puedes bypasear vía proxy pero no es fix." },
+        { "letter": "D", "text": "Usar JSONP como fallback.", "correct": false, "why": "JSONP es hack antiguo (pre-CORS 2005) con problemas de seguridad. Obsoleto. CORS es el mecanismo estándar desde ~2014." }
+      ],
+      "explanation": "CORS (Cross-Origin Resource Sharing) es protocolo del browser para requests cross-origin. Preflight OPTIONS request para non-simple methods/headers. Headers: (1) `Access-Control-Allow-Origin` — origins permitidos; (2) `Allow-Credentials` — permite cookies (requiere origin específico); (3) `Allow-Methods`, `Allow-Headers`; (4) `Max-Age` — cache preflight. Best practices: (a) whitelist explícito de origins, no wildcard salvo APIs públicas; (b) `Vary: Origin` header en response; (c) revalidar en server (CORS es client-side; no security guarantee absoluta); (d) especial cuidado con `Access-Control-Allow-Origin: null` (bug histórico). CSRF vs CORS: CSRF is exploiting cookies auto-sent; CORS controls response reading.",
+      "realWorld": "Muchas incidentes de misconfiguración CORS: 2016 GitHub OAuth había config CORS demasiado permisiva. 2018 Facebook tuvo CORS bug permitiendo leer profile. Regular pentests encuentran `*` en producción — anti-patrón común. Herramientas: OWASP ZAP, Burp Suite testean CORS config.",
+      "tags": ["CORS", "same-origin", "wildcards", "seguridad"],
+      "tech": ["CORS", "browser"],
+      "references": [{ "title": "MDN — CORS" }, { "title": "OWASP — CORS OriginHeaderScrutiny" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "apis",
+      "topic": "Webhooks — delivery guarantees",
+      "difficulty": "senior",
+      "scenario": "Tu app emite webhooks al cliente cuando un evento ocurre. A veces el cliente no recibe (network issue, downtime). El equipo debate cómo garantizar delivery.",
+      "question": "¿Cuáles son las MEJORES PRÁCTICAS de webhooks?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Retry con exponential backoff + jitter. Si el receiver responde 2xx, done. Si 5xx o timeout, reintentar con backoff. Después de N intentos, mover a DLQ y notificar.", "correct": true, "why": "Correcto. Estándar de webhooks: at-least-once delivery via retry. Backoff evita hammering; jitter previene thundering herd. Stripe reintenta durante 3 días con exponential backoff." },
+        { "letter": "B", "text": "Firma HMAC del payload. El receiver verifica que el webhook viene de TI (no un atacante). Header como `X-Signature: sha256=<hmac(secret, body)>`.", "correct": true, "why": "Correcto. Sin verificación, cualquiera puede POST a la URL del webhook con datos falsos. HMAC con shared secret garantiza autenticidad. Stripe, GitHub, Twilio — todos firman webhooks. Incluir timestamp en la firma para prevenir replay attacks." },
+        { "letter": "C", "text": "Idempotency por design: incluir event_id único. El receiver puede detectar duplicados y procesar solo una vez.", "correct": true, "why": "Correcto. Con retry, mismo evento puede llegar 2+ veces. Sin idempotency, side-effects duplicados. Receiver guarda event_ids procesados (dedup). Complementa el sistema at-least-once + idempotent = exactly-once effect." },
+        { "letter": "D", "text": "Documentar todos los tipos de eventos, payload schema, y ejemplos.", "correct": true, "why": "Correcto y frecuentemente olvidado. Sin docs claros, clientes no pueden integrar bien. OpenAPI/AsyncAPI para schemas. Sandbox environment para testing." },
+        { "letter": "E", "text": "Enviar webhook una vez y olvidar — si falla, el cliente pide de nuevo.", "correct": false, "why": "Anti-patrón. Delivery unreliable → cliente pierde eventos → tiene que polling activo (perdemos beneficio de webhook). Retry es fundamental." }
+      ],
+      "explanation": "Webhooks son event-driven APIs: server callbacks al client. Diseño robusto requiere: (1) delivery — retry + backoff + DLQ; (2) security — HMAC signature, HTTPS only, IP whitelist opcional; (3) idempotency — event_id + client dedup; (4) ordering — no garantizado por default (parallel delivery); (5) observability — dashboard de failed deliveries en el sender; (6) versioning — como APIs. Alternativas modernas: WebSockets/SSE para push continuous, Kafka Connect para event stream integration. Standard: CloudEvents spec (CNCF) para estructura de eventos.",
+      "realWorld": "Stripe, GitHub, Slack, Twilio — todos webhooks industry-standard con retry, HMAC, docs. Un incidente famoso: 2019 GitHub webhook signature vulnerabilities (timing attack en comparison). Fix: constant-time comparison. Standard.io tienen inspection tools para debugging webhooks locally.",
+      "tags": ["webhooks", "retry", "HMAC", "delivery guarantees"],
+      "tech": ["HMAC", "CloudEvents", "AsyncAPI"],
+      "references": [{ "title": "Stripe — 'Best practices for using webhooks'" }, { "title": "GitHub Webhooks Documentation" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "security",
+      "topic": "OWASP Top 10 — 2021/2025",
+      "difficulty": "senior",
+      "scenario": "Un dev pregunta qué categorías de seguridad debería estudiar como developer moderno.",
+      "question": "¿Cuáles son las categorías CORRECTAS del OWASP Top 10 (2021, aún relevante 2026)?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "A01 Broken Access Control — más común. Ex: user A accede recursos de user B por manipular ID en URL.", "correct": true, "why": "Correcto. Subió a #1 en 2021 (era #5 en 2017). Common: IDOR (Insecure Direct Object Reference) — /orders/123 sin verificar ownership. Fix: chequeo de autorización en CADA endpoint. Casos famosos: Twitter, Facebook, Uber han tenido incidentes." },
+        { "letter": "B", "text": "A03 Injection — SQL, NoSQL, LDAP, OS command. Fix: prepared statements, parameterized queries, input validation.", "correct": true, "why": "Correcto. Bajó de #1 (2017) a #3 (2021) por adopción de ORMs. Aún es común — encabezaba OWASP casi desde su origen." },
+        { "letter": "C", "text": "A02 Cryptographic Failures — password hashing débil, transporte inseguro (HTTP), datos sensibles no encriptados at-rest.", "correct": true, "why": "Correcto (era 'Sensitive Data Exposure' en 2017). Renombrado para enfatizar la causa. Incluye: passwords SHA-256 sin salt, TLS mal configurado, cookies sin Secure flag, JWT con alg=none." },
+        { "letter": "D", "text": "A08 Software and Data Integrity Failures — dependencies no verificadas, CI/CD comprometido, deserialización insegura.", "correct": true, "why": "Correcto y NUEVO en 2021. Auge de supply chain attacks (SolarWinds 2020, log4shell 2021, Codecov 2021). Fix: SBOM, dependency scanning (Snyk, Dependabot), signed artifacts (Sigstore), locked versions." },
+        { "letter": "E", "text": "A10 SSRF — Server-Side Request Forgery. Atacante hace que TU server haga request a URL interno.", "correct": true, "why": "Correcto y también nuevo prominence en 2021. Capital One breach (2019) fue SSRF a AWS metadata endpoint. Fix: no permitir URLs arbitrarias del user, whitelist de destinations, block internal IPs." }
+      ],
+      "explanation": "OWASP Top 10 (2021, próxima 2025) es referencia canónica de seguridad web. Cambios notables 2021: (1) Broken Access Control subió a #1; (2) nuevas categorías Software/Data Integrity y SSRF; (3) enfoque más en causas root. Otras críticas del 2021: A04 Insecure Design, A05 Security Misconfiguration, A06 Vulnerable and Outdated Components, A07 Identification and Authentication Failures, A09 Security Logging Monitoring Failures. Todo developer moderno debe conocer básicos de OWASP. Recurso: Cheat Sheets Series por categoría.",
+      "realWorld": "OWASP publica cada 3-4 años basándose en CVE data + surveys. Empresas grandes (Google, Microsoft) tienen equipos dedicados a OWASP compliance. Herramientas SAST/DAST/SCA (Snyk, Semgrep, OWASP ZAP) automatizan detection. Certificaciones (CSSLP, GWEB) validan conocimiento.",
+      "tags": ["OWASP", "seguridad web", "top 10", "vulnerabilities"],
+      "tech": ["OWASP", "Snyk", "Semgrep"],
+      "references": [{ "title": "OWASP Top 10 (2021)" }, { "title": "OWASP Cheat Sheets Series" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "apis",
+      "topic": "Timeouts y circuit breakers",
+      "difficulty": "staff",
+      "scenario": "Tu servicio llama a un microservicio downstream. Cuando el downstream se degrada (respuestas de 30s+), tu servicio se congela también — todos los threads bloqueados en llamadas. Cascada de failures.",
+      "question": "¿Cuáles patrones previenen esta cascada?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Timeouts: TODO call downstream tiene timeout explícito (connect + read). Default 'infinito' es letal. Regla: timeout < SLA de tu servicio × 0.5.", "correct": true, "why": "Correcto. Muchos clients tienen default sin timeout (infinite wait). Bajo failure, threads se acumulan hasta thread pool exhaustion. Timeout explícito da back-pressure. Netflix guidelines: timeouts en TODA network call." },
+        { "letter": "B", "text": "Circuit Breaker (Michael Nygard, 'Release It!'): rastrea failures, si supera umbral, ABRE el circuito — llamadas fallan inmediatamente sin siquiera intentar. Después de timeout, HALF-OPEN prueba de nuevo. CLOSED si vuelven a funcionar.", "correct": true, "why": "Correcto. Circuit breaker previene desperdiciar recursos llamando a un servicio muerto. Estados: CLOSED (normal), OPEN (skip calls, fail fast), HALF-OPEN (test recovery). Da al downstream tiempo para recuperar, y a tu servicio tiempo/recursos para responder degrado en vez de morir. Netflix Hystrix (deprecated), Resilience4j, Sentinel." },
+        { "letter": "C", "text": "Bulkhead: aislar recursos por dependencia. Thread pool separado por downstream — si uno se sobrecarga, no consume threads de otros.", "correct": true, "why": "Correcto. Analogía naval: compartimentos estancos evitan que el barco se hunda entero. Cada downstream con su thread pool bounded → si uno satura, otros siguen funcionando. Combinado con circuit breaker, aisla el fault." },
+        { "letter": "D", "text": "Fallback: cuando falla o circuit open, devolver respuesta degradada (cache, default, empty). Mantiene UX vs error total.", "correct": true, "why": "Correcto y importante. Graceful degradation vs hard failure. Ejemplo: si recommendation service down, mostrar 'items populares' cached. UX cae pero no rompe." },
+        { "letter": "E", "text": "Retry infinito hasta que funcione.", "correct": false, "why": "Amplifica el problema. Downstream sobrecargado + retries = tsunami de tráfico. Retries deben tener límite, exponential backoff, jitter." }
+      ],
+      "explanation": "Resilience patterns (Michael Nygard, Sam Newman, Netflix): (1) Timeout — cortar operaciones lentas; (2) Circuit Breaker — fail fast cuando downstream muerto; (3) Bulkhead — isolate resources; (4) Retry — con backoff + jitter + limits; (5) Fallback — graceful degradation; (6) Rate Limit — proteger tu servicio del abuse. Combinaciones: timeouts + circuit breaker + bulkhead + fallback = base de microservicios resilientes. Frameworks: Resilience4j (Java), Polly (.NET), Istio (service mesh a nivel infra). Netflix Hystrix fue líder, ahora deprecated en favor de Resilience4j.",
+      "realWorld": "Netflix escribió sobre 'The Netflix Way to Resilience' — hoy es referencia. Amazon usa combinaciones de estos patrones en cada microservicio. Un incidente famoso: 2016 Amazon EC2 outage regional — servicios que NO tenían circuit breakers cascadearon; los que sí, mantuvieron servicio degradado.",
+      "tags": ["circuit breaker", "timeout", "bulkhead", "resilience"],
+      "tech": ["Resilience4j", "Hystrix", "Istio"],
+      "references": [{ "title": "Michael Nygard — 'Release It!' 2nd ed" }, { "title": "Netflix Tech Blog — 'Fault Tolerance in a High Volume Distributed System'" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "security",
+      "topic": "Supply chain security",
+      "difficulty": "staff",
+      "scenario": "Tu proyecto tiene 300+ dependencies transitivas. Un compañero pregunta cómo prevenir el próximo log4shell/xz-utils backdoor.",
+      "question": "¿Cuáles son las MEJORES PRÁCTICAS de supply chain security 2026?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Dependency scanning automático (Dependabot, Snyk, GitHub Advisory) que detecta vulnerabilities en dependencies (directas y transitivas) y alerta / crea PRs de update.", "correct": true, "why": "Correcto y básico. Vulnerabilities se descubren constantemente en librerías; sin scanning automated, no te enteras hasta que es tarde. Dependabot integra a GitHub. Snyk, Whitesource, Sonatype son alternativas. Free tier suficiente para proyectos pequeños." },
+        { "letter": "B", "text": "SBOM (Software Bill of Materials): inventario de todas las dependencies, versiones, licenses. Standard formats: SPDX, CycloneDX. Requerido por US Executive Order 14028 para gov contractors.", "correct": true, "why": "Correcto. SBOM es como 'ingredients label' para software. Cuando aparece nueva CVE, puedes buscar en tu SBOM qué proyectos están afectados. Herramientas: Syft, SPDX-tools, cyclonedx-cli. GitHub genera SBOM automático." },
+        { "letter": "C", "text": "Version pinning + lockfiles (package-lock.json, poetry.lock, Cargo.lock). Reproducibilidad y protección contra 'malicious update' de una dependency.", "correct": true, "why": "Correcto. Sin lock, `npm install` puede pull nueva version comprometida. Lockfile garantiza mismos hashes. Complementar con: verify checksums, use private mirrors para dependencies críticas." },
+        { "letter": "D", "text": "Signed artifacts + verification (Sigstore, Cosign). Verificar que la dependency que instalas fue firmada por el maintainer legítimo — mitiga typo-squatting y account compromise.", "correct": true, "why": "Correcto y nuevo. Sigstore (2021, Linux Foundation) permite firmar artifacts sin PKI complex. Cosign firma container images. Chainguard, distroless — supply chain ecosystem moderno." },
+        { "letter": "E", "text": "Instalar todas las updates automáticamente sin revisión.", "correct": false, "why": "Auto-update de dependencies sin testing es riesgo — puede breaking changes o (peor) malicious updates. Balance: auto-update de patches, review de minor/major." }
+      ],
+      "explanation": "Supply chain attacks son el vector de crecimiento más rápido. Incidentes 2020-2024: SolarWinds Orion backdoor (2020), event-stream npm (2018), colors.js/faker.js protest sabotage (2022), log4shell (2021), xz-utils backdoor (2024). Defensa profunda: (1) minimize dependencies — 'do you really need lodash for isEmpty?'; (2) audit sources; (3) SCA tools; (4) SBOM; (5) signed artifacts (Sigstore); (6) SLSA framework para build pipeline security; (7) private registries; (8) reproducible builds. Es cultura + herramientas + procesos.",
+      "realWorld": "xz-utils backdoor (marzo 2024) casi comprometió SSH global — descubierto por casualidad por Andres Freund (Microsoft engineer notando 500ms lag). Log4Shell (Dec 2021) afectó millones de sistemas. SolarWinds (2020) comprometió agencias US y corporaciones. Cada uno tuvo diferentes vectores; defensa en profundidad es la única respuesta.",
+      "tags": ["supply chain", "SBOM", "Sigstore", "dependencies"],
+      "tech": ["Dependabot", "Snyk", "Sigstore", "Syft"],
+      "references": [{ "title": "SLSA — Supply-chain Levels for Software Artifacts" }, { "title": "US Executive Order 14028 — Improving the Nation's Cybersecurity" }]
+    }
+  ]
+}

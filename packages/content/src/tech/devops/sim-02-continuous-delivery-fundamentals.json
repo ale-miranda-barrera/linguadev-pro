@@ -1,0 +1,420 @@
+{
+  "id": "devops-sim-02-continuous-delivery-fundamentals",
+  "trackId": "devops",
+  "order": 2,
+  "title": "Simulacro 02 — Continuous Delivery Fundamentals",
+  "focus": "CI vs Continuous Delivery vs Continuous Deployment. Pipeline stages (build/test/deploy). Pipeline as code. Artifact management. Semantic versioning. Release cadence, gates, approvals. Rollback strategies. La diferencia REAL entre las tres 'C's que todos confunden.",
+  "areaCoverage": ["vcs-ci", "deployment"],
+  "timeLimitMin": 30,
+  "passThreshold": 0.75,
+  "questions": [
+    {
+      "id": "q1",
+      "areaId": "vcs-ci",
+      "topic": "CI vs CD vs CD — diferencias fundamentales",
+      "difficulty": "junior",
+      "scenario": "Un dev jr dice: 'tenemos CI/CD porque usamos GitHub Actions'. Otro dice: 'CI y CD son lo mismo'. Un tercero: 'CD significa Continuous Deployment'. La confusión es común porque las siglas se solapan.",
+      "question": "¿Cuál es la definición correcta de Continuous Integration, Continuous Delivery y Continuous Deployment?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Continuous Integration (CI): devs mergean a la rama principal frecuentemente (varias veces/día); cada merge dispara build + tests automáticos. Continuous Delivery (CD1): cada cambio que pasa CI está SIEMPRE listo para deploy a producción, pero el push final es manual (botón). Continuous Deployment (CD2): cada cambio que pasa CI se deploya AUTOMÁTICAMENTE a producción sin intervención humana.", "correct": true, "why": "Correcto. La distinción clave: CD1 (Delivery) siempre listo, deploy manual. CD2 (Deployment) sin humano en el loop. Jez Humble ('Continuous Delivery', 2010) definió estos términos que la industria adoptó. Amazon y Facebook hacen CD2; muchas empresas reguladas se quedan en CD1 por compliance." },
+        { "letter": "B", "text": "CI y CD son sinónimos y significan lo mismo.", "correct": false, "why": "Confusión común. CI se enfoca en INTEGRACIÓN (merge frequente + tests). CD se enfoca en DELIVERY/DEPLOYMENT (llevar a producción). Puedes tener CI sin CD (build y test pero no deploy)." },
+        { "letter": "C", "text": "CD siempre significa Continuous Deployment.", "correct": false, "why": "No — el acrónimo 'CD' es ambiguo. En la mayoría de contextos empresariales significa Continuous Delivery (deploy manual). Solo empresas como Netflix o Amazon hacen Deployment (automático)." },
+        { "letter": "D", "text": "Continuous Integration significa deployar cada commit a producción.", "correct": false, "why": "Confunde CI con Continuous Deployment. CI solo mergea + testea; no toca producción. El deploy es una etapa posterior." }
+      ],
+      "explanation": "La pirámide de madurez CI/CD: (1) Nightly builds (batch) → (2) CI (build+test on push) → (3) CD1 Continuous Delivery (siempre releasable, deploy manual) → (4) CD2 Continuous Deployment (automático). Cada nivel requiere el anterior. CI sin tests confiables = falso positivo constante. CD1 sin CI = imposible saber si el artefacto es deployable. CD2 sin observability + auto-rollback = suicidio. Regla práctica: la mayoría de equipos deben apuntar a CD1 sólido antes de CD2.\n\nCI requiere: (a) branch principal siempre verde, (b) merge frecuente (evita 'integration hell'), (c) tests rápidos (<10min ideal). CD1 añade: artifact management, deploy scripts automatizados, ambientes staging idénticos a prod. CD2 añade: canary deployment, feature flags, auto-rollback en errores, error budgets.",
+      "realWorld": "Amazon (2011): 11.7 segundos entre deploys (CD2). Facebook: 2x/día del monolito completo (CD2 con gradual rollout). ING Bank: pasó de deploys trimestrales a CD1 diaria en 2 años. GitHub, Etsy y Airbnb documentaron su evolución de CI → CD1 → CD2 en engineering blogs.",
+      "tags": ["CI", "CD", "continuous delivery", "continuous deployment", "definiciones"],
+      "tech": [],
+      "references": [{ "title": "Jez Humble & David Farley — Continuous Delivery (2010)" }, { "title": "Martin Fowler — Continuous Integration" }]
+    },
+    {
+      "id": "q2",
+      "areaId": "vcs-ci",
+      "topic": "Pipeline stages básicas",
+      "difficulty": "junior",
+      "scenario": "Estás diseñando el primer pipeline CI/CD de tu equipo. Debes decidir qué etapas incluir y en qué orden. El pipeline debe fallar rápido si algo va mal.",
+      "question": "¿Cuál es el orden CANÓNICO de stages en un pipeline CI/CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "1) Checkout code, 2) Install deps + cache, 3) Lint + static analysis, 4) Unit tests, 5) Build artifact, 6) Integration tests, 7) Security scans (SAST, deps), 8) Push artifact al registry, 9) Deploy a staging, 10) Smoke/E2E tests, 11) Deploy a producción (manual o auto).", "correct": true, "why": "Correcto. El principio es FAIL FAST: cosas rápidas y baratas primero (lint, unit tests son segundos), cosas caras al final (E2E toma minutos). Static analysis atrapa el 80% de bugs antes de compilar. Build ANTES de integration tests porque integration necesita el binary." },
+        { "letter": "B", "text": "1) Deploy, 2) Test, 3) Build, 4) Lint.", "correct": false, "why": "Orden completamente invertido. Deployar código no testeado = rompes producción. Tests antes de build no tienen sentido para código compilado." },
+        { "letter": "C", "text": "1) E2E tests, 2) Unit tests, 3) Build.", "correct": false, "why": "E2E primero = pipeline lentísimo. E2E toma 10-30min, unit tests segundos. Si falla el unit test, ya perdiste 30min en E2E. Anti-fail-fast." },
+        { "letter": "D", "text": "Solo build y deploy — los tests son opcionales.", "correct": false, "why": "Anti-patrón peligroso. Sin tests en pipeline, cada deploy es ruleta rusa. Testing es la base de CI/CD, no un extra." }
+      ],
+      "explanation": "El principio FAIL FAST guía el orden: cada stage es un filtro. Cosas rápidas y baratas primero — si linter falla en 5 segundos, no gastes 10 minutos en integration tests. Test pyramid: muchos unit tests (rápidos, aislados), menos integration (más lentos, más ambiente), pocos E2E (lentísimos, frágiles).\n\nDetalles clave: (1) Caching de dependencies acelera build 5-10x — Docker layer cache, npm/pnpm cache, Maven .m2. (2) SAST (Static Application Security Testing) como SonarQube, Semgrep detecta vulnerabilidades sin ejecutar código. (3) Dependency scan (Snyk, Dependabot) atrapa CVEs conocidos. (4) Artifact registry (Docker Hub, ECR, JFrog Artifactory, GHCR) es la 'source of truth' del binary — el mismo artefacto que se testeó en staging es el que va a prod.\n\nPipelines maduros añaden: matrix testing (Node 18/20/22), parallel jobs, conditional stages (solo E2E si backend cambió).",
+      "realWorld": "Netflix Spinnaker orquesta pipelines multi-stage con múltiples aprobaciones y canary analysis automático. GitLab CI documenta 'pipeline efficiency' con ejemplos de reducción de tiempos de 45min a 8min mediante paralelización. Google Cloud Build ejemplos oficiales muestran este mismo orden.",
+      "tags": ["pipeline", "stages", "fail fast", "test pyramid"],
+      "tech": ["GitHub Actions", "GitLab CI", "Jenkins"],
+      "references": [{ "title": "Martin Fowler — Continuous Integration" }, { "title": "Jez Humble — Continuous Delivery Book Ch. 5" }]
+    },
+    {
+      "id": "q3",
+      "areaId": "vcs-ci",
+      "topic": "Pipeline as Code",
+      "difficulty": "mid",
+      "scenario": "Tu equipo actualmente configura pipelines haciendo click en la UI de Jenkins. Cuando alguien renombra un job, se pierde el histórico. Nadie sabe qué cambió cuándo. Un ingeniero senior propone: 'pipeline as code'.",
+      "question": "¿Qué significa Pipeline as Code y cuáles son sus beneficios REALES?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "La definición del pipeline vive en un archivo dentro del repo (Jenkinsfile, .github/workflows/*.yml, .gitlab-ci.yml, azure-pipelines.yml). Cambios al pipeline pasan por PR review igual que el código.", "correct": true, "why": "Correcto. El pipeline es TAN código como el resto del sistema. Debe estar versionado, revisado y auditado. La UI configuration es un anti-patrón — no hay historia, no hay review, no hay reproducibilidad." },
+        { "letter": "B", "text": "Versionado: puedes hacer git blame para saber quién cambió el pipeline y por qué. Rollback trivial con git revert. Cambios a través de PRs con review.", "correct": true, "why": "Correcto. En Jenkins UI clásico, un ingeniero puede romper el pipeline con un click y nadie sabe. Con Jenkinsfile, cambios son commits — auditables, reversibles, revisados." },
+        { "letter": "C", "text": "Branch-aware: cada branch puede tener su propia versión del pipeline (útil cuando cambias el proceso de build en una feature branch). Trunk-based sin este problema.", "correct": true, "why": "Correcto. Un feature branch puede necesitar nuevos steps (ej. nuevo test suite). Con pipeline as code, se propone en el PR y se prueba en la CI antes de mergear a main." },
+        { "letter": "D", "text": "Reutilización: extraes lógica común en templates (reusable workflows en GitHub Actions, shared libraries en Jenkins, includes en GitLab). Un cambio en el template propaga a todos los repos.", "correct": true, "why": "Correcto. DRY para pipelines. Netflix, Spotify tienen 'golden pipelines' — templates centralizados que todos los servicios heredan. Cambia seguridad? Actualizas 1 template, no 500 repos." },
+        { "letter": "E", "text": "Requiere obligatoriamente usar YAML — otros formatos no cuentan.", "correct": false, "why": "El formato es secundario. YAML es común (GitHub Actions, GitLab CI, Azure Pipelines) pero Jenkins usa Groovy, Bazel usa Starlark, TeamCity Kotlin DSL. El PRINCIPIO (código versionado) es lo que importa." }
+      ],
+      "explanation": "Pipeline as Code convierte al pipeline en un ciudadano de primera clase del repo. Beneficios: (1) auditability — 'git log Jenkinsfile' cuenta la historia; (2) reviewability — cambios pasan por PR; (3) testability — puedes ejecutar el pipeline localmente (act para GitHub Actions, gitlab-runner exec); (4) portability — mover a otro proveedor es más fácil cuando la lógica está en código; (5) drift prevention — no hay 'snowflake' pipelines configurados a mano por alguien que ya se fue.\n\nFormatos comunes: (a) YAML (declarativo, más limitado pero más simple) — GitHub Actions, GitLab, Azure. (b) Groovy DSL (Jenkins) — más poderoso pero curva de aprendizaje. (c) Kotlin/Python DSL (TeamCity, Buildkite) — type-safe. La tendencia industrial es hacia YAML por simplicidad, con templates/composite actions para reutilización.\n\nAnti-patrones: (1) 'shadow config' — el YAML tiene lo básico pero las 'important settings' están en la UI. (2) Secretos hardcodeados en el YAML (usar env vars/secrets). (3) Pipelines de 5000 líneas — mismo smell que funciones largas, refactor con templates.",
+      "realWorld": "Jenkins 2 (2016) introdujo Jenkinsfile precisamente para esto. GitHub Actions nació en 2019 con YAML como default. Netflix Spinnaker permite 'pipeline templates' en JSON. En 2019, Capital One documentó su migración de Jenkins UI a Jenkinsfile — recuperaron 'weeks of tribal knowledge' que estaba escondida en la UI.",
+      "tags": ["pipeline as code", "Jenkinsfile", "GitHub Actions", "versionado"],
+      "tech": ["Jenkins", "GitHub Actions", "GitLab CI", "Azure Pipelines"],
+      "references": [{ "title": "Jenkins — Pipeline as Code" }, { "title": "GitHub Docs — Workflow syntax for GitHub Actions" }]
+    },
+    {
+      "id": "q4",
+      "areaId": "vcs-ci",
+      "topic": "Artifact management",
+      "difficulty": "mid",
+      "scenario": "Tu equipo builda el mismo commit 3 veces: una para dev, una para staging, una para prod. En prod, algo falla que no falló en staging. Investigan: el binary de staging y el de prod son DISTINTOS aunque el commit era el mismo (dependencies transitivas cambiaron entre builds).",
+      "question": "¿Cuál es el principio fundamental de artifact management y por qué?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Build ONCE, deploy MANY. Un solo artefacto (Docker image, jar, tarball) se builda en CI y se promueve a través de ambientes (dev → staging → prod). El artefacto es INMUTABLE — mismo binary que se testeó en staging es el que va a prod. Solo cambian configs por ambiente (env vars, config maps).", "correct": true, "why": "Correcto. Principio fundamental de CD. Rebuild = introducir riesgo (nueva versión de transitive dep, distinto compiler cache, distinto floating tag). El artefacto es la 'source of truth' — su hash/versión es su identidad." },
+        { "letter": "B", "text": "Cada ambiente debe buildear su propia versión con sus propias flags.", "correct": false, "why": "Anti-patrón. Es exactamente lo que causa 'works on staging, fails on prod'. Multiplica el riesgo por cada ambiente." },
+        { "letter": "C", "text": "Los artefactos no son importantes — solo importa el código fuente.", "correct": false, "why": "El código fuente NO es lo que se ejecuta en prod. Se ejecuta el binary. Si no controlas el binary, no controlas producción." },
+        { "letter": "D", "text": "Build en cada máquina de deployment.", "correct": false, "why": "Peor aún. Cada máquina termina con distinto binary (versiones de compiler, cache, network conditions). Reproducibilidad cero." }
+      ],
+      "explanation": "Immutable artifacts: (1) Se buildean UNA vez, se etiquetan con hash/semver + git SHA, (2) Se suben a un artifact registry (Docker Hub, ECR, JFrog Artifactory, Nexus, GHCR), (3) Se promueven entre ambientes por REFERENCIA (mismo digest), no rebuildeando. Config por ambiente vive fuera del artefacto — env vars, ConfigMaps de K8s, secrets managers.\n\nArtifact registries: (a) Docker registries — Docker Hub (público), ECR (AWS), GCR/Artifact Registry (Google), ACR (Azure), Harbor (self-hosted), GHCR (GitHub). (b) Package registries — npm, PyPI, Maven Central, NuGet. (c) Generic — JFrog Artifactory, Sonatype Nexus soportan múltiples formatos. Empresas grandes usan repositorios PRIVADOS (npm private, PyPI internal) para evitar dependency confusion attacks.\n\nRetención: artefactos crecen sin límite. Estrategias: (1) mantener últimas N versiones de cada tag; (2) retener release tags (semver) para siempre; (3) borrar dev/PR builds después de 30 días. Costo real: Docker Hub cobra por storage; ECR también.",
+      "realWorld": "En 2021, dependency confusion attack (Alex Birsan) demostró cómo tomar control de artifacts de Apple, Microsoft, PayPal — porque no tenían registries privados. GitLab publicó postmortem en 2018 sobre 'staging binary != prod binary' que causó incident. Netflix Spinnaker maneja 'bake and promote' — bakea AMI una vez, la promueve entre regions.",
+      "tags": ["artifacts", "immutability", "build once", "registry"],
+      "tech": ["Docker", "ECR", "Artifactory", "Nexus"],
+      "references": [{ "title": "Jez Humble — Continuous Delivery Book, Ch. 5" }, { "title": "Alex Birsan — Dependency Confusion (2021)" }]
+    },
+    {
+      "id": "q5",
+      "areaId": "vcs-ci",
+      "topic": "Semantic Versioning (SemVer)",
+      "difficulty": "mid",
+      "scenario": "Tu librería está en 1.4.2. Añades una nueva función que no rompe nada. Un usuario reporta que subir de 1.4.2 a 1.5.0 les rompió el build por un cambio en la firma de una función existente. Investigas: sí, se hizo un cambio incompatible que se documentó en el CHANGELOG.",
+      "question": "¿Qué significa cada dígito en SemVer y qué se violó?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "MAJOR.MINOR.PATCH. MAJOR (1.x.x): cambios INCOMPATIBLES — obliga al usuario a cambiar código. MINOR (x.4.x): añade funcionalidad de forma COMPATIBLE — código existente sigue funcionando. PATCH (x.x.2): bug fixes compatibles. Se violó SemVer: un cambio incompatible debe ser 2.0.0, no 1.5.0.", "correct": true, "why": "Correcto. SemVer 2.0 (semver.org) define esto exactamente. Un breaking change en un minor bump 'rompe el contrato' con usuarios que confían en que ^1.4.2 es seguro upgrade." },
+        { "letter": "B", "text": "MAJOR es el año, MINOR es el mes, PATCH es el día.", "correct": false, "why": "Confunde SemVer con CalVer (Calendar Versioning), usado por Ubuntu (24.04) o Python (3.12). Ambos son válidos, pero son distintos. SemVer transmite COMPATIBILIDAD; CalVer solo transmite CUÁNDO." },
+        { "letter": "C", "text": "Cada número puede incrementarse arbitrariamente sin significado.", "correct": false, "why": "Ese es 'random versioning' — inútil para consumidores. SemVer existe precisamente para dar SEÑALES claras a quien consume tu librería." },
+        { "letter": "D", "text": "PATCH es para features, MINOR para bugs, MAJOR para docs.", "correct": false, "why": "Invertido — features son MINOR, bugs son PATCH. Docs no requieren bump usualmente." }
+      ],
+      "explanation": "SemVer promete un CONTRATO al consumer: si haces yarn/npm install lib@^1.4.2, obtienes lo mejor de 1.x.x que no rompa (es decir, 1.9.9 pero no 2.0.0). ~1.4.2 es más estricto: solo patches (1.4.9 sí, 1.5.0 no). Este contrato solo funciona si los mantenedores respetan SemVer.\n\nDetalles importantes: (1) versión 0.y.z indica que la API es inestable — TODO cambio puede ser breaking. Publicar 1.0.0 es un COMPROMISO. (2) Prerelease tags: 1.0.0-alpha, 1.0.0-beta.2, 1.0.0-rc.1 preceden a 1.0.0. (3) Build metadata: 1.0.0+20130313144700 se ignora para precedencia. (4) Automatización: conventional commits (feat/fix/BREAKING CHANGE) + tools como semantic-release calculan el bump automáticamente.\n\nAlternativas: CalVer (Ubuntu 24.04, Python 3.12) transmite CUÁNDO se hizo el release pero no compatibilidad. ZeroVer (0.x forever) usado irónicamente por Kubernetes-in-early-days. Node.js usa 'Odd/Even' para LTS. Rust usa 'editions' además de semver para breaking changes del lenguaje.",
+      "realWorld": "npm/pnpm dependency resolution asume SemVer. Un breaking en minor bump ha causado outages históricos — left-pad 2016 (dev unpublished, pero fue en cualquier caso un incident). React 16→17 fue un major bump por breaking changes; React 17→18 también. Kubernetes usa Y.Z (sin X) por decisión histórica. Rust usa Edition (2015, 2018, 2021) para breaking changes del lenguaje, semver para librerías.",
+      "tags": ["semver", "versioning", "MAJOR", "MINOR", "PATCH"],
+      "tech": ["npm", "cargo", "conventional commits"],
+      "references": [{ "title": "semver.org — Semantic Versioning 2.0.0" }, { "title": "conventionalcommits.org" }]
+    },
+    {
+      "id": "q6",
+      "areaId": "vcs-ci",
+      "topic": "Release cadence",
+      "difficulty": "mid",
+      "scenario": "Tu equipo debate: ¿deployamos cada commit (continuous deployment), cada día, cada sprint (2 semanas), o cada trimestre? Un manager dice 'trimestral es más seguro'. Un dev senior dice 'trimestral es MÁS peligroso'.",
+      "question": "¿Por qué release cadence MÁS FRECUENTE es típicamente MÁS SEGURA?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Batch size pequeño: si releaseas 1 cambio y algo rompe, el debug es trivial. Si releaseas 200 cambios (release trimestral), git bisect toma días. Toyota Production System — one-piece flow supera batch processing.", "correct": true, "why": "Correcto. Es el hallazgo central de DORA/Accelerate. Batch pequeño = incident detection rápido = MTTR bajo. Batch grande = 'era el cambio X, Y, o Z de 200 cambios?'" },
+        { "letter": "B", "text": "Pipeline muscle memory: si tu pipeline corre 100x/día, se mantiene sano. Si corre 1x/trimestre, se pudre (secrets expiran, deps obsoletas, docs desactualizadas). El primer release trimestral suele fallar por config drift.", "correct": true, "why": "Correcto. 'Practice makes perfect' aplica también a pipelines. Empresas con releases quarterly típicamente pasan la primera semana del release trimestral solo arreglando cosas del pipeline." },
+        { "letter": "C", "text": "Rollback trivial: revertir 1 commit es 1 comando (git revert). Revertir 200 commits es imposible en la práctica — probablemente ya hay cambios de DB que dependen de esos commits, forward-fix es la única opción.", "correct": true, "why": "Correcto. Rollback pequeño = safety net real. Rollback de un release grande = 'roll forward and pray'. Los deploys frecuentes forzán a que el sistema sea rollback-friendly (feature flags, backwards compatible DB migrations)." },
+        { "letter": "D", "text": "Feedback loop rápido a devs: el bug que introdujiste hoy sale en producción hoy — recuerdas el contexto. En un release trimestral, un bug tiene 12 semanas de context switching antes de detectarse.", "correct": true, "why": "Correcto. El costo cognitivo de 'reload context' de un bug antiguo es enorme. Dev productivity y quality suben con feedback rápido." },
+        { "letter": "E", "text": "Deploy frecuente siempre significa mala calidad.", "correct": false, "why": "Mito refutado por DORA. High performers deployan MÁS y rompen MENOS. La correlación es POSITIVA entre velocidad y estabilidad." }
+      ],
+      "explanation": "Release cadence es una decisión ESTRATÉGICA: (1) On-demand / continuous (Amazon, Netflix, Facebook) — el ideal DevOps. Requiere: canary, feature flags, auto-rollback, obsservability madura. (2) Daily (Etsy, GitHub) — común en high performers. (3) Weekly — común en teams que están madurando. (4) Sprint-based (2 semanas) — común en teams que confunden Agile con DevOps. (5) Monthly/Quarterly — típico de empresas legacy, banks pre-transformación, gobierno.\n\nBloqueadores de cadencia frecuente: (a) Manual QA — cada release requiere semanas de testing manual. Fix: automatizar. (b) Coupling — el monolito requiere que TODOS los teams estén 'listos' para el release. Fix: modularizar, feature flags. (c) Approval processes — CAB (Change Advisory Board) mensual. Fix: standing approvals para patrones aprobados, self-service para cambios low-risk. (d) DB migrations irreversibles. Fix: expand-contract pattern.\n\nEmpresas reguladas (SOX, HIPAA) pueden hacer deploys frecuentes: Capital One (SOX) deploya thousands/day. La clave es AUDIT TRAIL automatizado, no lentitud manual.",
+      "realWorld": "Etsy 2011 documentó '25 deploys/día' con un post seminal. Amazon: 11.7 segundos entre deploys (Werner Vogels 2011). Facebook: 2x/día del monolito completo con LaunchDarkly-style feature flags. En 2019, un banco europeo grande documentó su paso de deploys trimestrales a diarios en 18 meses.",
+      "tags": ["release cadence", "batch size", "deploy frequency"],
+      "tech": [],
+      "references": [{ "title": "Accelerate — Forsgren, Humble, Kim" }, { "title": "Etsy Engineering — Deploys at Etsy" }]
+    },
+    {
+      "id": "q7",
+      "areaId": "vcs-ci",
+      "topic": "Gates y approvals",
+      "difficulty": "mid",
+      "scenario": "Tu compliance team requiere que TODO deploy a prod tenga approval. Actualmente es un email a un manager que aprueba en 2 días. El pipeline queda pausado esperando. Un ingeniero senior propone: 'automatizar el gate'.",
+      "question": "¿Qué son los gates/approvals en pipelines y cómo balancear compliance con velocidad?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Gates: puntos donde el pipeline se pausa esperando una condición. Manuales (approval de humano) o automáticos (pasa si tests OK, seguridad OK, cost OK). Compliance requiere audit trail, no necesariamente delay humano. Solución: automated gates con approval registered (quién, cuándo, por qué). Ejemplos: pre-approved deploy windows, standing approvals para patrones (backend patch OK auto; DB schema change requires human).", "correct": true, "why": "Correcto. Compliance moderno acepta AUDIT TRAIL AUTOMATIZADO — SOX, PCI-DSS, HIPAA todos permiten controles automatizados si son auditables. La regla 'approval = humano lento' es viejo pensamiento." },
+        { "letter": "B", "text": "Los approvals humanos son sagrados y no se deben automatizar.", "correct": false, "why": "El objetivo del approval NO es que un humano lea código a las 3AM. Es que haya CONTROL y AUDIT TRAIL. Un test automatizado + logging cumple ambos mejor que un manager sleep-deprived haciendo click." },
+        { "letter": "C", "text": "Eliminar todos los gates para maximizar velocidad.", "correct": false, "why": "Sin gates, no hay controles. En prod, algún gate (aunque sea 'los tests pasan') debe existir. La cuestión es cómo diseñarlos, no si eliminarlos." },
+        { "letter": "D", "text": "Los gates solo aplican a producción, nunca a staging.", "correct": false, "why": "Falso — gates útiles también en staging (ej. no promover a prod hasta que E2E pase en staging). El principio 'progressive filtering' aplica en cada ambiente." }
+      ],
+      "explanation": "Gates evolucionan: (1) Manual approval (email/click) — lento, escala mal. (2) Approval en la herramienta (GitHub Actions environments, GitLab manual jobs) — al menos versionado y auditable. (3) Automated gates — tests pass, security scan pass, cost estimate < threshold, error budget available. (4) Pre-approved patterns — 'todos los deploys de este tipo están pre-aprobados', humano solo interviene en excepciones.\n\nGates útiles: (a) SLO gate — no deployar si error budget consumed >80%. (b) Cost gate — no deployar si el cambio incrementa cost >10% (Terraform infracost). (c) Security gate — SAST y dependency scan sin CVEs high. (d) Test coverage gate — coverage no debe bajar. (e) Canary gate — 10% traffic 30min sin error spike antes de promover a 100%.\n\nAnti-patrones: (1) CAB weekly meeting — cuello de botella clásico. (2) Approval de C-level para cambios de dev. (3) Manual QA sign-off (cuando debería estar automatizado). (4) 'Freeze windows' de semanas antes de eventos (Black Friday) — inflexible, mejor error budgets.",
+      "realWorld": "Netflix Spinnaker automatiza gates con 'Canary Analysis' — decisión estadística automatizada de si continuar el rollout. GitHub Actions 'required reviewers' para production environments. HMRC (gobierno UK) documentó migración de CAB semanal → automated gates con audit trail. Amazon 'CRI' (Change Risk Intelligence) usa ML para clasificar cambios y ajustar el nivel de scrutiny.",
+      "tags": ["gates", "approvals", "compliance", "automation"],
+      "tech": ["GitHub Actions", "Spinnaker"],
+      "references": [{ "title": "Google SRE Book — Release Engineering" }, { "title": "Spinnaker — Automated Canary Analysis" }]
+    },
+    {
+      "id": "q8",
+      "areaId": "deployment",
+      "topic": "Rollback vs roll forward",
+      "difficulty": "senior",
+      "scenario": "Prod se cae 15 minutos después de un deploy. El on-call debe decidir: rollback al binary anterior o roll forward (fix + redeploy). El error parece ser una null pointer exception en un code path nuevo.",
+      "question": "¿Cuándo usar rollback y cuándo roll forward?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "DEFAULT: rollback (es más rápido y predecible). Roll forward SOLO cuando: (1) rollback no es posible (DB migration irreversible, cambio de schema breaking); (2) el bug es trivial y el fix está claro EN MINUTOS; (3) el rollback introduciría bugs conocidos (regression). Regla: prioriza MITIGATION del incident sobre PERFECTION del fix. Después del rollback, analizas root cause con calma.", "correct": true, "why": "Correcto. Google SRE Book, Ch. 8: 'Rollback should be your first thought during an incident'. La razón: rollback es determinístico (vuelves a un estado conocido bueno). Roll forward es especulativo (esperas que el fix funcione, bajo presión, sin tests completos)." },
+        { "letter": "B", "text": "Siempre roll forward — nunca vuelvas atrás.", "correct": false, "why": "Anti-patrón. En incident con clientes afectados, roll forward toma tiempo (fix, PR, review, build, deploy) mientras el impacto crece. Rollback es rápido y devuelve al estado bueno." },
+        { "letter": "C", "text": "Siempre rollback — nunca roll forward.", "correct": false, "why": "Absolutista. Hay casos válidos de roll forward (DB irreversible, fix trivial obvio). La regla es 'default rollback', no 'siempre'." },
+        { "letter": "D", "text": "La decisión no importa — ambos son iguales.", "correct": false, "why": "No — rollback es predecible (estado conocido) vs roll forward es especulativo (esperanza de que el fix funcione). Bajo presión de incident, la predictabilidad es oro." }
+      ],
+      "explanation": "Rollback strategies: (1) Version pinning — cambiar el tag del artefacto de v2.0 a v1.9. Trivial en Docker/K8s: kubectl rollout undo o helm rollback. (2) Blue-green — apagar 'green' (nuevo), volver a 'blue' (viejo). Instantáneo. (3) Canary — el canary detectó el problema con 10% traffic, se aborta el rollout, 100% vuelve al estable. Automatizado en Spinnaker/Argo Rollouts.\n\nBloqueadores de rollback: (a) DB migrations breaking — el schema nuevo no es compatible con el binary viejo. Solución: expand-contract (add column nullable, deploy code que usa nueva columna, luego eliminar la vieja en release separado). (b) API breaking changes downstream — clientes ya se actualizaron al nuevo protocolo. (c) Data corruption — el binary nuevo escribió datos malos que el viejo no puede leer.\n\nPrácticas: (1) rollback debe estar AUTOMATIZADO — un comando o un click. Si toma 4 horas, no es rollback. (2) rollback debe TESTEARSE regularmente — parte del disaster recovery drills. (3) rollback window — 'los últimos N binaries están siempre disponibles para rollback instantáneo'. (4) documentation — el runbook dice EXACTAMENTE cómo hacer rollback.",
+      "realWorld": "GitLab 2017 famoso incident: no pudieron hacer rollback por DB migration irreversible; roll forward tomó horas mientras 300GB de data se perdía. Facebook Oct 2021 outage — el rollback de config no pudo aplicarse porque el sistema de comunicación estaba caído. Netflix documenta que 90%+ de sus incidents se mitigan con rollback rápido (Spinnaker automated rollback).",
+      "tags": ["rollback", "roll forward", "incident", "mitigation"],
+      "tech": ["Kubernetes", "Spinnaker", "Argo Rollouts"],
+      "references": [{ "title": "Google SRE Book Ch. 8 — Release Engineering" }, { "title": "GitLab 2017 Postmortem" }]
+    },
+    {
+      "id": "q9",
+      "areaId": "deployment",
+      "topic": "Blue-Green deployment",
+      "difficulty": "senior",
+      "scenario": "Tu equipo quiere zero-downtime deploys. Actualmente hacen 'stop app → deploy → start app' con 2 minutos de downtime. Investigan estrategias y encuentran Blue-Green.",
+      "question": "¿Cómo funciona Blue-Green deployment y cuáles son sus tradeoffs?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Mantienes DOS environments idénticos: Blue (activo, recibe traffic) y Green (nuevo, sin traffic). Deployas al Green, testeas, y luego cambias el router/load balancer para que traffic vaya a Green. Blue queda como fallback instantáneo. Rollback = flip router de vuelta.", "correct": true, "why": "Correcto. Descrito por Martin Fowler. El switch del router es atómico (típicamente cambio de DNS, ALB target group, o Service selector en K8s). Downtime ~0. Rollback ~0 tiempo — flip back." },
+        { "letter": "B", "text": "TRADE-OFF: requiere el DOBLE de infraestructura (dos environments corriendo simultáneamente). Cost implication real — para servicios grandes, x2 es caro. Mitigación: solo mantener green durante el deploy y unas horas post-deploy.", "correct": true, "why": "Correcto. Es el gran costo de Blue-Green. En cloud (AWS/GCP) puedes autoscale green a 0 después de X horas para reducir cost. En on-prem, requiere hardware duplicado." },
+        { "letter": "C", "text": "TRADE-OFF: sesiones activas. Los usuarios conectados a Blue se cortan al switch (a menos que hagas 'connection draining' — permitir que sesiones existentes terminen mientras nuevo traffic va a Green). Websockets y long-polling son problemáticos.", "correct": true, "why": "Correcto. El HTTP request nuevo va a Green (bien), pero el WebSocket abierto a Blue muere al matar Blue. Solución: connection draining con timeout (típicamente 30-300s) antes de shutdown de Blue." },
+        { "letter": "D", "text": "TRADE-OFF: cambios de DB. Si Green necesita schema nuevo y Blue el viejo, ambos NO pueden compartir la DB. Solución: expand-contract migrations (schema compatible con ambas versiones durante la transición) o pausa breve para migration.", "correct": true, "why": "Correcto. La DB es el enemigo de Blue-Green. La regla es: migraciones deben ser BACKWARDS COMPATIBLE durante el switch. Add column primero (nullable), deploy código que la usa, drop column vieja en release SEPARADO." },
+        { "letter": "E", "text": "Blue-Green solo funciona en Kubernetes.", "correct": false, "why": "Falso. Blue-Green es una PATRÓN, no una tecnología. Funciona con VMs (2 auto-scaling groups), servidores físicos (2 racks), containers, functions (2 Lambda aliases con weighted routing), etc." }
+      ],
+      "explanation": "Blue-Green vs Canary vs Rolling: (1) Rolling — actualizas instancias una por una. Durante el rollout, corres MIXED versions. Deploy lento pero cost bajo. Kubernetes default. (2) Blue-Green — dos environments completos, switch atómico. Rollback instantáneo, cost 2x. (3) Canary — envías small % de traffic a la nueva versión, monitoreas métricas, aumentas gradualmente. Requiere routing sofisticado (service mesh, ALB weighted targets) y observability.\n\nBlue-Green ideal para: (a) cambios de gran riesgo (rollback debe ser instantáneo), (b) apps stateless, (c) cuando puedes pagar 2x infra. Canary ideal para: (a) micro-servicios con muchas requests (métricas estadísticamente significativas rápido), (b) cambios que quieres validar con USER TRAFFIC real. Rolling ideal para: (a) cambios low-risk, (b) cost sensitivity, (c) apps con estado.\n\nIntegración con feature flags: en muchos casos, la 'ruta correcta' es rolling deploy + feature flag off. Deployeas el código a todo prod (rolling barato), pero la feature no está activa. Luego activas la feature flag para 1% de usuarios (que es canary de USER, no de servidor). Esto desacopla deploy de release completamente.",
+      "realWorld": "Netflix migró a canary con Spinnaker (2015). Amazon SQS story documentada — Blue-Green permitió rollback instantáneo en un incident 2016. AWS ALB y GCP Load Balancer soportan weighted routing nativo para blue-green/canary. GitHub usa 'deployment-orchestrator' custom con blue-green para su monolito Ruby.",
+      "tags": ["blue-green", "deployment strategy", "zero-downtime"],
+      "tech": ["Kubernetes", "AWS ALB", "Spinnaker"],
+      "references": [{ "title": "Martin Fowler — Blue Green Deployment" }, { "title": "AWS — Blue/Green Deployments" }]
+    },
+    {
+      "id": "q10",
+      "areaId": "deployment",
+      "topic": "Canary deployment",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene 1M requests/hora. Un cambio parece bueno en staging pero temen que en el traffic REAL de prod aparezca algún bug. Un ingeniero propone canary deployment.",
+      "question": "¿Qué es canary deployment y qué requiere para funcionar bien?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Deployas nueva versión a UNA porción del traffic (típicamente 1-5% inicialmente), monitoreas métricas (error rate, latency, business metrics) contra el baseline (95% en versión estable). Si métricas OK, aumentas gradualmente (5% → 25% → 50% → 100%). Si degradación detectada, rollback automático. Requiere: (1) routing con % weighted, (2) métricas estadísticamente comparables, (3) observability madura, (4) rollback automatizado.", "correct": true, "why": "Correcto. El nombre viene del 'canary in coal mine' — un pequeño % detecta problemas antes de que afecten a todos. Es la técnica más rica en información: valida con TRAFFIC REAL sin exponer a todos los usuarios." },
+        { "letter": "B", "text": "Deployas todo al 100% inmediatamente y monitoreas.", "correct": false, "why": "Eso es 'YOLO deploy' o 'big bang'. Sin canary. Si el bug aparece, 100% de usuarios afectados." },
+        { "letter": "C", "text": "Deployas a un ambiente separado sin traffic.", "correct": false, "why": "Eso es staging. Canary es en PROD con traffic REAL — el 5% son usuarios reales, no sintéticos." },
+        { "letter": "D", "text": "Solo se puede hacer canary en Kubernetes.", "correct": false, "why": "Falso. Se puede hacer en cualquier stack con routing weighted: ALB, HAProxy, NGINX, Istio, Envoy, Linkerd, Consul, incluso DNS con weighted records." }
+      ],
+      "explanation": "Canary etapas típicas: (1) Deploy a 1 instancia (5% traffic típicamente); (2) 30min-1h observación; (3) Automated analysis — Spinnaker's Kayenta, Argo Rollouts + Prometheus queries. Métricas comparadas contra baseline (versión estable): error rate, p99 latency, business metrics (conversion rate, checkout success). (4) Si todo verde, promover a 25%, 50%, 100%. (5) Si degradación, abort y rollback automático.\n\nRequisitos técnicos: (a) Routing con weighted %: service mesh (Istio, Linkerd) o ALB con multiple target groups. (b) Métricas granulares por versión — labels/tags en Prometheus/Datadog que separen canary vs baseline. (c) Traffic representativo — si el canary recibe solo GET requests casualmente y no POST, no valida el path que importa. Sticky sessions o traffic mirroring pueden ayudar. (d) Baseline threshold — cuánta degradación permitir (5% error increase? 10% latency?).\n\nCanary vs A/B testing: canary es sobre CORRECTNESS (¿el binary funciona?), A/B es sobre BUSINESS (¿la feature mejora conversion?). Usan misma infra (weighted routing) pero distintos análisis.",
+      "realWorld": "Netflix Spinnaker + Kayenta (canary analysis automatizado) es el gold standard. En 2016 Netflix publicó 'Automated Canary Analysis at Netflix with Kayenta'. Google Search deploya con canary a 0.1% de queries. Facebook 'Gatekeeper' (feature flags) + canary. GitHub usa 'flipper' + canary. Argo Rollouts y Flagger son las opciones open-source populares en K8s.",
+      "tags": ["canary", "deployment strategy", "progressive delivery"],
+      "tech": ["Spinnaker", "Argo Rollouts", "Flagger", "Istio"],
+      "references": [{ "title": "Netflix — Automated Canary Analysis" }, { "title": "Argo Rollouts Docs" }]
+    },
+    {
+      "id": "q11",
+      "areaId": "deployment",
+      "topic": "Feature flags",
+      "difficulty": "senior",
+      "scenario": "Marketing quiere lanzar una feature el 15 de Marzo a las 9:00 AM exactas para coincidir con anuncio en TV. El equipo de dev quiere hacer merge del código HOY (1 de Marzo) para no bloquear otros cambios. ¿Cómo desacoplar deploy de release?",
+      "question": "¿Qué son feature flags y por qué son la clave de continuous deployment?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Feature flags (toggles): condicionales en código que activan/desactivan features en runtime sin redeploy. 'if (featureFlags.newCheckout) { newCode() } else { oldCode() }'. Permite: (1) desacoplar DEPLOY (código en prod) de RELEASE (feature visible al user); (2) rollback de feature en segundos (flag off) sin rollback de código; (3) gradual rollout (activar para 1% de usuarios, monitorear, escalar); (4) killswitch (disable feature en emergency); (5) A/B testing (feature on para grupo A, off para grupo B).", "correct": true, "why": "Correcto. La técnica más transformadora de deployment moderno. Desacopla dos decisiones que solían estar acopladas: '¿el código está en prod?' y '¿los users lo ven?'. Facebook, LinkedIn, Netflix son los pioneros públicos." },
+        { "letter": "B", "text": "Feature flags son solo variables de ambiente.", "correct": false, "why": "Env vars requieren restart y son estáticas. Feature flags modernas son DINÁMICAS (cambian en runtime), TARGETED (por user ID, geography, plan), y persistidas fuera del código (LaunchDarkly, Unleash, Flagsmith, custom)." },
+        { "letter": "C", "text": "Feature flags aumentan el technical debt y deben evitarse.", "correct": false, "why": "Peligro real (flag debt — flags olvidadas se acumulan) pero MITIGABLE (owner de cada flag, expiration date, code cleanup regular). Los beneficios superan el costo si se manejan bien." },
+        { "letter": "D", "text": "Feature flags solo son útiles para A/B testing.", "correct": false, "why": "A/B es uno de muchos casos. Los otros (canary release, killswitch, timed release, permission-based features) son igualmente importantes." }
+      ],
+      "explanation": "Tipos de feature flags: (1) Release flags — temporal, para desacoplar deploy de release. Se eliminan cuando la feature es GA. (2) Ops flags — controlan comportamiento operacional (rate limiting, expensive feature toggles). Pueden ser permanentes. (3) Experiment flags — A/B tests. (4) Permission flags — beta users, paid tier features.\n\nProveedores: (a) LaunchDarkly — market leader, feature enterprise. (b) Split.io. (c) Unleash — open source, self-hostable. (d) Flagsmith. (e) ConfigCat. (f) Home-grown — Facebook 'Gatekeeper', Netflix 'Feature Bricks'. Para empezar: config file simple + reload, evolucionar a servicio dedicado cuando el volumen justifique.\n\nAntipatrones: (1) Flag creep — flags que nunca se eliminan crean código con paths muertos. Fix: expiration dates, monitoring de 'stale flags'. (2) Complexidad exponencial — muchos flags interactúan, 2^N estados. Fix: audit regular, evitar flags mutuamente dependientes. (3) Flag como config permanente — si algo es siempre-on, borra el flag. (4) Testing — cada branch del flag debe testearse.",
+      "realWorld": "Facebook 'Gatekeeper' controla miles de flags en producción. LinkedIn migró a feature flags para desacoplar deploy (semanal) de release (diario). GitHub usa 'flipper' (Ruby gem) para todos sus deploys. Netflix documenta 'Feature Bricks' — sus flags se activan por device, region, membership tier.",
+      "tags": ["feature flags", "toggles", "progressive delivery"],
+      "tech": ["LaunchDarkly", "Unleash", "Flagsmith"],
+      "references": [{ "title": "Martin Fowler — Feature Toggles (aka Feature Flags)" }, { "title": "Pete Hodgson — Feature Toggles" }]
+    },
+    {
+      "id": "q12",
+      "areaId": "vcs-ci",
+      "topic": "Test pyramid",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene 5000 E2E tests que corren 4 horas. 20% son flaky (pasan/fallan aleatoriamente). Los devs los ignoran ('cierra los ojos y merge'). Un consultor te dice: 'tienes una helada de tests (ice cream cone), no una pirámide'.",
+      "question": "¿Qué es el test pyramid y por qué importa en CI/CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Test pyramid (Mike Cohn): MUCHOS unit tests (rápidos, aislados, baratos), MEDIANO número de integration tests, POCOS E2E tests (lentos, frágiles, caros). Inverted (ice cream cone) es anti-patrón: muchos E2E, pocos unit. Consecuencia de invertirlo: CI lento (horas), flaky (E2E depende de red, DB, timing), debugging difícil (falla en el frontend puede ser bug en backend, DB, o test setup).", "correct": true, "why": "Correcto. La pirámide es un ideal de eficiencia. Un unit test cuesta segundos, un E2E puede costar minutos. Y un unit test que falla apunta a UN archivo; un E2E que falla puede ser cualquier cosa. Pyramid = fast feedback + easy debugging." },
+        { "letter": "B", "text": "Solo importa el número TOTAL de tests, no el mix.", "correct": false, "why": "Falso — 1000 unit tests corren en 30 seg; 1000 E2E tests corren en horas. El mix determina la velocidad del pipeline y la utilidad para debugging." },
+        { "letter": "C", "text": "E2E tests son los únicos que importan porque validan la experiencia real.", "correct": false, "why": "Falacia común. E2E son valiosos pero: (1) muy lentos (bloquean CI), (2) muy frágiles (cambio de CSS rompe el test), (3) mal isolation (bugs difíciles de attribute). Necesitas E2E pero como pocos como sea posible." },
+        { "letter": "D", "text": "Los tests son opcionales — el linter atrapa todos los bugs.", "correct": false, "why": "Linters atrapan bugs sintácticos/de estilo. NO atrapan bugs lógicos (algoritmo incorrecto, race conditions, off-by-one). Tests son necesarios." }
+      ],
+      "explanation": "Pyramid layers y ratios típicos: (1) Unit tests — 70-80% del suite. Testean UNA función/clase en aislamiento (mocks para deps). Ejecución en milisegundos. Ejemplo: 'given empty cart, addProduct returns cart with 1 item'. (2) Integration tests — 15-25%. Testean componentes juntos con dependencies reales (DB en Docker, HTTP calls a service real). Ejecución en segundos-minutos. Ejemplo: 'POST /cart persists to DB and returns 201'. (3) E2E tests — 5-10%. Testean flow completo (browser → frontend → backend → DB). Ejecución en minutos. Herramientas: Selenium, Cypress, Playwright.\n\nAlternativas al pyramid: (a) Testing Trophy (Kent C. Dodds) — enfatiza más integration tests, menos unit tests. Filosofía: 'test how the software is used'. Válido para frontend. (b) Testing Diamond — muchos integration, pocos unit y E2E. Popular en microservices.\n\nAnti-flaky: (1) Deterministic tests — no depender de timing (setTimeout, random). Usa fake clocks. (2) Isolate — cada test crea/limpia su propia data. (3) Retry con exponential backoff pero LOG cada retry — flaky tests son bugs, no ignorables. (4) Quarantine — mueves flakies a 'quarantine' suite, no bloquean CI, pero un dev tiene la responsabilidad de arreglarlos.",
+      "realWorld": "Google publicó 'The Testing Trap' sobre inversión de la pyramid. Spotify documentó cómo pasaron de 4h E2E CI a 15min con más unit tests. Slack ha compartido su strategy con Testing Trophy para frontend. Kent Beck (creator de xUnit) mantiene que unit tests son la base — E2E son mera validación final.",
+      "tags": ["test pyramid", "unit tests", "integration tests", "E2E", "flaky"],
+      "tech": ["Jest", "Cypress", "Playwright"],
+      "references": [{ "title": "Mike Cohn — Succeeding with Agile" }, { "title": "Martin Fowler — Test Pyramid" }]
+    },
+    {
+      "id": "q13",
+      "areaId": "vcs-ci",
+      "topic": "Trunk-based development y CI",
+      "difficulty": "senior",
+      "scenario": "Tu equipo tiene 15 devs. Cada uno trabaja en su feature branch por 1-2 semanas antes de PR. Cuando mergean, hay conflictos de merge horrorosos. Un ingeniero propone trunk-based development.",
+      "question": "¿Qué es trunk-based development y cómo enable CI/CD real?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Todos los devs mergean cambios PEQUEÑOS a la rama principal (trunk/main) MÚLTIPLES VECES al día. Branches son cortas (<1 día). No hay 'develop' branch, no hay 'release' branches long-lived. Features grandes se rompen en pequeñas mergeable slices con feature flags para ocultar hasta estar completa.", "correct": true, "why": "Correcto. La palabra clave es 'continuous integration' — el que se integra CONTINUAMENTE (varias veces/día), no batches. Ver el sitio trunkbaseddevelopment.com de Paul Hammant." },
+        { "letter": "B", "text": "Feature branches largas son 'integration hell' — más tiempo pasan aisladas del trunk, más conflictos al merge. Devs hacen 'grand refactor' que cambia 500 files y merges se vuelven imposibles. Trunk-based fuerza commits pequeños y mergeable.", "correct": true, "why": "Correcto. Es el hallazgo principal de trunk-based. La complejidad de merge crece exponencialmente con el tamaño del diff. 20 líneas → trivial merge; 5000 líneas → 3 días de conflicts." },
+        { "letter": "C", "text": "Compatible con code review vía short-lived PR (branch de horas, no semanas). Alternativamente, pair programming reemplaza review formal. Google, Facebook usan trunk-based con code review estricto en pequeños PRs.", "correct": true, "why": "Correcto. Trunk-based NO significa 'sin review'. Significa 'review en pequeñas piezas y merge rápido'. PRs de 200 líneas se revisan en 10min; PRs de 2000 líneas se aprueban con 'LGTM' porque nadie los lee." },
+        { "letter": "D", "text": "Feature flags son ESENCIALES en trunk-based. Permiten mergear código incompleto a trunk sin exponer la feature. Sin flags, tienes que esperar hasta que la feature esté 'completa' antes de mergear — vuelves a feature branches largas.", "correct": true, "why": "Correcto. Feature flags son el enabler técnico. Sin ellos, trunk-based es imposible para features grandes. Con ellos, mergeás WIP code (behind flag off) y activás cuando esté listo." },
+        { "letter": "E", "text": "Trunk-based requiere abandonar todo control de calidad.", "correct": false, "why": "Falso — trunk-based EXIGE MÁS calidad automatizada (CI robusto, tests confiables, code review rápido). No es 'push everything', es 'push pequeño y validado'." }
+      ],
+      "explanation": "Trunk-based vs GitFlow: (1) GitFlow (Vincent Driessen, 2010) — main, develop, feature/*, release/*, hotfix/*. Diseñado para releases scheduled (una vez cada 2 semanas). Complejo. (2) Trunk-based — solo main + branches muy cortas. Diseñado para CI/CD (deploy continuo). Simple. (3) GitHub Flow — main + feature branches, PR a main. Simplificación de GitFlow, popular en OSS.\n\nDORA data (Accelerate): trunk-based DEV correlaciona con high performance. GitFlow correlaciona con low performance (releases mensuales, integration hell). Google internal: monorepo trunk-based, TODO commit a HEAD, sin branches. Facebook similar.\n\nRequisitos: (a) CI que corre en <10min (si toma 1h, no puedes commit-multiple-times-per-day). (b) Tests confiables (flakies bloquean todos). (c) Feature flags. (d) Devs disciplinados en romper trabajo en pequeñas slices. (e) Code review rápido (SLA de horas, no días). El bottleneck real de trunk-based es cultural, no técnico.",
+      "realWorld": "Google monorepo (2 billion LOC) es 100% trunk-based — sin branches, todos commit a HEAD. Facebook similar con su monorepo. Netflix, Amazon, LinkedIn documented trunk-based. El paper 'Why Google Stores Billions of Lines of Code in a Single Repository' (Rachel Potvin, Josh Levenberg 2016) describe la infraestructura.",
+      "tags": ["trunk-based", "gitflow", "CI", "branching"],
+      "tech": ["Git"],
+      "references": [{ "title": "trunkbaseddevelopment.com — Paul Hammant" }, { "title": "Accelerate — Trunk-based Development" }]
+    },
+    {
+      "id": "q14",
+      "areaId": "vcs-ci",
+      "topic": "Cache strategies en CI",
+      "difficulty": "senior",
+      "scenario": "Tu pipeline tarda 20 minutos: 8 min instalando dependencies (npm install), 5 min compilando, 7 min tests. Los devs se quejan del feedback lento.",
+      "question": "¿Qué estrategias de caching aceleran CI significativamente?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Dependency cache: cachear ~/.npm, node_modules, ~/.m2, .gradle, .cargo, .pip. Cache key basado en hash de lockfile (package-lock.json, Cargo.lock, poetry.lock). Cache hit = skip download (5+ min saved).", "correct": true, "why": "Correcto. Casi todos los CI providers (GitHub Actions, GitLab, CircleCI) soportan esto nativo. actions/cache con key: hashFiles('package-lock.json'). Cache HIT = 30 seg vs 5min de download." },
+        { "letter": "B", "text": "Docker layer cache: buildear imágenes incrementalmente. Layers que no cambian se reutilizan. Requiere Dockerfile bien estructurado (COPY package.json BEFORE COPY app/) para maximizar hits. BuildKit + registry cache o buildx con GHA cache.", "correct": true, "why": "Correcto. Docker build sin cache toma 5min; con cache warm, 30 seg. La clave es el ORDEN en el Dockerfile: cosas que cambian menos frecuentemente van primero." },
+        { "letter": "C", "text": "Build artifact cache: cachear resultados de compilación (target/, dist/, .next/cache). Herramientas: Turborepo (JS monorepos), Nx, Bazel, Gradle build cache, Rust sccache. Compartir cache entre CI runs con remote cache (S3).", "correct": true, "why": "Correcto. Bazel/Nx/Turborepo remote cache es transformador. Si otro CI run ya compiló 'shared/utils', tu CI baja el .js/.tar precompilado. Puede reducir 30min build a 30 seg." },
+        { "letter": "D", "text": "Test result cache: skip tests que no cambiaron. Turborepo, Nx, y Bazel hacen esto — hash del código + deps + test file. Cache HIT = 'este test pasó antes con este exact input, no re-ejecutar'.", "correct": true, "why": "Correcto. Especialmente valioso en monorepos grandes. Si solo cambió un package, no re-corras tests de los otros 100 packages. Rush, Turborepo, Nx, Bazel todos lo soportan." },
+        { "letter": "E", "text": "Cachear NEVER — cada CI run debe ser 100% fresh para reproducibilidad.", "correct": false, "why": "Anti-práctico. Reproducibilidad no requiere download from scratch — requiere que EL MISMO INPUT dé el mismo output. Un lockfile pinneado + cache dan reproducibilidad Y velocidad." }
+      ],
+      "explanation": "Cache hierarchy: (1) Local cache — el runner tiene .cache directory reused across jobs. (2) Distributed cache — S3/GCS/registry compartido entre runners. (3) CDN cache — el paquete NPM viene de un mirror cercano.\n\nCache invalidation es el problema difícil: 'cache invalidation and naming things' (Phil Karlton). Key strategies: (a) content-hash-based — key = hash(lockfile). Cambia el lockfile → nuevo cache. Never stale. (b) time-based — key = date + hash. Refresh diario. (c) branch-based — main branch tiene su cache; feature branches heredan y bifurcan.\n\nMedición: en GitHub Actions, el time saved aparece en el log de actions/cache. Meta-metric: average CI duration. Un pipeline de 20min → 5min es 4x productividad. Empresas serias tienen 'CI dashboard' con métricas per-repo.\n\nRiesgos: (1) Poisoned cache — malicious PR envenena el cache que otros repos usan. Fix: cache aislado por branch. (2) Stale cache — el lockfile no cambió pero un mirror upstream compromise. Fix: rotar cache periódicamente. (3) Cache overhead — cache upload/download > time saved. Fix: solo cachear cosas grandes (>10MB).",
+      "realWorld": "Turborepo (creado por Vercel) es popular en monorepos JS — remote cache en Vercel. Nx nx-cloud similar. Bazel remote cache usado por Google internamente. GitHub Actions actions/cache: los stats públicos de GitHub muestran cache hit rate del 60-80% en repos maduros. Docker BuildKit + GHA cache-from/to soporta remote layer cache.",
+      "tags": ["caching", "CI performance", "dependency cache", "layer cache"],
+      "tech": ["GitHub Actions", "Docker BuildKit", "Turborepo", "Nx", "Bazel"],
+      "references": [{ "title": "GitHub Docs — Caching dependencies" }, { "title": "Turborepo Docs — Remote Caching" }]
+    },
+    {
+      "id": "q15",
+      "areaId": "vcs-ci",
+      "topic": "Matrix builds",
+      "difficulty": "senior",
+      "scenario": "Tu librería debe soportar Node 18, 20, 22, en Linux, MacOS, Windows. Actualmente tu CI corre solo Node 20 en Linux. Los usuarios reportan bugs en Windows que no atrapaste.",
+      "question": "¿Qué son matrix builds y cómo se implementan?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Matrix builds: ejecutan el mismo job con distintas combinaciones de variables (versión de runtime, OS, browser, DB version). CI generates jobs = producto cartesiano. Ejemplo GitHub Actions: strategy.matrix con node: [18, 20, 22] y os: [ubuntu, macos, windows] = 9 jobs paralelos. Cada uno prueba una combinación.", "correct": true, "why": "Correcto. Matrix builds son fundamentales para librerías cross-platform. GitHub Actions strategy.matrix, GitLab parallel:matrix, CircleCI matrix jobs. Todos soportan syntax similar." },
+        { "letter": "B", "text": "Matrix es solo para bases de datos.", "correct": false, "why": "Falso — matrix se usa para cualquier dimensión: versiones de runtime, OS, browsers, arquitecturas (x86 vs ARM), locales, DB engines." },
+        { "letter": "C", "text": "Matrix builds hacen CI más lento.", "correct": false, "why": "Falso — corren en PARALELO. 9 jobs matrix ≈ tiempo de 1 job (asumiendo runners suficientes). El wall clock time no cambia; el compute time sí." },
+        { "letter": "D", "text": "Solo se puede tener matrix de una dimensión.", "correct": false, "why": "Falso — matrix es N-dimensional. En la práctica 2-3 dimensiones (runtime × OS × DB) es común, más se vuelve inmanejable." }
+      ],
+      "explanation": "Matrix build strategy: (1) Define dimensiones — ej. node: [18, 20, 22], os: [ubuntu-latest, macos-latest, windows-latest]. (2) CI genera N × M jobs. (3) Cada job ejecuta el mismo workflow con esas variables inyectadas. (4) Exclusiones — permite excluir combinaciones específicas (ej. Node 18 + macos-arm64 no soporta).\n\nUso común: (a) Librerías OSS — testear todas las combinaciones que prometen soportar. (b) Applications — testear en el runtime más viejo soportado + el más nuevo. (c) DB migrations — testear en PostgreSQL 14, 15, 16 antes de release. (d) Browsers — Chrome, Firefox, Safari, Edge en distintas versiones.\n\nTradeoffs: (1) Cost — 9 jobs consumen 9x compute. En OSS de GitHub Actions es gratis para public repos, en private cuesta. (2) Time — jobs paralelos requieren runners paralelos. Si tienes 1 runner, 9 matrix jobs corren serial. (3) Reporting — cuando un job falla, hay que identificar qué combinación específica. Test reporters como Junit XML ayudan.\n\nAntipatrones: (1) Matrix con 100 combinaciones — ineficiente y difícil de mantener. Trim a lo esencial. (2) Matrix con fail-fast=true por default — un fallo en Node 18 cancela los otros 8. Puede ser deseable o no, depende. (3) Duplicar setup entre matrix jobs — usa dependencies o composite actions para reutilizar.",
+      "realWorld": "Node.js core CI corre matrix de 5 OS × 8 arch (Linux, macOS, Windows, AIX, FreeBSD; x86, ARM, PPC). Rust crate CI típicamente: stable, beta, nightly, MSRV × Linux, macOS, Windows. React testea en React 17 + 18 + 19 para tools que soportan ambos. Docker Buildx multi-arch usa matrix implícito.",
+      "tags": ["matrix", "cross-platform", "parallel"],
+      "tech": ["GitHub Actions", "GitLab CI"],
+      "references": [{ "title": "GitHub Docs — Using a matrix for your jobs" }]
+    },
+    {
+      "id": "q16",
+      "areaId": "vcs-ci",
+      "topic": "Secrets management en CI",
+      "difficulty": "senior",
+      "scenario": "Tu pipeline necesita AWS credentials para deployar. Un dev commiteó las credentials en el YAML. Otro las puso en variables de ambiente pero se muestran en los logs. Un tercero las cargó desde .env.",
+      "question": "¿Cómo manejar secrets en CI de forma segura?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Store secrets en el vault del CI provider (GitHub Actions secrets, GitLab CI variables masked, CircleCI env vars encrypted). NUNCA en YAML plaintext, NUNCA en el repo (git-secrets scanner recomendado en pre-commit hook).", "correct": true, "why": "Correcto. Baseline mínimo. Los secrets están encrypted at rest, redacted from logs automáticamente por el CI provider (si están correctamente registrados como 'secret'/'masked')." },
+        { "letter": "B", "text": "Usar OIDC (OpenID Connect) para federated auth: el CI genera un JWT firmado que AWS/GCP/Azure verifica. Sin long-lived credentials en el CI. Rotación automática. GitHub Actions OIDC + AWS IAM Roles es state-of-the-art.", "correct": true, "why": "Correcto. La mejor práctica moderna. Elimina credenciales estáticas completamente. El CI intercambia el JWT por credenciales temporales (STS AssumeRoleWithWebIdentity). Rotación cero-touch." },
+        { "letter": "C", "text": "External secret managers: HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, GCP Secret Manager. CI se autentica al vault (via OIDC ideally) y saca los secrets on-demand. Rotación centralizada, audit trail rico.", "correct": true, "why": "Correcto. Para orgs grandes con muchos secrets, vault centralizado > secrets duplicados por repo. Rotar una credencial en un lugar, propaga a todos los CIs que la usan." },
+        { "letter": "D", "text": "Nunca imprimir secrets en logs. El CI provider redacta automáticamente valores registrados como secrets, pero si concatenas con otro string, la redacción puede fallar. Cuidado con 'echo $SECRET' o dumps de env.", "correct": true, "why": "Correcto. Historia común: secret redactado en 'echo $SECRET' pero visible en 'curl -H \\\"Auth: $SECRET\\\"' si el CI hace substring matching. Mejor: usar --data-urlencode o pipes." },
+        { "letter": "E", "text": "Los secrets pueden vivir en .env commiteado al repo si están 'encriptados con base64'.", "correct": false, "why": "Base64 NO es encryption — es encoding. Cualquiera con acceso al repo puede decodearlo. Anti-patrón crítico. Herramientas como git-secrets, gitleaks, trufflehog scanean repos para detectar esto." }
+      ],
+      "explanation": "Jerarquía de secrets security en CI (de peor a mejor): (1) Hardcoded en código commiteado (worst — nunca hacer). (2) .env commiteado (still bad). (3) Variables sin marcar como secret en CI (logs las muestran). (4) CI secrets (encrypted at rest, redacted logs). (5) External secret manager (rotación centralizada). (6) OIDC federated auth (no long-lived credentials at all).\n\nRotación: los secrets deben rotar regularmente. Manual = never happens. Automated = con Secrets Manager (AWS auto-rotates RDS credentials) o Vault (renewable leases). Si un secret leaks, la rotación debe ser inmediata (<1h).\n\nAudit: quien accedió qué secret cuándo. Vault y CSP secret managers tienen audit logs. GitHub Actions muestra qué jobs usaron secrets (parcial). En breach investigation, esto es crítico.\n\nAnti-patrones específicos: (1) 'echo secret' — mismo si se redacta, no lo hagas. (2) Secret en URL — logs de HTTP capturan URL. Use POST body o headers. (3) Secret en CI job artifact — los artifacts se conservan y pueden ser downloadeados por cualquiera con acceso al CI. (4) Compartir secrets entre repos sin necesidad. (5) Secrets globales de la org que 1000 repos pueden usar — blast radius huge si un repo comprometido.",
+      "realWorld": "Uber 2016 breach: credenciales AWS en GitHub privado (pero repo comprometido). Codecov 2021: script de bash tampering exfiltró CI secrets de miles de organizaciones. GitHub Actions OIDC + AWS IAM Roles introducido en 2021 — best practice actual. HashiCorp Vault es el estándar para orgs grandes. Doppler y 1Password Secrets Automation son alternativas modernas.",
+      "tags": ["secrets", "OIDC", "vault", "security"],
+      "tech": ["GitHub Actions", "HashiCorp Vault", "AWS Secrets Manager"],
+      "references": [{ "title": "GitHub Docs — Configuring OpenID Connect in AWS" }, { "title": "OWASP — Secrets Management Cheat Sheet" }]
+    },
+    {
+      "id": "q17",
+      "areaId": "deployment",
+      "topic": "Database migrations en CD",
+      "difficulty": "senior",
+      "scenario": "Tu equipo hace deploys diarios. Necesitan renombrar una columna de user_name → username. Un dev propone: ALTER TABLE user RENAME COLUMN. Otro dice: 'romperás el binary viejo durante el rollout'.",
+      "question": "¿Cuál es la estrategia CORRECTA para migrations en CD?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "Expand-Contract (también llamado Parallel Change o Blue-Green DB). (1) EXPAND: Add nueva columna 'username' NULLABLE. Deploy backwards-compatible. (2) DUAL WRITE: Deploy código que escribe a AMBAS columnas (user_name y username) y lee de nueva. (3) BACKFILL: Copiar user_name → username para rows existentes. (4) CONTRACT: Deploy código que solo escribe/lee de username. (5) CLEANUP: DROP columna user_name. Cada paso es independiente y reversible.", "correct": true, "why": "Correcto. La ÚNICA forma de hacer schema changes SEGUROS con CD. Cada paso es backwards-compatible con el paso anterior. Rollback en cualquier punto es seguro. Múltiples deploys pero cada uno low-risk." },
+        { "letter": "B", "text": "ALTER TABLE RENAME COLUMN en un solo deploy.", "correct": false, "why": "Anti-patrón. Durante el rollout (rolling deploy), tienes MIXED versions: binary viejo espera 'user_name', binary nuevo espera 'username'. Uno de los dos rompe. Rollback imposible (data ya migrada)." },
+        { "letter": "C", "text": "Downtime maintenance window: apagar app, migrar, deploy, encender.", "correct": false, "why": "Válido para batch operations tradicionales pero incompatible con CD/high-availability. En 2024, downtime maintenance es aceptable solo en circunstancias muy especiales." },
+        { "letter": "D", "text": "Ignorar la migración y trabajar con la columna vieja para siempre.", "correct": false, "why": "Deuda técnica creciendo. En algún momento el trade-off del rename supera el costo del expand-contract." }
+      ],
+      "explanation": "Expand-Contract detalle: (1) EXPAND phase — add nuevas columnas/tablas SIN romper el esquema viejo. Todo es backwards-compatible. Rollback: DROP nueva columna. (2) MIGRATE phase — código dual-write y dual-read (lee de nueva, fallback a vieja si null). Durante este período, ambos binarios (viejo y nuevo) funcionan. (3) BACKFILL — script batch que copia data vieja → nueva. Puede tomar días para tablas grandes. Debe ser resumable e idempotente. (4) CONTRACT phase — código solo usa nueva. Deploy y wait suficiente para que binary viejo no exista (rollback window). (5) CLEANUP — DROP columna vieja. Punto de no retorno.\n\nHerramientas: (a) Rails migrations con strong_migrations gem bloquea migrations peligrosos (add index sin CONCURRENTLY, add column with default en tablas grandes). (b) gh-ost, pt-osc — online schema changes para MySQL. (c) pg_repack, pg_squeeze — PostgreSQL online. (d) Flyway, Liquibase — schema migration tools que soportan versionado.\n\nAntipatrones: (1) migrations en el mismo deploy que el código dependiente — si el deploy falla mid-way, estado inconsistente. Separar: migration deploy primero, code deploy después. (2) DROP TABLE / DROP COLUMN sin cool-down — si necesitas rollback, la data se perdió. Wait al menos días. (3) Long-running migrations (10min+) durante peak traffic — locks bloquean queries de usuarios. Usar online DDL.",
+      "realWorld": "GitHub publicó 'How We Do Zero-Downtime MySQL Deployment' con expand-contract detallado. Stripe API versioning + expand-contract para cambios de schema. Shopify batch migrations con gh-ost para MySQL (Shopify creó gh-ost). Etsy documentó su schema change process con Percona pt-osc.",
+      "tags": ["migrations", "expand-contract", "zero-downtime", "database"],
+      "tech": ["Flyway", "Liquibase", "gh-ost"],
+      "references": [{ "title": "Martin Fowler — Parallel Change" }, { "title": "GitHub — Zero-Downtime MySQL Deployment" }]
+    },
+    {
+      "id": "q18",
+      "areaId": "deployment",
+      "topic": "Progressive delivery techniques",
+      "difficulty": "staff",
+      "scenario": "Tu producto es una API pública con 10M requests/hora. Un cambio grande al motor de pricing va a shipear. Un bug puede costar millones en revenue. El CEO quiere control granular sobre el rollout.",
+      "question": "¿Qué técnicas de progressive delivery permitirían un rollout seguro y observado?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Ring deployment: rollout en 'rings' concéntricos. Ring 0 = interno (dogfooding). Ring 1 = beta users opt-in. Ring 2 = 1% de usuarios random. Ring 3 = 10%. Ring 4 = 50%. Ring 5 = 100%. Cada ring tiene bake time (24-72h) para detectar issues. Microsoft popularizó esta estructura.", "correct": true, "why": "Correcto. Ring deployment es progressive delivery formalizado. Microsoft Windows updates usan rings; Office 365 similar. Cada ring es una checkpoint donde puedes cortar el rollout." },
+        { "letter": "B", "text": "Shadow traffic: la nueva versión recibe COPIA del traffic real pero sus respuestas NO se sirven al usuario. Se comparan métricas (latency, error, correctness) entre nueva y estable. Permite validar performance con traffic real SIN riesgo al usuario. Envoy y Istio soportan traffic mirroring nativo.", "correct": true, "why": "Correcto. Traffic mirroring / dark launch. Facebook lo popularizó — llamaban 'dark launches'. Ideal para migrations grandes (nuevo motor de pricing). Cost: 2x compute durante shadow period." },
+        { "letter": "C", "text": "Feature flags con targeting granular: activar la nueva feature para users específicos (por user_id, plan, geography, cohort). Rollout controlado por marketing/product, no por deploy. Killswitch instantáneo si algo va mal.", "correct": true, "why": "Correcto. LaunchDarkly, Optimizely, Split.io — targeting complejo. Rollout no técnico: product manager activa 1% de US users, monitoreamos por 3 días, si OK activamos 10%, etc. Deploy y release desacoplados completamente." },
+        { "letter": "D", "text": "Automated canary analysis (Kayenta, Argo Rollouts): compara estadísticamente métricas de canary (nuevo binary) vs baseline (viejo binary) durante rollout. Análisis con thresholds (error rate, latency, business KPIs). Auto-rollback si degradación detectada. Elimina el juicio humano subjetivo.", "correct": true, "why": "Correcto. Netflix Kayenta hace análisis Mann-Whitney U de métricas del canary vs baseline. Argo Rollouts + Prometheus similar. Reduces human error en decisiones 'rolar/no rolar'." },
+        { "letter": "E", "text": "Deploy directo al 100% de traffic y esperar lo mejor.", "correct": false, "why": "'Big bang deploy' — anti-patrón. Si el bug afecta el pricing, millones perdidos en minutos. Progressive delivery existe precisamente para evitar esto." }
+      ],
+      "explanation": "Progressive delivery (término acuñado por James Governor 2018) es la evolución de continuous delivery. La idea: no solo delivery frecuente, sino DELIVERY OBSERVADA con controles graduales. Componentes: (1) Canary + automated analysis — el binary nuevo recibe % pequeño de traffic, métricas vs baseline determinan si continuar. (2) Feature flags con targeting — control granular de qué usuarios ven qué feature. (3) A/B testing integrado con deployment. (4) Rollback automatizado en degradación.\n\nHerramientas: (a) Argo Rollouts — Kubernetes-native progressive delivery. Blue-green, canary, con automated analysis. (b) Flagger — similar, alternativa a Argo. (c) Spinnaker + Kayenta — Netflix stack, más orquestación. (d) LaunchDarkly, Split.io, Optimizely — feature flags managed. (e) Istio, Linkerd, Envoy — service mesh que hace weighted routing.\n\nMétricas para auto-rollback: (1) Golden signals — latency (p50, p99), traffic (RPS), errors (4xx, 5xx), saturation (CPU, memory). (2) Business metrics — checkout success rate, sign-up conversion, revenue per session. (3) Custom SLI — específicos al servicio.\n\nAnti-patrones staff-level: (1) Progressive delivery sin observability — flags de rollout gradual sin monitoring por ring = no progresivo, solo lento. (2) Manual analysis en cada ring — no escala. Automate the analysis. (3) Un solo tipo de progressive delivery para TODO — feature flags para features de usuario, canary para infra changes, ring deployment para plataforma. (4) Progressive delivery sin killswitch. Debe haber SIEMPRE un botón rojo que revierte todo en segundos.",
+      "realWorld": "Netflix stack completo: Spinnaker + Kayenta + Zuul (traffic routing). Facebook 'Gatekeeper' + shadow traffic para infra migrations. Microsoft Windows Insider rings — Dev/Beta/Release Preview/Public. Google Chrome release channels — Canary, Beta, Stable. Uber 'Piranha' — herramienta que ayuda a limpiar feature flags stale. Stripe rollea nuevos endpoints con progressive delivery + shadow calls.",
+      "tags": ["progressive delivery", "canary", "shadow traffic", "rings"],
+      "tech": ["Argo Rollouts", "Flagger", "Spinnaker", "LaunchDarkly"],
+      "references": [{ "title": "James Governor — Progressive Delivery" }, { "title": "Argo Rollouts Docs" }]
+    },
+    {
+      "id": "q19",
+      "areaId": "vcs-ci",
+      "topic": "Monorepo CI strategy",
+      "difficulty": "staff",
+      "scenario": "Tu monorepo tiene 200 packages. Un cambio a 1 archivo hace que TODO el CI corra (30 min). Los devs se quejan. Un ingeniero propone: 'affected packages only'.",
+      "question": "¿Qué estrategias hacen que CI de monorepo escale?",
+      "multiSelect": true,
+      "options": [
+        { "letter": "A", "text": "Affected/changed detection: analizar el diff del PR contra main, computar qué packages fueron afectados (directamente o transitivamente por deps). Solo buildear/testear esos. Herramientas: Turborepo, Nx, Bazel, Lerna. Reduce 30min CI → 3min para PRs típicos.", "correct": true, "why": "Correcto. La técnica más impactful. Nx affected, Turborepo pipeline, Bazel query rdeps. Si cambias 'shared/utils', se rebuilds solo eso + packages que depende de utils, no los otros 190." },
+        { "letter": "B", "text": "Remote cache: el output de builds/tests se guarda en cache compartido (S3, GCS). Si otro run ya buildeó 'shared/utils' con el mismo input, no re-buildeás — bajas el artifact del cache. Cache hits del 60-80% en repos maduros.", "correct": true, "why": "Correcto. Turborepo remote cache (Vercel), Nx Cloud, Bazel remote cache (BuildBuddy, EngFlow), Gradle build cache. En Google internal, es fundamental — todo build compartido de Bazel cache." },
+        { "letter": "C", "text": "Distributed builds: separar el build entre múltiples runners. Bazel puede shard automatically. Reduce wall-clock time.", "correct": true, "why": "Correcto. Bazel remote execution (RBE) es el ejemplo — el build se distribuye a workers en el cloud, un dev en su MacBook obtiene build velocity de 100 CPUs. Costo: infra compleja, pero para monorepos grandes vale la pena." },
+        { "letter": "D", "text": "Test sharding: dividir tests en N shards que corren en paralelo. Cada shard ejecuta 1/N tests. Jest --shard, Playwright shards, Bazel test sharding. Reduces wall-clock desde N*t a t.", "correct": true, "why": "Correcto. Simple y efectivo. Si tienes 10000 tests que toman 20min, 10 shards = 2min. La complicación: distribuir tests EVENLY para que shards terminen ≈ mismo tiempo (test rebalancing)." },
+        { "letter": "E", "text": "Correr TODOS los tests en TODOS los PRs siempre.", "correct": false, "why": "Anti-patrón en monorepos grandes. Google, Facebook, Airbnb — todos usan affected + cache. Correr todo siempre es waste computational y de developer time." }
+      ],
+      "explanation": "Monorepo CI trilemma: (1) SPEED — CI rápido para PRs frecuentes. (2) CORRECTNESS — asegurar que no rompes packages downstream. (3) COST — cloud compute no es gratis. Affected + cache + parallel resuelve los tres.\n\nDependency graph: la clave es tener un GRAFO de deps entre packages. Herramientas: (a) Bazel BUILD files declarativos — grafo perfecto. (b) Nx nx.json + tags — grafo derivado de imports. (c) Turborepo package.json + pipeline config — grafo desde package.json workspaces. (d) Rush rush.json — Microsoft's approach.\n\nAffected computation: (1) diff HEAD vs base branch. (2) mapear archivos → packages. (3) computar closure transitivo (si cambias package A y B depende de A, B también afectado). (4) generar plan de build/test.\n\nProblemas comunes: (1) 'Global config' cambia — si cambias tsconfig.json en root, TODOS afectados. Solución: no tener global config, config por package. (2) Node_modules confuso — pnpm workspaces resuelven mejor que npm/yarn workspaces. (3) Generated code — protobuf, GraphQL codegen — deben participar en el grafo. (4) External deps — si updates package.json, ¿re-run tests de packages que usan esa dep? Depende del rigor.",
+      "realWorld": "Google monorepo (2B LOC) usa Bazel + Blaze cache + RBE. Facebook similar con Buck2. Uber usa Bazel. Netflix con Nx. Microsoft con Rush. Vercel/Turborepo — mucha influencia moderna. En el mundo JS, Nx y Turborepo son los grandes. Bazel Books de mid 2010s influenciaron todo el space.",
+      "tags": ["monorepo", "affected", "cache", "distributed builds"],
+      "tech": ["Bazel", "Turborepo", "Nx", "Rush"],
+      "references": [{ "title": "Rachel Potvin — Why Google Stores Billions of Lines of Code in a Single Repository" }, { "title": "Bazel Docs — Remote Caching" }]
+    },
+    {
+      "id": "q20",
+      "areaId": "deployment",
+      "topic": "GitOps",
+      "difficulty": "staff",
+      "scenario": "Tu equipo maneja 30 clusters de Kubernetes en 5 regions. Los deploys se hacen con kubectl apply manual. A veces alguien aplica algo directamente en un cluster de prod sin PR (drift). Auditoría es imposible.",
+      "question": "¿Qué es GitOps y cómo resuelve este problema?",
+      "multiSelect": false,
+      "options": [
+        { "letter": "A", "text": "GitOps: el estado deseado del sistema vive en Git (declarative — manifests de K8s, Terraform, Helm charts). Un agente en el cluster (Argo CD, Flux) hace PULL del repo, compara con estado actual, y reconcilia. Cambios se hacen via PR — audit trail perfecto. Drift detection y auto-reconciliation. Rollback = revert del commit.", "correct": true, "why": "Correcto. GitOps (término de Weaveworks 2017) trae principios DevOps al deployment de infra. Git como single source of truth. Pull-based (agent en cluster), no push-based (kubectl desde CI). Todas las buenas propiedades: audit, review, rollback, drift detection." },
+        { "letter": "B", "text": "GitOps es solo usar Git para el código.", "correct": false, "why": "Confusión superficial. Todo dev usa Git. GitOps específicamente aplica el patrón GIT COMO SOURCE OF TRUTH a INFRA/DEPLOYMENT, con agents que reconcilian." },
+        { "letter": "C", "text": "GitOps requiere abandonar CI/CD.", "correct": false, "why": "Falso — GitOps COMPLEMENTA CI/CD. CI builds la imagen y actualiza el manifest en el Git repo. GitOps agent detecta el cambio y deployea. Separación: CI = build; GitOps = deploy." },
+        { "letter": "D", "text": "GitOps es lo mismo que Infrastructure as Code.", "correct": false, "why": "IaC es más amplio (Terraform, CloudFormation manejan cualquier recurso). GitOps es específicamente PULL-BASED reconciliation con agents. IaC push (Terraform apply desde CI) NO es GitOps stricto." }
+      ],
+      "explanation": "GitOps principios (según OpenGitOps working group): (1) DECLARATIVE — sistema descrito declarativamente (K8s manifests, Helm, Kustomize), no imperativamente (kubectl commands). (2) VERSIONED AND IMMUTABLE — estado deseado en Git, versionado, immutable snapshots. (3) PULLED AUTOMATICALLY — agents en el cluster pull del repo (no CI push). (4) CONTINUOUSLY RECONCILED — agent verifica constantemente, corrige drift.\n\nHerramientas: (a) Argo CD — CNCF graduated, UI rica, multi-cluster. Manejado por Intuit inicialmente. (b) Flux — CNCF graduated, más CLI-first, promoción entre environments más natural. (c) Jenkins X — GitOps-ish. (d) Rancher Fleet — para Rancher.\n\nWorkflow típico: (1) Dev push cambio a app repo. (2) CI builds imagen, tags con SHA. (3) CI actualiza el manifest repo (bumpa image tag en Kustomize/Helm values). PR o direct push. (4) Argo CD ve el cambio en manifest repo, sincroniza el cluster. Puede requerir manual sync o auto-sync con auto-prune.\n\nMulti-environment strategy: (a) Un repo por env (dev/, staging/, prod/). (b) Branch por env (main → prod, staging → staging). (c) Kustomize overlays por env. Promoción de dev→staging→prod = PR que copia el image tag.\n\nAnti-patrones: (1) Manual kubectl apply — rompe GitOps. Puede permitirse en emergencias, pero Argo CD reconciliará back al estado del repo. (2) Secrets en Git plaintext — usa Sealed Secrets, External Secrets Operator, o SOPS. (3) State drift ignorado — configurar Argo CD para alertar en drift. (4) Un manifest repo para 500 clusters — se vuelve lento; splittear por dominio.",
+      "realWorld": "Weaveworks acuñó 'GitOps' en 2017. Argo CD (Intuit) y Flux (Weaveworks) son los dos líderes. CNCF Sandbox → Incubating → Graduated para ambos. Redhat OpenShift GitOps es Argo CD packaged. Netflix, Intuit, Adobe usan Argo CD. Deutsche Telekom, State Farm Flux. Como pattern, GitOps ganó tanto tracción que ahora es 'the way' para K8s deployments en 2024+.",
+      "tags": ["gitops", "argo", "flux", "kubernetes", "deployment"],
+      "tech": ["Argo CD", "Flux", "Kubernetes"],
+      "references": [{ "title": "OpenGitOps Principles" }, { "title": "Weaveworks — Guide To GitOps" }]
+    }
+  ]
+}
